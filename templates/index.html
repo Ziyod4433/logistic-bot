@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LogiAdmin — Панель управления</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:      #08090d;
+  --bg2:     #0e1018;
+  --bg3:     #141720;
+  --bg4:     #1a1f2e;
+  --border:  #1f2535;
+  --border2: #252d3f;
+  --amber:   #f5a623;
+  --amber2:  #fbbf24;
+  --green:   #10b981;
+  --red:     #f43f5e;
+  --blue:    #38bdf8;
+  --purple:  #a78bfa;
+  --text:    #dde3f0;
+  --muted:   #4a5572;
+  --muted2:  #6b7a9e;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13.5px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ── SCROLLBAR ───────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* ── LOGIN PAGE ──────────────────────────────────────── */
+#login-page {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(245,166,35,.04) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 20%, rgba(56,189,248,.03) 0%, transparent 50%),
+    var(--bg);
+}
+.login-card {
+  width: 380px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  padding: 52px 44px;
+  box-shadow: 0 0 60px rgba(0,0,0,.6), 0 0 0 1px rgba(245,166,35,.05);
+}
+.login-brand {
+  font-family: 'Syne', sans-serif;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 4px; text-transform: uppercase;
+  color: var(--amber); margin-bottom: 4px;
+}
+.login-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 32px; font-weight: 800; line-height: 1.1;
+  color: var(--text); margin-bottom: 36px;
+}
+.login-title span { color: var(--amber); }
+.lbl {
+  display: block; font-size: 10px; font-weight: 600;
+  letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted2); margin-bottom: 8px;
+}
+.inp {
+  width: 100%;
+  background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 10px; padding: 13px 16px;
+  color: var(--text); font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px; outline: none; margin-bottom: 16px;
+  transition: border-color .2s, box-shadow .2s;
+}
+.inp:focus { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(245,166,35,.1); }
+.login-err { color: var(--red); font-size: 12px; margin-bottom: 12px; min-height: 18px; }
+.login-btn {
+  width: 100%; padding: 15px;
+  background: var(--amber); border: none; border-radius: 10px;
+  color: #0a0905; font-family: 'Syne', sans-serif;
+  font-size: 14px; font-weight: 800; letter-spacing: 2px;
+  text-transform: uppercase; cursor: pointer;
+  transition: background .15s, transform .1s, box-shadow .2s;
+  box-shadow: 0 4px 24px rgba(245,166,35,.3);
+}
+.login-btn:hover { background: var(--amber2); box-shadow: 0 4px 32px rgba(245,166,35,.45); }
+.login-btn:active { transform: scale(.98); }
+
+/* ── APP ─────────────────────────────────────────────── */
+#app { display: none; }
+
+/* ── SIDEBAR ─────────────────────────────────────────── */
+.sidebar {
+  position: fixed; top: 0; left: 0; bottom: 0; width: 220px;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  z-index: 200;
+}
+.sb-logo {
+  padding: 28px 22px 22px;
+  border-bottom: 1px solid var(--border);
+}
+.sb-brand {
+  font-family: 'Syne', sans-serif;
+  font-size: 10px; font-weight: 700; letter-spacing: 4px;
+  text-transform: uppercase; color: var(--amber);
+}
+.sb-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 20px; font-weight: 800; color: var(--text);
+  line-height: 1.2; margin-top: 2px;
+}
+nav { flex: 1; padding: 18px 10px; overflow-y: auto; }
+.nav-section {
+  font-size: 9px; font-weight: 700; letter-spacing: 2.5px;
+  text-transform: uppercase; color: var(--muted);
+  padding: 0 12px; margin: 16px 0 6px;
+}
+.nav-section:first-child { margin-top: 0; }
+.nav-link {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 9px;
+  color: var(--muted2); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all .15s; margin-bottom: 1px;
+  user-select: none;
+}
+.nav-link .ico { font-size: 15px; width: 18px; text-align: center; flex-shrink: 0; }
+.nav-link:hover { background: var(--bg3); color: var(--text); }
+.nav-link.active { background: rgba(245,166,35,.1); color: var(--amber); }
+.nav-link .badge-count {
+  margin-left: auto; background: var(--border2); color: var(--muted2);
+  font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  padding: 2px 6px; border-radius: 10px;
+}
+.sb-footer {
+  padding: 18px 22px; border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--muted);
+}
+.online { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: blink 2s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* ── MAIN CONTENT ────────────────────────────────────── */
+.main { margin-left: 220px; min-height: 100vh; }
+.topbar {
+  height: 56px; background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 32px; position: sticky; top: 0; z-index: 100;
+}
+.topbar-left { display: flex; align-items: center; gap: 10px; }
+.breadcrumb { font-size: 12px; color: var(--muted2); }
+.breadcrumb span { color: var(--amber); }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+
+.content { padding: 32px; }
+
+.page { display: none; animation: fadein .2s ease; }
+.page.active { display: block; }
+@keyframes fadein { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+
+/* ── HEADINGS ────────────────────────────────────────── */
+.page-h {
+  font-family: 'Syne', sans-serif;
+  font-size: 26px; font-weight: 800; line-height: 1;
+  margin-bottom: 24px;
+}
+.page-h em { color: var(--amber); font-style: normal; }
+
+/* ── STATS ROW ───────────────────────────────────────── */
+.stats-row { display: grid; grid-template-columns: repeat(6,1fr); gap: 12px; margin-bottom: 28px; }
+.stat {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 18px 16px;
+  position: relative; overflow: hidden; transition: border-color .2s;
+}
+.stat:hover { border-color: var(--border2); }
+.stat::after {
+  content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+  background: var(--line, var(--amber)); opacity: .5;
+}
+.stat-v {
+  font-family: 'Syne', sans-serif; font-size: 32px; font-weight: 800;
+  line-height: 1; color: var(--cv, var(--amber));
+}
+.stat-l { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted2); margin-top: 6px; }
+
+/* ── CARD ────────────────────────────────────────────── */
+.card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 14px; overflow: hidden; margin-bottom: 20px;
+}
+.card-h {
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.card-title { font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 700; }
+.card-body { padding: 20px; }
+
+/* ── TABLE ───────────────────────────────────────────── */
+.tbl { width: 100%; border-collapse: collapse; }
+.tbl th {
+  text-align: left; padding: 10px 14px;
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 1.5px;
+  color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 700;
+}
+.tbl td {
+  padding: 12px 14px; border-bottom: 1px solid rgba(31,37,53,.6);
+  font-size: 13px; vertical-align: middle;
+}
+.tbl tr:last-child td { border-bottom: none; }
+.tbl tbody tr { transition: background .1s; }
+.tbl tbody tr:hover td { background: rgba(255,255,255,.015); }
+
+.mono { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+
+/* ── BADGES ──────────────────────────────────────────── */
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  white-space: nowrap;
+}
+.badge-amber  { background: rgba(245,166,35,.12); color: var(--amber); }
+.badge-green  { background: rgba(16,185,129,.12); color: var(--green); }
+.badge-red    { background: rgba(244,63,94,.12);  color: var(--red); }
+.badge-blue   { background: rgba(56,189,248,.12); color: var(--blue); }
+.badge-purple { background: rgba(167,139,250,.12);color: var(--purple); }
+.badge-muted  { background: rgba(74,85,114,.2);   color: var(--muted2); }
+
+/* ── STATUS BADGES ───────────────────────────────────── */
+.s-accepted { background:rgba(74,85,114,.2);  color:var(--muted2); }
+.s-khorgos  { background:rgba(167,139,250,.12);color:var(--purple); }
+.s-almaty   { background:rgba(56,189,248,.12); color:var(--blue); }
+.s-road     { background:rgba(245,166,35,.12); color:var(--amber); }
+.s-tashkent { background:rgba(245,166,35,.2);  color:var(--amber2); }
+.s-done     { background:rgba(16,185,129,.12); color:var(--green); }
+
+/* ── BUTTONS ─────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 8px; border: none;
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: all .15s; white-space: nowrap; font-family: 'DM Sans', sans-serif;
+}
+.btn:active { transform: scale(.97); }
+.btn-sm { padding: 5px 10px; font-size: 11.5px; border-radius: 7px; }
+.btn-xs { padding: 4px 8px; font-size: 11px; border-radius: 6px; }
+.btn-amber { background: var(--amber); color: #0a0905; box-shadow: 0 2px 12px rgba(245,166,35,.25); }
+.btn-amber:hover { background: var(--amber2); }
+.btn-ghost { background: transparent; color: var(--muted2); border: 1px solid var(--border2); }
+.btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+.btn-red   { background: rgba(244,63,94,.12); color: var(--red); border: 1px solid rgba(244,63,94,.2); }
+.btn-red:hover { background: rgba(244,63,94,.2); }
+.btn-green { background: rgba(16,185,129,.12); color: var(--green); border: 1px solid rgba(16,185,129,.2); }
+.btn-green:hover { background: rgba(16,185,129,.2); }
+.btn-blue  { background: rgba(56,189,248,.1);  color: var(--blue);  border: 1px solid rgba(56,189,248,.2); }
+.btn-blue:hover { background: rgba(56,189,248,.18); }
+
+/* ── FORM ────────────────────────────────────────────── */
+.form-g { margin-bottom: 14px; }
+.form-g label { display: block; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted2); margin-bottom: 7px; }
+.form-g .inp { margin-bottom: 0; }
+.form-g textarea.inp { resize: vertical; min-height: 80px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+.form-g select.inp { cursor: pointer; }
+.form-g select.inp option { background: var(--bg2); }
+.form-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.form-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+/* ── MODAL ───────────────────────────────────────────── */
+.overlay {
+  position: fixed; inset: 0; z-index: 500;
+  background: rgba(0,0,0,.7); backdrop-filter: blur(6px);
+  display: none; align-items: center; justify-content: center;
+}
+.overlay.open { display: flex; }
+.modal {
+  background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: 16px; padding: 30px 28px;
+  width: 520px; max-width: 96vw; max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 32px 80px rgba(0,0,0,.7);
+  animation: fadein .2s ease;
+}
+.modal-title { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; margin-bottom: 22px; }
+.modal-title em { color: var(--amber); font-style: normal; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; border-top: 1px solid var(--border); padding-top: 20px; }
+
+/* ── TOAST ───────────────────────────────────────────── */
+#toast {
+  position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+  background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 10px; padding: 12px 18px;
+  box-shadow: 0 8px 40px rgba(0,0,0,.5);
+  transform: translateY(60px) scale(.95); opacity: 0;
+  transition: all .3s cubic-bezier(.34,1.3,.64,1);
+  font-size: 13px; font-weight: 500; max-width: 320px;
+  pointer-events: none;
+}
+#toast.show { transform: none; opacity: 1; }
+#toast.ok  { border-left: 3px solid var(--green); }
+#toast.err { border-left: 3px solid var(--red); }
+#toast.inf { border-left: 3px solid var(--amber); }
+
+/* ── SEND RESULTS ────────────────────────────────────── */
+.send-result {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 8px;
+  margin-bottom: 6px; font-size: 12.5px;
+  border: 1px solid transparent;
+}
+.send-result.ok  { background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.2); }
+.send-result.err { background: rgba(244,63,94,.08);  border-color: rgba(244,63,94,.15); }
+
+/* ── FILE CHIP ───────────────────────────────────────── */
+.file-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 7px; padding: 5px 10px;
+  font-size: 11.5px; color: var(--muted2); margin: 3px;
+}
+.file-chip button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px; }
+.file-chip button:hover { color: var(--red); }
+
+/* ── TEMPLATE EDITOR ─────────────────────────────────── */
+.var-pill {
+  display: inline-block; background: var(--bg4);
+  border: 1px solid var(--border2); border-radius: 5px;
+  padding: 3px 8px; font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px; color: var(--amber); margin: 3px 3px 3px 0;
+  cursor: pointer; transition: background .1s;
+}
+.var-pill:hover { background: rgba(245,166,35,.1); }
+
+/* ── LOGS TABLE ──────────────────────────────────────── */
+.log-row { border-left: 3px solid transparent; }
+.log-row.ok  { border-left-color: var(--green); }
+.log-row.err { border-left-color: var(--red); }
+
+/* ── EMPTY STATE ─────────────────────────────────────── */
+.empty {
+  text-align: center; padding: 60px 20px;
+  color: var(--muted);
+}
+.empty-icon { font-size: 44px; margin-bottom: 14px; opacity: .5; }
+.empty p { font-size: 14px; color: var(--muted2); }
+
+/* ── SEARCH ──────────────────────────────────────────── */
+.search {
+  background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 8px; padding: 8px 14px; color: var(--text);
+  font-size: 13px; outline: none; transition: border-color .2s;
+  width: 200px;
+}
+.search:focus { border-color: var(--amber); }
+
+/* ── STATUS SELECT COLORS ────────────────────────────── */
+.status-track {
+  display: flex; align-items: center; gap: 0; margin: 20px 0;
+}
+.status-step {
+  flex: 1; text-align: center; position: relative;
+}
+.status-step::after {
+  content: ''; position: absolute; top: 12px; left: 50%; width: 100%;
+  height: 2px; background: var(--border2); z-index: 0;
+}
+.status-step:last-child::after { display: none; }
+.status-dot {
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--bg4); border: 2px solid var(--border2);
+  margin: 0 auto 6px; position: relative; z-index: 1;
+  transition: all .3s;
+}
+.status-dot.done { background: var(--green); border-color: var(--green); }
+.status-dot.current { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 0 4px rgba(245,166,35,.2); }
+.status-label { font-size: 9.5px; color: var(--muted); text-align: center; line-height: 1.3; }
+.status-label.done { color: var(--green); }
+.status-label.current { color: var(--amber); font-weight: 700; }
+
+/* ── DETAIL PANEL ────────────────────────────────────── */
+#batch-detail { display: none; }
+#batch-detail.open { display: block; }
+
+/* ── DIVIDER ─────────────────────────────────────────── */
+.divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+/* ── PROGRESS ────────────────────────────────────────── */
+.prog-bar { background: var(--bg4); border-radius: 100px; height: 5px; overflow: hidden; }
+.prog-fill { height: 100%; border-radius: 100px; background: var(--amber); transition: width .5s; }
+
+/* ── BACK BUTTON ─────────────────────────────────────── */
+.back-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--muted2); font-size: 12.5px; cursor: pointer;
+  margin-bottom: 20px; transition: color .15s;
+}
+.back-btn:hover { color: var(--amber); }
+</style>
+</head>
+<body>
+
+<!-- ── LOGIN ──────────────────────────────────────────────── -->
+{% if login_page %}
+<div id="login-page" style="display:flex">
+  <div class="login-card">
+    <div class="login-brand">LogiAdmin System</div>
+    <div class="login-title">Вход в<br><span>систему</span></div>
+    <form method="POST" action="/login">
+      <label class="lbl">Логин</label>
+      <input name="username" type="text" class="inp" placeholder="admin" autocomplete="username" required>
+      <label class="lbl">Пароль</label>
+      <input name="password" type="password" class="inp" placeholder="••••••••" autocomplete="current-password" required>
+      <div class="login-err">{{ error or '' }}</div>
+      <button type="submit" class="login-btn">ВОЙТИ →</button>
+    </form>
+  </div>
+</div>
+{% else %}
+
+<!-- ── APP ───────────────────────────────────────────────── -->
+<div id="app" style="display:block">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sb-logo">
+      <div class="sb-brand">LogiAdmin</div>
+      <div class="sb-title">🚛 Cargo<br>System</div>
+    </div>
+    <nav>
+      <div class="nav-section">Главное</div>
+      <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Дашборд</div>
+      <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
+      <div class="nav-section">Настройки</div>
+      <div class="nav-link" onclick="goto('template')"><span class="ico">✏️</span> Шаблон</div>
+      <div class="nav-link" onclick="goto('logs')"><span class="ico">📋</span> Логи отправки</div>
+    </nav>
+    <div class="sb-footer">
+      <div class="online"><span class="dot"></span> Сессия активна</div>
+      <div style="margin-top:8px;display:flex;justify-content:space-between">
+        <span style="color:var(--muted2)">{{ session.username }}</span>
+        <a href="/logout" style="color:var(--red);text-decoration:none;font-size:11px">Выйти</a>
+      </div>
+    </div>
+  </aside>
+
+  <!-- TOPBAR -->
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="breadcrumb" id="breadcrumb">Дашборд</div>
+      </div>
+      <div class="topbar-right">
+        <button class="btn btn-ghost btn-sm" onclick="refreshPage()">↻ Обновить</button>
+        <button class="btn btn-amber btn-sm" onclick="openModal('create-batch-modal')">+ Партия</button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ═══════════════════════════════════════════════════ -->
+      <!-- PAGE: DASHBOARD -->
+      <!-- ═══════════════════════════════════════════════════ -->
+      <div class="page active" id="page-dashboard">
+        <div class="page-h">Дашборд <em>/ Обзор</em></div>
+
+        <div class="stats-row" id="stats-row">
+          <div class="stat"><div class="stat-v" id="s-batches">—</div><div class="stat-l">Партий</div></div>
+          <div class="stat" style="--cv:var(--text)"><div class="stat-v" id="s-bl">—</div><div class="stat-l">BL кодов</div></div>
+          <div class="stat" style="--cv:var(--blue);--line:var(--blue)"><div class="stat-v" id="s-linked">—</div><div class="stat-l">Привязано</div></div>
+          <div class="stat" style="--cv:var(--green);--line:var(--green)"><div class="stat-v" id="s-sent">—</div><div class="stat-l">Отправлено</div></div>
+          <div class="stat" style="--cv:var(--red);--line:var(--red)"><div class="stat-v" id="s-failed">—</div><div class="stat-l">Ошибок</div></div>
+          <div class="stat" style="--cv:var(--green);--line:var(--green)"><div class="stat-v" id="s-delivered">—</div><div class="stat-l">Доставлено</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Активные партии</span>
+            <button class="btn btn-ghost btn-sm" onclick="goto('batches')">Все партии →</button>
+          </div>
+          <table class="tbl">
+            <thead><tr>
+              <th>Название</th><th>BL кодов</th><th>Привязано групп</th><th>Создана</th><th></th>
+            </tr></thead>
+            <tbody id="dash-batches"></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><span class="card-title">Последние отправки</span></div>
+          <table class="tbl">
+            <thead><tr>
+              <th>Время</th><th>BL</th><th>Партия</th><th>Статус</th><th>Результат</th>
+            </tr></thead>
+            <tbody id="dash-logs"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════ -->
+      <!-- PAGE: BATCHES LIST -->
+      <!-- ═══════════════════════════════════════════════════ -->
+      <div class="page" id="page-batches">
+        <!-- Batch list view -->
+        <div id="batches-list-view">
+          <div class="page-h">Партии <em>/ Управление</em></div>
+          <div class="card">
+            <div class="card-h">
+              <span class="card-title">Все партии</span>
+              <div style="display:flex;gap:10px;align-items:center">
+                <input class="search" placeholder="🔍 Поиск..." id="batch-search" oninput="filterBatches()">
+                <button class="btn btn-amber btn-sm" onclick="openModal('create-batch-modal')">+ Создать партию</button>
+              </div>
+            </div>
+            <table class="tbl">
+              <thead><tr>
+                <th>Название партии</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
+              </tr></thead>
+              <tbody id="batches-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Batch detail view -->
+        <div id="batch-detail">
+          <div class="back-btn" onclick="showBatchList()">← Все партии</div>
+          <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:24px">
+            <div class="page-h" id="detail-title">Партия</div>
+            <div id="detail-progress-text" style="color:var(--muted2);font-size:13px"></div>
+          </div>
+
+          <!-- BL Controls -->
+          <div class="card">
+            <div class="card-h">
+              <span class="card-title">BL коды клиентов</span>
+              <div style="display:flex;gap:8px">
+                <input class="search" placeholder="🔍 Поиск BL..." id="bl-search" oninput="filterBL()">
+                <button class="btn btn-ghost btn-sm" onclick="openAddBLModal()">+ Добавить BL</button>
+                <button class="btn btn-amber btn-sm" id="send-batch-btn" onclick="sendBatch()">📤 Отправить партию</button>
+              </div>
+            </div>
+            <table class="tbl" id="bl-table-wrap">
+              <thead><tr>
+                <th>BL код</th><th>Клиент</th><th>Chat ID</th><th>Статус</th><th>Файлы</th><th>Действия</th>
+              </tr></thead>
+              <tbody id="bl-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════ -->
+      <!-- PAGE: TEMPLATE -->
+      <!-- ═══════════════════════════════════════════════════ -->
+      <div class="page" id="page-template">
+        <div class="page-h">Шаблон <em>/ Сообщений</em></div>
+        <div style="display:grid;grid-template-columns:1fr 380px;gap:20px">
+
+          <div class="card">
+            <div class="card-h"><span class="card-title">Текст шаблона</span></div>
+            <div class="card-body">
+              <div style="margin-bottom:12px">
+                <div style="font-size:11px;color:var(--muted2);margin-bottom:8px">Доступные переменные (нажми чтобы вставить):</div>
+                <span class="var-pill" onclick="insertVar('{batch_name}')">{batch_name}</span>
+                <span class="var-pill" onclick="insertVar('{bl_code}')">{bl_code}</span>
+                <span class="var-pill" onclick="insertVar('{client_name}')">{client_name}</span>
+                <span class="var-pill" onclick="insertVar('{status}')">{status}</span>
+                <span class="var-pill" onclick="insertVar('{status_detail}')">{status_detail}</span>
+              </div>
+              <div class="form-g">
+                <label>Шаблон сообщения</label>
+                <textarea class="inp" id="tpl-content" rows="12" style="min-height:240px"></textarea>
+              </div>
+              <button class="btn btn-amber" onclick="saveTemplate()">💾 Сохранить шаблон</button>
+            </div>
+          </div>
+
+          <div>
+            <div class="card" style="margin-bottom:16px">
+              <div class="card-h"><span class="card-title">Предпросмотр</span></div>
+              <div class="card-body">
+                <div id="tpl-preview" style="font-size:12.5px;line-height:1.7;color:var(--muted2);white-space:pre-wrap;font-family:'IBM Plex Mono',monospace;min-height:80px"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-h"><span class="card-title">Тексты статусов</span></div>
+              <div class="card-body" id="status-details-form"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════ -->
+      <!-- PAGE: LOGS -->
+      <!-- ═══════════════════════════════════════════════════ -->
+      <div class="page" id="page-logs">
+        <div class="page-h">Логи <em>/ Отправки</em></div>
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">История отправок</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadLogs()">↻ Обновить</button>
+          </div>
+          <table class="tbl">
+            <thead><tr>
+              <th>Время</th><th>BL код</th><th>Партия</th><th>Chat ID</th><th>Статус груза</th><th>Результат</th><th>Ошибка</th>
+            </tr></thead>
+            <tbody id="logs-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- MODALS                                                     -->
+<!-- ══════════════════════════════════════════════════════════ -->
+
+<!-- Create batch -->
+<div class="overlay" id="create-batch-modal">
+  <div class="modal" style="width:400px">
+    <div class="modal-title">Новая <em>партия</em></div>
+    <div class="form-g">
+      <label>Название партии</label>
+      <input class="inp" id="new-batch-name" placeholder="напр. 07.02.2026 или FEB-01">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('create-batch-modal')">Отмена</button>
+      <button class="btn btn-amber" onclick="createBatch()">Создать</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add BL -->
+<div class="overlay" id="add-bl-modal">
+  <div class="modal">
+    <div class="modal-title">Добавить <em>BL код</em></div>
+    <input type="hidden" id="add-bl-batch-id">
+    <div class="form-row2">
+      <div class="form-g">
+        <label>BL код *</label>
+        <input class="inp mono" id="add-bl-code" placeholder="BL171">
+      </div>
+      <div class="form-g">
+        <label>Имя клиента</label>
+        <input class="inp" id="add-bl-client" placeholder="ООО Рога и Копыта">
+      </div>
+    </div>
+    <div class="form-g">
+      <label>Chat ID группы Telegram</label>
+      <input class="inp mono" id="add-bl-chat" placeholder="-1001234567890">
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Используй команду /chatid в Telegram-группе</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('add-bl-modal')">Отмена</button>
+      <button class="btn btn-amber" onclick="addBL()">Добавить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit BL -->
+<div class="overlay" id="edit-bl-modal">
+  <div class="modal">
+    <div class="modal-title">Редактировать <em id="edit-bl-title">BL</em></div>
+    <input type="hidden" id="edit-bl-id">
+    <div class="form-row2">
+      <div class="form-g">
+        <label>Имя клиента</label>
+        <input class="inp" id="edit-bl-client" placeholder="ООО Компания">
+      </div>
+      <div class="form-g">
+        <label>Chat ID</label>
+        <input class="inp mono" id="edit-bl-chat" placeholder="-1001234567890">
+      </div>
+    </div>
+    <div class="form-g">
+      <label>Статус груза</label>
+      <select class="inp" id="edit-bl-status"></select>
+    </div>
+    <hr class="divider">
+    <div class="form-g">
+      <label>Файлы (документы клиента)</label>
+      <div id="edit-bl-files" style="margin-bottom:10px"></div>
+      <input type="file" id="edit-bl-file-input" style="display:none" onchange="uploadFile()">
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('edit-bl-file-input').click()">📎 Добавить файл</button>
+      <span style="font-size:11px;color:var(--muted2);margin-left:8px">PDF, DOCX, XLSX, PNG, JPG, ZIP</span>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('edit-bl-modal')">Отмена</button>
+      <button class="btn btn-amber" onclick="saveBL()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Send results -->
+<div class="overlay" id="send-modal">
+  <div class="modal" style="width:560px">
+    <div class="modal-title">Результат <em>отправки</em></div>
+    <div style="font-size:13px;color:var(--muted2);margin-bottom:16px" id="send-summary"></div>
+    <div id="send-results" style="max-height:320px;overflow-y:auto"></div>
+    <div class="modal-actions">
+      <button class="btn btn-amber" onclick="closeModal('send-modal')">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════
+let currentBatchId = null;
+let allBatches = [];
+let allBL = [];
+let editingBLId = null;
+const STATUSES = ["Принят","Хоргос","Алматы","В пути до Ташкента","Ташкент","Доставлен"];
+
+const STATUS_BADGE = {
+  "Принят":             "badge s-accepted",
+  "Хоргос":             "badge s-khorgos",
+  "Алматы":             "badge s-almaty",
+  "В пути до Ташкента": "badge s-road",
+  "Ташкент":            "badge s-tashkent",
+  "Доставлен":          "badge s-done",
+};
+const STATUS_ICO = {
+  "Принят":"📥","Хоргос":"🛃","Алматы":"🏙",
+  "В пути до Ташкента":"🚛","Ташкент":"📦","Доставлен":"✅"
+};
+
+// ── Fetch helper ──────────────────────────────────────────
+async function api(path, method="GET", body=null) {
+  const opts = { method, headers:{"Content-Type":"application/json"} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(data.error || "Ошибка запроса");
+  return data;
+}
+
+// ── Toast ─────────────────────────────────────────────────
+function toast(msg, type="inf") {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "show " + type;
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>el.className="", 3500);
+}
+
+// ── Navigation ────────────────────────────────────────────
+function goto(page) {
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.querySelectorAll(".nav-link").forEach(n=>n.classList.remove("active"));
+  document.getElementById("page-"+page).classList.add("active");
+  document.querySelector(`[onclick="goto('${page}')"]`)?.classList.add("active");
+
+  const labels = {dashboard:"Дашборд",batches:"Партии",template:"Шаблон сообщений",logs:"Логи отправки"};
+  document.getElementById("breadcrumb").innerHTML = labels[page] || page;
+
+  if (page==="dashboard")  loadDashboard();
+  if (page==="batches")    { showBatchList(); loadBatches(); }
+  if (page==="template")   loadTemplate();
+  if (page==="logs")       loadLogs();
+}
+
+function refreshPage() {
+  const active = document.querySelector(".page.active");
+  if (!active) return;
+  const id = active.id.replace("page-","");
+  if (id==="dashboard")  loadDashboard();
+  else if (id==="batches" && currentBatchId) loadBatchDetail(currentBatchId);
+  else if (id==="batches") loadBatches();
+  else if (id==="logs")  loadLogs();
+}
+
+// ── Modals ────────────────────────────────────────────────
+function openModal(id) { document.getElementById(id).classList.add("open"); }
+function closeModal(id) { document.getElementById(id).classList.remove("open"); }
+document.querySelectorAll(".overlay").forEach(m=>{
+  m.addEventListener("click", e=>{ if(e.target===m) m.classList.remove("open"); });
+});
+
+// ══════════════════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════════════════
+async function loadDashboard() {
+  try {
+    const [stats, batches, logs] = await Promise.all([
+      api("/api/stats"), api("/api/batches"), api("/api/logs?limit=8")
+    ]);
+    document.getElementById("s-batches").textContent   = stats.batches;
+    document.getElementById("s-bl").textContent        = stats.bl_total;
+    document.getElementById("s-linked").textContent    = stats.linked;
+    document.getElementById("s-sent").textContent      = stats.sent;
+    document.getElementById("s-failed").textContent    = stats.failed;
+    document.getElementById("s-delivered").textContent = stats.delivered;
+
+    // Batches table
+    const bt = document.getElementById("dash-batches");
+    bt.innerHTML = batches.length ? batches.slice(0,6).map(b=>`
+      <tr>
+        <td><b style="cursor:pointer;color:var(--amber)" onclick="goto('batches');openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</b></td>
+        <td><span class="badge badge-muted">${b.bl_count}</span></td>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="prog-bar" style="width:80px"><div class="prog-fill" style="width:${b.bl_count?Math.round(b.linked_count/b.bl_count*100):0}%"></div></div>
+            <span style="font-size:11px;color:var(--muted2)">${b.linked_count}/${b.bl_count}</span>
+          </div>
+        </td>
+        <td class="mono" style="color:var(--muted2);font-size:11px">${b.created_at}</td>
+        <td><button class="btn btn-ghost btn-xs" onclick="goto('batches');openBatchDetail(${b.id},'${esc(b.name)}')">Открыть →</button></td>
+      </tr>`).join("") :
+      `<tr><td colspan="5"><div class="empty"><div class="empty-icon">📦</div><p>Партий пока нет. Создай первую!</p></div></td></tr>`;
+
+    // Logs table
+    const lt = document.getElementById("dash-logs");
+    lt.innerHTML = logs.length ? logs.map(l=>`
+      <tr>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${l.sent_at}</td>
+        <td class="mono" style="color:var(--amber)">${esc(l.bl_code)}</td>
+        <td>${esc(l.batch_name)}</td>
+        <td>${statusBadge(l.status)}</td>
+        <td>${l.success
+          ? '<span class="badge badge-green">✓ Успешно</span>'
+          : '<span class="badge badge-red">✗ Ошибка</span>'}</td>
+      </tr>`).join("") :
+      `<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:24px">Логов пока нет</td></tr>`;
+  } catch(e) { toast("Ошибка загрузки: "+e.message,"err"); }
+}
+
+// ══════════════════════════════════════════════════════════
+// BATCHES
+// ══════════════════════════════════════════════════════════
+async function loadBatches() {
+  try {
+    allBatches = await api("/api/batches");
+    renderBatches(allBatches);
+  } catch(e) { toast(e.message,"err"); }
+}
+
+function renderBatches(list) {
+  const t = document.getElementById("batches-table");
+  t.innerHTML = list.length ? list.map(b=>`
+    <tr>
+      <td>
+        <span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span>
+      </td>
+      <td><span class="badge badge-muted">${b.bl_count} BL</span></td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="prog-bar" style="width:70px"><div class="prog-fill" style="width:${b.bl_count?Math.round(b.linked_count/b.bl_count*100):0}%"></div></div>
+          <span style="font-size:11px;color:var(--muted2)">${b.linked_count}/${b.bl_count}</span>
+        </div>
+      </td>
+      <td class="mono" style="font-size:11px;color:var(--muted2)">${b.created_at}</td>
+      <td>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-blue btn-xs" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">Открыть</button>
+          <button class="btn btn-red btn-xs" onclick="deleteBatch(${b.id},'${esc(b.name)}')">✕</button>
+        </div>
+      </td>
+    </tr>`).join("") :
+    `<tr><td colspan="5"><div class="empty"><div class="empty-icon">📦</div><p>Нет партий. Создай первую!</p></div></td></tr>`;
+}
+
+function filterBatches() {
+  const q = document.getElementById("batch-search").value.toLowerCase();
+  renderBatches(allBatches.filter(b=>b.name.toLowerCase().includes(q)));
+}
+
+async function createBatch() {
+  const name = document.getElementById("new-batch-name").value.trim();
+  if (!name) { toast("Введи название","err"); return; }
+  try {
+    await api("/api/batches","POST",{name});
+    toast("✅ Партия «"+name+"» создана","ok");
+    closeModal("create-batch-modal");
+    document.getElementById("new-batch-name").value = "";
+    loadBatches(); loadDashboard();
+  } catch(e) { toast(e.message,"err"); }
+}
+
+async function deleteBatch(id, name) {
+  if (!confirm(`Удалить партию «${name}»?\nВсе BL коды и файлы будут удалены.`)) return;
+  try {
+    await api("/api/batches/"+id,"DELETE");
+    toast("Партия удалена","ok");
+    loadBatches(); loadDashboard();
+  } catch(e) { toast(e.message,"err"); }
+}
+
+function showBatchList() {
+  currentBatchId = null;
+  document.getElementById("batches-list-view").style.display = "";
+  document.getElementById("batch-detail").classList.remove("open");
+}
+
+async function openBatchDetail(id, name) {
+  goto("batches");
+  currentBatchId = id;
+  document.getElementById("batches-list-view").style.display = "none";
+  document.getElementById("batch-detail").classList.add("open");
+  document.getElementById("detail-title").textContent = name;
+  await loadBatchDetail(id);
+}
+
+async function loadBatchDetail(batchId) {
+  try {
+    const data = await api("/api/batches/"+batchId+"/bl");
+    allBL = data.bl_codes;
+
+    // Populate statuses select
+    const sel = document.getElementById("edit-bl-status");
+    sel.innerHTML = data.statuses.map(s=>`<option value="${s}">${STATUS_ICO[s]||''} ${s}</option>`).join("");
+
+    renderBL(allBL, data.batch.name);
+
+    const linked = allBL.filter(b=>b.chat_id).length;
+    document.getElementById("detail-progress-text").textContent =
+      `${allBL.length} клиентов · ${linked} привязано`;
+    document.getElementById("add-bl-batch-id").value = batchId;
+  } catch(e) { toast(e.message,"err"); }
+}
+
+function renderBL(list, batchName) {
+  const t = document.getElementById("bl-table");
+  t.innerHTML = list.length ? list.map(b=>`
+    <tr>
+      <td class="mono" style="color:var(--amber);font-weight:600">${esc(b.code)}</td>
+      <td>${b.client_name ? `<span style="font-weight:500">${esc(b.client_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+      <td class="mono" style="font-size:11px;color:var(--muted2)">${b.chat_id || '<span style="color:var(--red);font-size:11px">не указан</span>'}</td>
+      <td>${statusBadge(b.status)}</td>
+      <td>
+        ${b.file_count > 0
+          ? `<span class="badge badge-blue">📎 ${b.file_count}</span>`
+          : `<span style="color:var(--muted);font-size:11px">нет</span>`}
+      </td>
+      <td>
+        <div style="display:flex;gap:5px">
+          <button class="btn btn-ghost btn-xs" onclick="openEditBL(${b.id})">✏️ Ред.</button>
+          <button class="btn btn-green btn-xs" onclick="sendOne(${b.id},'${esc(b.code)}')" ${!b.chat_id?'disabled title="Нет chat_id"':''}>📤</button>
+          <button class="btn btn-red btn-xs" onclick="deleteBL(${b.id})">✕</button>
+        </div>
+      </td>
+    </tr>`).join("") :
+    `<tr><td colspan="6"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
+}
+
+function filterBL() {
+  const q = document.getElementById("bl-search").value.toLowerCase();
+  renderBL(allBL.filter(b=>
+    b.code.toLowerCase().includes(q) ||
+    (b.client_name||"").toLowerCase().includes(q)
+  ));
+}
+
+function openAddBLModal() {
+  document.getElementById("add-bl-code").value = "";
+  document.getElementById("add-bl-client").value = "";
+  document.getElementById("add-bl-chat").value = "";
+  openModal("add-bl-modal");
+}
+
+async function addBL() {
+  const batch_id    = document.getElementById("add-bl-batch-id").value;
+  const code        = document.getElementById("add-bl-code").value.trim();
+  const client_name = document.getElementById("add-bl-client").value.trim();
+  const chat_id     = document.getElementById("add-bl-chat").value.trim();
+  if (!code) { toast("BL код обязателен","err"); return; }
+  try {
+    await api("/api/bl","POST",{batch_id:parseInt(batch_id), code, client_name, chat_id});
+    toast("✅ BL код "+code+" добавлен","ok");
+    closeModal("add-bl-modal");
+    loadBatchDetail(batch_id);
+  } catch(e) { toast(e.message,"err"); }
+}
+
+async function openEditBL(blId) {
+  const bl = allBL.find(b=>b.id===blId);
+  if (!bl) return;
+  editingBLId = blId;
+  document.getElementById("edit-bl-title").textContent = bl.code;
+  document.getElementById("edit-bl-id").value = blId;
+  document.getElementById("edit-bl-client").value = bl.client_name||"";
+  document.getElementById("edit-bl-chat").value = bl.chat_id||"";
+  document.getElementById("edit-bl-status").value = bl.status;
+  document.getElementById("edit-bl-file-input").dataset.blId = blId;
+
+  // Load files
+  await loadBLFiles(blId);
+  openModal("edit-bl-modal");
+}
+
+async function loadBLFiles(blId) {
+  try {
+    const files = await api("/api/bl/"+blId+"/files");
+    const el = document.getElementById("edit-bl-files");
+    el.innerHTML = files.length ? files.map(f=>`
+      <span class="file-chip">
+        📄 ${esc(f.filename)}
+        <button onclick="deleteFile(${f.id})" title="Удалить">×</button>
+      </span>`).join("") : `<span style="color:var(--muted);font-size:12px">Файлов нет</span>`;
+  } catch(e) {}
+}
+
+async function saveBL() {
+  const id = editingBLId;
+  if (!id) return;
+  try {
+    await api("/api/bl/"+id,"PUT",{
+      client_name: document.getElementById("edit-bl-client").value.trim(),
+      chat_id:     document.getElementById("edit-bl-chat").value.trim(),
+      status:      document.getElementById("edit-bl-status").value,
+    });
+    toast("✅ Сохранено","ok");
+    closeModal("edit-bl-modal");
+    loadBatchDetail(currentBatchId);
+  } catch(e) { toast(e.message,"err"); }
+}
+
+async function deleteBL(id) {
+  if (!confirm("Удалить BL код?")) return;
+  try {
+    await api("/api/bl/"+id,"DELETE");
+    toast("Удалено","ok");
+    loadBatchDetail(currentBatchId);
+  } catch(e) { toast(e.message,"err"); }
+}
+
+async function uploadFile() {
+  const input = document.getElementById("edit-bl-file-input");
+  const blId = input.dataset.blId || editingBLId;
+  if (!input.files[0]) return;
+  const fd = new FormData();
+  fd.append("file", input.files[0]);
+  try {
+    const r = await fetch("/api/bl/"+blId+"/files", {method:"POST", body:fd});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error);
+    toast("✅ Файл загружен","ok");
+    input.value = "";
+    loadBLFiles(blId);
+  } catch(e) { toast(e.message,"err"); }
+}
+
+async function deleteFile(fileId) {
+  try {
+    await api("/api/files/"+fileId,"DELETE");
+    toast("Файл удалён","ok");
+    loadBLFiles(editingBLId);
+  } catch(e) { toast(e.message,"err"); }
+}
+
+// ── Send ──────────────────────────────────────────────────
+async function sendBatch() {
+  if (!currentBatchId) return;
+  const linked = allBL.filter(b=>b.chat_id).length;
+  if (!linked) { toast("Ни один BL не имеет chat_id","err"); return; }
+  if (!confirm(`Отправить сообщения ${linked} клиентам?`)) return;
+
+  const btn = document.getElementById("send-batch-btn");
+  btn.disabled = true; btn.textContent = "⏳ Отправляю...";
+
+  try {
+    const res = await api("/api/batches/"+currentBatchId+"/send","POST");
+    document.getElementById("send-summary").innerHTML =
+      `Отправлено: <b style="color:var(--green)">${res.sent}</b> из <b>${res.total}</b>`;
+    document.getElementById("send-results").innerHTML = res.results.map(r=>`
+      <div class="send-result ${r.success?'ok':'err'}">
+        <span style="font-size:16px">${r.success?'✅':'❌'}</span>
+        <div>
+          <div class="mono" style="font-size:12px;font-weight:600">${esc(r.code)}</div>
+          ${r.client ? `<div style="font-size:11px;color:var(--muted2)">${esc(r.client)}</div>` : ''}
+          ${r.error  ? `<div style="font-size:11px;color:var(--red)">${esc(r.error)}</div>` : ''}
+        </div>
+      </div>`).join("");
+    openModal("send-modal");
+    loadDashboard();
+  } catch(e) { toast("Ошибка: "+e.message,"err"); }
+  finally { btn.disabled=false; btn.textContent="📤 Отправить партию"; }
+}
+
+async function sendOne(blId, code) {
+  if (!confirm(`Отправить сообщение клиенту ${code}?`)) return;
+  try {
+    await api("/api/bl/"+blId+"/send","POST");
+    toast(`✅ ${code} — отправлено`,"ok");
+    loadDashboard();
+  } catch(e) { toast("Ошибка: "+e.message,"err"); }
+}
+
+// ══════════════════════════════════════════════════════════
+// TEMPLATE
+// ══════════════════════════════════════════════════════════
+async function loadTemplate() {
+  try {
+    const data = await api("/api/template");
+    document.getElementById("tpl-content").value = data.content;
+    updatePreview();
+
+    // Status details
+    const container = document.getElementById("status-details-form");
+    container.innerHTML = data.statuses.map(s=>`
+      <div class="form-g">
+        <label>${STATUS_ICO[s]||''} ${s}</label>
+        <textarea class="inp" id="sd-${s.replace(/ /g,'_')}" rows="2" style="min-height:56px;font-size:12px">${esc(data.status_details[s]||'')}</textarea>
+      </div>`).join("") +
+      `<button class="btn btn-amber btn-sm" onclick="saveTemplate()">💾 Сохранить всё</button>`;
+  } catch(e) { toast(e.message,"err"); }
+}
+
+function updatePreview() {
+  const tmpl = document.getElementById("tpl-content").value;
+  const preview = tmpl
+    .replace(/{batch_name}/g, "07.02.2026")
+    .replace(/{bl_code}/g, "BL171")
+    .replace(/{client_name}/g, "ООО Пример")
+    .replace(/{status}/g, "Алматы")
+    .replace(/{status_detail}/g, "🏙 Груз прибыл в Алматы. Идёт сортировка...");
+  document.getElementById("tpl-preview").textContent = preview;
+}
+
+document.getElementById("tpl-content")?.addEventListener("input", updatePreview);
+
+function insertVar(v) {
+  const ta = document.getElementById("tpl-content");
+  const s = ta.selectionStart, e = ta.selectionEnd;
+  ta.value = ta.value.slice(0,s) + v + ta.value.slice(e);
+  ta.selectionStart = ta.selectionEnd = s + v.length;
+  ta.focus();
+  updatePreview();
+}
+
+async function saveTemplate() {
+  const content = document.getElementById("tpl-content").value.trim();
+  if (!content) { toast("Шаблон пустой","err"); return; }
+  const status_details = {};
+  STATUSES.forEach(s=>{
+    const el = document.getElementById("sd-"+s.replace(/ /g,"_"));
+    if (el) status_details[s] = el.value.trim();
+  });
+  try {
+    await api("/api/template","POST",{content, status_details});
+    toast("✅ Шаблон сохранён","ok");
+  } catch(e) { toast(e.message,"err"); }
+}
+
+// ══════════════════════════════════════════════════════════
+// LOGS
+// ══════════════════════════════════════════════════════════
+async function loadLogs() {
+  try {
+    const logs = await api("/api/logs?limit=200");
+    const t = document.getElementById("logs-table");
+    t.innerHTML = logs.length ? logs.map(l=>`
+      <tr class="log-row ${l.success?'ok':'err'}">
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${l.sent_at}</td>
+        <td class="mono" style="color:var(--amber)">${esc(l.bl_code)}</td>
+        <td>${esc(l.batch_name)}</td>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(l.chat_id)}</td>
+        <td>${statusBadge(l.status)}</td>
+        <td>${l.success
+          ? '<span class="badge badge-green">✓ OK</span>'
+          : '<span class="badge badge-red">✗ Fail</span>'}</td>
+        <td style="font-size:11px;color:var(--red)">${esc(l.error_msg||'—')}</td>
+      </tr>`).join("") :
+      `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted)">Логов пока нет</td></tr>`;
+  } catch(e) { toast(e.message,"err"); }
+}
+
+// ══════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════
+function statusBadge(s) {
+  const cls = STATUS_BADGE[s] || "badge badge-muted";
+  const ico = STATUS_ICO[s] || "•";
+  return `<span class="${cls}">${ico} ${s}</span>`;
+}
+
+function esc(str) {
+  return String(str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// ── INIT ──────────────────────────────────────────────────
+{% if not login_page %}
+loadDashboard();
+// Enter key for login
+document.getElementById("new-batch-name")?.addEventListener("keydown",e=>{if(e.key==="Enter")createBatch();});
+{% endif %}
+</script>
+</body>
+</html>
