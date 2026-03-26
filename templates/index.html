@@ -594,7 +594,7 @@ nav { flex: 1; padding: 18px 10px; overflow-y: auto; }
             <button class="btn btn-ghost btn-sm" onclick="loadChatsPage()">↻ Обновить</button>
           </div>
           <div class="card-body" style="color:var(--muted2);font-size:13px;line-height:1.7">
-            Бот автоматически показывает все группы, где он состоит. Нажми <b>В партии</b>, чтобы перенести выбранную группу в работу с партиями, открыть нужную партию и сразу подставить этот Chat ID при добавлении BL.
+            Бот автоматически показывает все группы, где он состоит. Выбери партию прямо в этой таблице и нажми <b>Открыть в партии</b> — нужная партия откроется сразу, а Chat ID группы уже будет подставлен в форму добавления BL.
           </div>
         </div>
 
@@ -605,7 +605,7 @@ nav { flex: 1; padding: 18px 10px; overflow-y: auto; }
           </div>
           <table class="tbl">
             <thead><tr>
-              <th>Название</th><th>Chat ID</th><th>Тип</th><th>Привязано</th><th>Статус</th><th>Действие</th>
+              <th>Название</th><th>Chat ID</th><th>Тип</th><th>Привязано</th><th>Статус</th><th>Партия</th><th>Действие</th>
             </tr></thead>
             <tbody id="known-chats-page-table"></tbody>
           </table>
@@ -1103,13 +1103,18 @@ function renderChatsPage() {
       <td>${chat.linked_count ? `<span class="badge badge-green">${chat.linked_count}</span>` : '<span style="color:var(--muted);font-size:11px">нет</span>'}</td>
       <td>${chat.is_active ? '<span class="badge badge-green">активна</span>' : '<span class="badge badge-red">удалена</span>'}</td>
       <td>
+        <select class="inp" id="${getChatBatchSelectId(chat.chat_id)}" style="min-width:220px;padding:8px 12px;font-size:12px;margin:0" ${allBatches.length ? "" : "disabled"}>
+          ${renderBatchOptions()}
+        </select>
+      </td>
+      <td>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-amber btn-xs" onclick='moveChatToBatches(${JSON.stringify(String(chat.chat_id))})'>В партии</button>
+          <button class="btn btn-amber btn-xs" onclick='openChatInBatch(${JSON.stringify(String(chat.chat_id))})' ${allBatches.length ? "" : "disabled"}>Открыть в партии</button>
           <button class="btn btn-ghost btn-xs" onclick='copyChatId(${JSON.stringify(String(chat.chat_id))})'>Копировать ID</button>
         </div>
       </td>
     </tr>
-  `).join("") : `<tr><td colspan="6"><div class="empty"><div class="empty-icon">👥</div><p>Пока нет найденных групп. Добавь бота в Telegram-группу и обнови список.</p></div></td></tr>`;
+  `).join("") : `<tr><td colspan="7"><div class="empty"><div class="empty-icon">👥</div><p>Пока нет найденных групп. Добавь бота в Telegram-группу и обнови список.</p></div></td></tr>`;
 }
 
 function populateChatSelect(id, selected="") {
@@ -1165,6 +1170,19 @@ function clearPendingChatTransfer() {
   updatePendingChatBanner();
 }
 
+function getChatBatchSelectId(chatId) {
+  return `chat-batch-${String(chatId).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+function renderBatchOptions(selected="") {
+  if (!allBatches.length) {
+    return `<option value="">Сначала создай партию</option>`;
+  }
+  return `<option value="">Выбери партию</option>` + allBatches.map(batch=>`
+    <option value="${batch.id}" ${String(batch.id)===String(selected) ? "selected" : ""}>${esc(batch.name)}</option>
+  `).join("");
+}
+
 function moveChatToBatches(chatId) {
   const chat = knownChats.find(c=>String(c.chat_id)===String(chatId));
   if (!chat) {
@@ -1179,6 +1197,36 @@ function moveChatToBatches(chatId) {
   showBatchList();
   updatePendingChatBanner();
   toast(`Группа «${chat.title || "Без названия"}» перенесена в раздел партий. Открой нужную партию и нажми «Добавить BL».`,"ok");
+}
+
+async function openChatInBatch(chatId) {
+  const chat = knownChats.find(c=>String(c.chat_id)===String(chatId));
+  if (!chat) {
+    toast("Группа не найдена","err");
+    return;
+  }
+  const select = document.getElementById(getChatBatchSelectId(chatId));
+  const batchId = select?.value || "";
+  if (!batchId) {
+    toast("Сначала выбери партию","err");
+    return;
+  }
+  const batch = allBatches.find(item=>String(item.id)===String(batchId));
+  if (!batch) {
+    toast("Партия не найдена","err");
+    return;
+  }
+
+  pendingChatTransfer = {
+    chat_id: String(chat.chat_id),
+    title: chat.title || "Без названия",
+  };
+
+  goto("batches");
+  await openBatchDetail(batch.id, batch.name);
+  updatePendingChatBanner();
+  openAddBLModal();
+  toast(`Открыта партия «${batch.name}». Группа уже подставлена в форму BL.`,"ok");
 }
 
 async function copyChatId(chatId) {
@@ -1205,7 +1253,8 @@ async function loadKnownChats() {
 }
 
 async function loadChatsPage() {
-  await loadKnownChats();
+  await Promise.all([loadKnownChats(), ensureBatchesLoaded(true)]);
+  renderChatsPage();
 }
 
 function openAddBLModal() {
@@ -1247,6 +1296,12 @@ async function openEditBL(blId) {
   // Load files
   await loadBLFiles(blId);
   openModal("edit-bl-modal");
+}
+
+async function ensureBatchesLoaded(force=false) {
+  if (!force && allBatches.length) return allBatches;
+  allBatches = await api("/api/batches");
+  return allBatches;
 }
 
 async function loadBLFiles(blId) {
