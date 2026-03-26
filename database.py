@@ -100,6 +100,16 @@ def init_db():
             state TEXT NOT NULL DEFAULT '',
             updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
+
+        CREATE TABLE IF NOT EXISTS telegram_chats (
+            chat_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL DEFAULT '',
+            chat_type TEXT NOT NULL DEFAULT 'group',
+            username TEXT DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            last_seen_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         """
     )
 
@@ -384,3 +394,41 @@ def clear_chat_state(chat_id):
     conn.execute("DELETE FROM telegram_sessions WHERE chat_id = ?", (str(chat_id),))
     conn.commit()
     conn.close()
+
+
+def upsert_telegram_chat(chat_id, title, chat_type, username="", is_active=True):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT INTO telegram_chats(chat_id, title, chat_type, username, is_active, created_at, last_seen_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'))
+        ON CONFLICT(chat_id) DO UPDATE SET
+            title = excluded.title,
+            chat_type = excluded.chat_type,
+            username = excluded.username,
+            is_active = excluded.is_active,
+            last_seen_at = datetime('now','localtime')
+        """,
+        (str(chat_id), title or "", chat_type or "group", username or "", 1 if is_active else 0),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_telegram_chats(include_inactive=False):
+    conn = get_conn()
+    where = "" if include_inactive else "WHERE c.is_active = 1"
+    rows = conn.execute(
+        f"""
+        SELECT
+            c.*,
+            COUNT(bl.id) AS linked_count
+        FROM telegram_chats c
+        LEFT JOIN bl_codes bl ON bl.chat_id = c.chat_id
+        {where}
+        GROUP BY c.chat_id
+        ORDER BY c.is_active DESC, c.last_seen_at DESC, c.created_at DESC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]

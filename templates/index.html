@@ -540,6 +540,25 @@ nav { flex: 1; padding: 18px 10px; overflow-y: auto; }
             <div id="detail-progress-text" style="color:var(--muted2);font-size:13px"></div>
           </div>
 
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-h">
+              <span class="card-title">Найденные Telegram группы</span>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span id="known-chat-count" style="font-size:12px;color:var(--muted2)"></span>
+                <button class="btn btn-ghost btn-sm" onclick="loadKnownChats()">↻ Обновить</button>
+              </div>
+            </div>
+            <table class="tbl">
+              <thead><tr>
+                <th>Название</th><th>Chat ID</th><th>Тип</th><th>Привязано</th><th>Статус</th>
+              </tr></thead>
+              <tbody id="known-chats-table"></tbody>
+            </table>
+            <div style="padding:0 20px 18px;color:var(--muted2);font-size:11px">
+              Добавь бота в группу Telegram. Группа появится здесь автоматически. Если группа была добавлена раньше, отправь в группе команду боту или добавь его заново.
+            </div>
+          </div>
+
           <!-- BL Controls -->
           <div class="card">
             <div class="card-h">
@@ -660,9 +679,16 @@ nav { flex: 1; padding: 18px 10px; overflow-y: auto; }
       </div>
     </div>
     <div class="form-g">
+      <label>Найденная группа Telegram</label>
+      <select class="inp" id="add-bl-chat-select" onchange="applySelectedChat('add')">
+        <option value="">Выбери группу из списка</option>
+      </select>
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Можно выбрать группу, которую бот зарегистрировал автоматически.</div>
+    </div>
+    <div class="form-g">
       <label>Chat ID группы Telegram</label>
       <input class="inp mono" id="add-bl-chat" placeholder="-1001234567890">
-      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Используй команду /chatid в Telegram-группе</div>
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Поле заполнится само после выбора группы выше. При необходимости можно ввести ID вручную.</div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('add-bl-modal')">Отмена</button>
@@ -682,9 +708,16 @@ nav { flex: 1; padding: 18px 10px; overflow-y: auto; }
         <input class="inp" id="edit-bl-client" placeholder="ООО Компания">
       </div>
       <div class="form-g">
-        <label>Chat ID</label>
-        <input class="inp mono" id="edit-bl-chat" placeholder="-1001234567890">
+        <label>Найденная группа Telegram</label>
+        <select class="inp" id="edit-bl-chat-select" onchange="applySelectedChat('edit')">
+          <option value="">Выбери группу из списка</option>
+        </select>
       </div>
+    </div>
+    <div class="form-g">
+      <label>Chat ID</label>
+      <input class="inp mono" id="edit-bl-chat" placeholder="-1001234567890">
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Можно выбрать найденную группу выше или указать chat_id вручную.</div>
     </div>
     <div class="form-g">
       <label>Статус груза</label>
@@ -729,6 +762,7 @@ nav { flex: 1; padding: 18px 10px; overflow-y: auto; }
 let currentBatchId = null;
 let allBatches = [];
 let allBL = [];
+let knownChats = [];
 let editingBLId = null;
 const STATUSES = ["Принят","Хоргос","Алматы","В пути до Ташкента","Ташкент","Доставлен"];
 
@@ -923,13 +957,20 @@ async function openBatchDetail(id, name) {
 
 async function loadBatchDetail(batchId) {
   try {
-    const data = await api("/api/batches/"+batchId+"/bl");
+    const [data, chats] = await Promise.all([
+      api("/api/batches/"+batchId+"/bl"),
+      api("/api/chats?all=1")
+    ]);
     allBL = data.bl_codes;
+    knownChats = chats;
 
     // Populate statuses select
     const sel = document.getElementById("edit-bl-status");
     sel.innerHTML = data.statuses.map(s=>`<option value="${s}">${STATUS_ICO[s]||''} ${s}</option>`).join("");
 
+    populateChatSelect("add-bl-chat-select");
+    populateChatSelect("edit-bl-chat-select");
+    renderKnownChats();
     renderBL(allBL, data.batch.name);
 
     const linked = allBL.filter(b=>b.chat_id).length;
@@ -945,7 +986,7 @@ function renderBL(list, batchName) {
     <tr>
       <td class="mono" style="color:var(--amber);font-weight:600">${esc(b.code)}</td>
       <td>${b.client_name ? `<span style="font-weight:500">${esc(b.client_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
-      <td class="mono" style="font-size:11px;color:var(--muted2)">${b.chat_id || '<span style="color:var(--red);font-size:11px">не указан</span>'}</td>
+      <td>${renderChatCell(b.chat_id)}</td>
       <td>${statusBadge(b.status)}</td>
       <td>
         ${b.file_count > 0
@@ -971,10 +1012,78 @@ function filterBL() {
   ));
 }
 
+function renderChatCell(chatId) {
+  if (!chatId) {
+    return '<span style="color:var(--red);font-size:11px">не указан</span>';
+  }
+  const chat = knownChats.find(c=>String(c.chat_id)===String(chatId));
+  if (!chat) {
+    return `<span class="mono" style="font-size:11px;color:var(--muted2)">${esc(chatId)}</span>`;
+  }
+  return `
+    <div style="font-weight:500">${esc(chat.title || "Без названия")}</div>
+    <div class="mono" style="font-size:11px;color:var(--muted2)">${esc(chat.chat_id)}</div>
+  `;
+}
+
+function renderKnownChats() {
+  const table = document.getElementById("known-chats-table");
+  const count = document.getElementById("known-chat-count");
+  if (!table || !count) return;
+
+  count.textContent = `${knownChats.length} групп найдено`;
+  table.innerHTML = knownChats.length ? knownChats.map(chat=>`
+    <tr>
+      <td>
+        <div style="font-weight:500">${esc(chat.title || "Без названия")}</div>
+        ${chat.username ? `<div style="font-size:11px;color:var(--muted2)">@${esc(chat.username)}</div>` : ""}
+      </td>
+      <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(chat.chat_id)}</td>
+      <td>${chat.chat_type === "supergroup" ? '<span class="badge badge-blue">supergroup</span>' : '<span class="badge badge-muted">group</span>'}</td>
+      <td>${chat.linked_count ? `<span class="badge badge-green">${chat.linked_count}</span>` : '<span style="color:var(--muted);font-size:11px">нет</span>'}</td>
+      <td>${chat.is_active ? '<span class="badge badge-green">активна</span>' : '<span class="badge badge-red">удалена</span>'}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="5"><div class="empty"><div class="empty-icon">👥</div><p>Пока нет найденных групп. Добавь бота в Telegram-группу.</p></div></td></tr>`;
+}
+
+function populateChatSelect(id, selected="") {
+  const select = document.getElementById(id);
+  if (!select) return;
+
+  select.innerHTML = `<option value="">Выбери группу из списка</option>` + knownChats.map(chat=>`
+    <option value="${esc(chat.chat_id)}">${esc(chat.title || "Без названия")} (${esc(chat.chat_id)})</option>
+  `).join("");
+
+  if (selected) {
+    const exists = knownChats.some(chat=>String(chat.chat_id)===String(selected));
+    select.value = exists ? String(selected) : "";
+  } else {
+    select.value = "";
+  }
+}
+
+function applySelectedChat(prefix) {
+  const select = document.getElementById(`${prefix}-bl-chat-select`);
+  const input = document.getElementById(`${prefix}-bl-chat`);
+  if (!select || !input) return;
+  input.value = select.value || "";
+}
+
+async function loadKnownChats() {
+  try {
+    knownChats = await api("/api/chats?all=1");
+    populateChatSelect("add-bl-chat-select", document.getElementById("add-bl-chat").value.trim());
+    populateChatSelect("edit-bl-chat-select", document.getElementById("edit-bl-chat").value.trim());
+    renderKnownChats();
+    renderBL(allBL, document.getElementById("detail-title").textContent || "");
+  } catch(e) { toast(e.message,"err"); }
+}
+
 function openAddBLModal() {
   document.getElementById("add-bl-code").value = "";
   document.getElementById("add-bl-client").value = "";
   document.getElementById("add-bl-chat").value = "";
+  populateChatSelect("add-bl-chat-select");
   openModal("add-bl-modal");
 }
 
@@ -1000,6 +1109,7 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-id").value = blId;
   document.getElementById("edit-bl-client").value = bl.client_name||"";
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
+  populateChatSelect("edit-bl-chat-select", bl.chat_id||"");
   document.getElementById("edit-bl-status").value = bl.status;
   document.getElementById("edit-bl-file-input").dataset.blId = blId;
 

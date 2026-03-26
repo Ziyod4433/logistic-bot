@@ -112,6 +112,23 @@ def configure_telegram_webhook():
     return True
 
 
+def remember_group_chat(chat: dict, is_active: bool = True):
+    if not chat:
+        return
+
+    chat_type = chat.get("type")
+    if chat_type not in {"group", "supergroup"}:
+        return
+
+    db.upsert_telegram_chat(
+        chat_id=chat.get("id"),
+        title=chat.get("title") or f"Group {chat.get('id')}",
+        chat_type=chat_type,
+        username=chat.get("username") or "",
+        is_active=is_active,
+    )
+
+
 def send_bl_status(chat_id, bl: dict):
     text = db.render_message(bl, bl["batch_name"])
     telegram_send_message(chat_id, text, reply_markup=MAIN_REPLY_MARKUP)
@@ -151,6 +168,8 @@ def handle_telegram_message(message: dict):
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
     text = (message.get("text") or "").strip()
+
+    remember_group_chat(chat, is_active=True)
 
     if not chat_id or not text:
         return
@@ -193,6 +212,17 @@ def handle_telegram_message(message: dict):
 
     if db.get_chat_state(chat_id) == STATE_WAITING_BL:
         handle_bl_lookup(chat_id, text)
+
+
+def handle_my_chat_member_update(chat_update: dict):
+    chat = chat_update.get("chat") or {}
+    chat_type = chat.get("type")
+    if chat_type not in {"group", "supergroup"}:
+        return
+
+    new_status = ((chat_update.get("new_chat_member") or {}).get("status") or "").lower()
+    is_active = new_status not in {"left", "kicked"}
+    remember_group_chat(chat, is_active=is_active)
 
 
 def send_bl_package(bl: dict, batch_name: str):
@@ -262,6 +292,10 @@ def telegram_webhook():
             return jsonify({"ok": False, "error": "invalid webhook secret"}), 403
 
     update = request.get_json(silent=True) or {}
+    chat_update = update.get("my_chat_member")
+    if chat_update:
+        handle_my_chat_member_update(chat_update)
+
     message = update.get("message") or update.get("edited_message")
     if message:
         handle_telegram_message(message)
@@ -307,6 +341,13 @@ def api_bl_list(batch_id):
         abort(404)
     bl_codes = db.get_bl_by_batch(batch_id)
     return jsonify({"batch": batch, "bl_codes": bl_codes, "statuses": db.STATUSES})
+
+
+@app.route("/api/chats")
+@login_required
+def api_chats():
+    include_inactive = request.args.get("all") == "1"
+    return jsonify(db.get_telegram_chats(include_inactive=include_inactive))
 
 
 @app.route("/api/bl", methods=["POST"])
