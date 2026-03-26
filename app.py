@@ -1,13 +1,21 @@
 import os
 import secrets
 from functools import wraps
-from flask import (
-    Flask, render_template, request, redirect,
-    url_for, session, jsonify, send_from_directory, abort
-)
+
 import requests as req
-from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
+from flask import (
+    Flask,
+    abort,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from werkzeug.utils import secure_filename
+
 import database as db
 
 load_dotenv()
@@ -15,37 +23,209 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))
 
-ADMIN_LOGIN    = os.getenv("ADMIN_LOGIN", "admin")
+ADMIN_LOGIN = os.getenv("ADMIN_LOGIN", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
-BOT_TOKEN      = os.getenv("BOT_TOKEN", "")
-UPLOAD_FOLDER  = os.path.join(os.path.dirname(__file__), "uploads")
-ALLOWED_EXT    = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "docx", "zip"}
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").strip()
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
+PORT = int(os.getenv("PORT", "5000"))
+
+UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
+ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "docx", "zip"}
+
+TRACK_BUTTON = "📦 Статус моего груза"
+CANCEL_BUTTON = "❌ Отмена"
+STATE_WAITING_BL = "waiting_bl"
+
+MAIN_REPLY_MARKUP = {
+    "keyboard": [[{"text": TRACK_BUTTON}]],
+    "resize_keyboard": True,
+}
+
+CANCEL_REPLY_MARKUP = {
+    "keyboard": [[{"text": CANCEL_BUTTON}]],
+    "resize_keyboard": True,
+    "one_time_keyboard": True,
+}
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
 db.init_db()
 
 
-# ── Auth ──────────────────────────────────────────────────
-
-def login_required(f):
-    @wraps(f)
+def login_required(func):
+    @wraps(func)
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
             return redirect(url_for("login"))
-        return f(*args, **kwargs)
+        return func(*args, **kwargs)
+
     return decorated
+
+
+def telegram_api(method: str, *, timeout: int = 15, **kwargs):
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is not configured")
+    response = req.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/{method}",
+        timeout=timeout,
+        **kwargs,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def telegram_send_message(chat_id, text: str, reply_markup: dict | None = None):
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    return telegram_api("sendMessage", json=payload)
+
+
+def telegram_send_document(chat_id, file_path: str, filename: str):
+    with open(file_path, "rb") as file_handle:
+        response = req.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+            data={"chat_id": chat_id},
+            files={"document": (filename, file_handle)},
+            timeout=30,
+        )
+    response.raise_for_status()
+    return response.json()
+
+
+def configure_telegram_webhook():
+    if not BOT_TOKEN or not WEBHOOK_BASE_URL:
+        return False
+
+    payload = {
+        "url": f"{WEBHOOK_BASE_URL.rstrip('/')}/telegram/webhook",
+        "drop_pending_updates": True,
+    }
+    if WEBHOOK_SECRET:
+        payload["secret_token"] = WEBHOOK_SECRET
+
+    telegram_api("setWebhook", json=payload)
+    return True
+
+
+def send_bl_status(chat_id, bl: dict):
+    text = db.render_message(bl, bl["batch_name"])
+    telegram_send_message(chat_id, text, reply_markup=MAIN_REPLY_MARKUP)
+
+    files = db.get_files(bl["id"])
+    for file_info in files:
+        try:
+            telegram_send_document(chat_id, file_info["file_path"], file_info["filename"])
+        except Exception as exc:
+            app.logger.warning("Failed to send file %s: %s", file_info["filename"], exc)
+
+
+def handle_bl_lookup(chat_id, raw_code: str):
+    code = raw_code.strip().upper()
+    if not code:
+        telegram_send_message(
+            chat_id,
+            "Введи <b>BL-код</b> текстом.\nНапример: <code>BL171</code>",
+            reply_markup=CANCEL_REPLY_MARKUP,
+        )
+        return
+
+    bl = db.find_bl_by_code(code)
+    if not bl:
+        telegram_send_message(
+            chat_id,
+            f"❌ BL-код <b>{code}</b> не найден.\n\nПроверь код и отправь его ещё раз.",
+            reply_markup=CANCEL_REPLY_MARKUP,
+        )
+        return
+
+    db.clear_chat_state(chat_id)
+    send_bl_status(chat_id, bl)
+
+
+def handle_telegram_message(message: dict):
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    text = (message.get("text") or "").strip()
+
+    if not chat_id or not text:
+        return
+
+    if text == "/start":
+        db.clear_chat_state(chat_id)
+        telegram_send_message(
+            chat_id,
+            "Привет!\n\n"
+            "Нажми кнопку ниже, чтобы узнать текущий статус своего груза.",
+            reply_markup=MAIN_REPLY_MARKUP,
+        )
+        return
+
+    if text == "/chatid":
+        title = chat.get("title") or "Личный чат"
+        telegram_send_message(
+            chat_id,
+            f"📍 Чат: <b>{title}</b>\n🆔 ID: <code>{chat_id}</code>",
+        )
+        return
+
+    if text == TRACK_BUTTON:
+        db.set_chat_state(chat_id, STATE_WAITING_BL)
+        telegram_send_message(
+            chat_id,
+            "Введи <b>BL-код</b> своего груза.\n\nНапример: <code>BL171</code>",
+            reply_markup=CANCEL_REPLY_MARKUP,
+        )
+        return
+
+    if text == CANCEL_BUTTON:
+        db.clear_chat_state(chat_id)
+        telegram_send_message(
+            chat_id,
+            "Запрос отменён.",
+            reply_markup=MAIN_REPLY_MARKUP,
+        )
+        return
+
+    if db.get_chat_state(chat_id) == STATE_WAITING_BL:
+        handle_bl_lookup(chat_id, text)
+
+
+def send_bl_package(bl: dict, batch_name: str):
+    if not bl["chat_id"]:
+        return False, "Нет chat_id"
+
+    try:
+        telegram_send_message(bl["chat_id"], db.render_message(bl, batch_name))
+    except Exception as exc:
+        return False, str(exc)
+
+    file_errors = []
+    for file_info in db.get_files(bl["id"]):
+        try:
+            telegram_send_document(bl["chat_id"], file_info["file_path"], file_info["filename"])
+        except Exception as exc:
+            file_errors.append(f"{file_info['filename']}: {exc}")
+
+    if file_errors:
+        return False, "; ".join(file_errors)
+
+    return True, ""
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = None
     if request.method == "POST":
-        u = request.form.get("username", "")
-        p = request.form.get("password", "")
-        if u == ADMIN_LOGIN and p == ADMIN_PASSWORD:
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        if username == ADMIN_LOGIN and password == ADMIN_PASSWORD:
             session["logged_in"] = True
-            session["username"] = u
+            session["username"] = username
             return redirect(url_for("index"))
         error = "Неверный логин или пароль"
     return render_template("index.html", login_page=True, error=error)
@@ -57,23 +237,42 @@ def logout():
     return redirect(url_for("login"))
 
 
-# ── Main pages ────────────────────────────────────────────
-
 @app.route("/")
 @login_required
 def index():
     return render_template("index.html")
 
 
-# ── API: Stats ────────────────────────────────────────────
+@app.route("/health")
+def health():
+    return jsonify(
+        {
+            "ok": True,
+            "bot_configured": bool(BOT_TOKEN),
+            "webhook_configured": bool(BOT_TOKEN and WEBHOOK_BASE_URL),
+        }
+    )
+
+
+@app.route("/telegram/webhook", methods=["POST"])
+def telegram_webhook():
+    if WEBHOOK_SECRET:
+        incoming_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not secrets.compare_digest(incoming_secret, WEBHOOK_SECRET):
+            return jsonify({"ok": False, "error": "invalid webhook secret"}), 403
+
+    update = request.get_json(silent=True) or {}
+    message = update.get("message") or update.get("edited_message")
+    if message:
+        handle_telegram_message(message)
+    return jsonify({"ok": True})
+
 
 @app.route("/api/stats")
 @login_required
 def api_stats():
     return jsonify(db.get_stats())
 
-
-# ── API: Batches ──────────────────────────────────────────
 
 @app.route("/api/batches")
 @login_required
@@ -88,8 +287,7 @@ def api_create_batch():
     name = (data.get("name") or "").strip()
     if not name:
         return jsonify({"error": "Имя партии обязательно"}), 400
-    ok = db.create_batch(name)
-    if not ok:
+    if not db.create_batch(name):
         return jsonify({"error": "Партия с таким именем уже существует"}), 400
     return jsonify({"ok": True})
 
@@ -101,31 +299,31 @@ def api_delete_batch(batch_id):
     return jsonify({"ok": True})
 
 
-# ── API: BL Codes ─────────────────────────────────────────
-
 @app.route("/api/batches/<int:batch_id>/bl")
 @login_required
 def api_bl_list(batch_id):
     batch = db.get_batch(batch_id)
     if not batch:
         abort(404)
-    bls = db.get_bl_by_batch(batch_id)
-    return jsonify({"batch": batch, "bl_codes": bls, "statuses": db.STATUSES})
+    bl_codes = db.get_bl_by_batch(batch_id)
+    return jsonify({"batch": batch, "bl_codes": bl_codes, "statuses": db.STATUSES})
 
 
 @app.route("/api/bl", methods=["POST"])
 @login_required
 def api_add_bl():
     data = request.json or {}
-    batch_id    = data.get("batch_id")
-    code        = (data.get("code") or "").strip()
+    batch_id = data.get("batch_id")
+    code = (data.get("code") or "").strip()
     client_name = (data.get("client_name") or "").strip()
-    chat_id     = (data.get("chat_id") or "").strip()
+    chat_id = (data.get("chat_id") or "").strip()
+
     if not batch_id or not code:
         return jsonify({"error": "batch_id и code обязательны"}), 400
-    ok = db.add_bl(batch_id, code, client_name, chat_id)
-    if not ok:
+
+    if not db.add_bl(batch_id, code, client_name, chat_id):
         return jsonify({"error": "BL-код уже существует в этой партии"}), 400
+
     return jsonify({"ok": True})
 
 
@@ -149,8 +347,6 @@ def api_delete_bl(bl_id):
     return jsonify({"ok": True})
 
 
-# ── API: Files ────────────────────────────────────────────
-
 @app.route("/api/bl/<int:bl_id>/files")
 @login_required
 def api_files(bl_id):
@@ -162,16 +358,17 @@ def api_files(bl_id):
 def api_upload(bl_id):
     if "file" not in request.files:
         return jsonify({"error": "Файл не выбран"}), 400
-    f = request.files["file"]
-    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+
+    uploaded_file = request.files["file"]
+    ext = uploaded_file.filename.rsplit(".", 1)[-1].lower() if "." in uploaded_file.filename else ""
     if ext not in ALLOWED_EXT:
         return jsonify({"error": f"Тип файла .{ext} не разрешён"}), 400
-    filename = secure_filename(f.filename)
-    # Unique name
+
+    filename = secure_filename(uploaded_file.filename)
     unique = f"bl{bl_id}_{secrets.token_hex(4)}_{filename}"
-    path = os.path.join(UPLOAD_FOLDER, unique)
-    f.save(path)
-    db.add_file(bl_id, filename, path)
+    file_path = os.path.join(UPLOAD_FOLDER, unique)
+    uploaded_file.save(file_path)
+    db.add_file(bl_id, filename, file_path)
     return jsonify({"ok": True, "filename": filename})
 
 
@@ -181,8 +378,6 @@ def api_delete_file(file_id):
     db.delete_file(file_id)
     return jsonify({"ok": True})
 
-
-# ── API: Send ─────────────────────────────────────────────
 
 @app.route("/api/batches/<int:batch_id>/send", methods=["POST"])
 @login_required
@@ -194,66 +389,30 @@ def api_send_batch(batch_id):
     if not batch:
         abort(404)
 
-    bls = db.get_bl_by_batch(batch_id)
     results = []
-
-    for bl in bls:
-        if not bl["chat_id"]:
-            results.append({
-                "code": bl["code"],
-                "success": False,
-                "error": "Нет chat_id"
-            })
-            continue
-
-        text = db.render_message(bl, batch["name"])
-
-        # Send message
-        try:
-            r = req.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                json={"chat_id": bl["chat_id"], "text": text, "parse_mode": "HTML"},
-                timeout=10,
-            )
-            r.raise_for_status()
-            msg_ok = True
-            msg_err = ""
-        except Exception as e:
-            msg_ok = False
-            msg_err = str(e)
-
-        # Send files
-        files = db.get_files(bl["id"])
-        for file in files:
-            try:
-                with open(file["file_path"], "rb") as fh:
-                    req.post(
-                        f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
-                        data={"chat_id": bl["chat_id"]},
-                        files={"document": (file["filename"], fh)},
-                        timeout=30,
-                    )
-            except Exception:
-                pass
-
+    for bl in db.get_bl_by_batch(batch_id):
+        success, error_msg = send_bl_package(bl, batch["name"])
         db.add_log(
-            bl["id"], bl["code"], batch["name"],
-            bl["chat_id"], bl["status"], msg_ok, msg_err
+            bl["id"],
+            bl["code"],
+            batch["name"],
+            bl["chat_id"],
+            bl["status"],
+            success,
+            error_msg,
+        )
+        results.append(
+            {
+                "code": bl["code"],
+                "client": bl["client_name"],
+                "success": success,
+                "error": error_msg,
+            }
         )
 
-        results.append({
-            "code": bl["code"],
-            "client": bl["client_name"],
-            "success": msg_ok,
-            "error": msg_err,
-        })
+    sent = sum(1 for item in results if item["success"])
+    return jsonify({"ok": True, "sent": sent, "total": len(results), "results": results})
 
-    sent  = sum(1 for r in results if r["success"])
-    total = len(results)
-    return jsonify({"ok": True, "sent": sent, "total": total, "results": results})
-
-
-# ── API: Single BL send ───────────────────────────────────
 
 @app.route("/api/bl/<int:bl_id>/send", methods=["POST"])
 @login_required
@@ -264,31 +423,20 @@ def api_send_one(bl_id):
     bl = db.get_bl_by_id(bl_id)
     if not bl:
         abort(404)
+
     if not bl["chat_id"]:
         return jsonify({"error": "Не указан chat_id"}), 400
 
-    # Get batch name
-    conn = db.get_conn()
-    batch = conn.execute("SELECT name FROM batches WHERE id=?", (bl["batch_id"],)).fetchone()
-    conn.close()
+    batch = db.get_batch(bl["batch_id"])
     batch_name = batch["name"] if batch else "—"
+    success, error_msg = send_bl_package(bl, batch_name)
+    db.add_log(bl["id"], bl["code"], batch_name, bl["chat_id"], bl["status"], success, error_msg)
 
-    text = db.render_message(bl, batch_name)
-    try:
-        r = req.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            json={"chat_id": bl["chat_id"], "text": text, "parse_mode": "HTML"},
-            timeout=10,
-        )
-        r.raise_for_status()
-        db.add_log(bl["id"], bl["code"], batch_name, bl["chat_id"], bl["status"], True)
-        return jsonify({"ok": True})
-    except Exception as e:
-        db.add_log(bl["id"], bl["code"], batch_name, bl["chat_id"], bl["status"], False, str(e))
-        return jsonify({"error": str(e)}), 500
+    if not success:
+        return jsonify({"error": error_msg}), 500
 
+    return jsonify({"ok": True})
 
-# ── API: Logs ─────────────────────────────────────────────
 
 @app.route("/api/logs")
 @login_required
@@ -297,16 +445,16 @@ def api_logs():
     return jsonify(db.get_logs(limit))
 
 
-# ── API: Template ─────────────────────────────────────────
-
 @app.route("/api/template")
 @login_required
 def api_get_template():
-    return jsonify({
-        "content": db.get_template(),
-        "status_details": db.get_status_details(),
-        "statuses": db.STATUSES,
-    })
+    return jsonify(
+        {
+            "content": db.get_template(),
+            "status_details": db.get_status_details(),
+            "statuses": db.STATUSES,
+        }
+    )
 
 
 @app.route("/api/template", methods=["POST"])
@@ -316,28 +464,25 @@ def api_save_template():
     content = data.get("content", "").strip()
     if not content:
         return jsonify({"error": "Шаблон не может быть пустым"}), 400
+
     db.save_template(content)
 
-    # Save status details
     details = data.get("status_details", {})
-    for status, detail in details.items():
-        if status in db.STATUSES:
-            db.save_status_detail(status, detail)
+    for status_name, detail in details.items():
+        if status_name in db.STATUSES:
+            db.save_status_detail(status_name, detail)
 
     return jsonify({"ok": True})
-import threading
 
-def run_bot():
-    try:
-        import asyncio
-        from bot import main
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        main()
-    except Exception as e:
-        print(f"БОТ ОШИБКА: {e}", flush=True)
-
-bot_thread = threading.Thread(target=run_bot, daemon=True)
-bot_thread.start()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+    if BOT_TOKEN and WEBHOOK_BASE_URL:
+        try:
+            configure_telegram_webhook()
+            app.logger.info("Telegram webhook configured")
+        except Exception as exc:
+            app.logger.warning("Failed to configure Telegram webhook: %s", exc)
+    else:
+        app.logger.warning("Telegram webhook is not configured. Set BOT_TOKEN and WEBHOOK_BASE_URL.")
+
+    app.run(host="0.0.0.0", port=PORT, debug=False)
