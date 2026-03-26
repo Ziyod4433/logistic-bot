@@ -442,6 +442,7 @@ nav { flex: 1; padding: 18px 10px; overflow-y: auto; }
       <div class="nav-section">Главное</div>
       <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Дашборд</div>
       <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
+      <div class="nav-link" onclick="goto('chats')"><span class="ico">👥</span> Telegram группы <span class="badge-count" id="nav-chat-count">0</span></div>
       <div class="nav-section">Настройки</div>
       <div class="nav-link" onclick="goto('template')"><span class="ico">✏️</span> Шаблон</div>
       <div class="nav-link" onclick="goto('logs')"><span class="ico">📋</span> Логи отправки</div>
@@ -512,6 +513,8 @@ nav { flex: 1; padding: 18px 10px; overflow-y: auto; }
       <!-- PAGE: BATCHES LIST -->
       <!-- ═══════════════════════════════════════════════════ -->
       <div class="page" id="page-batches">
+        <div class="card" id="pending-chat-banner" style="display:none;margin-bottom:16px"></div>
+
         <!-- Batch list view -->
         <div id="batches-list-view">
           <div class="page-h">Партии <em>/ Управление</em></div>
@@ -576,6 +579,36 @@ nav { flex: 1; padding: 18px 10px; overflow-y: auto; }
               <tbody id="bl-table"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════ -->
+      <!-- PAGE: TELEGRAM CHATS -->
+      <!-- ═══════════════════════════════════════════════════ -->
+      <div class="page" id="page-chats">
+        <div class="page-h">Telegram группы <em>/ Автоопределение</em></div>
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-h">
+            <span class="card-title">Как это работает</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadChatsPage()">↻ Обновить</button>
+          </div>
+          <div class="card-body" style="color:var(--muted2);font-size:13px;line-height:1.7">
+            Бот автоматически показывает все группы, где он состоит. Нажми <b>В партии</b>, чтобы перенести выбранную группу в работу с партиями, открыть нужную партию и сразу подставить этот Chat ID при добавлении BL.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Все найденные группы</span>
+            <span id="known-chats-page-count" style="font-size:12px;color:var(--muted2)"></span>
+          </div>
+          <table class="tbl">
+            <thead><tr>
+              <th>Название</th><th>Chat ID</th><th>Тип</th><th>Привязано</th><th>Статус</th><th>Действие</th>
+            </tr></thead>
+            <tbody id="known-chats-page-table"></tbody>
+          </table>
         </div>
       </div>
 
@@ -763,6 +796,7 @@ let currentBatchId = null;
 let allBatches = [];
 let allBL = [];
 let knownChats = [];
+let pendingChatTransfer = null;
 let editingBLId = null;
 const STATUSES = ["Принят","Хоргос","Алматы","В пути до Ташкента","Ташкент","Доставлен"];
 
@@ -805,11 +839,12 @@ function goto(page) {
   document.getElementById("page-"+page).classList.add("active");
   document.querySelector(`[onclick="goto('${page}')"]`)?.classList.add("active");
 
-  const labels = {dashboard:"Дашборд",batches:"Партии",template:"Шаблон сообщений",logs:"Логи отправки"};
+  const labels = {dashboard:"Дашборд",batches:"Партии",chats:"Telegram группы",template:"Шаблон сообщений",logs:"Логи отправки"};
   document.getElementById("breadcrumb").innerHTML = labels[page] || page;
 
   if (page==="dashboard")  loadDashboard();
   if (page==="batches")    { showBatchList(); loadBatches(); }
+  if (page==="chats")      loadChatsPage();
   if (page==="template")   loadTemplate();
   if (page==="logs")       loadLogs();
 }
@@ -821,6 +856,7 @@ function refreshPage() {
   if (id==="dashboard")  loadDashboard();
   else if (id==="batches" && currentBatchId) loadBatchDetail(currentBatchId);
   else if (id==="batches") loadBatches();
+  else if (id==="chats") loadChatsPage();
   else if (id==="logs")  loadLogs();
 }
 
@@ -971,6 +1007,8 @@ async function loadBatchDetail(batchId) {
     populateChatSelect("add-bl-chat-select");
     populateChatSelect("edit-bl-chat-select");
     renderKnownChats();
+    renderChatsPage();
+    updatePendingChatBanner();
     renderBL(allBL, data.batch.name);
 
     const linked = allBL.filter(b=>b.chat_id).length;
@@ -1046,6 +1084,34 @@ function renderKnownChats() {
   `).join("") : `<tr><td colspan="5"><div class="empty"><div class="empty-icon">👥</div><p>Пока нет найденных групп. Добавь бота в Telegram-группу.</p></div></td></tr>`;
 }
 
+function renderChatsPage() {
+  const table = document.getElementById("known-chats-page-table");
+  const count = document.getElementById("known-chats-page-count");
+  const badge = document.getElementById("nav-chat-count");
+  if (badge) badge.textContent = String(knownChats.length);
+  if (!table || !count) return;
+
+  count.textContent = `${knownChats.length} групп доступно`;
+  table.innerHTML = knownChats.length ? knownChats.map(chat=>`
+    <tr>
+      <td>
+        <div style="font-weight:500">${esc(chat.title || "Без названия")}</div>
+        ${chat.username ? `<div style="font-size:11px;color:var(--muted2)">@${esc(chat.username)}</div>` : ""}
+      </td>
+      <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(chat.chat_id)}</td>
+      <td>${chat.chat_type === "supergroup" ? '<span class="badge badge-blue">supergroup</span>' : '<span class="badge badge-muted">group</span>'}</td>
+      <td>${chat.linked_count ? `<span class="badge badge-green">${chat.linked_count}</span>` : '<span style="color:var(--muted);font-size:11px">нет</span>'}</td>
+      <td>${chat.is_active ? '<span class="badge badge-green">активна</span>' : '<span class="badge badge-red">удалена</span>'}</td>
+      <td>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-amber btn-xs" onclick='moveChatToBatches(${JSON.stringify(String(chat.chat_id))})'>В партии</button>
+          <button class="btn btn-ghost btn-xs" onclick='copyChatId(${JSON.stringify(String(chat.chat_id))})'>Копировать ID</button>
+        </div>
+      </td>
+    </tr>
+  `).join("") : `<tr><td colspan="6"><div class="empty"><div class="empty-icon">👥</div><p>Пока нет найденных групп. Добавь бота в Telegram-группу и обнови список.</p></div></td></tr>`;
+}
+
 function populateChatSelect(id, selected="") {
   const select = document.getElementById(id);
   if (!select) return;
@@ -1069,21 +1135,85 @@ function applySelectedChat(prefix) {
   input.value = select.value || "";
 }
 
+function updatePendingChatBanner() {
+  const banner = document.getElementById("pending-chat-banner");
+  if (!banner) return;
+  if (!pendingChatTransfer) {
+    banner.style.display = "none";
+    banner.innerHTML = "";
+    return;
+  }
+
+  banner.style.display = "";
+  banner.innerHTML = `
+    <div class="card-body" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div>
+        <div style="font-weight:600">Группа готова для партии</div>
+        <div style="color:var(--muted2);font-size:12px;margin-top:4px">
+          ${esc(pendingChatTransfer.title)} · <span class="mono">${esc(pendingChatTransfer.chat_id)}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="clearPendingChatTransfer()">Очистить</button>
+      </div>
+    </div>
+  `;
+}
+
+function clearPendingChatTransfer() {
+  pendingChatTransfer = null;
+  updatePendingChatBanner();
+}
+
+function moveChatToBatches(chatId) {
+  const chat = knownChats.find(c=>String(c.chat_id)===String(chatId));
+  if (!chat) {
+    toast("Группа не найдена","err");
+    return;
+  }
+  pendingChatTransfer = {
+    chat_id: String(chat.chat_id),
+    title: chat.title || "Без названия",
+  };
+  goto("batches");
+  showBatchList();
+  updatePendingChatBanner();
+  toast(`Группа «${chat.title || "Без названия"}» перенесена в раздел партий. Открой нужную партию и нажми «Добавить BL».`,"ok");
+}
+
+async function copyChatId(chatId) {
+  try {
+    await navigator.clipboard.writeText(String(chatId));
+    toast("Chat ID скопирован","ok");
+  } catch (e) {
+    toast("Не удалось скопировать Chat ID","err");
+  }
+}
+
 async function loadKnownChats() {
   try {
     knownChats = await api("/api/chats?all=1");
     populateChatSelect("add-bl-chat-select", document.getElementById("add-bl-chat").value.trim());
     populateChatSelect("edit-bl-chat-select", document.getElementById("edit-bl-chat").value.trim());
     renderKnownChats();
-    renderBL(allBL, document.getElementById("detail-title").textContent || "");
+    renderChatsPage();
+    updatePendingChatBanner();
+    if (currentBatchId) {
+      renderBL(allBL, document.getElementById("detail-title").textContent || "");
+    }
   } catch(e) { toast(e.message,"err"); }
+}
+
+async function loadChatsPage() {
+  await loadKnownChats();
 }
 
 function openAddBLModal() {
   document.getElementById("add-bl-code").value = "";
   document.getElementById("add-bl-client").value = "";
-  document.getElementById("add-bl-chat").value = "";
-  populateChatSelect("add-bl-chat-select");
+  const pendingChatId = pendingChatTransfer?.chat_id || "";
+  document.getElementById("add-bl-chat").value = pendingChatId;
+  populateChatSelect("add-bl-chat-select", pendingChatId);
   openModal("add-bl-modal");
 }
 
@@ -1097,6 +1227,7 @@ async function addBL() {
     await api("/api/bl","POST",{batch_id:parseInt(batch_id), code, client_name, chat_id});
     toast("✅ BL код "+code+" добавлен","ok");
     closeModal("add-bl-modal");
+    clearPendingChatTransfer();
     loadBatchDetail(batch_id);
   } catch(e) { toast(e.message,"err"); }
 }
