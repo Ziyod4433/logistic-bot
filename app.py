@@ -325,20 +325,19 @@ def api_save_template():
             db.save_status_detail(status, detail)
 
     return jsonify({"ok": True})
-
 import threading
 
 def run_bot():
-    import asyncio
-    from bot import main
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    main()
+    try:
+        import asyncio
+        from bot import main
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        main()
+    except Exception as e:
+        print(f"БОТ ОШИБКА: {e}", flush=True)
 
 bot_thread = threading.Thread(target=run_bot, daemon=True)
 bot_thread.start()
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
