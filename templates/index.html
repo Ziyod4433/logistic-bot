@@ -831,7 +831,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     </div>
     <nav>
       <div class="nav-section">Главное</div>
-      <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Дашборд</div>
+      <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Dashboard</div>
       <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
       <div class="nav-link" onclick="goto('clients')"><span class="ico">👥</span> Клиенты</div>
       <div class="nav-link" onclick="goto('chats')"><span class="ico">💬</span> Telegram группы <span class="badge-count" id="nav-chat-count">0</span></div>
@@ -858,7 +858,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="topbar-left">
         <div class="topbar-stack">
           <div class="topbar-kicker">BURAQ logistics</div>
-          <div class="breadcrumb" id="breadcrumb">Дашборд</div>
+          <div class="breadcrumb" id="breadcrumb">Dashboard</div>
         </div>
       </div>
       <div class="topbar-right">
@@ -873,7 +873,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <!-- PAGE: DASHBOARD -->
       <!-- ═══════════════════════════════════════════════════ -->
       <div class="page active" id="page-dashboard">
-        <div class="page-h">Дашборд <em>/ Обзор</em></div>
+        <div class="page-h">Dashboard <em>/ Обзор</em></div>
 
         <div class="stats-row" id="stats-row">
           <div class="stat"><div class="stat-v" id="s-batches">—</div><div class="stat-l">Партий</div></div>
@@ -1522,7 +1522,7 @@ function goto(page) {
   document.querySelector(`[onclick="goto('${page}')"]`)?.classList.add("active");
 
   const labels = {
-    dashboard:"Дашборд",
+    dashboard:"Dashboard",
     batches:"Партии",
     clients:"Клиенты",
     chats:"Telegram группы",
