@@ -39,6 +39,7 @@ ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "docx", "zip"}
 TRACK_BUTTON = "📦 Статус моего груза"
 CANCEL_BUTTON = "❌ Отмена"
 STATE_WAITING_BL = "waiting_bl"
+COMM_RATE_PREFIX = "comm_rate"
 
 MAIN_REPLY_MARKUP = {
     "keyboard": [[{"text": TRACK_BUTTON}]],
@@ -98,6 +99,80 @@ def telegram_send_document(chat_id, file_path: str, filename: str):
         )
     response.raise_for_status()
     return response.json()
+
+
+def telegram_answer_callback_query(callback_query_id, text: str):
+    return telegram_api(
+        "answerCallbackQuery",
+        json={
+            "callback_query_id": callback_query_id,
+            "text": text,
+            "show_alert": False,
+        },
+    )
+
+
+def communication_rating_markup(month_key: str):
+    rows = []
+    for start in (1, 6):
+        row = []
+        for score in range(start, start + 5):
+            row.append(
+                {
+                    "text": str(score),
+                    "callback_data": f"{COMM_RATE_PREFIX}:{month_key}:{score}",
+                }
+            )
+        rows.append(row)
+    return {"inline_keyboard": rows}
+
+
+def send_communication_survey(recipient: dict, month_key: str):
+    client_name = recipient.get("client_name") or "клиент"
+    text = (
+        f"Опрос за {month_key}\n\n"
+        f"Пожалуйста, оцени работу менеджера по коммуникации для клиента <b>{client_name}</b>.\n"
+        "Шкала: <b>1–10</b>, где 10 — отлично.\n\n"
+        "Твоя оценка не будет показана в группе. Её увидит только админ панели."
+    )
+    telegram_send_message(
+        recipient["chat_id"],
+        text,
+        reply_markup=communication_rating_markup(month_key),
+    )
+
+
+def handle_callback_query(callback_query: dict):
+    callback_id = callback_query.get("id")
+    data = (callback_query.get("data") or "").strip()
+    message = callback_query.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+
+    if not callback_id or not data or not chat_id:
+        return
+
+    if not data.startswith(f"{COMM_RATE_PREFIX}:"):
+        telegram_answer_callback_query(callback_id, "Неизвестное действие")
+        return
+
+    parts = data.split(":")
+    if len(parts) != 3:
+        telegram_answer_callback_query(callback_id, "Неверный формат оценки")
+        return
+
+    _, month_key, score_raw = parts
+    try:
+        score = int(score_raw)
+    except ValueError:
+        telegram_answer_callback_query(callback_id, "Оценка не распознана")
+        return
+
+    if not db.save_communication_rating(month_key, chat_id, score):
+        telegram_answer_callback_query(callback_id, "Не удалось сохранить оценку")
+        return
+
+    telegram_answer_callback_query(callback_id, f"Спасибо! Оценка {score}/10 сохранена")
 
 
 def configure_telegram_webhook():
@@ -295,6 +370,10 @@ def telegram_webhook():
             return jsonify({"ok": False, "error": "invalid webhook secret"}), 403
 
     update = request.get_json(silent=True) or {}
+    callback_query = update.get("callback_query")
+    if callback_query:
+        handle_callback_query(callback_query)
+
     chat_update = update.get("my_chat_member")
     if chat_update:
         handle_my_chat_member_update(chat_update)
@@ -621,6 +700,66 @@ def api_client_detail(client_name):
 def api_notifications():
     limit = int(request.args.get("limit", 30))
     return jsonify(db.get_notifications(limit))
+
+
+@app.route("/api/communication-rate")
+@login_required
+def api_communication_rate():
+    month_key = (request.args.get("month") or db.current_month_key()).strip()
+    return jsonify(
+        {
+            "summary": db.get_communication_rate_summary(month_key),
+            "rows": db.get_communication_rate(month_key),
+            "month_key": month_key,
+        }
+    )
+
+
+@app.route("/api/communication-rate/send", methods=["POST"])
+@login_required
+def api_send_communication_rate():
+    if not BOT_TOKEN:
+        return jsonify({"error": "BOT_TOKEN не настроен в .env"}), 500
+
+    data = request.json or {}
+    month_key = (data.get("month") or db.current_month_key()).strip()
+    recipients = db.get_communication_recipients()
+    already_sent = {str(row["chat_id"]) for row in db.get_communication_rate(month_key)}
+
+    sent = 0
+    skipped = 0
+    errors = []
+
+    for recipient in recipients:
+        chat_id = str(recipient.get("chat_id", ""))
+        if not chat_id:
+            continue
+        if chat_id in already_sent:
+            skipped += 1
+            continue
+        try:
+            send_communication_survey(recipient, month_key)
+            db.record_communication_survey_send(month_key, recipient)
+            sent += 1
+        except Exception as exc:
+            errors.append(
+                {
+                    "client": recipient.get("client_name", ""),
+                    "chat_id": chat_id,
+                    "error": str(exc),
+                }
+            )
+
+    return jsonify(
+        {
+            "ok": True,
+            "month_key": month_key,
+            "sent": sent,
+            "skipped": skipped,
+            "total_recipients": len(recipients),
+            "errors": errors,
+        }
+    )
 
 
 @app.route("/api/template")

@@ -828,6 +828,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="nav-section">Мониторинг</div>
       <div class="nav-link" onclick="goto('problems')"><span class="ico">⚠️</span> Проблемы</div>
       <div class="nav-link" onclick="goto('notifications')"><span class="ico">🔔</span> Уведомления</div>
+      <div class="nav-link" onclick="goto('communication-rate')"><span class="ico">💬</span> Communication Rate</div>
       <div class="nav-section">Настройки</div>
       <div class="nav-link" onclick="goto('template')"><span class="ico">✏️</span> Шаблон</div>
       <div class="nav-link" onclick="goto('logs')"><span class="ico">📋</span> Логи отправки</div>
@@ -1108,6 +1109,43 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           <div class="card-body">
             <div class="notif-list" id="notifications-list"></div>
           </div>
+        </div>
+      </div>
+
+      <!-- PAGE: COMMUNICATION RATE -->
+      <div class="page" id="page-communication-rate">
+        <div class="page-h">Communication Rate <em>/ Оценка коммуникации</em></div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Месячный опрос</span>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <input class="inp" type="month" id="communication-month" style="margin:0;min-width:170px" onchange="loadCommunicationRatePage()">
+              <button class="btn btn-amber btn-sm" onclick="sendCommunicationSurvey()">Отправить опрос</button>
+              <button class="btn btn-ghost btn-sm" onclick="loadCommunicationRatePage()">↻ Обновить</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="info-grid-3">
+              <div class="mini-stat"><div class="mini-stat-v" id="comm-sent">0</div><div class="mini-stat-l">Отправлено</div></div>
+              <div class="mini-stat"><div class="mini-stat-v" id="comm-answered">0</div><div class="mini-stat-l">Ответов</div></div>
+              <div class="mini-stat"><div class="mini-stat-v" id="comm-average">0</div><div class="mini-stat-l">Средняя оценка</div></div>
+            </div>
+            <div class="kpi-note" style="margin-top:12px">Оценка ставится кнопками 1–10 внутри Telegram. В группе не видно, кто нажал; результат видит только админ.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Ответы клиентов</span>
+            <span id="comm-count" style="font-size:12px;color:var(--muted2)"></span>
+          </div>
+          <table class="tbl">
+            <thead><tr>
+              <th>Клиент</th><th>Партия</th><th>Chat ID</th><th>Отправлено</th><th>Оценка</th><th>Ответ</th>
+            </tr></thead>
+            <tbody id="communication-table"></tbody>
+          </table>
         </div>
       </div>
 
@@ -1451,6 +1489,7 @@ function goto(page) {
     chats:"Telegram группы",
     problems:"Проблемы",
     notifications:"Уведомления",
+    "communication-rate":"Communication Rate",
     template:"Шаблон сообщений",
     logs:"Логи отправки"
   };
@@ -1462,6 +1501,7 @@ function goto(page) {
   if (page==="chats")      loadChatsPage();
   if (page==="problems")   loadProblemsPage();
   if (page==="notifications") loadNotificationsPage();
+  if (page==="communication-rate") loadCommunicationRatePage();
   if (page==="template")   loadTemplate();
   if (page==="logs")       loadLogs();
 }
@@ -1477,6 +1517,7 @@ function refreshPage() {
   else if (id==="chats") loadChatsPage();
   else if (id==="problems") loadProblemsPage();
   else if (id==="notifications") loadNotificationsPage();
+  else if (id==="communication-rate") loadCommunicationRatePage();
   else if (id==="logs")  loadLogs();
 }
 
@@ -2307,6 +2348,51 @@ async function loadNotificationsPage() {
       </div>`).join("") :
       `<div class="empty" style="padding:16px"><div class="empty-icon">🔔</div><p>Новых уведомлений нет</p></div>`;
   } catch(e) { toast(e.message,"err"); }
+}
+
+function getCommunicationMonthValue() {
+  const input = document.getElementById("communication-month");
+  if (!input) return "";
+  if (!input.value) {
+    const now = new Date();
+    input.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+  }
+  return input.value;
+}
+
+async function loadCommunicationRatePage() {
+  try {
+    const month = getCommunicationMonthValue();
+    const data = await api("/api/communication-rate?month=" + encodeURIComponent(month));
+    document.getElementById("comm-sent").textContent = data.summary.sent || 0;
+    document.getElementById("comm-answered").textContent = data.summary.answered || 0;
+    document.getElementById("comm-average").textContent = data.summary.average_score || 0;
+    document.getElementById("comm-count").textContent = `${data.rows.length} клиентов в выборке`;
+
+    const table = document.getElementById("communication-table");
+    table.innerHTML = data.rows.length ? data.rows.map(row=>`
+      <tr>
+        <td style="font-weight:600">${esc(row.client_name || "Без клиента")}</td>
+        <td>${row.batch_name ? `<span class="badge badge-muted">${esc(row.batch_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(row.chat_id || "")}</td>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(row.sent_at || "")}</td>
+        <td>${row.score ? `<span class="badge badge-green">${row.score}/10</span>` : `<span class="badge badge-muted">ожидается</span>`}</td>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(row.submitted_at || "—")}</td>
+      </tr>`).join("") :
+      `<tr><td colspan="6"><div class="empty"><div class="empty-icon">💬</div><p>Опросы за этот месяц ещё не отправлялись</p></div></td></tr>`;
+  } catch(e) { toast(e.message,"err"); }
+}
+
+async function sendCommunicationSurvey() {
+  const month = getCommunicationMonthValue();
+  if (!confirm(`Отправить опрос Communication Rate за ${month} всем клиентам с chat_id?`)) return;
+  try {
+    const res = await api("/api/communication-rate/send", "POST", { month });
+    toast(`Опрос отправлен: ${res.sent}, пропущено: ${res.skipped}`,"ok");
+    loadCommunicationRatePage();
+  } catch(e) {
+    toast(e.message,"err");
+  }
 }
 
 async function loadTemplate() {

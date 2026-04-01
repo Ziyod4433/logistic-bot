@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from datetime import date
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "logistic.db")
 
@@ -167,6 +168,30 @@ def init_db():
             status TEXT NOT NULL DEFAULT 'open',
             created_at TEXT DEFAULT (datetime('now','localtime')),
             updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS communication_survey_sends (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            month_key TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            client_name TEXT NOT NULL DEFAULT '',
+            bl_id INTEGER REFERENCES bl_codes(id) ON DELETE SET NULL,
+            batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+            batch_name TEXT DEFAULT '',
+            sent_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(month_key, chat_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS communication_ratings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            month_key TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            client_name TEXT NOT NULL DEFAULT '',
+            bl_id INTEGER REFERENCES bl_codes(id) ON DELETE SET NULL,
+            batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+            score INTEGER NOT NULL,
+            submitted_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(month_key, chat_id)
         );
         """
     )
@@ -945,3 +970,179 @@ def get_notifications(limit=30):
     conn.close()
     notifications.sort(key=lambda item: item.get("created_at", ""), reverse=True)
     return notifications[:limit]
+
+
+def current_month_key():
+    return date.today().strftime("%Y-%m")
+
+
+def _get_latest_chat_recipient(conn, chat_id):
+    row = conn.execute(
+        """
+        SELECT
+            bl.id AS bl_id,
+            bl.batch_id,
+            bl.chat_id,
+            COALESCE(NULLIF(TRIM(bl.client_name), ''), bl.code) AS client_name,
+            b.name AS batch_name
+        FROM bl_codes bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE bl.chat_id = ?
+        ORDER BY bl.created_at DESC
+        LIMIT 1
+        """,
+        (str(chat_id),),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_communication_recipients():
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT
+            bl.id AS bl_id,
+            bl.batch_id,
+            bl.chat_id,
+            COALESCE(NULLIF(TRIM(bl.client_name), ''), bl.code) AS client_name,
+            b.name AS batch_name
+        FROM bl_codes bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE bl.chat_id != ''
+          AND bl.id = (
+              SELECT bl2.id
+              FROM bl_codes bl2
+              WHERE bl2.chat_id = bl.chat_id
+              ORDER BY bl2.created_at DESC
+              LIMIT 1
+          )
+        ORDER BY client_name COLLATE NOCASE ASC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def record_communication_survey_send(month_key, recipient):
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO communication_survey_sends(
+                month_key, chat_id, client_name, bl_id, batch_id, batch_name
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                month_key,
+                str(recipient.get("chat_id", "")),
+                recipient.get("client_name", ""),
+                recipient.get("bl_id"),
+                recipient.get("batch_id"),
+                recipient.get("batch_name", ""),
+            ),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def save_communication_rating(month_key, chat_id, score):
+    score_value = _to_int(score)
+    if score_value < 1 or score_value > 10:
+        return False
+
+    conn = get_conn()
+    send_row = conn.execute(
+        """
+        SELECT chat_id, client_name, bl_id, batch_id
+        FROM communication_survey_sends
+        WHERE month_key = ? AND chat_id = ?
+        """,
+        (month_key, str(chat_id)),
+    ).fetchone()
+
+    recipient = dict(send_row) if send_row else _get_latest_chat_recipient(conn, chat_id)
+    if not recipient:
+        conn.close()
+        return False
+
+    conn.execute(
+        """
+        INSERT INTO communication_ratings(month_key, chat_id, client_name, bl_id, batch_id, score, submitted_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        ON CONFLICT(month_key, chat_id) DO UPDATE SET
+            client_name = excluded.client_name,
+            bl_id = excluded.bl_id,
+            batch_id = excluded.batch_id,
+            score = excluded.score,
+            submitted_at = datetime('now','localtime')
+        """,
+        (
+            month_key,
+            str(chat_id),
+            recipient.get("client_name", ""),
+            recipient.get("bl_id"),
+            recipient.get("batch_id"),
+            score_value,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_communication_rate(month_key):
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT
+            s.month_key,
+            s.chat_id,
+            s.client_name,
+            s.batch_id,
+            s.batch_name,
+            s.sent_at,
+            r.score,
+            r.submitted_at
+        FROM communication_survey_sends s
+        LEFT JOIN communication_ratings r
+            ON r.month_key = s.month_key
+           AND r.chat_id = s.chat_id
+        WHERE s.month_key = ?
+        ORDER BY
+            CASE WHEN r.score IS NULL THEN 1 ELSE 0 END,
+            COALESCE(r.submitted_at, '') DESC,
+            s.sent_at DESC
+        """,
+        (month_key,),
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_communication_rate_summary(month_key):
+    conn = get_conn()
+    sent = conn.execute(
+        "SELECT COUNT(*) FROM communication_survey_sends WHERE month_key = ?",
+        (month_key,),
+    ).fetchone()[0]
+    answered = conn.execute(
+        "SELECT COUNT(*) FROM communication_ratings WHERE month_key = ?",
+        (month_key,),
+    ).fetchone()[0]
+    avg_row = conn.execute(
+        "SELECT ROUND(AVG(score), 1) FROM communication_ratings WHERE month_key = ?",
+        (month_key,),
+    ).fetchone()
+    conn.close()
+    return {
+        "month_key": month_key,
+        "sent": sent,
+        "answered": answered,
+        "pending": max(sent - answered, 0),
+        "average_score": avg_row[0] if avg_row and avg_row[0] is not None else 0,
+    }
