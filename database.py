@@ -197,6 +197,9 @@ def init_db():
             client_name TEXT NOT NULL DEFAULT '',
             bl_id INTEGER REFERENCES bl_codes(id) ON DELETE SET NULL,
             batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+            voter_user_id TEXT NOT NULL DEFAULT '',
+            voter_name TEXT NOT NULL DEFAULT '',
+            voter_username TEXT NOT NULL DEFAULT '',
             score INTEGER NOT NULL,
             submitted_at TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(month_key, chat_id)
@@ -223,6 +226,15 @@ def init_db():
     for column_name, column_def in legacy_columns:
         if not _table_has_column(conn, "bl_codes", column_name):
             conn.execute(f"ALTER TABLE bl_codes ADD COLUMN {column_name} {column_def}")
+
+    communication_rating_columns = [
+        ("voter_user_id", "TEXT NOT NULL DEFAULT ''"),
+        ("voter_name", "TEXT NOT NULL DEFAULT ''"),
+        ("voter_username", "TEXT NOT NULL DEFAULT ''"),
+    ]
+    for column_name, column_def in communication_rating_columns:
+        if not _table_has_column(conn, "communication_ratings", column_name):
+            conn.execute(f"ALTER TABLE communication_ratings ADD COLUMN {column_name} {column_def}")
 
     conn.execute(
         """
@@ -1110,7 +1122,7 @@ def record_communication_survey_send(month_key, recipient):
         conn.close()
 
 
-def save_communication_rating(month_key, chat_id, score):
+def save_communication_rating(month_key, chat_id, score, voter=None):
     score_value = _to_int(score)
     if score_value < 1 or score_value > 10:
         return False
@@ -1138,12 +1150,23 @@ def save_communication_rating(month_key, chat_id, score):
         conn.close()
         return False
 
+    voter = voter or {}
+    voter_user_id = str(voter.get("id") or "")
+    first_name = (voter.get("first_name") or "").strip()
+    last_name = (voter.get("last_name") or "").strip()
+    voter_name = " ".join(part for part in [first_name, last_name] if part).strip()
+    voter_username = (voter.get("username") or "").strip()
+    if not voter_name and voter_username:
+        voter_name = f"@{voter_username}"
+
     conn.execute(
         """
         INSERT OR IGNORE INTO communication_ratings(
-            month_key, chat_id, client_name, bl_id, batch_id, score, submitted_at
+            month_key, chat_id, client_name, bl_id, batch_id,
+            voter_user_id, voter_name, voter_username,
+            score, submitted_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
         """,
         (
             month_key,
@@ -1151,6 +1174,9 @@ def save_communication_rating(month_key, chat_id, score):
             recipient.get("client_name", ""),
             recipient.get("bl_id"),
             recipient.get("batch_id"),
+            voter_user_id,
+            voter_name,
+            voter_username,
             score_value,
         ),
     )
@@ -1170,6 +1196,9 @@ def get_communication_rate(month_key):
             s.batch_id,
             s.batch_name,
             s.sent_at,
+            r.voter_user_id,
+            r.voter_name,
+            r.voter_username,
             r.score,
             r.submitted_at
         FROM communication_survey_sends s

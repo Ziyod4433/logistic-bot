@@ -139,6 +139,7 @@ def send_communication_survey(recipient: dict, month_key: str):
 def handle_callback_query(callback_query: dict):
     callback_id = callback_query.get("id")
     data = (callback_query.get("data") or "").strip()
+    voter = callback_query.get("from") or {}
     message = callback_query.get("message") or {}
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
@@ -162,7 +163,7 @@ def handle_callback_query(callback_query: dict):
         telegram_answer_callback_query(callback_id, "Оценка не распознана")
         return
 
-    rating_result = db.save_communication_rating(month_key, chat_id, score)
+    rating_result = db.save_communication_rating(month_key, chat_id, score, voter=voter)
     if rating_result == "exists":
         telegram_answer_callback_query(callback_id, "Оценка за этот месяц уже сохранена")
         return

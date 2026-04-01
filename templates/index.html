@@ -2409,6 +2409,23 @@ function updateCommunicationCount(totalRows=0) {
   el.textContent = `${totalRows} клиентов в отчёте · выбрано ${selectedCommunicationChats.size}`;
 }
 
+function formatCommunicationVoter(row) {
+  const name = String(row?.voter_name || "").trim();
+  const username = String(row?.voter_username || "").trim();
+  const userId = String(row?.voter_user_id || "").trim();
+  if (!name && !username && !userId) {
+    return `<span style="color:var(--muted)">—</span>`;
+  }
+  const title = name || (username ? `@${username}` : userId);
+  const meta = username ? `@${esc(username)}` : (userId ? `ID ${esc(userId)}` : "");
+  return `
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-weight:600">${esc(title)}</span>
+      ${meta ? `<span class="mono" style="font-size:11px;color:var(--muted2)">${meta}</span>` : ""}
+    </div>
+  `;
+}
+
 function renderCommunicationRecipientsTable(totalRows=0) {
   const table = document.getElementById("communication-recipients-table");
   if (!table) return;
@@ -2528,12 +2545,31 @@ async function loadCommunicationRatePage() {
       templateTextarea.value = templateData.content || "";
     }
 
+    data.rows = (data.rows || []).map(row => {
+      const voterName = String(row.voter_name || "").trim();
+      const voterUsername = String(row.voter_username || "").trim();
+      const voterUserId = String(row.voter_user_id || "").trim();
+      let voterLabel = "";
+      if (voterName && voterUsername) voterLabel = `${voterName} (@${voterUsername})`;
+      else if (voterName) voterLabel = voterName;
+      else if (voterUsername) voterLabel = `@${voterUsername}`;
+      else if (voterUserId) voterLabel = `ID ${voterUserId}`;
+      return {
+        ...row,
+        batch_name: voterLabel
+      };
+    });
+
     document.getElementById("comm-sent").textContent = data.summary.sent || 0;
     document.getElementById("comm-answered").textContent = data.summary.answered || 0;
     document.getElementById("comm-average").textContent = data.summary.average_score || 0;
     renderCommunicationRecipientsTable(data.rows.length);
 
     const table = document.getElementById("communication-table");
+    const headRow = table.closest("table")?.querySelector("thead tr");
+    if (headRow) {
+      headRow.innerHTML = "<th>Клиент</th><th>Кто оценил</th><th>Chat ID</th><th>Отправлено</th><th>Оценка</th><th>Ответ</th>";
+    }
     table.innerHTML = data.rows.length ? data.rows.map(row=>`
       <tr>
         <td style="font-weight:600">${esc(row.client_name || "Без клиента")}</td>
