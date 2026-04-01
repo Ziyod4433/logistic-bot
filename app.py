@@ -33,7 +33,6 @@ WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").strip()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 PORT = int(os.getenv("PORT", "5000"))
 
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
 ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "docx", "zip"}
 
 TRACK_BUTTON = "📦 Статус моего груза"
@@ -51,6 +50,8 @@ CANCEL_REPLY_MARKUP = {
     "resize_keyboard": True,
     "one_time_keyboard": True,
 }
+
+UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER") or os.path.join(str(db.APP_DATA_DIR), "uploads")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 db.init_db()

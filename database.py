@@ -1,9 +1,17 @@
 import os
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "logistic.db")
+BASE_DIR = Path(__file__).resolve().parent
+APP_DATA_DIR = Path(
+    os.getenv("APP_DATA_DIR")
+    or os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    or str(BASE_DIR)
+)
+APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = os.getenv("DB_PATH") or str(APP_DATA_DIR / "logistic.db")
 try:
     TASHKENT_TZ = ZoneInfo("Asia/Tashkent")
 except Exception:

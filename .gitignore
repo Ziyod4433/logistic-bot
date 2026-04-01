@@ -2,3 +2,4 @@ venv/
 logistic.db 
 uploads/ 
 __pycache__/ 
+data/
