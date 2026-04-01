@@ -1101,9 +1101,15 @@ def record_communication_survey_send(month_key, recipient):
         conn.execute(
             """
             INSERT INTO communication_survey_sends(
-                month_key, chat_id, client_name, bl_id, batch_id, batch_name
+                month_key, chat_id, client_name, bl_id, batch_id, batch_name, sent_at
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+            ON CONFLICT(month_key, chat_id) DO UPDATE SET
+                client_name = excluded.client_name,
+                bl_id = excluded.bl_id,
+                batch_id = excluded.batch_id,
+                batch_name = excluded.batch_name,
+                sent_at = datetime('now','localtime')
             """,
             (
                 month_key,
@@ -1116,8 +1122,6 @@ def record_communication_survey_send(month_key, recipient):
         )
         conn.commit()
         return True
-    except sqlite3.IntegrityError:
-        return False
     finally:
         conn.close()
 

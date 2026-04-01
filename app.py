@@ -112,14 +112,36 @@ def telegram_answer_callback_query(callback_query_id, text: str):
     )
 
 
+def telegram_delete_message(chat_id, message_id):
+    return telegram_api(
+        "deleteMessage",
+        json={
+            "chat_id": chat_id,
+            "message_id": message_id,
+        },
+    )
+
+
 def communication_rating_markup(month_key: str):
+    labels = {
+        1: "1 😞",
+        2: "2",
+        3: "3",
+        4: "4",
+        5: "5 🙂",
+        6: "6",
+        7: "7",
+        8: "8",
+        9: "9",
+        10: "10 🤝",
+    }
     rows = []
     for start in (1, 6):
         row = []
         for score in range(start, start + 5):
             row.append(
                 {
-                    "text": str(score),
+                    "text": labels.get(score, str(score)),
                     "callback_data": f"{COMM_RATE_PREFIX}:{month_key}:{score}",
                 }
             )
@@ -143,6 +165,7 @@ def handle_callback_query(callback_query: dict):
     message = callback_query.get("message") or {}
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
+    message_id = message.get("message_id")
 
     if not callback_id or not data or not chat_id:
         return
@@ -166,6 +189,11 @@ def handle_callback_query(callback_query: dict):
     rating_result = db.save_communication_rating(month_key, chat_id, score, voter=voter)
     if rating_result == "exists":
         telegram_answer_callback_query(callback_id, "Оценка за этот месяц уже сохранена")
+        if message_id:
+            try:
+                telegram_delete_message(chat_id, message_id)
+            except Exception:
+                pass
         return
     if not rating_result:
         telegram_answer_callback_query(callback_id, "Не удалось сохранить оценку")
@@ -173,6 +201,11 @@ def handle_callback_query(callback_query: dict):
 
     telegram_answer_callback_query(callback_id, f"Спасибо! Оценка {score}/10 сохранена")
 
+    if message_id:
+        try:
+            telegram_delete_message(chat_id, message_id)
+        except Exception:
+            pass
 
 def configure_telegram_webhook():
     if not BOT_TOKEN or not WEBHOOK_BASE_URL:
@@ -745,7 +778,6 @@ def api_send_communication_rate():
     recipients = db.get_communication_recipients()
     if selected_chat_ids:
         recipients = [item for item in recipients if str(item.get("chat_id", "")) in selected_chat_ids]
-    already_sent = db.get_communication_sent_chat_ids(month_key)
 
     sent = 0
     skipped = 0
@@ -754,9 +786,6 @@ def api_send_communication_rate():
     for recipient in recipients:
         chat_id = str(recipient.get("chat_id", ""))
         if not chat_id:
-            continue
-        if chat_id in already_sent:
-            skipped += 1
             continue
         try:
             send_communication_survey(recipient, month_key)
