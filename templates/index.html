@@ -832,7 +832,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <nav>
       <div class="nav-section">Главное</div>
       <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Dashboard</div>
-      <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
+      <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Partiyalar</div>
       <div class="nav-link" onclick="goto('clients')"><span class="ico">👥</span> Клиенты</div>
       <div class="nav-link" onclick="goto('chats')"><span class="ico">💬</span> Telegram группы <span class="badge-count" id="nav-chat-count">0</span></div>
       <div class="nav-section">Мониторинг</div>
@@ -928,7 +928,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 
         <!-- Batch list view -->
         <div id="batches-list-view">
-          <div class="page-h">Партии <em>/ Управление</em></div>
+          <div class="page-h">Partiyalar <em>/ Управление</em></div>
           <div class="card">
             <div class="card-h">
               <span class="card-title">Все партии</span>
@@ -1523,7 +1523,7 @@ function goto(page) {
 
   const labels = {
     dashboard:"Dashboard",
-    batches:"Партии",
+    batches:"Partiyalar",
     clients:"Клиенты",
     chats:"Telegram группы",
     problems:"Muammolar",
