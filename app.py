@@ -128,13 +128,7 @@ def communication_rating_markup(month_key: str):
 
 
 def send_communication_survey(recipient: dict, month_key: str):
-    client_name = recipient.get("client_name") or "клиент"
-    text = (
-        f"Опрос за {month_key}\n\n"
-        f"Пожалуйста, оцени работу менеджера по коммуникации для клиента <b>{client_name}</b>.\n"
-        "Шкала: <b>1–10</b>, где 10 — отлично.\n\n"
-        "Твоя оценка не будет показана в группе. Её увидит только админ панели."
-    )
+    text = db.render_communication_rate_message(recipient, month_key)
     telegram_send_message(
         recipient["chat_id"],
         text,
@@ -168,7 +162,11 @@ def handle_callback_query(callback_query: dict):
         telegram_answer_callback_query(callback_id, "Оценка не распознана")
         return
 
-    if not db.save_communication_rating(month_key, chat_id, score):
+    rating_result = db.save_communication_rating(month_key, chat_id, score)
+    if rating_result == "exists":
+        telegram_answer_callback_query(callback_id, "Оценка за этот месяц уже сохранена")
+        return
+    if not rating_result:
         telegram_answer_callback_query(callback_id, "Не удалось сохранить оценку")
         return
 
@@ -710,9 +708,28 @@ def api_communication_rate():
         {
             "summary": db.get_communication_rate_summary(month_key),
             "rows": db.get_communication_rate(month_key),
+            "recipients": db.get_communication_recipients(),
+            "sent_chat_ids": list(db.get_communication_sent_chat_ids(month_key)),
             "month_key": month_key,
         }
     )
+
+
+@app.route("/api/communication-rate/template")
+@login_required
+def api_communication_rate_template():
+    return jsonify({"content": db.get_communication_rate_template()})
+
+
+@app.route("/api/communication-rate/template", methods=["POST"])
+@login_required
+def api_save_communication_rate_template():
+    data = request.json or {}
+    content = (data.get("content") or "").strip()
+    if not content:
+        return jsonify({"error": "Шаблон опроса не может быть пустым"}), 400
+    db.save_communication_rate_template(content)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/communication-rate/send", methods=["POST"])
@@ -723,8 +740,11 @@ def api_send_communication_rate():
 
     data = request.json or {}
     month_key = (data.get("month") or db.current_month_key()).strip()
+    selected_chat_ids = {str(chat_id) for chat_id in (data.get("chat_ids") or []) if str(chat_id).strip()}
     recipients = db.get_communication_recipients()
-    already_sent = {str(row["chat_id"]) for row in db.get_communication_rate(month_key)}
+    if selected_chat_ids:
+        recipients = [item for item in recipients if str(item.get("chat_id", "")) in selected_chat_ids]
+    already_sent = db.get_communication_sent_chat_ids(month_key)
 
     sent = 0
     skipped = 0

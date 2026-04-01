@@ -1121,7 +1121,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <span class="card-title">Месячный опрос</span>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
               <input class="inp" type="month" id="communication-month" style="margin:0;min-width:170px" onchange="loadCommunicationRatePage()">
-              <button class="btn btn-amber btn-sm" onclick="sendCommunicationSurvey()">Отправить опрос</button>
+              <button class="btn btn-amber btn-sm" onclick="sendCommunicationSurvey()">Отправить выбранным</button>
               <button class="btn btn-ghost btn-sm" onclick="loadCommunicationRatePage()">↻ Обновить</button>
             </div>
           </div>
@@ -1133,6 +1133,33 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
             <div class="kpi-note" style="margin-top:12px">Оценка ставится кнопками 1–10 внутри Telegram. В группе не видно, кто нажал; результат видит только админ.</div>
           </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Шаблон сообщения</span>
+            <button class="btn btn-ghost btn-sm" onclick="saveCommunicationTemplate()">💾 Сохранить шаблон</button>
+          </div>
+          <div class="card-body">
+            <div style="font-size:11px;color:var(--muted2);margin-bottom:8px">Переменные: <span class="var-pill" onclick="insertCommunicationVar('{month_key}')">{month_key}</span> <span class="var-pill" onclick="insertCommunicationVar('{client_name}')">{client_name}</span> <span class="var-pill" onclick="insertCommunicationVar('{batch_name}')">{batch_name}</span></div>
+            <textarea class="inp" id="communication-template" rows="6" style="min-height:160px"></textarea>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Кому отправить</span>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-sm" onclick="selectAllCommunicationRecipients()">Выбрать всех</button>
+              <button class="btn btn-ghost btn-sm" onclick="clearCommunicationRecipients()">Снять выбор</button>
+            </div>
+          </div>
+          <table class="tbl">
+            <thead><tr>
+              <th></th><th>Клиент</th><th>Партия</th><th>Chat ID</th><th>Статус</th>
+            </tr></thead>
+            <tbody id="communication-recipients-table"></tbody>
+          </table>
         </div>
 
         <div class="card">
@@ -1435,6 +1462,8 @@ let pendingChatTransfer = null;
 let editingBLId = null;
 let allClients = [];
 let currentClientName = "";
+let communicationRecipients = [];
+let selectedCommunicationChats = new Set();
 const STATUSES = ["Принят","Хоргос","Алматы","В пути до Ташкента","Ташкент","Доставлен"];
 const PROBLEM_TYPES = {
   damage: "Повреждение",
@@ -2360,14 +2389,131 @@ function getCommunicationMonthValue() {
   return input.value;
 }
 
+function getCommunicationChatId(recipient) {
+  return String(recipient?.chat_id || "").trim();
+}
+
+function updateCommunicationCount(totalRows=0) {
+  const el = document.getElementById("comm-count");
+  if (!el) return;
+  el.textContent = `${totalRows} клиентов в отчёте · выбрано ${selectedCommunicationChats.size}`;
+}
+
+function renderCommunicationRecipientsTable(totalRows=0) {
+  const table = document.getElementById("communication-recipients-table");
+  if (!table) return;
+
+  if (!communicationRecipients.length) {
+    table.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty-icon">💬</div><p>Нет клиентских групп с chat_id для опроса</p></div></td></tr>`;
+    updateCommunicationCount(totalRows);
+    return;
+  }
+
+  table.innerHTML = communicationRecipients.map(item => {
+    const chatId = getCommunicationChatId(item);
+    const checked = selectedCommunicationChats.has(chatId);
+    const disabled = item.already_sent ? "disabled" : "";
+    const status = item.already_sent
+      ? `<span class="badge badge-green">Уже отправлен</span>`
+      : `<span class="badge badge-muted">Готов к отправке</span>`;
+    return `
+      <tr>
+        <td style="width:40px">
+          <input type="checkbox"
+                 ${checked ? "checked" : ""}
+                 ${disabled}
+                 onchange="toggleCommunicationRecipient('${esc(chatId)}', this.checked)">
+        </td>
+        <td style="font-weight:600">${esc(item.client_name || "Без клиента")}</td>
+        <td>${item.batch_name ? `<span class="badge badge-muted">${esc(item.batch_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(chatId)}</td>
+        <td>${status}</td>
+      </tr>`;
+  }).join("");
+
+  updateCommunicationCount(totalRows);
+}
+
+function toggleCommunicationRecipient(chatId, checked) {
+  const value = String(chatId || "").trim();
+  if (!value) return;
+  if (checked) selectedCommunicationChats.add(value);
+  else selectedCommunicationChats.delete(value);
+  updateCommunicationCount(document.getElementById("communication-table")?.children.length || 0);
+}
+
+function selectAllCommunicationRecipients() {
+  communicationRecipients.forEach(item => {
+    const chatId = getCommunicationChatId(item);
+    if (chatId && !item.already_sent) selectedCommunicationChats.add(chatId);
+  });
+  renderCommunicationRecipientsTable(document.getElementById("communication-table")?.children.length || 0);
+}
+
+function clearCommunicationRecipients() {
+  selectedCommunicationChats.clear();
+  renderCommunicationRecipientsTable(document.getElementById("communication-table")?.children.length || 0);
+}
+
+function insertCommunicationVar(v) {
+  const ta = document.getElementById("communication-template");
+  if (!ta) return;
+  const s = ta.selectionStart || 0;
+  const e = ta.selectionEnd || 0;
+  ta.value = ta.value.slice(0, s) + v + ta.value.slice(e);
+  ta.selectionStart = ta.selectionEnd = s + v.length;
+  ta.focus();
+}
+
+async function saveCommunicationTemplate() {
+  const textarea = document.getElementById("communication-template");
+  const content = textarea?.value?.trim() || "";
+  if (!content) {
+    toast("Шаблон опроса не может быть пустым", "err");
+    return;
+  }
+  try {
+    await api("/api/communication-rate/template", "POST", { content });
+    toast("Шаблон опроса сохранён", "ok");
+  } catch(e) {
+    toast(e.message, "err");
+  }
+}
+
 async function loadCommunicationRatePage() {
   try {
     const month = getCommunicationMonthValue();
-    const data = await api("/api/communication-rate?month=" + encodeURIComponent(month));
+    const [data, templateData] = await Promise.all([
+      api("/api/communication-rate?month=" + encodeURIComponent(month)),
+      api("/api/communication-rate/template")
+    ]);
+    const sentChatIds = new Set((data.sent_chat_ids || []).map(id => String(id)));
+    const previousSelection = new Set(selectedCommunicationChats);
+    communicationRecipients = (data.recipients || []).map(item => {
+      const chatId = getCommunicationChatId(item);
+      return {
+        ...item,
+        chat_id: chatId,
+        already_sent: sentChatIds.has(chatId),
+      };
+    });
+    selectedCommunicationChats = new Set();
+    communicationRecipients.forEach(item => {
+      if (!item.chat_id || item.already_sent) return;
+      if (!previousSelection.size || previousSelection.has(item.chat_id)) {
+        selectedCommunicationChats.add(item.chat_id);
+      }
+    });
+
+    const templateTextarea = document.getElementById("communication-template");
+    if (templateTextarea && document.activeElement !== templateTextarea) {
+      templateTextarea.value = templateData.content || "";
+    }
+
     document.getElementById("comm-sent").textContent = data.summary.sent || 0;
     document.getElementById("comm-answered").textContent = data.summary.answered || 0;
     document.getElementById("comm-average").textContent = data.summary.average_score || 0;
-    document.getElementById("comm-count").textContent = `${data.rows.length} клиентов в выборке`;
+    renderCommunicationRecipientsTable(data.rows.length);
 
     const table = document.getElementById("communication-table");
     table.innerHTML = data.rows.length ? data.rows.map(row=>`
@@ -2380,14 +2526,20 @@ async function loadCommunicationRatePage() {
         <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(row.submitted_at || "—")}</td>
       </tr>`).join("") :
       `<tr><td colspan="6"><div class="empty"><div class="empty-icon">💬</div><p>Опросы за этот месяц ещё не отправлялись</p></div></td></tr>`;
+    updateCommunicationCount(data.rows.length);
   } catch(e) { toast(e.message,"err"); }
 }
 
 async function sendCommunicationSurvey() {
   const month = getCommunicationMonthValue();
-  if (!confirm(`Отправить опрос Communication Rate за ${month} всем клиентам с chat_id?`)) return;
+  const chatIds = Array.from(selectedCommunicationChats);
+  if (!chatIds.length) {
+    toast("Выбери хотя бы одну группу для отправки опроса", "err");
+    return;
+  }
+  if (!confirm(`Отправить опрос Communication Rate за ${month} выбранным группам: ${chatIds.length}?`)) return;
   try {
-    const res = await api("/api/communication-rate/send", "POST", { month });
+    const res = await api("/api/communication-rate/send", "POST", { month, chat_ids: chatIds });
     toast(`Опрос отправлен: ${res.sent}, пропущено: ${res.skipped}`,"ok");
     loadCommunicationRatePage();
   } catch(e) {

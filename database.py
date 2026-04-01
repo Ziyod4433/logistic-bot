@@ -31,6 +31,14 @@ DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 ---
 По вопросам обращайтесь к вашему менеджеру."""
 
+DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Опрос за {month_key}
+
+Пожалуйста, оцени работу менеджера по коммуникации для клиента <b>{client_name}</b>.
+Партия: <b>{batch_name}</b>
+
+Шкала: <b>1–10</b>, где 10 — отлично.
+Эта оценка не будет показана в группе. Её увидит только админ панели."""
+
 DEFAULT_STATUS_DETAILS = {
     "Принят": "✅ Груз принят к перевозке и оформляется на складе отправления.",
     "Хоргос": "🛃 Груз находится на таможне Хоргос. Ожидайте прохождения контроля в течение 1-3 дней.",
@@ -193,6 +201,12 @@ def init_db():
             submitted_at TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(month_key, chat_id)
         );
+
+        CREATE TABLE IF NOT EXISTS communication_rate_template (
+            id INTEGER PRIMARY KEY,
+            content TEXT NOT NULL,
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         """
     )
 
@@ -221,6 +235,13 @@ def init_db():
     row = cursor.execute("SELECT id FROM message_template WHERE id = 1").fetchone()
     if not row:
         cursor.execute("INSERT INTO message_template(id, content) VALUES(1, ?)", (DEFAULT_TEMPLATE,))
+
+    row = cursor.execute("SELECT id FROM communication_rate_template WHERE id = 1").fetchone()
+    if not row:
+        cursor.execute(
+            "INSERT INTO communication_rate_template(id, content) VALUES(1, ?)",
+            (DEFAULT_COMMUNICATION_RATE_TEMPLATE,),
+        )
 
     for status_name, detail in DEFAULT_STATUS_DETAILS.items():
         cursor.execute(
@@ -976,6 +997,35 @@ def current_month_key():
     return date.today().strftime("%Y-%m")
 
 
+def get_communication_rate_template():
+    conn = get_conn()
+    row = conn.execute("SELECT content FROM communication_rate_template WHERE id = 1").fetchone()
+    conn.close()
+    return row["content"] if row else DEFAULT_COMMUNICATION_RATE_TEMPLATE
+
+
+def save_communication_rate_template(content):
+    conn = get_conn()
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO communication_rate_template(id, content, updated_at)
+        VALUES (1, ?, datetime('now','localtime'))
+        """,
+        (content,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def render_communication_rate_message(recipient: dict, month_key: str) -> str:
+    return get_communication_rate_template().format(
+        month_key=month_key,
+        client_name=recipient.get("client_name") or "клиент",
+        batch_name=recipient.get("batch_name") or "—",
+        chat_id=recipient.get("chat_id") or "",
+    )
+
+
 def _get_latest_chat_recipient(conn, chat_id):
     row = conn.execute(
         """
@@ -1023,6 +1073,16 @@ def get_communication_recipients():
     return [dict(row) for row in rows]
 
 
+def get_communication_sent_chat_ids(month_key):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT chat_id FROM communication_survey_sends WHERE month_key = ?",
+        (month_key,),
+    ).fetchall()
+    conn.close()
+    return {str(row["chat_id"]) for row in rows}
+
+
 def record_communication_survey_send(month_key, recipient):
     conn = get_conn()
     try:
@@ -1056,6 +1116,14 @@ def save_communication_rating(month_key, chat_id, score):
         return False
 
     conn = get_conn()
+    existing = conn.execute(
+        "SELECT id FROM communication_ratings WHERE month_key = ? AND chat_id = ?",
+        (month_key, str(chat_id)),
+    ).fetchone()
+    if existing:
+        conn.close()
+        return "exists"
+
     send_row = conn.execute(
         """
         SELECT chat_id, client_name, bl_id, batch_id
@@ -1072,14 +1140,10 @@ def save_communication_rating(month_key, chat_id, score):
 
     conn.execute(
         """
-        INSERT INTO communication_ratings(month_key, chat_id, client_name, bl_id, batch_id, score, submitted_at)
+        INSERT OR IGNORE INTO communication_ratings(
+            month_key, chat_id, client_name, bl_id, batch_id, score, submitted_at
+        )
         VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
-        ON CONFLICT(month_key, chat_id) DO UPDATE SET
-            client_name = excluded.client_name,
-            bl_id = excluded.bl_id,
-            batch_id = excluded.batch_id,
-            score = excluded.score,
-            submitted_at = datetime('now','localtime')
         """,
         (
             month_key,
