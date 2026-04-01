@@ -1,3 +1,5 @@
+import csv
+import io
 import os
 import secrets
 from functools import wraps
@@ -5,6 +7,7 @@ from functools import wraps
 import requests as req
 from dotenv import load_dotenv
 from flask import (
+    Response,
     Flask,
     abort,
     jsonify,
@@ -308,6 +311,13 @@ def api_stats():
     return jsonify(db.get_stats())
 
 
+@app.route("/api/attention")
+@login_required
+def api_attention():
+    limit = int(request.args.get("limit", 10))
+    return jsonify(db.get_attention_items(limit))
+
+
 @app.route("/api/batches")
 @login_required
 def api_batches():
@@ -358,11 +368,13 @@ def api_add_bl():
     code = (data.get("code") or "").strip()
     client_name = (data.get("client_name") or "").strip()
     chat_id = (data.get("chat_id") or "").strip()
+    expected_date = (data.get("expected_date") or "").strip()
+    actual_date = (data.get("actual_date") or "").strip()
 
     if not batch_id or not code:
         return jsonify({"error": "batch_id и code обязательны"}), 400
 
-    if not db.add_bl(batch_id, code, client_name, chat_id):
+    if not db.add_bl(batch_id, code, client_name, chat_id, expected_date, actual_date):
         return jsonify({"error": "BL-код уже существует в этой партии"}), 400
 
     return jsonify({"ok": True})
@@ -377,6 +389,8 @@ def api_update_bl(bl_id):
         data.get("client_name", ""),
         data.get("chat_id", ""),
         data.get("status", "Принят"),
+        data.get("expected_date", ""),
+        data.get("actual_date", ""),
     )
     return jsonify({"ok": True})
 
@@ -484,6 +498,107 @@ def api_send_one(bl_id):
 def api_logs():
     limit = int(request.args.get("limit", 100))
     return jsonify(db.get_logs(limit))
+
+
+@app.route("/api/problems")
+@login_required
+def api_problems():
+    return jsonify(
+        db.get_problems(
+            problem_type=(request.args.get("type") or "").strip(),
+            date_from=(request.args.get("date_from") or "").strip(),
+            date_to=(request.args.get("date_to") or "").strip(),
+            batch_id=(request.args.get("batch_id") or "").strip(),
+        )
+    )
+
+
+@app.route("/api/problems", methods=["POST"])
+@login_required
+def api_create_problem():
+    data = request.json or {}
+    bl_id = data.get("bl_id")
+    problem_type = (data.get("problem_type") or "").strip()
+    description = (data.get("description") or "").strip()
+
+    if not bl_id:
+        return jsonify({"error": "Не указан BL"}), 400
+    if problem_type not in db.PROBLEM_TYPES:
+        return jsonify({"error": "Неверный тип проблемы"}), 400
+    if not db.create_problem(bl_id, problem_type, description):
+        return jsonify({"error": "BL не найден"}), 404
+
+    return jsonify({"ok": True})
+
+
+@app.route("/api/problems/export")
+@login_required
+def api_export_problems():
+    rows = db.get_problems(
+        problem_type=(request.args.get("type") or "").strip(),
+        date_from=(request.args.get("date_from") or "").strip(),
+        date_to=(request.args.get("date_to") or "").strip(),
+        batch_id=(request.args.get("batch_id") or "").strip(),
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(
+        [
+            "Дата",
+            "Партия",
+            "BL код",
+            "Клиент",
+            "Тип",
+            "Описание",
+            "Статус груза",
+            "Ожидаемая дата",
+            "Факт дата",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                row.get("created_at", ""),
+                row.get("batch_name", ""),
+                row.get("bl_code", ""),
+                row.get("client_name", ""),
+                db.PROBLEM_TYPES.get(row.get("problem_type", ""), row.get("problem_type", "")),
+                row.get("description", ""),
+                row.get("bl_status", ""),
+                row.get("expected_date", ""),
+                row.get("actual_date", ""),
+            ]
+        )
+
+    csv_text = "\ufeff" + output.getvalue()
+    return Response(
+        csv_text,
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=problems_export.csv"},
+    )
+
+
+@app.route("/api/clients")
+@login_required
+def api_clients():
+    return jsonify(db.get_clients())
+
+
+@app.route("/api/clients/<path:client_name>")
+@login_required
+def api_client_detail(client_name):
+    detail = db.get_client_detail(client_name)
+    if not detail:
+        abort(404)
+    return jsonify(detail)
+
+
+@app.route("/api/notifications")
+@login_required
+def api_notifications():
+    limit = int(request.args.get("limit", 30))
+    return jsonify(db.get_notifications(limit))
 
 
 @app.route("/api/template")

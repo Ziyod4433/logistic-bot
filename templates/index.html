@@ -399,7 +399,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .page-h em { color: var(--amber); font-style: normal; }
 
 /* ── STATS ROW ───────────────────────────────────────── */
-.stats-row { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 14px; margin-bottom: 30px; }
+.stats-row { display: grid; grid-template-columns: repeat(8, minmax(0,1fr)); gap: 14px; margin-bottom: 30px; }
 .stat {
   background:
     linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0)),
@@ -423,6 +423,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   line-height: 1; color: var(--cv, var(--amber));
 }
 .stat-l { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted2); margin-top: 6px; }
+.stat-critical { --line: var(--red); --cv: var(--red); }
+.stat-warning { --line: var(--amber); --cv: var(--amber); }
 
 /* ── CARD ────────────────────────────────────────────── */
 .card {
@@ -456,6 +458,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .tbl tr:last-child td { border-bottom: none; }
 .tbl tbody tr { transition: background .1s; }
 .tbl tbody tr:hover td { background: rgba(255,255,255,.03); }
+.tbl tbody tr.row-late td { background: rgba(244,63,94,.06); }
+.tbl tbody tr.row-problem td { box-shadow: inset 3px 0 0 rgba(245,166,35,.35); }
 
 .mono { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
 
@@ -639,6 +643,97 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 /* ── PROGRESS ────────────────────────────────────────── */
 .prog-bar { background: var(--bg4); border-radius: 100px; height: 5px; overflow: hidden; }
 .prog-fill { height: 100%; border-radius: 100px; background: var(--amber); transition: width .5s; }
+.kpi-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted2);
+}
+.filter-bar {
+  display: grid;
+  grid-template-columns: 180px 170px 170px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+.filter-bar .inp,
+.filter-bar .search {
+  margin: 0;
+  width: 100%;
+}
+.attention-stack {
+  display: grid;
+  gap: 12px;
+}
+.attention-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.06);
+  background: rgba(255,255,255,.02);
+}
+.attention-item strong { color: var(--text); }
+.attention-meta {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--muted2);
+}
+.info-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.mini-stat {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.06);
+  background: rgba(255,255,255,.02);
+}
+.mini-stat-v {
+  font-family: 'Syne', sans-serif;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--text);
+}
+.mini-stat-l {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted2);
+  text-transform: uppercase;
+  letter-spacing: 1.3px;
+}
+.notif-list {
+  display: grid;
+  gap: 12px;
+}
+.notif-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.06);
+  background: rgba(255,255,255,.02);
+}
+.notif-item.high {
+  border-color: rgba(244,63,94,.2);
+  background: rgba(244,63,94,.05);
+}
+.notif-item.medium {
+  border-color: rgba(245,166,35,.18);
+  background: rgba(245,166,35,.05);
+}
+.notif-item.low {
+  border-color: rgba(56,189,248,.16);
+  background: rgba(56,189,248,.04);
+}
+.client-detail-grid {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 20px;
+}
 
 /* ── BACK BUTTON ─────────────────────────────────────── */
 .back-btn {
@@ -649,7 +744,9 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .back-btn:hover { color: var(--amber); }
 
 @media (max-width: 1260px) {
-  .stats-row { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .stats-row { grid-template-columns: repeat(4, minmax(0,1fr)); }
+  .filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .client-detail-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 940px) {
@@ -671,6 +768,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   .stats-row { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .form-row2, .form-row3 { grid-template-columns: 1fr; }
   .search { width: 100%; }
+  .filter-bar,
+  .info-grid-3 { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {
@@ -724,7 +823,10 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="nav-section">Главное</div>
       <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Дашборд</div>
       <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
-      <div class="nav-link" onclick="goto('chats')"><span class="ico">👥</span> Telegram группы <span class="badge-count" id="nav-chat-count">0</span></div>
+      <div class="nav-link" onclick="goto('clients')"><span class="ico">👥</span> Клиенты</div>
+      <div class="nav-section">Мониторинг</div>
+      <div class="nav-link" onclick="goto('problems')"><span class="ico">⚠️</span> Проблемы</div>
+      <div class="nav-link" onclick="goto('notifications')"><span class="ico">🔔</span> Уведомления</div>
       <div class="nav-section">Настройки</div>
       <div class="nav-link" onclick="goto('template')"><span class="ico">✏️</span> Шаблон</div>
       <div class="nav-link" onclick="goto('logs')"><span class="ico">📋</span> Логи отправки</div>
@@ -764,10 +866,22 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <div class="stats-row" id="stats-row">
           <div class="stat"><div class="stat-v" id="s-batches">—</div><div class="stat-l">Партий</div></div>
           <div class="stat" style="--cv:var(--text)"><div class="stat-v" id="s-bl">—</div><div class="stat-l">BL кодов</div></div>
+          <div class="stat stat-critical"><div class="stat-v" id="s-late">—</div><div class="stat-l">Опаздывают</div></div>
+          <div class="stat stat-warning"><div class="stat-v" id="s-problematic">—</div><div class="stat-l">С проблемами</div></div>
           <div class="stat" style="--cv:var(--blue);--line:var(--blue)"><div class="stat-v" id="s-linked">—</div><div class="stat-l">Привязано</div></div>
           <div class="stat" style="--cv:var(--green);--line:var(--green)"><div class="stat-v" id="s-sent">—</div><div class="stat-l">Отправлено</div></div>
           <div class="stat" style="--cv:var(--red);--line:var(--red)"><div class="stat-v" id="s-failed">—</div><div class="stat-l">Ошибок</div></div>
           <div class="stat" style="--cv:var(--green);--line:var(--green)"><div class="stat-v" id="s-delivered">—</div><div class="stat-l">Доставлено</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Требуют внимания</span>
+            <button class="btn btn-ghost btn-sm" onclick="goto('problems')">Все инциденты →</button>
+          </div>
+          <div class="card-body">
+            <div class="attention-stack" id="attention-list"></div>
+          </div>
         </div>
 
         <div class="card">
@@ -859,7 +973,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
             <table class="tbl" id="bl-table-wrap">
               <thead><tr>
-                <th>BL код</th><th>Клиент</th><th>Chat ID</th><th>Статус</th><th>Файлы</th><th>Действия</th>
+                <th>BL код</th><th>Клиент</th><th>Chat ID</th><th>Статус</th><th>Ожидаемая дата</th><th>Факт дата</th><th>Файлы</th><th>Действия</th>
               </tr></thead>
               <tbody id="bl-table"></tbody>
             </table>
@@ -894,6 +1008,101 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </tr></thead>
             <tbody id="known-chats-page-table"></tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- PAGE: CLIENTS -->
+      <div class="page" id="page-clients">
+        <div id="clients-list-view">
+          <div class="page-h">Клиенты <em>/ База</em></div>
+          <div class="card">
+            <div class="card-h">
+              <span class="card-title">Все клиенты</span>
+              <input class="search" placeholder="🔎 Поиск клиента..." id="client-search" oninput="filterClients()">
+            </div>
+            <table class="tbl">
+              <thead><tr>
+                <th>Клиент</th><th>BL кодов</th><th>Партий</th><th>Проблем</th><th>Опаздывают</th><th>Последний груз</th><th></th>
+              </tr></thead>
+              <tbody id="clients-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="client-detail" style="display:none">
+          <div class="back-btn" onclick="showClientsList()">← Все клиенты</div>
+          <div class="page-h" id="client-detail-title">Клиент <em>/ Карточка</em></div>
+
+          <div class="client-detail-grid">
+            <div class="card">
+              <div class="card-h"><span class="card-title">Сводка клиента</span></div>
+              <div class="card-body">
+                <div class="info-grid-3" style="grid-template-columns:1fr;gap:10px" id="client-summary"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-h"><span class="card-title">Все BL коды клиента</span></div>
+              <table class="tbl">
+                <thead><tr>
+                  <th>BL</th><th>Партия</th><th>Статус</th><th>Ожидаемая</th><th>Факт</th><th>Проблемы</th><th></th>
+                </tr></thead>
+                <tbody id="client-bl-table"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAGE: PROBLEMS -->
+      <div class="page" id="page-problems">
+        <div class="page-h">Проблемы <em>/ Инциденты</em></div>
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Фильтры</span>
+            <button class="btn btn-amber btn-sm" onclick="exportProblems()">Экспорт Excel</button>
+          </div>
+          <div class="card-body">
+            <div class="filter-bar">
+              <select class="inp" id="problem-filter-type" onchange="loadProblemsPage()">
+                <option value="">Все типы</option>
+                <option value="damage">Повреждение</option>
+                <option value="delay">Опоздание</option>
+                <option value="shortage">Недостача</option>
+                <option value="other">Другое</option>
+              </select>
+              <input class="inp" type="date" id="problem-filter-from" onchange="loadProblemsPage()">
+              <input class="inp" type="date" id="problem-filter-to" onchange="loadProblemsPage()">
+              <select class="inp" id="problem-filter-batch" onchange="loadProblemsPage()"></select>
+              <button class="btn btn-ghost btn-sm" onclick="resetProblemFilters()">Сбросить</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Все инциденты</span>
+            <span id="problems-count" style="font-size:12px;color:var(--muted2)"></span>
+          </div>
+          <table class="tbl">
+            <thead><tr>
+              <th>Дата</th><th>Партия</th><th>BL</th><th>Клиент</th><th>Тип</th><th>Описание</th><th></th>
+            </tr></thead>
+            <tbody id="problems-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- PAGE: NOTIFICATIONS -->
+      <div class="page" id="page-notifications">
+        <div class="page-h">Уведомления <em>/ Мониторинг</em></div>
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Последние сигналы</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadNotificationsPage()">↻ Обновить</button>
+          </div>
+          <div class="card-body">
+            <div class="notif-list" id="notifications-list"></div>
+          </div>
         </div>
       </div>
 
@@ -1008,6 +1217,16 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <input class="inp mono" id="add-bl-chat" placeholder="-1001234567890">
       <div style="font-size:11px;color:var(--muted2);margin-top:5px">Поле заполнится само после выбора группы выше. При необходимости можно ввести ID вручную.</div>
     </div>
+    <div class="form-row2">
+      <div class="form-g">
+        <label>Ожидаемая дата</label>
+        <input class="inp" type="date" id="add-bl-expected-date">
+      </div>
+      <div class="form-g">
+        <label>Факт дата</label>
+        <input class="inp" type="date" id="add-bl-actual-date">
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('add-bl-modal')">Отмена</button>
       <button class="btn btn-amber" onclick="addBL()">Добавить</button>
@@ -1041,6 +1260,16 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <label>Статус груза</label>
       <select class="inp" id="edit-bl-status"></select>
     </div>
+    <div class="form-row2">
+      <div class="form-g">
+        <label>Ожидаемая дата</label>
+        <input class="inp" type="date" id="edit-bl-expected-date">
+      </div>
+      <div class="form-g">
+        <label>Факт дата</label>
+        <input class="inp" type="date" id="edit-bl-actual-date">
+      </div>
+    </div>
     <hr class="divider">
     <div class="form-g">
       <label>Файлы (документы клиента)</label>
@@ -1052,6 +1281,35 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('edit-bl-modal')">Отмена</button>
       <button class="btn btn-amber" onclick="saveBL()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Problem modal -->
+<div class="overlay" id="problem-modal">
+  <div class="modal" style="width:460px">
+    <div class="modal-title">Новая <em>проблема</em></div>
+    <input type="hidden" id="problem-bl-id">
+    <div class="form-g">
+      <label>BL код</label>
+      <input class="inp mono" id="problem-bl-code" readonly>
+    </div>
+    <div class="form-g">
+      <label>Тип проблемы</label>
+      <select class="inp" id="problem-type">
+        <option value="delay">Опоздание</option>
+        <option value="damage">Повреждение</option>
+        <option value="shortage">Недостача</option>
+        <option value="other">Другое</option>
+      </select>
+    </div>
+    <div class="form-g">
+      <label>Описание</label>
+      <textarea class="inp" id="problem-description" rows="4" placeholder="Коротко опиши проблему"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('problem-modal')">Отмена</button>
+      <button class="btn btn-amber" onclick="saveProblem()">Сохранить</button>
     </div>
   </div>
 </div>
@@ -1083,7 +1341,15 @@ let allBL = [];
 let knownChats = [];
 let pendingChatTransfer = null;
 let editingBLId = null;
+let allClients = [];
+let currentClientName = "";
 const STATUSES = ["Принят","Хоргос","Алматы","В пути до Ташкента","Ташкент","Доставлен"];
+const PROBLEM_TYPES = {
+  damage: "Повреждение",
+  delay: "Опоздание",
+  shortage: "Недостача",
+  other: "Другое",
+};
 
 const STATUS_BADGE = {
   "Принят":             "badge s-accepted",
@@ -1124,12 +1390,24 @@ function goto(page) {
   document.getElementById("page-"+page).classList.add("active");
   document.querySelector(`[onclick="goto('${page}')"]`)?.classList.add("active");
 
-  const labels = {dashboard:"Дашборд",batches:"Партии",chats:"Telegram группы",template:"Шаблон сообщений",logs:"Логи отправки"};
+  const labels = {
+    dashboard:"Дашборд",
+    batches:"Партии",
+    clients:"Клиенты",
+    chats:"Telegram группы",
+    problems:"Проблемы",
+    notifications:"Уведомления",
+    template:"Шаблон сообщений",
+    logs:"Логи отправки"
+  };
   document.getElementById("breadcrumb").innerHTML = labels[page] || page;
 
   if (page==="dashboard")  loadDashboard();
   if (page==="batches")    { showBatchList(); loadBatches(); }
+  if (page==="clients")    loadClientsPage();
   if (page==="chats")      loadChatsPage();
+  if (page==="problems")   loadProblemsPage();
+  if (page==="notifications") loadNotificationsPage();
   if (page==="template")   loadTemplate();
   if (page==="logs")       loadLogs();
 }
@@ -1141,7 +1419,10 @@ function refreshPage() {
   if (id==="dashboard")  loadDashboard();
   else if (id==="batches" && currentBatchId) loadBatchDetail(currentBatchId);
   else if (id==="batches") loadBatches();
+  else if (id==="clients") loadClientsPage();
   else if (id==="chats") loadChatsPage();
+  else if (id==="problems") loadProblemsPage();
+  else if (id==="notifications") loadNotificationsPage();
   else if (id==="logs")  loadLogs();
 }
 
@@ -1157,15 +1438,34 @@ document.querySelectorAll(".overlay").forEach(m=>{
 // ══════════════════════════════════════════════════════════
 async function loadDashboard() {
   try {
-    const [stats, batches, logs] = await Promise.all([
-      api("/api/stats"), api("/api/batches"), api("/api/logs?limit=8")
+    const [stats, batches, logs, attention] = await Promise.all([
+      api("/api/stats"),
+      api("/api/batches"),
+      api("/api/logs?limit=8"),
+      api("/api/attention?limit=8")
     ]);
+    allBatches = batches;
     document.getElementById("s-batches").textContent   = stats.batches;
     document.getElementById("s-bl").textContent        = stats.bl_total;
+    document.getElementById("s-late").textContent      = stats.late || 0;
+    document.getElementById("s-problematic").textContent = stats.problematic || 0;
     document.getElementById("s-linked").textContent    = stats.linked;
     document.getElementById("s-sent").textContent      = stats.sent;
     document.getElementById("s-failed").textContent    = stats.failed;
     document.getElementById("s-delivered").textContent = stats.delivered;
+
+    const att = document.getElementById("attention-list");
+    att.innerHTML = attention.length ? attention.map(item=>`
+      <div class="attention-item">
+        <div>
+          <strong>${esc(item.code)}</strong>
+          <span style="color:var(--muted2)"> · ${esc(item.client_name || "Без клиента")}</span>
+          <div class="attention-meta">${esc(item.attention_reason || "Требует проверки")}</div>
+          <div class="attention-meta">${statusBadge(item.status)} · партия ${esc(item.batch_name)}</div>
+        </div>
+        <button class="btn btn-ghost btn-xs" onclick='goto("batches");openBatchDetail(${item.batch_id}, ${JSON.stringify(item.batch_name)})'>Перейти в партию</button>
+      </div>`).join("") :
+      `<div class="empty" style="padding:20px"><div class="empty-icon">✅</div><p>Критичных грузов сейчас нет</p></div>`;
 
     // Batches table
     const bt = document.getElementById("dash-batches");
@@ -1306,25 +1606,34 @@ async function loadBatchDetail(batchId) {
 function renderBL(list, batchName) {
   const t = document.getElementById("bl-table");
   t.innerHTML = list.length ? list.map(b=>`
-    <tr>
+    <tr class="${b.is_late ? 'row-late' : ''} ${b.problem_count ? 'row-problem' : ''}">
       <td class="mono" style="color:var(--amber);font-weight:600">${esc(b.code)}</td>
       <td>${b.client_name ? `<span style="font-weight:500">${esc(b.client_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td>${renderChatCell(b.chat_id)}</td>
-      <td>${statusBadge(b.status)}</td>
+      <td>
+        ${statusBadge(b.status)}
+        ${b.is_stuck ? `<div class="kpi-note" style="color:var(--amber)">Статус не менялся долго</div>` : ""}
+      </td>
+      <td>${b.expected_date ? `<span class="mono">${esc(b.expected_date)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+      <td>${b.actual_date ? `<span class="mono">${esc(b.actual_date)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td>
         ${b.file_count > 0
           ? `<span class="badge badge-blue">📎 ${b.file_count}</span>`
           : `<span style="color:var(--muted);font-size:11px">нет</span>`}
+        ${b.problem_count > 0
+          ? `<span class="badge badge-red" style="margin-left:6px">⚠ ${b.problem_count}</span>`
+          : ``}
       </td>
       <td>
         <div style="display:flex;gap:5px">
           <button class="btn btn-ghost btn-xs" onclick="openEditBL(${b.id})">✏️ Ред.</button>
+          <button class="btn btn-red btn-xs" onclick="openProblemModal(${b.id},'${esc(b.code)}')">⚠️ Проблема</button>
           <button class="btn btn-green btn-xs" onclick="sendOne(${b.id},'${esc(b.code)}')" ${!b.chat_id?'disabled title="Нет chat_id"':''}>📤</button>
           <button class="btn btn-red btn-xs" onclick="deleteBL(${b.id})">✕</button>
         </div>
       </td>
     </tr>`).join("") :
-    `<tr><td colspan="6"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
+    `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
 }
 
 function filterBL() {
@@ -1545,6 +1854,8 @@ async function loadChatsPage() {
 function openAddBLModal() {
   document.getElementById("add-bl-code").value = "";
   document.getElementById("add-bl-client").value = "";
+  document.getElementById("add-bl-expected-date").value = "";
+  document.getElementById("add-bl-actual-date").value = "";
   const pendingChatId = pendingChatTransfer?.chat_id || "";
   document.getElementById("add-bl-chat").value = pendingChatId;
   populateChatSelect("add-bl-chat-select", pendingChatId);
@@ -1556,9 +1867,11 @@ async function addBL() {
   const code        = document.getElementById("add-bl-code").value.trim();
   const client_name = document.getElementById("add-bl-client").value.trim();
   const chat_id     = document.getElementById("add-bl-chat").value.trim();
+  const expected_date = document.getElementById("add-bl-expected-date").value.trim();
+  const actual_date = document.getElementById("add-bl-actual-date").value.trim();
   if (!code) { toast("BL код обязателен","err"); return; }
   try {
-    await api("/api/bl","POST",{batch_id:parseInt(batch_id), code, client_name, chat_id});
+    await api("/api/bl","POST",{batch_id:parseInt(batch_id), code, client_name, chat_id, expected_date, actual_date});
     toast("✅ BL код "+code+" добавлен","ok");
     closeModal("add-bl-modal");
     clearPendingChatTransfer();
@@ -1574,6 +1887,8 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-id").value = blId;
   document.getElementById("edit-bl-client").value = bl.client_name||"";
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
+  document.getElementById("edit-bl-expected-date").value = bl.expected_date || "";
+  document.getElementById("edit-bl-actual-date").value = bl.actual_date || "";
   populateChatSelect("edit-bl-chat-select", bl.chat_id||"");
   document.getElementById("edit-bl-status").value = bl.status;
   document.getElementById("edit-bl-file-input").dataset.blId = blId;
@@ -1609,6 +1924,8 @@ async function saveBL() {
       client_name: document.getElementById("edit-bl-client").value.trim(),
       chat_id:     document.getElementById("edit-bl-chat").value.trim(),
       status:      document.getElementById("edit-bl-status").value,
+      expected_date: document.getElementById("edit-bl-expected-date").value.trim(),
+      actual_date: document.getElementById("edit-bl-actual-date").value.trim(),
     });
     toast("✅ Сохранено","ok");
     closeModal("edit-bl-modal");
@@ -1647,6 +1964,47 @@ async function deleteFile(fileId) {
     toast("Файл удалён","ok");
     loadBLFiles(editingBLId);
   } catch(e) { toast(e.message,"err"); }
+}
+
+function problemBadge(type) {
+  const label = PROBLEM_TYPES[type] || type || "Проблема";
+  const cls = type === "damage"
+    ? "badge badge-red"
+    : type === "delay"
+      ? "badge badge-amber"
+      : type === "shortage"
+        ? "badge badge-purple"
+        : "badge badge-blue";
+  return `<span class="${cls}">${label}</span>`;
+}
+
+function openProblemModal(blId, code) {
+  document.getElementById("problem-bl-id").value = blId;
+  document.getElementById("problem-bl-code").value = code;
+  document.getElementById("problem-type").value = "delay";
+  document.getElementById("problem-description").value = "";
+  openModal("problem-modal");
+}
+
+async function saveProblem() {
+  const bl_id = parseInt(document.getElementById("problem-bl-id").value, 10);
+  const problem_type = document.getElementById("problem-type").value;
+  const description = document.getElementById("problem-description").value.trim();
+  if (!bl_id) {
+    toast("BL не выбран","err");
+    return;
+  }
+  try {
+    await api("/api/problems","POST",{ bl_id, problem_type, description });
+    toast("Проблема сохранена","ok");
+    closeModal("problem-modal");
+    if (currentBatchId) await loadBatchDetail(currentBatchId);
+    loadDashboard();
+    if (document.getElementById("page-problems").classList.contains("active")) loadProblemsPage();
+    if (document.getElementById("page-notifications").classList.contains("active")) loadNotificationsPage();
+  } catch(e) {
+    toast(e.message,"err");
+  }
 }
 
 // ── Send ──────────────────────────────────────────────────
@@ -1690,6 +2048,148 @@ async function sendOne(blId, code) {
 // ══════════════════════════════════════════════════════════
 // TEMPLATE
 // ══════════════════════════════════════════════════════════
+async function loadProblemsPage() {
+  try {
+    await ensureBatchesLoaded();
+    populateProblemBatchFilter();
+    const qs = buildProblemQuery();
+    const problems = await api("/api/problems" + (qs ? `?${qs}` : ""));
+    const table = document.getElementById("problems-table");
+    const count = document.getElementById("problems-count");
+    count.textContent = `${problems.length} инцидентов`;
+    table.innerHTML = problems.length ? problems.map(item=>`
+      <tr>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(item.created_at)}</td>
+        <td>${esc(item.batch_name)}</td>
+        <td class="mono" style="color:var(--amber)">${esc(item.bl_code)}</td>
+        <td>${esc(item.client_name || "—")}</td>
+        <td>${problemBadge(item.problem_type)}</td>
+        <td style="max-width:340px">${esc(item.description || "—")}</td>
+        <td><button class="btn btn-ghost btn-xs" onclick='goto("batches");openBatchDetail(${item.batch_id}, ${JSON.stringify(item.batch_name)})'>Открыть партию</button></td>
+      </tr>`).join("") :
+      `<tr><td colspan="7"><div class="empty"><div class="empty-icon">⚠️</div><p>Инцидентов по выбранным фильтрам нет</p></div></td></tr>`;
+  } catch(e) { toast(e.message,"err"); }
+}
+
+function buildProblemQuery() {
+  const params = new URLSearchParams();
+  const type = document.getElementById("problem-filter-type")?.value || "";
+  const dateFrom = document.getElementById("problem-filter-from")?.value || "";
+  const dateTo = document.getElementById("problem-filter-to")?.value || "";
+  const batchId = document.getElementById("problem-filter-batch")?.value || "";
+  if (type) params.set("type", type);
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  if (batchId) params.set("batch_id", batchId);
+  return params.toString();
+}
+
+function populateProblemBatchFilter() {
+  const select = document.getElementById("problem-filter-batch");
+  if (!select) return;
+  const current = select.value || "";
+  select.innerHTML = `<option value="">Все партии</option>` + allBatches.map(batch=>`
+    <option value="${batch.id}" ${String(batch.id)===String(current) ? "selected" : ""}>${esc(batch.name)}</option>
+  `).join("");
+}
+
+function resetProblemFilters() {
+  document.getElementById("problem-filter-type").value = "";
+  document.getElementById("problem-filter-from").value = "";
+  document.getElementById("problem-filter-to").value = "";
+  document.getElementById("problem-filter-batch").value = "";
+  loadProblemsPage();
+}
+
+function exportProblems() {
+  const qs = buildProblemQuery();
+  window.open("/api/problems/export" + (qs ? `?${qs}` : ""), "_blank");
+}
+
+async function loadClientsPage() {
+  try {
+    allClients = await api("/api/clients");
+    showClientsList(false);
+    renderClients(allClients);
+  } catch(e) { toast(e.message,"err"); }
+}
+
+function renderClients(list) {
+  const table = document.getElementById("clients-table");
+  table.innerHTML = list.length ? list.map(client=>`
+    <tr>
+      <td style="font-weight:600">${esc(client.client_name)}</td>
+      <td><span class="badge badge-muted">${client.bl_count}</span></td>
+      <td><span class="badge badge-blue">${client.batch_count}</span></td>
+      <td>${client.problem_count ? `<span class="badge badge-red">${client.problem_count}</span>` : `<span style="color:var(--muted)">0</span>`}</td>
+      <td>${client.late_count ? `<span class="badge badge-amber">${client.late_count}</span>` : `<span style="color:var(--muted)">0</span>`}</td>
+      <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(client.last_bl_at || "—")}</td>
+      <td><button class="btn btn-ghost btn-xs" onclick='openClientDetail(${JSON.stringify(client.client_name)})'>Открыть</button></td>
+    </tr>`).join("") :
+    `<tr><td colspan="7"><div class="empty"><div class="empty-icon">👥</div><p>Клиенты пока не добавлены</p></div></td></tr>`;
+}
+
+function filterClients() {
+  const q = (document.getElementById("client-search").value || "").toLowerCase();
+  renderClients(allClients.filter(client => client.client_name.toLowerCase().includes(q)));
+}
+
+function showClientsList(resetSearch=true) {
+  currentClientName = "";
+  document.getElementById("clients-list-view").style.display = "";
+  document.getElementById("client-detail").style.display = "none";
+  if (resetSearch) {
+    const input = document.getElementById("client-search");
+    if (input) input.value = "";
+  }
+}
+
+async function openClientDetail(clientName) {
+  currentClientName = clientName;
+  try {
+    const data = await api("/api/clients/" + encodeURIComponent(clientName));
+    document.getElementById("clients-list-view").style.display = "none";
+    document.getElementById("client-detail").style.display = "block";
+    document.getElementById("client-detail-title").innerHTML = `${esc(data.summary.client_name)} <em>/ Карточка</em>`;
+    document.getElementById("client-summary").innerHTML = `
+      <div class="mini-stat"><div class="mini-stat-v">${data.summary.bl_count}</div><div class="mini-stat-l">BL кодов</div></div>
+      <div class="mini-stat"><div class="mini-stat-v">${data.summary.batch_count}</div><div class="mini-stat-l">Партий</div></div>
+      <div class="mini-stat"><div class="mini-stat-v">${data.summary.problem_count}</div><div class="mini-stat-l">Проблем</div></div>
+      <div class="mini-stat"><div class="mini-stat-v">${data.summary.late_count}</div><div class="mini-stat-l">Опаздывают</div></div>
+      <div class="mini-stat"><div class="mini-stat-v">${data.summary.delivered_count}</div><div class="mini-stat-l">Доставлено</div></div>
+      <div class="mini-stat"><div class="mini-stat-v">${data.summary.active_count}</div><div class="mini-stat-l">Активно</div></div>
+    `;
+    document.getElementById("client-bl-table").innerHTML = data.bl_codes.length ? data.bl_codes.map(item=>`
+      <tr class="${item.is_late ? 'row-late' : ''}">
+        <td class="mono" style="color:var(--amber)">${esc(item.code)}</td>
+        <td>${esc(item.batch_name)}</td>
+        <td>${statusBadge(item.status)}</td>
+        <td>${item.expected_date ? `<span class="mono">${esc(item.expected_date)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+        <td>${item.actual_date ? `<span class="mono">${esc(item.actual_date)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+        <td>${item.problem_count ? `<span class="badge badge-red">${item.problem_count}</span>` : `<span style="color:var(--muted)">0</span>`}</td>
+        <td><button class="btn btn-ghost btn-xs" onclick='goto("batches");openBatchDetail(${item.batch_id}, ${JSON.stringify(item.batch_name)})'>Перейти</button></td>
+      </tr>`).join("") :
+      `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📦</div><p>У клиента пока нет BL кодов</p></div></td></tr>`;
+  } catch(e) { toast(e.message,"err"); }
+}
+
+async function loadNotificationsPage() {
+  try {
+    const notifications = await api("/api/notifications?limit=30");
+    const list = document.getElementById("notifications-list");
+    list.innerHTML = notifications.length ? notifications.map(item=>`
+      <div class="notif-item ${esc(item.level || 'low')}">
+        <div>
+          <div style="font-weight:600">${esc(item.title)}</div>
+          <div class="attention-meta">${esc(item.message || "—")}</div>
+          <div class="attention-meta">${esc(item.batch_name || "Без партии")} · ${esc(item.created_at || "")}</div>
+        </div>
+        ${item.batch_id ? `<button class="btn btn-ghost btn-xs" onclick='goto("batches");openBatchDetail(${item.batch_id}, ${JSON.stringify(item.batch_name || "")})'>Открыть</button>` : ""}
+      </div>`).join("") :
+      `<div class="empty" style="padding:16px"><div class="empty-icon">🔔</div><p>Новых уведомлений нет</p></div>`;
+  } catch(e) { toast(e.message,"err"); }
+}
+
 async function loadTemplate() {
   try {
     const data = await api("/api/template");

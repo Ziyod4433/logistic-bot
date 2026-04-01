@@ -12,6 +12,13 @@ STATUSES = [
     "Доставлен",
 ]
 
+PROBLEM_TYPES = {
+    "damage": "Повреждение",
+    "delay": "Опоздание",
+    "shortage": "Недостача",
+    "other": "Другое",
+}
+
 DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 📦 BL код: {bl_code}
 👤 Клиент: {client_name}
@@ -25,12 +32,14 @@ DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 
 DEFAULT_STATUS_DETAILS = {
     "Принят": "✅ Груз принят к перевозке и оформляется на складе отправления.",
-    "Хоргос": "🛃 Груз находится на таможне Хоргос. Ожидайте прохождения таможенного контроля (1-3 дня).",
+    "Хоргос": "🛃 Груз находится на таможне Хоргос. Ожидайте прохождения контроля в течение 1-3 дней.",
     "Алматы": "🏙 Груз прибыл в Алматы. Идёт сортировка и подготовка к дальнейшей отправке.",
-    "В пути до Ташкента": "🚚 Груз в пути до Ташкента. Ориентировочное время прибытия — 1-2 дня.",
+    "В пути до Ташкента": "🚛 Груз в пути до Ташкента. Ориентировочное время прибытия — 1-2 дня.",
     "Ташкент": "📦 Груз прибыл в Ташкент. Подготовка к выдаче клиенту.",
     "Доставлен": "✅ Груз успешно доставлен. Спасибо, что выбрали нас!",
 }
+
+STUCK_DAYS = 5
 
 
 def get_conn():
@@ -39,6 +48,36 @@ def get_conn():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def _table_has_column(conn, table_name: str, column_name: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return any(row["name"] == column_name for row in rows)
+
+
+def _late_sql(alias: str = "bl") -> str:
+    return f"""
+    CASE
+        WHEN COALESCE({alias}.expected_date, '') = '' THEN 0
+        WHEN COALESCE({alias}.actual_date, '') != ''
+             AND date({alias}.actual_date) > date({alias}.expected_date) THEN 1
+        WHEN COALESCE({alias}.actual_date, '') = ''
+             AND {alias}.status != 'Доставлен'
+             AND date('now','localtime') > date({alias}.expected_date) THEN 1
+        ELSE 0
+    END
+    """
+
+
+def _stuck_sql(alias: str = "bl") -> str:
+    return f"""
+    CASE
+        WHEN {alias}.status = 'Доставлен' THEN 0
+        WHEN julianday('now','localtime') - julianday(COALESCE(NULLIF({alias}.status_updated_at, ''), {alias}.created_at)) >= {STUCK_DAYS}
+            THEN 1
+        ELSE 0
+    END
+    """
 
 
 def init_db():
@@ -59,6 +98,9 @@ def init_db():
             client_name TEXT DEFAULT '',
             chat_id TEXT DEFAULT '',
             status TEXT DEFAULT 'Принят',
+            expected_date TEXT DEFAULT '',
+            actual_date TEXT DEFAULT '',
+            status_updated_at TEXT DEFAULT (datetime('now','localtime')),
             created_at TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(batch_id, code)
         );
@@ -110,10 +152,38 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime')),
             last_seen_at TEXT DEFAULT (datetime('now','localtime'))
         );
+
+        CREATE TABLE IF NOT EXISTS problems (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
+            batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+            problem_type TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         """
     )
 
-    row = cursor.execute("SELECT id FROM message_template WHERE id=1").fetchone()
+    legacy_columns = [
+        ("expected_date", "TEXT DEFAULT ''"),
+        ("actual_date", "TEXT DEFAULT ''"),
+        ("status_updated_at", "TEXT DEFAULT ''"),
+    ]
+    for column_name, column_def in legacy_columns:
+        if not _table_has_column(conn, "bl_codes", column_name):
+            conn.execute(f"ALTER TABLE bl_codes ADD COLUMN {column_name} {column_def}")
+
+    conn.execute(
+        """
+        UPDATE bl_codes
+        SET status_updated_at = COALESCE(NULLIF(status_updated_at, ''), created_at, datetime('now','localtime'))
+        WHERE status_updated_at IS NULL OR status_updated_at = ''
+        """
+    )
+
+    row = cursor.execute("SELECT id FROM message_template WHERE id = 1").fetchone()
     if not row:
         cursor.execute("INSERT INTO message_template(id, content) VALUES(1, ?)", (DEFAULT_TEMPLATE,))
 
@@ -142,13 +212,18 @@ def create_batch(name):
 def get_batches():
     conn = get_conn()
     rows = conn.execute(
-        """
-        SELECT b.*,
-               COUNT(bl.id) AS bl_count,
-               SUM(CASE WHEN bl.chat_id != '' THEN 1 ELSE 0 END) AS linked_count
+        f"""
+        SELECT
+            b.*,
+            (SELECT COUNT(*) FROM bl_codes bl WHERE bl.batch_id = b.id) AS bl_count,
+            (SELECT COUNT(*) FROM bl_codes bl WHERE bl.batch_id = b.id AND bl.chat_id != '') AS linked_count,
+            (SELECT COUNT(*) FROM bl_codes bl WHERE bl.batch_id = b.id AND {_late_sql('bl')} = 1) AS late_count,
+            (
+                SELECT COUNT(DISTINCT p.bl_id)
+                FROM problems p
+                WHERE p.batch_id = b.id AND p.status = 'open'
+            ) AS problem_count
         FROM batches b
-        LEFT JOIN bl_codes bl ON bl.batch_id = b.id
-        GROUP BY b.id
         ORDER BY b.created_at DESC
         """
     ).fetchall()
@@ -170,15 +245,22 @@ def delete_batch(batch_id):
     conn.close()
 
 
-def add_bl(batch_id, code, client_name="", chat_id=""):
+def add_bl(batch_id, code, client_name="", chat_id="", expected_date="", actual_date=""):
     conn = get_conn()
     try:
         conn.execute(
             """
-            INSERT INTO bl_codes(batch_id, code, client_name, chat_id)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO bl_codes(batch_id, code, client_name, chat_id, expected_date, actual_date, status_updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
             """,
-            (batch_id, code.upper().strip(), client_name, chat_id),
+            (
+                batch_id,
+                code.upper().strip(),
+                client_name.strip(),
+                chat_id.strip(),
+                (expected_date or "").strip(),
+                (actual_date or "").strip(),
+            ),
         )
         conn.commit()
         return True
@@ -191,12 +273,16 @@ def add_bl(batch_id, code, client_name="", chat_id=""):
 def get_bl_by_batch(batch_id):
     conn = get_conn()
     rows = conn.execute(
-        """
-        SELECT bl.*, COUNT(f.id) AS file_count
+        f"""
+        SELECT
+            bl.*,
+            (SELECT COUNT(*) FROM files f WHERE f.bl_id = bl.id) AS file_count,
+            (SELECT COUNT(*) FROM problems p WHERE p.bl_id = bl.id AND p.status = 'open') AS problem_count,
+            (SELECT p.problem_type FROM problems p WHERE p.bl_id = bl.id AND p.status = 'open' ORDER BY p.created_at DESC LIMIT 1) AS latest_problem_type,
+            {_late_sql('bl')} AS is_late,
+            {_stuck_sql('bl')} AS is_stuck
         FROM bl_codes bl
-        LEFT JOIN files f ON f.bl_id = bl.id
         WHERE bl.batch_id = ?
-        GROUP BY bl.id
         ORDER BY bl.created_at
         """,
         (batch_id,),
@@ -229,11 +315,32 @@ def find_bl_by_code(code):
     return dict(row) if row else None
 
 
-def update_bl(bl_id, client_name, chat_id, status):
+def update_bl(bl_id, client_name, chat_id, status, expected_date="", actual_date=""):
     conn = get_conn()
     conn.execute(
-        "UPDATE bl_codes SET client_name = ?, chat_id = ?, status = ? WHERE id = ?",
-        (client_name, chat_id, status, bl_id),
+        """
+        UPDATE bl_codes
+        SET
+            client_name = ?,
+            chat_id = ?,
+            status = ?,
+            expected_date = ?,
+            actual_date = ?,
+            status_updated_at = CASE
+                WHEN status != ? THEN datetime('now','localtime')
+                ELSE status_updated_at
+            END
+        WHERE id = ?
+        """,
+        (
+            client_name.strip(),
+            chat_id.strip(),
+            status,
+            (expected_date or "").strip(),
+            (actual_date or "").strip(),
+            status,
+            bl_id,
+        ),
     )
     conn.commit()
     conn.close()
@@ -308,6 +415,13 @@ def get_stats():
         "sent": conn.execute("SELECT COUNT(*) FROM send_logs WHERE success = 1").fetchone()[0],
         "failed": conn.execute("SELECT COUNT(*) FROM send_logs WHERE success = 0").fetchone()[0],
         "delivered": conn.execute("SELECT COUNT(*) FROM bl_codes WHERE status = 'Доставлен'").fetchone()[0],
+        "late": conn.execute(f"SELECT COUNT(*) FROM bl_codes bl WHERE {_late_sql('bl')} = 1").fetchone()[0],
+        "problematic": conn.execute(
+            "SELECT COUNT(DISTINCT bl_id) FROM problems WHERE status = 'open'"
+        ).fetchone()[0],
+        "clients": conn.execute(
+            "SELECT COUNT(DISTINCT TRIM(client_name)) FROM bl_codes WHERE TRIM(client_name) != ''"
+        ).fetchone()[0],
     }
     conn.close()
     return stats
@@ -432,3 +546,306 @@ def get_telegram_chats(include_inactive=False):
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def create_problem(bl_id, problem_type, description=""):
+    conn = get_conn()
+    bl = conn.execute("SELECT id, batch_id FROM bl_codes WHERE id = ?", (bl_id,)).fetchone()
+    if not bl:
+        conn.close()
+        return False
+
+    conn.execute(
+        """
+        INSERT INTO problems(bl_id, batch_id, problem_type, description, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'open', datetime('now','localtime'), datetime('now','localtime'))
+        """,
+        (bl["id"], bl["batch_id"], problem_type, (description or "").strip()),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_problems(problem_type="", date_from="", date_to="", batch_id=""):
+    conn = get_conn()
+    conditions = []
+    params = []
+
+    if problem_type:
+        conditions.append("p.problem_type = ?")
+        params.append(problem_type)
+    if batch_id:
+        conditions.append("p.batch_id = ?")
+        params.append(batch_id)
+    if date_from:
+        conditions.append("date(p.created_at) >= date(?)")
+        params.append(date_from)
+    if date_to:
+        conditions.append("date(p.created_at) <= date(?)")
+        params.append(date_to)
+
+    where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    rows = conn.execute(
+        f"""
+        SELECT
+            p.*,
+            bl.code AS bl_code,
+            bl.client_name,
+            bl.chat_id,
+            bl.status AS bl_status,
+            bl.expected_date,
+            bl.actual_date,
+            {_late_sql('bl')} AS is_late,
+            b.name AS batch_name
+        FROM problems p
+        JOIN bl_codes bl ON bl.id = p.bl_id
+        JOIN batches b ON b.id = p.batch_id
+        {where_sql}
+        ORDER BY p.created_at DESC
+        """,
+        params,
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_clients():
+    conn = get_conn()
+    rows = conn.execute(
+        f"""
+        SELECT
+            TRIM(bl.client_name) AS client_name,
+            COUNT(*) AS bl_count,
+            COUNT(DISTINCT bl.batch_id) AS batch_count,
+            SUM(CASE WHEN bl.status = 'Доставлен' THEN 1 ELSE 0 END) AS delivered_count,
+            SUM(CASE WHEN {_late_sql('bl')} = 1 THEN 1 ELSE 0 END) AS late_count,
+            (
+                SELECT COUNT(*)
+                FROM problems p
+                JOIN bl_codes bl2 ON bl2.id = p.bl_id
+                WHERE TRIM(bl2.client_name) = TRIM(bl.client_name)
+            ) AS problem_count,
+            MAX(bl.created_at) AS last_bl_at
+        FROM bl_codes bl
+        WHERE TRIM(bl.client_name) != ''
+        GROUP BY TRIM(bl.client_name)
+        ORDER BY last_bl_at DESC, client_name COLLATE NOCASE ASC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_client_detail(client_name):
+    conn = get_conn()
+    summary_row = conn.execute(
+        f"""
+        SELECT
+            TRIM(bl.client_name) AS client_name,
+            COUNT(*) AS bl_count,
+            COUNT(DISTINCT bl.batch_id) AS batch_count,
+            SUM(CASE WHEN bl.status = 'Доставлен' THEN 1 ELSE 0 END) AS delivered_count,
+            SUM(CASE WHEN bl.status != 'Доставлен' THEN 1 ELSE 0 END) AS active_count,
+            SUM(CASE WHEN {_late_sql('bl')} = 1 THEN 1 ELSE 0 END) AS late_count,
+            (
+                SELECT COUNT(*)
+                FROM problems p
+                JOIN bl_codes bl2 ON bl2.id = p.bl_id
+                WHERE TRIM(bl2.client_name) = ?
+            ) AS problem_count,
+            MAX(bl.created_at) AS last_bl_at
+        FROM bl_codes bl
+        WHERE TRIM(bl.client_name) = ?
+        GROUP BY TRIM(bl.client_name)
+        """,
+        (client_name, client_name),
+    ).fetchone()
+
+    if not summary_row:
+        conn.close()
+        return None
+
+    items = conn.execute(
+        f"""
+        SELECT
+            bl.*,
+            b.name AS batch_name,
+            (SELECT COUNT(*) FROM problems p WHERE p.bl_id = bl.id) AS problem_count,
+            {_late_sql('bl')} AS is_late
+        FROM bl_codes bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE TRIM(bl.client_name) = ?
+        ORDER BY bl.created_at DESC
+        """,
+        (client_name,),
+    ).fetchall()
+    conn.close()
+    return {
+        "summary": dict(summary_row),
+        "bl_codes": [dict(row) for row in items],
+    }
+
+
+def get_attention_items(limit=10):
+    conn = get_conn()
+    rows = conn.execute(
+        f"""
+        SELECT
+            bl.id,
+            bl.code,
+            bl.client_name,
+            bl.status,
+            bl.expected_date,
+            bl.actual_date,
+            bl.status_updated_at,
+            b.id AS batch_id,
+            b.name AS batch_name,
+            {_late_sql('bl')} AS is_late,
+            {_stuck_sql('bl')} AS is_stuck,
+            (SELECT COUNT(*) FROM problems p WHERE p.bl_id = bl.id AND p.status = 'open') AS problem_count,
+            (SELECT p.problem_type FROM problems p WHERE p.bl_id = bl.id AND p.status = 'open' ORDER BY p.created_at DESC LIMIT 1) AS latest_problem_type
+        FROM bl_codes bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE {_late_sql('bl')} = 1
+           OR {_stuck_sql('bl')} = 1
+           OR EXISTS (SELECT 1 FROM problems p WHERE p.bl_id = bl.id AND p.status = 'open')
+        ORDER BY
+            {_late_sql('bl')} DESC,
+            (SELECT COUNT(*) FROM problems p WHERE p.bl_id = bl.id AND p.status = 'open') DESC,
+            bl.status_updated_at ASC,
+            bl.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    conn.close()
+
+    items = []
+    for row in rows:
+        item = dict(row)
+        reasons = []
+        if item["is_late"]:
+            if item.get("actual_date"):
+                reasons.append("факт позже ожидаемой даты")
+            else:
+                reasons.append("груз просрочен")
+        if item["problem_count"]:
+            problem_label = PROBLEM_TYPES.get(item.get("latest_problem_type") or "", "Проблема")
+            reasons.append(f"открытых инцидентов: {item['problem_count']} ({problem_label})")
+        if item["is_stuck"]:
+            reasons.append(f"статус не менялся более {STUCK_DAYS} дней")
+        item["attention_reason"] = " • ".join(reasons)
+        items.append(item)
+    return items
+
+
+def get_notifications(limit=30):
+    conn = get_conn()
+    notifications = []
+
+    problem_rows = conn.execute(
+        """
+        SELECT
+            p.created_at AS event_at,
+            p.problem_type,
+            p.description,
+            b.id AS batch_id,
+            b.name AS batch_name,
+            bl.code AS bl_code,
+            bl.client_name
+        FROM problems p
+        JOIN bl_codes bl ON bl.id = p.bl_id
+        JOIN batches b ON b.id = p.batch_id
+        ORDER BY p.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    for row in problem_rows:
+        item = dict(row)
+        notifications.append(
+            {
+                "kind": "problem",
+                "level": "high" if item["problem_type"] in {"damage", "shortage"} else "medium",
+                "title": f"{item['bl_code']} — {PROBLEM_TYPES.get(item['problem_type'], 'Проблема')}",
+                "message": item["description"] or item["client_name"] or "Новый инцидент по грузу",
+                "batch_id": item["batch_id"],
+                "batch_name": item["batch_name"],
+                "created_at": item["event_at"],
+            }
+        )
+
+    late_rows = conn.execute(
+        f"""
+        SELECT
+            bl.expected_date AS event_at,
+            b.id AS batch_id,
+            b.name AS batch_name,
+            bl.code AS bl_code,
+            bl.client_name,
+            bl.expected_date,
+            bl.actual_date
+        FROM bl_codes bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE {_late_sql('bl')} = 1
+        ORDER BY date(bl.expected_date) DESC, bl.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    for row in late_rows:
+        item = dict(row)
+        late_msg = (
+            f"Факт: {item['actual_date']} позже ожидания {item['expected_date']}"
+            if item["actual_date"]
+            else f"Ожидалась дата {item['expected_date']}, груз ещё не закрыт"
+        )
+        notifications.append(
+            {
+                "kind": "late",
+                "level": "high",
+                "title": f"{item['bl_code']} — опаздывает",
+                "message": late_msg,
+                "batch_id": item["batch_id"],
+                "batch_name": item["batch_name"],
+                "created_at": item["event_at"] or "",
+            }
+        )
+
+    failed_rows = conn.execute(
+        """
+        SELECT
+            sent_at AS event_at,
+            bl_id,
+            bl_code,
+            batch_name,
+            error_msg
+        FROM send_logs
+        WHERE success = 0
+        ORDER BY sent_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    for row in failed_rows:
+        item = dict(row)
+        batch_id_row = conn.execute(
+            "SELECT batch_id FROM bl_codes WHERE id = ?",
+            (item["bl_id"],),
+        ).fetchone()
+        notifications.append(
+            {
+                "kind": "send_fail",
+                "level": "medium",
+                "title": f"{item['bl_code']} — ошибка отправки",
+                "message": item["error_msg"] or "Telegram не принял сообщение или файл",
+                "batch_id": batch_id_row["batch_id"] if batch_id_row else None,
+                "batch_name": item["batch_name"],
+                "created_at": item["event_at"],
+            }
+        )
+
+    conn.close()
+    notifications.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    return notifications[:limit]
