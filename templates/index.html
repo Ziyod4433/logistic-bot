@@ -460,6 +460,16 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .tbl tbody tr:hover td { background: rgba(255,255,255,.03); }
 .tbl tbody tr.row-late td { background: rgba(244,63,94,.06); }
 .tbl tbody tr.row-problem td { box-shadow: inset 3px 0 0 rgba(245,166,35,.35); }
+.comm-check {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--amber);
+  cursor: pointer;
+}
+.comm-check:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
 
 .mono { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
 
@@ -2402,6 +2412,14 @@ function updateCommunicationCount(totalRows=0) {
 function renderCommunicationRecipientsTable(totalRows=0) {
   const table = document.getElementById("communication-recipients-table");
   if (!table) return;
+  const recipientsCard = table.closest(".card");
+  const selectHead = table.closest("table")?.querySelector("thead th:first-child");
+  if (selectHead) selectHead.innerHTML = "☑";
+  const title = recipientsCard?.querySelector(".card-title");
+  if (title && !title.dataset.iconified) {
+    title.innerHTML = "👥 Кому отправить";
+    title.dataset.iconified = "1";
+  }
 
   if (!communicationRecipients.length) {
     table.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty-icon">💬</div><p>Нет клиентских групп с chat_id для опроса</p></div></td></tr>`;
@@ -2419,7 +2437,7 @@ function renderCommunicationRecipientsTable(totalRows=0) {
     return `
       <tr>
         <td style="width:40px">
-          <input type="checkbox"
+          <input class="comm-check" type="checkbox"
                  ${checked ? "checked" : ""}
                  ${disabled}
                  onchange="toggleCommunicationRecipient('${esc(chatId)}', this.checked)">
