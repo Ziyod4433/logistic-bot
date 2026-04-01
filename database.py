@@ -1084,10 +1084,11 @@ def _get_latest_chat_recipient(conn, chat_id):
             bl.id AS bl_id,
             bl.batch_id,
             bl.chat_id,
-            COALESCE(NULLIF(TRIM(bl.client_name), ''), bl.code) AS client_name,
+            COALESCE(NULLIF(TRIM(tc.title), ''), NULLIF(TRIM(bl.client_name), ''), bl.code) AS client_name,
             b.name AS batch_name
         FROM bl_codes bl
         JOIN batches b ON b.id = bl.batch_id
+        LEFT JOIN telegram_chats tc ON tc.chat_id = bl.chat_id
         WHERE bl.chat_id = ?
         ORDER BY bl.created_at DESC
         LIMIT 1
@@ -1105,10 +1106,11 @@ def get_communication_recipients():
             bl.id AS bl_id,
             bl.batch_id,
             bl.chat_id,
-            COALESCE(NULLIF(TRIM(bl.client_name), ''), bl.code) AS client_name,
+            COALESCE(NULLIF(TRIM(tc.title), ''), NULLIF(TRIM(bl.client_name), ''), bl.code) AS client_name,
             b.name AS batch_name
         FROM bl_codes bl
         JOIN batches b ON b.id = bl.batch_id
+        LEFT JOIN telegram_chats tc ON tc.chat_id = bl.chat_id
         WHERE bl.chat_id != ''
           AND bl.id = (
               SELECT bl2.id
@@ -1357,7 +1359,7 @@ def get_communication_rate(month_key):
             d.id AS dispatch_id,
             d.month_key,
             d.chat_id,
-            d.client_name,
+            COALESCE(NULLIF(TRIM(tc.title), ''), NULLIF(TRIM(d.client_name), ''), d.chat_id) AS client_name,
             d.sent_at,
             e.voter_user_id,
             e.voter_name,
@@ -1365,6 +1367,7 @@ def get_communication_rate(month_key):
             e.score,
             e.submitted_at
         FROM communication_survey_dispatches d
+        LEFT JOIN telegram_chats tc ON tc.chat_id = d.chat_id
         LEFT JOIN communication_rating_events e
             ON e.dispatch_id = d.id
         WHERE d.month_key = ?
