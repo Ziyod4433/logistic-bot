@@ -98,6 +98,11 @@ def init_db():
             client_name TEXT DEFAULT '',
             chat_id TEXT DEFAULT '',
             status TEXT DEFAULT 'Принят',
+            cargo_type TEXT DEFAULT '',
+            weight_kg REAL NOT NULL DEFAULT 0,
+            volume_cbm REAL NOT NULL DEFAULT 0,
+            quantity_places INTEGER NOT NULL DEFAULT 0,
+            cargo_description TEXT DEFAULT '',
             expected_date TEXT DEFAULT '',
             actual_date TEXT DEFAULT '',
             status_updated_at TEXT DEFAULT (datetime('now','localtime')),
@@ -167,6 +172,11 @@ def init_db():
     )
 
     legacy_columns = [
+        ("cargo_type", "TEXT DEFAULT ''"),
+        ("weight_kg", "REAL NOT NULL DEFAULT 0"),
+        ("volume_cbm", "REAL NOT NULL DEFAULT 0"),
+        ("quantity_places", "INTEGER NOT NULL DEFAULT 0"),
+        ("cargo_description", "TEXT DEFAULT ''"),
         ("expected_date", "TEXT DEFAULT ''"),
         ("actual_date", "TEXT DEFAULT ''"),
         ("status_updated_at", "TEXT DEFAULT ''"),
@@ -245,19 +255,82 @@ def delete_batch(batch_id):
     conn.close()
 
 
-def add_bl(batch_id, code, client_name="", chat_id="", expected_date="", actual_date=""):
+def _to_float(value):
+    if value in (None, ""):
+        return 0.0
+    try:
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _to_int(value):
+    if value in (None, ""):
+        return 0
+    try:
+        return int(float(str(value).replace(",", ".")))
+    except (TypeError, ValueError):
+        return 0
+
+
+def format_cargo_info(bl: dict) -> str:
+    parts = []
+    cargo_type = (bl.get("cargo_type") or "").strip()
+    if cargo_type:
+        parts.append(f"Вид товара: {cargo_type}")
+
+    weight = _to_float(bl.get("weight_kg"))
+    if weight:
+        parts.append(f"Вес: {weight:g} кг")
+
+    volume = _to_float(bl.get("volume_cbm"))
+    if volume:
+        parts.append(f"Объём: {volume:g} м³")
+
+    quantity = _to_int(bl.get("quantity_places"))
+    if quantity:
+        parts.append(f"Количество: {quantity} мест")
+
+    description = (bl.get("cargo_description") or "").strip()
+    if description:
+        parts.append(f"Описание: {description}")
+
+    return "\n".join(parts) if parts else "Грузовые параметры не указаны."
+
+
+def add_bl(
+    batch_id,
+    code,
+    client_name="",
+    chat_id="",
+    expected_date="",
+    actual_date="",
+    cargo_type="",
+    weight_kg=0,
+    volume_cbm=0,
+    quantity_places=0,
+    cargo_description="",
+):
     conn = get_conn()
     try:
         conn.execute(
             """
-            INSERT INTO bl_codes(batch_id, code, client_name, chat_id, expected_date, actual_date, status_updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+            INSERT INTO bl_codes(
+                batch_id, code, client_name, chat_id, cargo_type, weight_kg, volume_cbm, quantity_places,
+                cargo_description, expected_date, actual_date, status_updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
             """,
             (
                 batch_id,
                 code.upper().strip(),
                 client_name.strip(),
                 chat_id.strip(),
+                (cargo_type or "").strip(),
+                _to_float(weight_kg),
+                _to_float(volume_cbm),
+                _to_int(quantity_places),
+                (cargo_description or "").strip(),
                 (expected_date or "").strip(),
                 (actual_date or "").strip(),
             ),
@@ -315,7 +388,19 @@ def find_bl_by_code(code):
     return dict(row) if row else None
 
 
-def update_bl(bl_id, client_name, chat_id, status, expected_date="", actual_date=""):
+def update_bl(
+    bl_id,
+    client_name,
+    chat_id,
+    status,
+    expected_date="",
+    actual_date="",
+    cargo_type="",
+    weight_kg=0,
+    volume_cbm=0,
+    quantity_places=0,
+    cargo_description="",
+):
     conn = get_conn()
     conn.execute(
         """
@@ -324,6 +409,11 @@ def update_bl(bl_id, client_name, chat_id, status, expected_date="", actual_date
             client_name = ?,
             chat_id = ?,
             status = ?,
+            cargo_type = ?,
+            weight_kg = ?,
+            volume_cbm = ?,
+            quantity_places = ?,
+            cargo_description = ?,
             expected_date = ?,
             actual_date = ?,
             status_updated_at = CASE
@@ -336,6 +426,11 @@ def update_bl(bl_id, client_name, chat_id, status, expected_date="", actual_date
             client_name.strip(),
             chat_id.strip(),
             status,
+            (cargo_type or "").strip(),
+            _to_float(weight_kg),
+            _to_float(volume_cbm),
+            _to_int(quantity_places),
+            (cargo_description or "").strip(),
             (expected_date or "").strip(),
             (actual_date or "").strip(),
             status,
@@ -473,6 +568,7 @@ def render_message(bl: dict, batch_name: str) -> str:
         bl_code=bl.get("code", ""),
         client_name=bl.get("client_name", ""),
         status=status,
+        cargo_info=format_cargo_info(bl),
         status_detail=details.get(status, ""),
     )
 

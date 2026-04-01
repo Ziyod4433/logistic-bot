@@ -974,10 +974,14 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
             <table class="tbl" id="bl-table-wrap">
               <thead><tr>
-                <th>BL код</th><th>Клиент</th><th>Chat ID</th><th>Статус</th><th>Ожидаемая дата</th><th>Факт дата</th><th>Файлы</th><th>Действия</th>
+                <th>BL код</th><th>Клиент</th><th>Груз</th><th>Chat ID</th><th>Статус</th><th>Ожидаемая дата</th><th>Факт дата</th><th>Файлы</th><th>Действия</th>
               </tr></thead>
               <tbody id="bl-table"></tbody>
             </table>
+            <div style="padding:14px 18px 18px;border-top:1px solid rgba(255,255,255,.05);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+              <div style="font-size:12px;color:var(--muted2)">Сводка по партии</div>
+              <div id="batch-total-line" style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--text)"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -1123,6 +1127,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
                 <span class="var-pill" onclick="insertVar('{bl_code}')">{bl_code}</span>
                 <span class="var-pill" onclick="insertVar('{client_name}')">{client_name}</span>
                 <span class="var-pill" onclick="insertVar('{status}')">{status}</span>
+                <span class="var-pill" onclick="insertVar('{cargo_info}')">{cargo_info}</span>
                 <span class="var-pill" onclick="insertVar('{status_detail}')">{status_detail}</span>
               </div>
               <div class="form-g">
@@ -1206,6 +1211,30 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <input class="inp" id="add-bl-client" placeholder="ООО Рога и Копыта">
       </div>
     </div>
+    <div class="form-row3">
+      <div class="form-g">
+        <label>Вид товара</label>
+        <input class="inp" id="add-bl-cargo-type" placeholder="Электроника">
+      </div>
+      <div class="form-g">
+        <label>Вес, кг</label>
+        <input class="inp" id="add-bl-weight" placeholder="1200">
+      </div>
+      <div class="form-g">
+        <label>Объём, м³</label>
+        <input class="inp" id="add-bl-volume" placeholder="8.5">
+      </div>
+    </div>
+    <div class="form-row2">
+      <div class="form-g">
+        <label>Количество мест</label>
+        <input class="inp" id="add-bl-quantity" placeholder="48">
+      </div>
+      <div class="form-g">
+        <label>Описание</label>
+        <input class="inp" id="add-bl-description" placeholder="Свободное описание груза">
+      </div>
+    </div>
     <div class="form-g">
       <label>Найденная группа Telegram</label>
       <select class="inp" id="add-bl-chat-select" onchange="applySelectedChat('add')">
@@ -1260,6 +1289,30 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <div class="form-g">
       <label>Статус груза</label>
       <select class="inp" id="edit-bl-status"></select>
+    </div>
+    <div class="form-row3">
+      <div class="form-g">
+        <label>Вид товара</label>
+        <input class="inp" id="edit-bl-cargo-type" placeholder="Электроника">
+      </div>
+      <div class="form-g">
+        <label>Вес, кг</label>
+        <input class="inp" id="edit-bl-weight" placeholder="1200">
+      </div>
+      <div class="form-g">
+        <label>Объём, м³</label>
+        <input class="inp" id="edit-bl-volume" placeholder="8.5">
+      </div>
+    </div>
+    <div class="form-row2">
+      <div class="form-g">
+        <label>Количество мест</label>
+        <input class="inp" id="edit-bl-quantity" placeholder="48">
+      </div>
+      <div class="form-g">
+        <label>Описание</label>
+        <input class="inp" id="edit-bl-description" placeholder="Свободное описание груза">
+      </div>
     </div>
     <div class="form-row2">
       <div class="form-g">
@@ -1610,6 +1663,7 @@ function renderBL(list, batchName) {
     <tr class="${b.is_late ? 'row-late' : ''} ${b.problem_count ? 'row-problem' : ''}">
       <td class="mono" style="color:var(--amber);font-weight:600">${esc(b.code)}</td>
       <td>${b.client_name ? `<span style="font-weight:500">${esc(b.client_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+      <td>${renderCargoChips(b)}</td>
       <td>${renderChatCell(b.chat_id)}</td>
       <td>
         ${statusBadge(b.status)}
@@ -1634,7 +1688,8 @@ function renderBL(list, batchName) {
         </div>
       </td>
     </tr>`).join("") :
-    `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
+    `<tr><td colspan="9"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
+  renderBatchTotals(list);
 }
 
 function filterBL() {
@@ -1657,6 +1712,37 @@ function renderChatCell(chatId) {
     <div style="font-weight:500">${esc(chat.title || "Без названия")}</div>
     <div class="mono" style="font-size:11px;color:var(--muted2)">${esc(chat.chat_id)}</div>
   `;
+}
+
+function num(v) {
+  const n = Number(String(v ?? "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatMeasure(value) {
+  const n = num(value);
+  if (!n) return "";
+  return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, "");
+}
+
+function renderCargoChips(bl) {
+  const items = [];
+  if (bl.cargo_type) items.push(`<span class="badge badge-muted">📦 ${esc(bl.cargo_type)}</span>`);
+  if (num(bl.weight_kg)) items.push(`<span class="badge badge-blue">⚖ ${formatMeasure(bl.weight_kg)} кг</span>`);
+  if (num(bl.volume_cbm)) items.push(`<span class="badge badge-purple">◻ ${formatMeasure(bl.volume_cbm)} м³</span>`);
+  if (num(bl.quantity_places)) items.push(`<span class="badge badge-green"># ${formatMeasure(bl.quantity_places)} мест</span>`);
+  if (!items.length) return `<span style="color:var(--muted);font-size:11px">не указано</span>`;
+  const desc = bl.cargo_description ? `<div style="font-size:11px;color:var(--muted2);margin-top:6px">${esc(bl.cargo_description)}</div>` : "";
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap">${items.join("")}</div>${desc}`;
+}
+
+function renderBatchTotals(list) {
+  const totalBL = list.length;
+  const totalWeight = list.reduce((sum, item)=>sum + num(item.weight_kg), 0);
+  const totalVolume = list.reduce((sum, item)=>sum + num(item.volume_cbm), 0);
+  const totalQty = list.reduce((sum, item)=>sum + num(item.quantity_places), 0);
+  document.getElementById("batch-total-line").textContent =
+    `Итого по партии: ${totalBL} BL · ${formatMeasure(totalWeight)} кг · ${formatMeasure(totalVolume)} м³ · ${formatMeasure(totalQty)} мест`;
 }
 
 function renderKnownChats() {
@@ -1855,6 +1941,11 @@ async function loadChatsPage() {
 function openAddBLModal() {
   document.getElementById("add-bl-code").value = "";
   document.getElementById("add-bl-client").value = "";
+  document.getElementById("add-bl-cargo-type").value = "";
+  document.getElementById("add-bl-weight").value = "";
+  document.getElementById("add-bl-volume").value = "";
+  document.getElementById("add-bl-quantity").value = "";
+  document.getElementById("add-bl-description").value = "";
   document.getElementById("add-bl-expected-date").value = "";
   document.getElementById("add-bl-actual-date").value = "";
   const pendingChatId = pendingChatTransfer?.chat_id || "";
@@ -1867,12 +1958,29 @@ async function addBL() {
   const batch_id    = document.getElementById("add-bl-batch-id").value;
   const code        = document.getElementById("add-bl-code").value.trim();
   const client_name = document.getElementById("add-bl-client").value.trim();
+  const cargo_type  = document.getElementById("add-bl-cargo-type").value.trim();
+  const weight_kg   = document.getElementById("add-bl-weight").value.trim();
+  const volume_cbm  = document.getElementById("add-bl-volume").value.trim();
+  const quantity_places = document.getElementById("add-bl-quantity").value.trim();
+  const cargo_description = document.getElementById("add-bl-description").value.trim();
   const chat_id     = document.getElementById("add-bl-chat").value.trim();
   const expected_date = document.getElementById("add-bl-expected-date").value.trim();
   const actual_date = document.getElementById("add-bl-actual-date").value.trim();
   if (!code) { toast("BL код обязателен","err"); return; }
   try {
-    await api("/api/bl","POST",{batch_id:parseInt(batch_id), code, client_name, chat_id, expected_date, actual_date});
+    await api("/api/bl","POST",{
+      batch_id:parseInt(batch_id),
+      code,
+      client_name,
+      cargo_type,
+      weight_kg,
+      volume_cbm,
+      quantity_places,
+      cargo_description,
+      chat_id,
+      expected_date,
+      actual_date
+    });
     toast("✅ BL код "+code+" добавлен","ok");
     closeModal("add-bl-modal");
     clearPendingChatTransfer();
@@ -1887,6 +1995,11 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-title").textContent = bl.code;
   document.getElementById("edit-bl-id").value = blId;
   document.getElementById("edit-bl-client").value = bl.client_name||"";
+  document.getElementById("edit-bl-cargo-type").value = bl.cargo_type || "";
+  document.getElementById("edit-bl-weight").value = bl.weight_kg || "";
+  document.getElementById("edit-bl-volume").value = bl.volume_cbm || "";
+  document.getElementById("edit-bl-quantity").value = bl.quantity_places || "";
+  document.getElementById("edit-bl-description").value = bl.cargo_description || "";
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
   document.getElementById("edit-bl-expected-date").value = bl.expected_date || "";
   document.getElementById("edit-bl-actual-date").value = bl.actual_date || "";
@@ -1923,6 +2036,11 @@ async function saveBL() {
   try {
     await api("/api/bl/"+id,"PUT",{
       client_name: document.getElementById("edit-bl-client").value.trim(),
+      cargo_type: document.getElementById("edit-bl-cargo-type").value.trim(),
+      weight_kg: document.getElementById("edit-bl-weight").value.trim(),
+      volume_cbm: document.getElementById("edit-bl-volume").value.trim(),
+      quantity_places: document.getElementById("edit-bl-quantity").value.trim(),
+      cargo_description: document.getElementById("edit-bl-description").value.trim(),
       chat_id:     document.getElementById("edit-bl-chat").value.trim(),
       status:      document.getElementById("edit-bl-status").value,
       expected_date: document.getElementById("edit-bl-expected-date").value.trim(),
@@ -2215,6 +2333,7 @@ function updatePreview() {
     .replace(/{bl_code}/g, "BL171")
     .replace(/{client_name}/g, "ООО Пример")
     .replace(/{status}/g, "Алматы")
+    .replace(/{cargo_info}/g, "Вид товара: Электроника\nВес: 1200 кг\nОбъём: 8.5 м³\nКоличество: 48 мест\nОписание: Смартфоны и аксессуары")
     .replace(/{status_detail}/g, "🏙 Груз прибыл в Алматы. Идёт сортировка...");
   document.getElementById("tpl-preview").textContent = preview;
 }

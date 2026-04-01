@@ -370,11 +370,28 @@ def api_add_bl():
     chat_id = (data.get("chat_id") or "").strip()
     expected_date = (data.get("expected_date") or "").strip()
     actual_date = (data.get("actual_date") or "").strip()
+    cargo_type = (data.get("cargo_type") or "").strip()
+    weight_kg = data.get("weight_kg", 0)
+    volume_cbm = data.get("volume_cbm", 0)
+    quantity_places = data.get("quantity_places", 0)
+    cargo_description = (data.get("cargo_description") or "").strip()
 
     if not batch_id or not code:
         return jsonify({"error": "batch_id и code обязательны"}), 400
 
-    if not db.add_bl(batch_id, code, client_name, chat_id, expected_date, actual_date):
+    if not db.add_bl(
+        batch_id,
+        code,
+        client_name,
+        chat_id,
+        expected_date,
+        actual_date,
+        cargo_type,
+        weight_kg,
+        volume_cbm,
+        quantity_places,
+        cargo_description,
+    ):
         return jsonify({"error": "BL-код уже существует в этой партии"}), 400
 
     return jsonify({"ok": True})
@@ -391,6 +408,11 @@ def api_update_bl(bl_id):
         data.get("status", "Принят"),
         data.get("expected_date", ""),
         data.get("actual_date", ""),
+        data.get("cargo_type", ""),
+        data.get("weight_kg", 0),
+        data.get("volume_cbm", 0),
+        data.get("quantity_places", 0),
+        data.get("cargo_description", ""),
     )
     return jsonify({"ok": True})
 
