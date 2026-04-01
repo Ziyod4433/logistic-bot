@@ -1166,7 +1166,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
           <table class="tbl">
             <thead><tr>
-              <th></th><th>Клиент</th><th>Партия</th><th>Chat ID</th><th>Статус</th>
+              <th></th><th>Клиент</th><th>Chat ID</th><th>Статус</th>
             </tr></thead>
             <tbody id="communication-recipients-table"></tbody>
           </table>
@@ -1179,7 +1179,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
           <table class="tbl">
             <thead><tr>
-              <th>Клиент</th><th>Партия</th><th>Chat ID</th><th>Отправлено</th><th>Оценка</th><th>Ответ</th>
+              <th>Клиент</th><th>Кто оценил</th><th>Отправлено</th><th>Оценка</th><th>Ответ</th>
             </tr></thead>
             <tbody id="communication-table"></tbody>
           </table>
@@ -2414,7 +2414,7 @@ function formatCommunicationVoter(row) {
   const username = String(row?.voter_username || "").trim();
   const userId = String(row?.voter_user_id || "").trim();
   if (!name && !username && !userId) {
-    return `<span style="color:var(--muted)">—</span>`;
+    return `<span style="color:var(--muted)">&mdash;</span>`;
   }
   const title = name || (username ? `@${username}` : userId);
   const meta = username ? `@${esc(username)}` : (userId ? `ID ${esc(userId)}` : "");
@@ -2426,20 +2426,37 @@ function formatCommunicationVoter(row) {
   `;
 }
 
+function formatCommunicationScore(score) {
+  const value = Number(score || 0);
+  if (!value) return `<span class="badge badge-muted">ожидается</span>`;
+  const labels = { 1: "YOMON", 4: "O'RTA", 7: "YAXSHI", 10: "ALO" };
+  const badgeClass = value <= 2
+    ? 'badge badge-red'
+    : value <= 5
+      ? 'badge badge-amber'
+      : value <= 8
+        ? 'badge badge-blue'
+        : 'badge badge-green';
+  return `<span class="${badgeClass}">${esc(labels[value] || `${value}/10`)}</span>`;
+}
+
+function formatCommunicationTime(value) {
+  return value
+    ? `<span class="mono" style="font-size:11px;color:var(--muted2)">${esc(value)}</span>`
+    : `<span style="color:var(--muted)">&mdash;</span>`;
+}
+
 function renderCommunicationRecipientsTable(totalRows=0) {
   const table = document.getElementById("communication-recipients-table");
   if (!table) return;
   const recipientsCard = table.closest(".card");
-  const selectHead = table.closest("table")?.querySelector("thead th:first-child");
-  if (selectHead) selectHead.innerHTML = "☑";
+  const headRow = table.closest("table")?.querySelector("thead tr");
+  if (headRow) headRow.innerHTML = "<th>&#9745;</th><th>Клиент</th><th>Chat ID</th><th>Статус</th>";
   const title = recipientsCard?.querySelector(".card-title");
-  if (title && !title.dataset.iconified) {
-    title.innerHTML = "👥 Кому отправить";
-    title.dataset.iconified = "1";
-  }
+  if (title) title.innerHTML = "&#128101; Кому отправить";
 
   if (!communicationRecipients.length) {
-    table.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty-icon">💬</div><p>Нет клиентских групп с chat_id для опроса</p></div></td></tr>`;
+    table.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="empty-icon">&#128172;</div><p>Нет клиентских групп с chat_id для опроса</p></div></td></tr>`;
     updateCommunicationCount(totalRows);
     return;
   }
@@ -2448,7 +2465,7 @@ function renderCommunicationRecipientsTable(totalRows=0) {
     const chatId = getCommunicationChatId(item);
     const checked = selectedCommunicationChats.has(chatId);
     const status = item.already_sent
-      ? `<span class="badge badge-green">Уже отправлен</span>`
+      ? `<span class="badge badge-green">Уже отправляли</span>`
       : `<span class="badge badge-muted">Готов к отправке</span>`;
     return `
       <tr>
@@ -2458,7 +2475,6 @@ function renderCommunicationRecipientsTable(totalRows=0) {
                  onchange="toggleCommunicationRecipient('${esc(chatId)}', this.checked)">
         </td>
         <td style="font-weight:600">${esc(item.client_name || "Без клиента")}</td>
-        <td>${item.batch_name ? `<span class="badge badge-muted">${esc(item.batch_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
         <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(chatId)}</td>
         <td>${status}</td>
       </tr>`;
@@ -2543,45 +2559,30 @@ async function loadCommunicationRatePage() {
       templateTextarea.value = templateData.content || "";
     }
 
-    data.rows = (data.rows || []).map(row => {
-      const voterName = String(row.voter_name || "").trim();
-      const voterUsername = String(row.voter_username || "").trim();
-      const voterUserId = String(row.voter_user_id || "").trim();
-      let voterLabel = "";
-      if (voterName && voterUsername) voterLabel = `${voterName} (@${voterUsername})`;
-      else if (voterName) voterLabel = voterName;
-      else if (voterUsername) voterLabel = `@${voterUsername}`;
-      else if (voterUserId) voterLabel = `ID ${voterUserId}`;
-      return {
-        ...row,
-        batch_name: voterLabel
-      };
-    });
-
     document.getElementById("comm-sent").textContent = data.summary.sent || 0;
     document.getElementById("comm-answered").textContent = data.summary.answered || 0;
     document.getElementById("comm-average").textContent = data.summary.average_score || 0;
-    renderCommunicationRecipientsTable(data.rows.length);
+    document.querySelector("#page-communication-rate .kpi-note").textContent = "Оценка ставится кнопками YOMON / O'RTA / YAXSHI / ALO внутри Telegram. В группе не видно, кто нажал; результат видит только админ.";
+    renderCommunicationRecipientsTable((data.rows || []).length);
 
     const table = document.getElementById("communication-table");
     const headRow = table.closest("table")?.querySelector("thead tr");
     if (headRow) {
-      headRow.innerHTML = "<th>Клиент</th><th>Кто оценил</th><th>Chat ID</th><th>Отправлено</th><th>Оценка</th><th>Ответ</th>";
+      headRow.innerHTML = "<th>Клиент</th><th>Кто оценил</th><th>Отправлено</th><th>Оценка</th><th>Ответ</th>";
     }
-    if (headRow) headRow.innerHTML = "<th>Клиент</th><th>Кто оценил</th><th>Отправлено</th><th>Оценка</th><th>Ответ</th>";
-    table.innerHTML = data.rows.length ? data.rows.map(row=>`
+    table.innerHTML = (data.rows || []).length ? data.rows.map(row => `
       <tr>
         <td style="font-weight:600">${esc(row.client_name || "Без клиента")}</td>
-        <td>${row.batch_name ? `<span class="badge badge-muted">${esc(row.batch_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
-        <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(row.sent_at || "")}</td>
-        <td>${row.score ? `<span class="badge badge-green">${row.score}/10</span>` : `<span class="badge badge-muted">ожидается</span>`}</td>
-        <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(row.submitted_at || "—")}</td>
+        <td>${formatCommunicationVoter(row)}</td>
+        <td>${formatCommunicationTime(row.sent_at)}</td>
+        <td>${formatCommunicationScore(row.score)}</td>
+        <td>${formatCommunicationTime(row.submitted_at)}</td>
       </tr>`).join("") :
-      `<tr><td colspan="6"><div class="empty"><div class="empty-icon">💬</div><p>Опросы за этот месяц ещё не отправлялись</p></div></td></tr>`;
-    table.querySelector('td[colspan="6"]')?.setAttribute("colspan", "5");
-    updateCommunicationCount(data.rows.length);
+      `<tr><td colspan="5"><div class="empty"><div class="empty-icon">&#128172;</div><p>Опросы за этот месяц ещё не отправлялись</p></div></td></tr>`;
+    updateCommunicationCount((data.rows || []).length);
   } catch(e) { toast(e.message,"err"); }
 }
+
 
 async function sendCommunicationSurvey() {
   const month = getCommunicationMonthValue();

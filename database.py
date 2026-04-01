@@ -1,8 +1,13 @@
 import os
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "logistic.db")
+try:
+    TASHKENT_TZ = ZoneInfo("Asia/Tashkent")
+except Exception:
+    TASHKENT_TZ = timezone(timedelta(hours=5))
 
 STATUSES = [
     "Принят",
@@ -34,9 +39,13 @@ DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Опрос за {month_key}
 
 Пожалуйста, оцени работу менеджера по коммуникации для клиента <b>{client_name}</b>.
-Партия: <b>{batch_name}</b>
 
-Шкала: <b>1–10</b>, где 10 — отлично.
+Шкала:
+<b>YOMON</b> — плохо
+<b>O'RTA</b> — средне
+<b>YAXSHI</b> — хорошо
+<b>ALO</b> — отлично
+
 Эта оценка не будет показана в группе. Её увидит только админ панели."""
 
 DEFAULT_STATUS_DETAILS = {
@@ -190,6 +199,17 @@ def init_db():
             UNIQUE(month_key, chat_id)
         );
 
+        CREATE TABLE IF NOT EXISTS communication_survey_dispatches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            month_key TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            client_name TEXT NOT NULL DEFAULT '',
+            bl_id INTEGER REFERENCES bl_codes(id) ON DELETE SET NULL,
+            batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+            batch_name TEXT DEFAULT '',
+            sent_at TEXT NOT NULL DEFAULT ''
+        );
+
         CREATE TABLE IF NOT EXISTS communication_ratings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             month_key TEXT NOT NULL,
@@ -203,6 +223,21 @@ def init_db():
             score INTEGER NOT NULL,
             submitted_at TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(month_key, chat_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS communication_rating_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dispatch_id INTEGER REFERENCES communication_survey_dispatches(id) ON DELETE CASCADE,
+            month_key TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            client_name TEXT NOT NULL DEFAULT '',
+            bl_id INTEGER REFERENCES bl_codes(id) ON DELETE SET NULL,
+            batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+            voter_user_id TEXT NOT NULL DEFAULT '',
+            voter_name TEXT NOT NULL DEFAULT '',
+            voter_username TEXT NOT NULL DEFAULT '',
+            score INTEGER NOT NULL,
+            submitted_at TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS communication_rate_template (
@@ -329,6 +364,10 @@ def _to_int(value):
         return int(float(str(value).replace(",", ".")))
     except (TypeError, ValueError):
         return 0
+
+
+def current_ts():
+    return datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def format_cargo_info(bl: dict) -> str:
@@ -1006,7 +1045,7 @@ def get_notifications(limit=30):
 
 
 def current_month_key():
-    return date.today().strftime("%Y-%m")
+    return datetime.now(TASHKENT_TZ).strftime("%Y-%m")
 
 
 def get_communication_rate_template():
@@ -1088,7 +1127,7 @@ def get_communication_recipients():
 def get_communication_sent_chat_ids(month_key):
     conn = get_conn()
     rows = conn.execute(
-        "SELECT chat_id FROM communication_survey_sends WHERE month_key = ?",
+        "SELECT DISTINCT chat_id FROM communication_survey_dispatches WHERE month_key = ?",
         (month_key,),
     ).fetchall()
     conn.close()
@@ -1098,18 +1137,13 @@ def get_communication_sent_chat_ids(month_key):
 def record_communication_survey_send(month_key, recipient):
     conn = get_conn()
     try:
-        conn.execute(
+        sent_at = current_ts()
+        cursor = conn.execute(
             """
-            INSERT INTO communication_survey_sends(
+            INSERT INTO communication_survey_dispatches(
                 month_key, chat_id, client_name, bl_id, batch_id, batch_name, sent_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
-            ON CONFLICT(month_key, chat_id) DO UPDATE SET
-                client_name = excluded.client_name,
-                bl_id = excluded.bl_id,
-                batch_id = excluded.batch_id,
-                batch_name = excluded.batch_name,
-                sent_at = datetime('now','localtime')
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 month_key,
@@ -1118,42 +1152,133 @@ def record_communication_survey_send(month_key, recipient):
                 recipient.get("bl_id"),
                 recipient.get("batch_id"),
                 recipient.get("batch_name", ""),
+                sent_at,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO communication_survey_sends(
+                month_key, chat_id, client_name, bl_id, batch_id, batch_name, sent_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(month_key, chat_id) DO UPDATE SET
+                client_name = excluded.client_name,
+                bl_id = excluded.bl_id,
+                batch_id = excluded.batch_id,
+                batch_name = excluded.batch_name,
+                sent_at = excluded.sent_at
+            """,
+            (
+                month_key,
+                str(recipient.get("chat_id", "")),
+                recipient.get("client_name", ""),
+                recipient.get("bl_id"),
+                recipient.get("batch_id"),
+                recipient.get("batch_name", ""),
+                sent_at,
             ),
         )
         conn.commit()
-        return True
+        return cursor.lastrowid
     finally:
         conn.close()
 
 
-def save_communication_rating(month_key, chat_id, score, voter=None):
+def delete_communication_survey_dispatch(dispatch_id):
+    if not dispatch_id:
+        return
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT month_key, chat_id FROM communication_survey_dispatches WHERE id = ?",
+        (dispatch_id,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return
+
+    month_key = row["month_key"]
+    chat_id = row["chat_id"]
+
+    conn.execute("DELETE FROM communication_survey_dispatches WHERE id = ?", (dispatch_id,))
+
+    latest = conn.execute(
+        """
+        SELECT month_key, chat_id, client_name, bl_id, batch_id, batch_name, sent_at
+        FROM communication_survey_dispatches
+        WHERE month_key = ? AND chat_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (month_key, chat_id),
+    ).fetchone()
+    if latest:
+        conn.execute(
+            """
+            INSERT INTO communication_survey_sends(
+                month_key, chat_id, client_name, bl_id, batch_id, batch_name, sent_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(month_key, chat_id) DO UPDATE SET
+                client_name = excluded.client_name,
+                bl_id = excluded.bl_id,
+                batch_id = excluded.batch_id,
+                batch_name = excluded.batch_name,
+                sent_at = excluded.sent_at
+            """,
+            (
+                latest["month_key"],
+                latest["chat_id"],
+                latest["client_name"],
+                latest["bl_id"],
+                latest["batch_id"],
+                latest["batch_name"],
+                latest["sent_at"],
+            ),
+        )
+    else:
+        conn.execute(
+            "DELETE FROM communication_survey_sends WHERE month_key = ? AND chat_id = ?",
+            (month_key, chat_id),
+        )
+    conn.commit()
+    conn.close()
+
+
+def save_communication_rating(dispatch_id, month_key, chat_id, score, voter=None):
     score_value = _to_int(score)
     if score_value < 1 or score_value > 10:
         return False
 
     conn = get_conn()
-    existing = conn.execute(
-        "SELECT id FROM communication_ratings WHERE month_key = ? AND chat_id = ?",
-        (month_key, str(chat_id)),
-    ).fetchone()
-    if existing:
-        conn.close()
-        return "exists"
-
-    send_row = conn.execute(
-        """
-        SELECT chat_id, client_name, bl_id, batch_id
-        FROM communication_survey_sends
-        WHERE month_key = ? AND chat_id = ?
-        """,
-        (month_key, str(chat_id)),
-    ).fetchone()
+    if dispatch_id:
+        send_row = conn.execute(
+            """
+            SELECT id, month_key, chat_id, client_name, bl_id, batch_id
+            FROM communication_survey_dispatches
+            WHERE id = ?
+            """,
+            (dispatch_id,),
+        ).fetchone()
+    else:
+        send_row = conn.execute(
+            """
+            SELECT id, month_key, chat_id, client_name, bl_id, batch_id
+            FROM communication_survey_dispatches
+            WHERE month_key = ? AND chat_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (month_key, str(chat_id)),
+        ).fetchone()
 
     recipient = dict(send_row) if send_row else _get_latest_chat_recipient(conn, chat_id)
     if not recipient:
         conn.close()
         return False
 
+    dispatch_id = recipient.get("id")
+    month_key = recipient.get("month_key") or month_key
+    chat_id = recipient.get("chat_id") or chat_id
     voter = voter or {}
     voter_user_id = str(voter.get("id") or "")
     first_name = (voter.get("first_name") or "").strip()
@@ -1163,14 +1288,48 @@ def save_communication_rating(month_key, chat_id, score, voter=None):
     if not voter_name and voter_username:
         voter_name = f"@{voter_username}"
 
+    submitted_at = current_ts()
+
     conn.execute(
         """
-        INSERT OR IGNORE INTO communication_ratings(
+        INSERT INTO communication_rating_events(
+            dispatch_id, month_key, chat_id, client_name, bl_id, batch_id,
+            voter_user_id, voter_name, voter_username, score, submitted_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            dispatch_id,
+            month_key,
+            str(chat_id),
+            recipient.get("client_name", ""),
+            recipient.get("bl_id"),
+            recipient.get("batch_id"),
+            voter_user_id,
+            voter_name,
+            voter_username,
+            score_value,
+            submitted_at,
+        ),
+    )
+
+    conn.execute(
+        """
+        INSERT INTO communication_ratings(
             month_key, chat_id, client_name, bl_id, batch_id,
             voter_user_id, voter_name, voter_username,
             score, submitted_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(month_key, chat_id) DO UPDATE SET
+            client_name = excluded.client_name,
+            bl_id = excluded.bl_id,
+            batch_id = excluded.batch_id,
+            voter_user_id = excluded.voter_user_id,
+            voter_name = excluded.voter_name,
+            voter_username = excluded.voter_username,
+            score = excluded.score,
+            submitted_at = excluded.submitted_at
         """,
         (
             month_key,
@@ -1182,6 +1341,7 @@ def save_communication_rating(month_key, chat_id, score, voter=None):
             voter_name,
             voter_username,
             score_value,
+            submitted_at,
         ),
     )
     conn.commit()
@@ -1194,26 +1354,25 @@ def get_communication_rate(month_key):
     rows = conn.execute(
         """
         SELECT
-            s.month_key,
-            s.chat_id,
-            s.client_name,
-            s.batch_id,
-            s.batch_name,
-            s.sent_at,
-            r.voter_user_id,
-            r.voter_name,
-            r.voter_username,
-            r.score,
-            r.submitted_at
-        FROM communication_survey_sends s
-        LEFT JOIN communication_ratings r
-            ON r.month_key = s.month_key
-           AND r.chat_id = s.chat_id
-        WHERE s.month_key = ?
+            d.id AS dispatch_id,
+            d.month_key,
+            d.chat_id,
+            d.client_name,
+            d.sent_at,
+            e.voter_user_id,
+            e.voter_name,
+            e.voter_username,
+            e.score,
+            e.submitted_at
+        FROM communication_survey_dispatches d
+        LEFT JOIN communication_rating_events e
+            ON e.dispatch_id = d.id
+        WHERE d.month_key = ?
         ORDER BY
-            CASE WHEN r.score IS NULL THEN 1 ELSE 0 END,
-            COALESCE(r.submitted_at, '') DESC,
-            s.sent_at DESC
+            d.sent_at DESC,
+            COALESCE(e.submitted_at, '') DESC,
+            d.id DESC,
+            COALESCE(e.id, 0) DESC
         """,
         (month_key,),
     ).fetchall()
@@ -1224,15 +1383,15 @@ def get_communication_rate(month_key):
 def get_communication_rate_summary(month_key):
     conn = get_conn()
     sent = conn.execute(
-        "SELECT COUNT(*) FROM communication_survey_sends WHERE month_key = ?",
+        "SELECT COUNT(*) FROM communication_survey_dispatches WHERE month_key = ?",
         (month_key,),
     ).fetchone()[0]
     answered = conn.execute(
-        "SELECT COUNT(*) FROM communication_ratings WHERE month_key = ?",
+        "SELECT COUNT(*) FROM communication_rating_events WHERE month_key = ?",
         (month_key,),
     ).fetchone()[0]
     avg_row = conn.execute(
-        "SELECT ROUND(AVG(score), 1) FROM communication_ratings WHERE month_key = ?",
+        "SELECT ROUND(AVG(score), 1) FROM communication_rating_events WHERE month_key = ?",
         (month_key,),
     ).fetchone()
     conn.close()

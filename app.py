@@ -122,40 +122,45 @@ def telegram_delete_message(chat_id, message_id):
     )
 
 
-def communication_rating_markup(month_key: str):
-    labels = {
-        1: "1 😞",
-        2: "2",
-        3: "3",
-        4: "4",
-        5: "5 🙂",
-        6: "6",
-        7: "7",
-        8: "8",
-        9: "9",
-        10: "10 🤝",
+def communication_rating_markup(dispatch_id: int):
+    options = [
+        ("YOMON", 1),
+        ("O'RTA", 4),
+        ("YAXSHI", 7),
+        ("ALO", 10),
+    ]
+    return {
+        "inline_keyboard": [[
+            {
+                "text": label,
+                "callback_data": f"{COMM_RATE_PREFIX}:{dispatch_id}:{score}",
+            }
+            for label, score in options
+        ]]
     }
-    rows = []
-    for start in (1, 6):
-        row = []
-        for score in range(start, start + 5):
-            row.append(
-                {
-                    "text": labels.get(score, str(score)),
-                    "callback_data": f"{COMM_RATE_PREFIX}:{month_key}:{score}",
-                }
-            )
-        rows.append(row)
-    return {"inline_keyboard": rows}
+
+
+def communication_rating_label(score: int) -> str:
+    return {
+        1: "YOMON",
+        4: "O'RTA",
+        7: "YAXSHI",
+        10: "ALO",
+    }.get(int(score), f"{score}/10")
 
 
 def send_communication_survey(recipient: dict, month_key: str):
+    dispatch_id = db.record_communication_survey_send(month_key, recipient)
     text = db.render_communication_rate_message(recipient, month_key)
-    telegram_send_message(
-        recipient["chat_id"],
-        text,
-        reply_markup=communication_rating_markup(month_key),
-    )
+    try:
+        telegram_send_message(
+            recipient["chat_id"],
+            text,
+            reply_markup=communication_rating_markup(dispatch_id),
+        )
+    except Exception:
+        db.delete_communication_survey_dispatch(dispatch_id)
+        raise
 
 
 def handle_callback_query(callback_query: dict):
@@ -179,34 +184,35 @@ def handle_callback_query(callback_query: dict):
         telegram_answer_callback_query(callback_id, "Неверный формат оценки")
         return
 
-    _, month_key, score_raw = parts
+    _, dispatch_or_month, score_raw = parts
     try:
         score = int(score_raw)
     except ValueError:
         telegram_answer_callback_query(callback_id, "Оценка не распознана")
         return
 
-    rating_result = db.save_communication_rating(month_key, chat_id, score, voter=voter)
-    if rating_result == "exists":
-        telegram_answer_callback_query(callback_id, "Оценка за этот месяц уже сохранена")
-        if message_id:
-            try:
-                telegram_delete_message(chat_id, message_id)
-            except Exception:
-                pass
-        return
-    if not rating_result:
+    dispatch_id = None
+    month_key = dispatch_or_month
+    try:
+        dispatch_id = int(dispatch_or_month)
+        month_key = ""
+    except ValueError:
+        pass
+
+    if not db.save_communication_rating(dispatch_id, month_key, chat_id, score, voter=voter):
         telegram_answer_callback_query(callback_id, "Не удалось сохранить оценку")
         return
 
-    telegram_answer_callback_query(callback_id, f"Спасибо! Оценка {score}/10 сохранена")
+    telegram_answer_callback_query(
+        callback_id,
+        f"Спасибо! Оценка {communication_rating_label(score)} сохранена",
+    )
 
     if message_id:
         try:
             telegram_delete_message(chat_id, message_id)
         except Exception:
             pass
-
 def configure_telegram_webhook():
     if not BOT_TOKEN or not WEBHOOK_BASE_URL:
         return False
@@ -789,7 +795,6 @@ def api_send_communication_rate():
             continue
         try:
             send_communication_survey(recipient, month_key)
-            db.record_communication_survey_send(month_key, recipient)
             sent += 1
         except Exception as exc:
             errors.append(
