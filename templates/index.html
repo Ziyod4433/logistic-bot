@@ -1628,7 +1628,7 @@ function renderBL(list, batchName) {
       <td>
         <div style="display:flex;gap:5px">
           <button class="btn btn-ghost btn-xs" onclick="openEditBL(${b.id})">✏️ Ред.</button>
-          <button class="btn btn-red btn-xs" onclick="openProblemModal(${b.id},'${esc(b.code)}')">⚠️ Проблема</button>
+          <button class="btn btn-ghost btn-xs" onclick="openProblemModal(${b.id},'${esc(b.code)}')">＋ Инцидент</button>
           <button class="btn btn-green btn-xs" onclick="sendOne(${b.id},'${esc(b.code)}')" ${!b.chat_id?'disabled title="Нет chat_id"':''}>📤</button>
           <button class="btn btn-red btn-xs" onclick="deleteBL(${b.id})">✕</button>
         </div>
