@@ -1008,12 +1008,7 @@ def format_packing_list(bl_id) -> str:
         name = (file_info.get("filename") or "").strip()
         if not name:
             continue
-        token = (file_info.get("public_token") or "").strip()
-        if PUBLIC_BASE_URL and token:
-            url = f"{PUBLIC_BASE_URL}/public/file/{token}"
-            items.append(f'• <a href="{html.escape(url, quote=True)}">{html.escape(name)}</a>')
-        else:
-            items.append(f"• {html.escape(name)}")
+        items.append(f"• {html.escape(name)}")
     if not items:
         return "Packing list biriktirilmagan"
     file_lines = "\n".join(items)
