@@ -1575,6 +1575,35 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   </div>
 </div>
 
+<!-- Move BL -->
+<div class="overlay" id="move-bl-modal">
+  <div class="modal" style="width:460px">
+    <div class="modal-title">Перенести <em>BL код</em></div>
+    <input type="hidden" id="move-bl-id">
+    <div class="form-g">
+      <label>BL код</label>
+      <input class="inp mono" id="move-bl-code" readonly>
+    </div>
+    <div class="form-g">
+      <label>Текущая партия</label>
+      <input class="inp" id="move-bl-current-batch" readonly>
+    </div>
+    <div class="form-g">
+      <label>Новая партия</label>
+      <select class="inp" id="move-bl-target-batch">
+        <option value="">Выбери партию для переноса</option>
+      </select>
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">
+        BL будет перенесён в другую партию вместе с привязкой клиента и связанными инцидентами.
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('move-bl-modal')">Отмена</button>
+      <button class="btn btn-amber editor-only" onclick="moveBLToBatch()">Перенести</button>
+    </div>
+  </div>
+</div>
+
 <!-- Problem modal -->
 <div class="overlay" id="problem-modal">
   <div class="modal" style="width:460px">
@@ -1632,6 +1661,7 @@ let allBL = [];
 let knownChats = [];
 let pendingChatTransfer = null;
 let editingBLId = null;
+let movingBLId = null;
 let allClients = [];
 let currentClientName = "";
 let communicationRecipients = [];
@@ -1948,6 +1978,7 @@ function renderBL(list, batchName) {
       <td>
         <div style="display:flex;gap:5px">
           <button class="btn btn-ghost btn-xs editor-only" onclick="openEditBL(${b.id})">✏️ Ред.</button>
+          <button class="btn btn-ghost btn-xs editor-only" onclick='openMoveBLModal(${b.id}, ${JSON.stringify(String(b.code || ""))}, ${Number(b.batch_id || 0)})'>⇄ Перенести</button>
           <button class="btn btn-ghost btn-xs editor-only" onclick="openProblemModal(${b.id},'${esc(b.code)}')">＋ Инцидент</button>
           <button class="btn btn-green btn-xs editor-only" onclick="sendOne(${b.id},'${esc(b.code)}')" ${!b.chat_id?'disabled title="Нет chat_id"':''}>📤</button>
           <button class="btn btn-red btn-xs editor-only" onclick="deleteBL(${b.id})">✕</button>
@@ -2334,6 +2365,11 @@ async function ensureBatchesLoaded(force=false) {
   return allBatches;
 }
 
+function batchNameById(batchId) {
+  const batch = allBatches.find(item => Number(item.id) === Number(batchId));
+  return batch ? batch.name : `Партия #${batchId}`;
+}
+
 async function loadBLFiles(blId) {
   try {
     const files = await api("/api/bl/"+blId+"/files");
@@ -2363,6 +2399,50 @@ async function saveBL() {
     toast("✅ Сохранено","ok");
     closeModal("edit-bl-modal");
     loadBatchDetail(currentBatchId);
+  } catch(e) { toast(e.message,"err"); }
+}
+
+async function openMoveBLModal(blId, code, batchId) {
+  if (!ensureEditor()) return;
+  await ensureBatchesLoaded();
+  const targetSelect = document.getElementById("move-bl-target-batch");
+  const options = allBatches
+    .filter(batch => Number(batch.id) !== Number(batchId))
+    .map(batch => `<option value="${batch.id}">${esc(batch.name)}</option>`)
+    .join("");
+
+  if (!options) {
+    toast("Сначала создай вторую партию для переноса", "err");
+    return;
+  }
+
+  movingBLId = blId;
+  document.getElementById("move-bl-id").value = blId;
+  document.getElementById("move-bl-code").value = code || "";
+  document.getElementById("move-bl-current-batch").value = batchNameById(batchId);
+  targetSelect.innerHTML = `<option value="">Выбери партию для переноса</option>${options}`;
+  targetSelect.value = "";
+  openModal("move-bl-modal");
+}
+
+async function moveBLToBatch() {
+  if (!ensureEditor()) return;
+  const blId = movingBLId || document.getElementById("move-bl-id").value;
+  const targetBatchId = Number(document.getElementById("move-bl-target-batch").value || 0);
+  if (!blId) return;
+  if (!targetBatchId) {
+    toast("Выбери новую партию", "err");
+    return;
+  }
+  try {
+    const result = await api(`/api/bl/${blId}/move`, "POST", { target_batch_id: targetBatchId });
+    closeModal("move-bl-modal");
+    movingBLId = null;
+    await ensureBatchesLoaded(true);
+    renderBatches(allBatches);
+    await loadBatchDetail(currentBatchId);
+    loadDashboard();
+    toast(`BL ${result.result?.code || ""} перенесён в партию «${result.result?.to_batch_name || batchNameById(targetBatchId)}»`, "ok");
   } catch(e) { toast(e.message,"err"); }
 }
 

@@ -861,6 +861,86 @@ def update_bl(
     conn.close()
 
 
+def move_bl_to_batch(bl_id, target_batch_id):
+    conn = get_conn()
+    try:
+        bl_row = conn.execute(
+            "SELECT id, batch_id, code FROM bl_codes WHERE id = ?",
+            (bl_id,),
+        ).fetchone()
+        if not bl_row:
+            raise ValueError("BL не найден")
+
+        current_batch_id = int(bl_row["batch_id"])
+        target_batch_id = int(target_batch_id)
+        if current_batch_id == target_batch_id:
+            raise ValueError("BL уже находится в этой партии")
+
+        target_batch = conn.execute(
+            """
+            SELECT id, name, status, expected_date, actual_date, status_updated_at
+            FROM batches
+            WHERE id = ?
+            """,
+            (target_batch_id,),
+        ).fetchone()
+        if not target_batch:
+            raise ValueError("Целевая партия не найдена")
+
+        duplicate = conn.execute(
+            """
+            SELECT 1
+            FROM bl_codes
+            WHERE batch_id = ? AND UPPER(code) = UPPER(?) AND id != ?
+            LIMIT 1
+            """,
+            (target_batch_id, bl_row["code"], bl_id),
+        ).fetchone()
+        if duplicate:
+            raise ValueError("В целевой партии уже есть такой BL код")
+
+        target_status_updated_at = (
+            target_batch["status_updated_at"] if target_batch["status_updated_at"] else current_ts()
+        )
+
+        conn.execute(
+            """
+            UPDATE bl_codes
+            SET
+                batch_id = ?,
+                status = ?,
+                expected_date = ?,
+                actual_date = ?,
+                status_updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                target_batch_id,
+                target_batch["status"] or "Принят",
+                (target_batch["expected_date"] or "").strip(),
+                (target_batch["actual_date"] or "").strip(),
+                target_status_updated_at,
+                bl_id,
+            ),
+        )
+
+        conn.execute(
+            "UPDATE problems SET batch_id = ? WHERE bl_id = ?",
+            (target_batch_id, bl_id),
+        )
+
+        conn.commit()
+        return {
+            "bl_id": bl_id,
+            "code": bl_row["code"],
+            "from_batch_id": current_batch_id,
+            "to_batch_id": target_batch_id,
+            "to_batch_name": target_batch["name"],
+        }
+    finally:
+        conn.close()
+
+
 def delete_bl(bl_id):
     conn = get_conn()
     conn.execute("DELETE FROM bl_codes WHERE id = ?", (bl_id,))

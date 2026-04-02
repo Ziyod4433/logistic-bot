@@ -643,6 +643,20 @@ def api_delete_bl(bl_id):
     return jsonify({"ok": True})
 
 
+@app.route("/api/bl/<int:bl_id>/move", methods=["POST"])
+@editor_required
+def api_move_bl(bl_id):
+    data = request.json or {}
+    target_batch_id = data.get("target_batch_id")
+    if not target_batch_id:
+        return jsonify({"error": "target_batch_id обязателен"}), 400
+    try:
+        result = db.move_bl_to_batch(bl_id, target_batch_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "result": result})
+
+
 @app.route("/api/bl/<int:bl_id>/files")
 @login_required
 def api_files(bl_id):
