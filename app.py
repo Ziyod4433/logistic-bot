@@ -532,9 +532,28 @@ def api_batches():
 def api_create_batch():
     data = request.json or {}
     name = (data.get("name") or "").strip()
+    expected_date = (data.get("expected_date") or "").strip()
+    actual_date = (data.get("actual_date") or "").strip()
     if not name:
         return jsonify({"error": "Имя партии обязательно"}), 400
-    if not db.create_batch(name):
+    if not db.create_batch(name, expected_date, actual_date):
+        return jsonify({"error": "Партия с таким именем уже существует"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/batches/<int:batch_id>", methods=["PUT"])
+@editor_required
+def api_update_batch(batch_id):
+    data = request.json or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Имя партии обязательно"}), 400
+    if not db.update_batch(
+        batch_id,
+        name,
+        (data.get("expected_date") or "").strip(),
+        (data.get("actual_date") or "").strip(),
+    ):
         return jsonify({"error": "Партия с таким именем уже существует"}), 400
     return jsonify({"ok": True})
 
@@ -571,8 +590,6 @@ def api_add_bl():
     code = (data.get("code") or "").strip()
     client_name = (data.get("client_name") or "").strip()
     chat_id = (data.get("chat_id") or "").strip()
-    expected_date = (data.get("expected_date") or "").strip()
-    actual_date = (data.get("actual_date") or "").strip()
     cargo_type = (data.get("cargo_type") or "").strip()
     weight_kg = data.get("weight_kg", 0)
     volume_cbm = data.get("volume_cbm", 0)
@@ -587,8 +604,6 @@ def api_add_bl():
         code,
         client_name,
         chat_id,
-        expected_date,
-        actual_date,
         cargo_type,
         weight_kg,
         volume_cbm,
@@ -609,8 +624,6 @@ def api_update_bl(bl_id):
         data.get("client_name", ""),
         data.get("chat_id", ""),
         data.get("status", "Принят"),
-        data.get("expected_date", ""),
-        data.get("actual_date", ""),
         data.get("cargo_type", ""),
         data.get("weight_kg", 0),
         data.get("volume_cbm", 0),

@@ -1016,13 +1016,15 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               <span class="card-title">BL коды клиентов</span>
               <div style="display:flex;gap:8px">
                 <input class="search" placeholder="🔍 Поиск BL..." id="bl-search" oninput="filterBL()">
+                <button class="btn btn-ghost btn-sm editor-only" onclick="openEditBatchModal()">⚙️ Параметры партии</button>
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openAddBLModal()">+ Добавить BL</button>
                 <button class="btn btn-amber btn-sm editor-only" id="send-batch-btn" onclick="sendBatch()">📤 Отправить партию</button>
               </div>
             </div>
+            <div id="batch-meta-bar" style="padding:0 18px 14px;color:var(--muted2);font-size:12px"></div>
             <table class="tbl" id="bl-table-wrap">
               <thead><tr>
-                <th>BL код</th><th>Клиент</th><th>Груз</th><th>Chat ID</th><th>Статус</th><th>Ожидаемая дата</th><th>Факт дата</th><th>Файлы</th><th>Действия</th>
+                <th>BL код</th><th>Клиент</th><th>Груз</th><th>Chat ID</th><th>Статус</th><th>Файлы</th><th>Действия</th>
               </tr></thead>
               <tbody id="bl-table"></tbody>
             </table>
@@ -1247,6 +1249,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
                 <span class="var-pill" onclick="insertVar('{places}')">{places}</span>
                 <span class="var-pill" onclick="insertVar('{description}')">{description}</span>
                 <span class="var-pill" onclick="insertVar('{expected_date}')">{expected_date}</span>
+                <span class="var-pill" onclick="insertVar('{packing_list}')">{packing_list}</span>
                 <span class="var-pill" onclick="insertVar('{status_detail}')">{status_detail}</span>
               </div>
               <div class="form-g">
@@ -1326,9 +1329,47 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <label>Название партии</label>
       <input class="inp" id="new-batch-name" placeholder="напр. 07.02.2026 или FEB-01">
     </div>
+    <div class="form-row2">
+      <div class="form-g">
+        <label>Ожидаемая дата партии</label>
+        <input class="inp" type="date" id="new-batch-expected-date">
+      </div>
+      <div class="form-g">
+        <label>Факт дата партии</label>
+        <input class="inp" type="date" id="new-batch-actual-date">
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('create-batch-modal')">Отмена</button>
       <button class="btn btn-amber editor-only" onclick="createBatch()">Создать</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="edit-batch-modal">
+  <div class="modal" style="width:420px">
+    <div class="modal-title">Параметры <em>партии</em></div>
+    <input type="hidden" id="edit-batch-id">
+    <div class="form-g">
+      <label>Название партии</label>
+      <input class="inp" id="edit-batch-name" placeholder="Название партии">
+    </div>
+    <div class="form-row2">
+      <div class="form-g">
+        <label>Ожидаемая дата партии</label>
+        <input class="inp" type="date" id="edit-batch-expected-date">
+      </div>
+      <div class="form-g">
+        <label>Факт дата партии</label>
+        <input class="inp" type="date" id="edit-batch-actual-date">
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--muted2);line-height:1.6">
+      Эти даты будут общими для всей партии и автоматически применятся ко всем BL внутри неё.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('edit-batch-modal')">Отмена</button>
+      <button class="btn btn-amber editor-only" onclick="saveBatchMeta()">Сохранить</button>
     </div>
   </div>
 </div>
@@ -1383,16 +1424,6 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <label>Chat ID группы Telegram</label>
       <input class="inp mono" id="add-bl-chat" placeholder="-1001234567890">
       <div style="font-size:11px;color:var(--muted2);margin-top:5px">Поле заполнится само после выбора группы выше. При необходимости можно ввести ID вручную.</div>
-    </div>
-    <div class="form-row2">
-      <div class="form-g">
-        <label>Ожидаемая дата</label>
-        <input class="inp" type="date" id="add-bl-expected-date">
-      </div>
-      <div class="form-g">
-        <label>Факт дата</label>
-        <input class="inp" type="date" id="add-bl-actual-date">
-      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('add-bl-modal')">Отмена</button>
@@ -1449,16 +1480,6 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="form-g">
         <label>Описание</label>
         <input class="inp" id="edit-bl-description" placeholder="Свободное описание груза">
-      </div>
-    </div>
-    <div class="form-row2">
-      <div class="form-g">
-        <label>Ожидаемая дата</label>
-        <input class="inp" type="date" id="edit-bl-expected-date">
-      </div>
-      <div class="form-g">
-        <label>Факт дата</label>
-        <input class="inp" type="date" id="edit-bl-actual-date">
       </div>
     </div>
     <hr class="divider">
@@ -1527,6 +1548,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 // STATE
 // ══════════════════════════════════════════════════════════
 let currentBatchId = null;
+let currentBatch = null;
 let allBatches = [];
 let allBL = [];
 let knownChats = [];
@@ -1750,12 +1772,16 @@ function filterBatches() {
 async function createBatch() {
   if (!ensureEditor()) return;
   const name = document.getElementById("new-batch-name").value.trim();
+  const expected_date = document.getElementById("new-batch-expected-date").value.trim();
+  const actual_date = document.getElementById("new-batch-actual-date").value.trim();
   if (!name) { toast("Введи название","err"); return; }
   try {
-    await api("/api/batches","POST",{name});
+    await api("/api/batches","POST",{name, expected_date, actual_date});
     toast("✅ Партия «"+name+"» создана","ok");
     closeModal("create-batch-modal");
     document.getElementById("new-batch-name").value = "";
+    document.getElementById("new-batch-expected-date").value = "";
+    document.getElementById("new-batch-actual-date").value = "";
     loadBatches(); loadDashboard();
   } catch(e) { toast(e.message,"err"); }
 }
@@ -1772,6 +1798,7 @@ async function deleteBatch(id, name) {
 
 function showBatchList() {
   currentBatchId = null;
+  currentBatch = null;
   document.getElementById("batches-list-view").style.display = "";
   document.getElementById("batch-detail").classList.remove("open");
 }
@@ -1791,8 +1818,10 @@ async function loadBatchDetail(batchId) {
       api("/api/batches/"+batchId+"/bl"),
       api("/api/chats?all=1")
     ]);
+    currentBatch = data.batch;
     allBL = data.bl_codes;
     knownChats = chats;
+    document.getElementById("detail-title").textContent = data.batch.name || "";
 
     // Populate statuses select
     const sel = document.getElementById("edit-bl-status");
@@ -1804,6 +1833,7 @@ async function loadBatchDetail(batchId) {
     renderChatsPage();
     updatePendingChatBanner();
     renderBL(allBL, data.batch.name);
+    renderBatchMeta(data.batch);
 
     const linked = allBL.filter(b=>b.chat_id).length;
     document.getElementById("detail-progress-text").textContent =
@@ -1824,8 +1854,6 @@ function renderBL(list, batchName) {
         ${statusBadge(b.status)}
         ${b.is_stuck ? `<div class="kpi-note" style="color:var(--amber)">Статус не менялся долго</div>` : ""}
       </td>
-      <td>${b.expected_date ? `<span class="mono">${esc(b.expected_date)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
-      <td>${b.actual_date ? `<span class="mono">${esc(b.actual_date)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td>
         ${b.file_count > 0
           ? `<span class="badge badge-blue">📎 ${b.file_count}</span>`
@@ -1843,7 +1871,7 @@ function renderBL(list, batchName) {
         </div>
       </td>
     </tr>`).join("") :
-    `<tr><td colspan="9"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
+    `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
   renderBatchTotals(list);
 }
 
@@ -1898,6 +1926,22 @@ function renderBatchTotals(list) {
   const totalQty = list.reduce((sum, item)=>sum + num(item.quantity_places), 0);
   document.getElementById("batch-total-line").textContent =
     `Итого по партии: ${totalBL} BL · ${formatMeasure(totalWeight)} кг · ${formatMeasure(totalVolume)} м³ · ${formatMeasure(totalQty)} мест`;
+}
+
+function renderBatchMeta(batch) {
+  const bar = document.getElementById("batch-meta-bar");
+  if (!bar) return;
+  if (!batch) {
+    bar.innerHTML = "";
+    return;
+  }
+  const expected = batch.expected_date
+    ? `<span class="badge badge-blue">🖥 Ожидаемая дата: ${esc(batch.expected_date)}</span>`
+    : `<span class="badge badge-muted">🖥 Ожидаемая дата не указана</span>`;
+  const actual = batch.actual_date
+    ? `<span class="badge badge-green">✅ Факт дата: ${esc(batch.actual_date)}</span>`
+    : `<span class="badge badge-muted">📦 Факт дата не указана</span>`;
+  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${expected}${actual}</div>`;
 }
 
 function renderKnownChats() {
@@ -2103,12 +2147,43 @@ function openAddBLModal() {
   document.getElementById("add-bl-volume").value = "";
   document.getElementById("add-bl-quantity").value = "";
   document.getElementById("add-bl-description").value = "";
-  document.getElementById("add-bl-expected-date").value = "";
-  document.getElementById("add-bl-actual-date").value = "";
   const pendingChatId = pendingChatTransfer?.chat_id || "";
   document.getElementById("add-bl-chat").value = pendingChatId;
   populateChatSelect("add-bl-chat-select", pendingChatId);
   openModal("add-bl-modal");
+}
+
+function openEditBatchModal() {
+  if (!ensureEditor()) return;
+  if (!currentBatchId || !currentBatch) {
+    toast("Сначала открой партию","err");
+    return;
+  }
+  document.getElementById("edit-batch-id").value = currentBatchId;
+  document.getElementById("edit-batch-name").value = currentBatch.name || "";
+  document.getElementById("edit-batch-expected-date").value = currentBatch.expected_date || "";
+  document.getElementById("edit-batch-actual-date").value = currentBatch.actual_date || "";
+  openModal("edit-batch-modal");
+}
+
+async function saveBatchMeta() {
+  if (!ensureEditor()) return;
+  const batchId = document.getElementById("edit-batch-id").value;
+  const name = document.getElementById("edit-batch-name").value.trim();
+  const expected_date = document.getElementById("edit-batch-expected-date").value.trim();
+  const actual_date = document.getElementById("edit-batch-actual-date").value.trim();
+  if (!batchId || !name) {
+    toast("Название партии обязательно","err");
+    return;
+  }
+  try {
+    await api(`/api/batches/${batchId}`,"PUT",{name, expected_date, actual_date});
+    toast("✅ Параметры партии сохранены","ok");
+    closeModal("edit-batch-modal");
+    await ensureBatchesLoaded(true);
+    await loadBatchDetail(Number(batchId));
+    loadDashboard();
+  } catch(e) { toast(e.message,"err"); }
 }
 
 async function addBL() {
@@ -2122,8 +2197,6 @@ async function addBL() {
   const quantity_places = document.getElementById("add-bl-quantity").value.trim();
   const cargo_description = document.getElementById("add-bl-description").value.trim();
   const chat_id     = document.getElementById("add-bl-chat").value.trim();
-  const expected_date = document.getElementById("add-bl-expected-date").value.trim();
-  const actual_date = document.getElementById("add-bl-actual-date").value.trim();
   if (!code) { toast("BL код обязателен","err"); return; }
   try {
     await api("/api/bl","POST",{
@@ -2135,9 +2208,7 @@ async function addBL() {
       volume_cbm,
       quantity_places,
       cargo_description,
-      chat_id,
-      expected_date,
-      actual_date
+      chat_id
     });
     toast("✅ BL код "+code+" добавлен","ok");
     closeModal("add-bl-modal");
@@ -2160,8 +2231,6 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-quantity").value = bl.quantity_places || "";
   document.getElementById("edit-bl-description").value = bl.cargo_description || "";
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
-  document.getElementById("edit-bl-expected-date").value = bl.expected_date || "";
-  document.getElementById("edit-bl-actual-date").value = bl.actual_date || "";
   populateChatSelect("edit-bl-chat-select", bl.chat_id||"");
   document.getElementById("edit-bl-status").value = bl.status;
   document.getElementById("edit-bl-file-input").dataset.blId = blId;
@@ -2203,8 +2272,6 @@ async function saveBL() {
       cargo_description: document.getElementById("edit-bl-description").value.trim(),
       chat_id:     document.getElementById("edit-bl-chat").value.trim(),
       status:      document.getElementById("edit-bl-status").value,
-      expected_date: document.getElementById("edit-bl-expected-date").value.trim(),
-      actual_date: document.getElementById("edit-bl-actual-date").value.trim(),
     });
     toast("✅ Сохранено","ok");
     closeModal("edit-bl-modal");
@@ -2727,6 +2794,7 @@ function updatePreview() {
     "{description}": "Smartfonlar va aksessuarlar",
     "{expected_date}": "2026-04-08",
     "{actual_date}": "",
+    "{packing_list}": "packing_list_BL171.pdf",
     "{cargo_info}": "• Tovar turi: Elektronika\n• Og'irligi: 1200 kg\n• Hajmi: 8.5 m³\n• Joylar soni: 48\n• Tavsif: Smartfonlar va aksessuarlar",
     "{status_detail}": "🚛 Yuk Almatyga yetib keldi va keyingi jo'natishga tayyorlanmoqda."
   };

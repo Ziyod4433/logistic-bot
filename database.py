@@ -58,7 +58,7 @@ DEFAULT_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
 
 {status_detail}
 
-📎 Tovar bo'yicha: Packing list
+📎 Tovar bo'yicha: {packing_list}
 
 📞 Mas'ul menejer: Ziyodilla
 📲 95-975-66-11
@@ -134,6 +134,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE NOT NULL,
+            expected_date TEXT DEFAULT '',
+            actual_date TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
@@ -286,6 +288,14 @@ def init_db():
         """
     )
 
+    batch_columns = [
+        ("expected_date", "TEXT DEFAULT ''"),
+        ("actual_date", "TEXT DEFAULT ''"),
+    ]
+    for column_name, column_def in batch_columns:
+        if not _table_has_column(conn, "batches", column_name):
+            conn.execute(f"ALTER TABLE batches ADD COLUMN {column_name} {column_def}")
+
     legacy_columns = [
         ("cargo_type", "TEXT DEFAULT ''"),
         ("weight_kg", "REAL NOT NULL DEFAULT 0"),
@@ -314,6 +324,50 @@ def init_db():
         UPDATE bl_codes
         SET status_updated_at = COALESCE(NULLIF(status_updated_at, ''), created_at, datetime('now','localtime'))
         WHERE status_updated_at IS NULL OR status_updated_at = ''
+        """
+    )
+
+    conn.execute(
+        """
+        UPDATE batches
+        SET expected_date = COALESCE(
+                NULLIF(expected_date, ''),
+                (
+                    SELECT expected_date
+                    FROM bl_codes bl
+                    WHERE bl.batch_id = batches.id AND COALESCE(bl.expected_date, '') != ''
+                    ORDER BY bl.created_at DESC
+                    LIMIT 1
+                ),
+                ''
+            ),
+            actual_date = COALESCE(
+                NULLIF(actual_date, ''),
+                (
+                    SELECT actual_date
+                    FROM bl_codes bl
+                    WHERE bl.batch_id = batches.id AND COALESCE(bl.actual_date, '') != ''
+                    ORDER BY bl.created_at DESC
+                    LIMIT 1
+                ),
+                ''
+            )
+        """
+    )
+
+    conn.execute(
+        """
+        UPDATE bl_codes
+        SET
+            expected_date = COALESCE(
+                (SELECT b.expected_date FROM batches b WHERE b.id = bl_codes.batch_id),
+                ''
+            ),
+            actual_date = COALESCE(
+                (SELECT b.actual_date FROM batches b WHERE b.id = bl_codes.batch_id),
+                ''
+            )
+        WHERE EXISTS (SELECT 1 FROM batches b WHERE b.id = bl_codes.batch_id)
         """
     )
 
@@ -349,10 +403,58 @@ def init_db():
     conn.close()
 
 
-def create_batch(name):
+def create_batch(name, expected_date="", actual_date=""):
     conn = get_conn()
     try:
-        conn.execute("INSERT INTO batches(name) VALUES(?)", (name,))
+        conn.execute(
+            "INSERT INTO batches(name, expected_date, actual_date) VALUES(?, ?, ?)",
+            (
+                (name or "").strip(),
+                (expected_date or "").strip(),
+                (actual_date or "").strip(),
+            ),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def update_batch(batch_id, name, expected_date="", actual_date=""):
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE batches
+            SET
+                name = ?,
+                expected_date = ?,
+                actual_date = ?
+            WHERE id = ?
+            """,
+            (
+                (name or "").strip(),
+                (expected_date or "").strip(),
+                (actual_date or "").strip(),
+                batch_id,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE bl_codes
+            SET
+                expected_date = ?,
+                actual_date = ?
+            WHERE batch_id = ?
+            """,
+            (
+                (expected_date or "").strip(),
+                (actual_date or "").strip(),
+                batch_id,
+            ),
+        )
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -506,6 +608,12 @@ def _inject_cargo_info_placeholder(template: str) -> str:
     return template + "\n\n🕯 Yuk haqida ma'lumot:\n{cargo_info}"
 
 
+def _inject_packing_list_placeholder(template: str) -> str:
+    if "{packing_list}" in template or "{bl_files}" in template:
+        return template
+    return template.replace("📎 Tovar bo'yicha: Packing list", "📎 Tovar bo'yicha: {packing_list}")
+
+
 def _normalize_template_value(value):
     if value is None:
         return ""
@@ -517,8 +625,6 @@ def add_bl(
     code,
     client_name="",
     chat_id="",
-    expected_date="",
-    actual_date="",
     cargo_type="",
     weight_kg=0,
     volume_cbm=0,
@@ -527,6 +633,12 @@ def add_bl(
 ):
     conn = get_conn()
     try:
+        batch_row = conn.execute(
+            "SELECT expected_date, actual_date FROM batches WHERE id = ?",
+            (batch_id,),
+        ).fetchone()
+        expected_date = batch_row["expected_date"] if batch_row else ""
+        actual_date = batch_row["actual_date"] if batch_row else ""
         conn.execute(
             """
             INSERT INTO bl_codes(
@@ -607,8 +719,6 @@ def update_bl(
     client_name,
     chat_id,
     status,
-    expected_date="",
-    actual_date="",
     cargo_type="",
     weight_kg=0,
     volume_cbm=0,
@@ -628,8 +738,6 @@ def update_bl(
             volume_cbm = ?,
             quantity_places = ?,
             cargo_description = ?,
-            expected_date = ?,
-            actual_date = ?,
             status_updated_at = CASE
                 WHEN status != ? THEN datetime('now','localtime')
                 ELSE status_updated_at
@@ -645,8 +753,6 @@ def update_bl(
             _to_float(volume_cbm),
             _to_int(quantity_places),
             (cargo_description or "").strip(),
-            (expected_date or "").strip(),
-            (actual_date or "").strip(),
             status,
             bl_id,
         ),
@@ -677,6 +783,16 @@ def get_files(bl_id):
     rows = conn.execute("SELECT * FROM files WHERE bl_id = ?", (bl_id,)).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def format_packing_list(bl_id) -> str:
+    files = get_files(bl_id)
+    if not files:
+        return "Packing list biriktirilmagan"
+    names = [f.get("filename", "").strip() for f in files if (f.get("filename") or "").strip()]
+    if not names:
+        return "Packing list biriktirilmagan"
+    return ", ".join(names)
 
 
 def delete_file(file_id):
@@ -774,7 +890,7 @@ def save_status_detail(status, detail):
 
 
 def render_message(bl: dict, batch_name: str) -> str:
-    template = _inject_cargo_info_placeholder(get_template())
+    template = _inject_packing_list_placeholder(_inject_cargo_info_placeholder(get_template()))
     details = get_status_details()
     status = bl.get("status", "Принят")
     cargo_type = (bl.get("cargo_type") or "").strip()
@@ -784,6 +900,7 @@ def render_message(bl: dict, batch_name: str) -> str:
     description = (bl.get("cargo_description") or "").strip()
     expected_date = (bl.get("expected_date") or "").strip()
     actual_date = (bl.get("actual_date") or "").strip()
+    packing_list = format_packing_list(bl.get("id"))
 
     context = _TemplateContext(
         batch_name=_normalize_template_value(batch_name),
@@ -802,6 +919,8 @@ def render_message(bl: dict, batch_name: str) -> str:
         description=_normalize_template_value(description),
         expected_date=_normalize_template_value(expected_date),
         actual_date=_normalize_template_value(actual_date),
+        packing_list=_normalize_template_value(packing_list),
+        bl_files=_normalize_template_value(packing_list),
         status_detail=_normalize_template_value(details.get(status, "")),
     )
     return template.format_map(context)
