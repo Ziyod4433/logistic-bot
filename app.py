@@ -1,5 +1,4 @@
-import csv
-import io
+import html
 import os
 import secrets
 from functools import wraps
@@ -13,6 +12,7 @@ from flask import (
     jsonify,
     redirect,
     render_template,
+    render_template_string,
     request,
     session,
     url_for,
@@ -674,48 +674,146 @@ def api_create_problem():
 @app.route("/api/problems/export")
 @login_required
 def api_export_problems():
+    problem_type = (request.args.get("type") or "").strip()
+    date_from = (request.args.get("date_from") or "").strip()
+    date_to = (request.args.get("date_to") or "").strip()
+    batch_id = (request.args.get("batch_id") or "").strip()
     rows = db.get_problems(
-        problem_type=(request.args.get("type") or "").strip(),
-        date_from=(request.args.get("date_from") or "").strip(),
-        date_to=(request.args.get("date_to") or "").strip(),
-        batch_id=(request.args.get("batch_id") or "").strip(),
+        problem_type=problem_type,
+        date_from=date_from,
+        date_to=date_to,
+        batch_id=batch_id,
     )
 
-    output = io.StringIO()
-    writer = csv.writer(output, delimiter=";")
-    writer.writerow(
-        [
-            "Дата",
-            "Партия",
-            "BL код",
-            "Клиент",
-            "Тип",
-            "Описание",
-            "Статус груза",
-            "Ожидаемая дата",
-            "Факт дата",
-        ]
-    )
-    for row in rows:
-        writer.writerow(
-            [
-                row.get("created_at", ""),
-                row.get("batch_name", ""),
-                row.get("bl_code", ""),
-                row.get("client_name", ""),
-                db.PROBLEM_TYPES.get(row.get("problem_type", ""), row.get("problem_type", "")),
-                row.get("description", ""),
-                row.get("bl_status", ""),
-                row.get("expected_date", ""),
-                row.get("actual_date", ""),
-            ]
-        )
+    filter_items = []
+    if problem_type:
+        filter_items.append(f"Type: {db.PROBLEM_TYPES.get(problem_type, problem_type)}")
+    if date_from:
+        filter_items.append(f"From: {date_from}")
+    if date_to:
+        filter_items.append(f"To: {date_to}")
+    if batch_id:
+        filter_items.append(f"Batch ID: {batch_id}")
 
-    csv_text = "\ufeff" + output.getvalue()
+    body_rows = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(row.get('created_at', '') or '-')}</td>
+          <td>{html.escape(row.get('batch_name', '') or '-')}</td>
+          <td>{html.escape(row.get('bl_code', '') or '-')}</td>
+          <td>{html.escape(row.get('client_name', '') or '-')}</td>
+          <td>{html.escape(db.PROBLEM_TYPES.get(row.get('problem_type', ''), row.get('problem_type', '') or '-'))}</td>
+          <td>{html.escape(row.get('description', '') or '-')}</td>
+          <td>{html.escape(row.get('bl_status', '') or '-')}</td>
+          <td>{html.escape(row.get('expected_date', '') or '-')}</td>
+          <td>{html.escape(row.get('actual_date', '') or '-')}</td>
+        </tr>
+        """
+        for row in rows
+    )
+    if not body_rows:
+        body_rows = """
+        <tr>
+          <td colspan="9" class="empty">No problems found for the selected filters</td>
+        </tr>
+        """
+
+    report_html = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Problems Report</title>
+      <style>
+        :root {
+          --bg: #f4f5f7;
+          --card: #ffffff;
+          --text: #17191f;
+          --muted: #667085;
+          --line: #d8dde6;
+          --accent: #111827;
+          --accent-soft: #eef2f7;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+        .page { max-width: 1400px; margin: 0 auto; padding: 28px; }
+        .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+        .title { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
+        .meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
+        .actions { display: flex; gap: 10px; }
+        .btn { border: none; border-radius: 10px; padding: 11px 16px; cursor: pointer; font-size: 14px; font-weight: 700; }
+        .btn-dark { background: var(--accent); color: #fff; }
+        .btn-light { background: var(--accent-soft); color: var(--accent); }
+        .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: 0 10px 30px rgba(15, 23, 42, .06); }
+        .card-head { padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+        .card-title { font-size: 18px; font-weight: 700; }
+        .filters { color: var(--muted); font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; padding: 14px 16px; background: #f8fafc; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; border-bottom: 1px solid var(--line); }
+        td { padding: 14px 16px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 13px; line-height: 1.45; }
+        tr:last-child td { border-bottom: none; }
+        .empty { text-align: center; color: var(--muted); padding: 28px; }
+        .footer { margin-top: 14px; color: var(--muted); font-size: 12px; text-align: right; }
+        @media print {
+          body { background: #fff; }
+          .page { max-width: none; padding: 0; }
+          .actions { display: none; }
+          .card { border: none; box-shadow: none; }
+          .card-head { padding-left: 0; padding-right: 0; }
+          th, td { font-size: 11px; padding: 10px 8px; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="page">
+        <div class="toolbar">
+          <div>
+            <div class="title">Problems Report</div>
+            <div class="meta">Exported: {{ exported_at }} / Total rows: {{ rows_count }}</div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-light" onclick="window.close()">Close</button>
+            <button class="btn btn-dark" onclick="window.print()">Save as PDF</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title">Problem List</div>
+            <div class="filters">{{ filters_label }}</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Batch</th>
+                <th>BL Code</th>
+                <th>Client</th>
+                <th>Type</th>
+                <th>Description</th>
+                <th>Cargo Status</th>
+                <th>Expected</th>
+                <th>Actual Date</th>
+              </tr>
+            </thead>
+            <tbody>{{ body_rows|safe }}</tbody>
+          </table>
+        </div>
+        <div class="footer">BURAQ logistics ? Problems export</div>
+      </div>
+    </body>
+    </html>
+    """
+
     return Response(
-        csv_text,
-        mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=problems_export.csv"},
+        render_template_string(
+            report_html,
+            exported_at=db.current_ts(),
+            rows_count=len(rows),
+            filters_label=" / ".join(filter_items) if filter_items else "No filters",
+            body_rows=body_rows,
+        ),
+        mimetype="text/html; charset=utf-8",
     )
 
 
