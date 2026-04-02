@@ -946,15 +946,6 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </table>
         </div>
 
-        <div class="card">
-          <div class="card-h"><span class="card-title">Последние отправки</span></div>
-          <table class="tbl">
-            <thead><tr>
-              <th>Время</th><th>BL</th><th>Партия</th><th>Статус</th><th>Результат</th>
-            </tr></thead>
-            <tbody id="dash-logs"></tbody>
-          </table>
-        </div>
       </div>
 
       <!-- ═══════════════════════════════════════════════════ -->
@@ -1692,10 +1683,9 @@ document.querySelectorAll(".overlay").forEach(m=>{
 // ══════════════════════════════════════════════════════════
 async function loadDashboard() {
   try {
-    const [stats, batches, logs, attention] = await Promise.all([
+    const [stats, batches, attention] = await Promise.all([
       api("/api/stats"),
       api("/api/batches"),
-      api("/api/logs?limit=8"),
       api("/api/attention?limit=8")
     ]);
     allBatches = batches;
@@ -1744,19 +1734,6 @@ async function loadDashboard() {
       </tr>`).join("") :
       `<tr><td colspan="5"><div class="empty"><div class="empty-icon">📦</div><p>Партий пока нет. Создай первую!</p></div></td></tr>`;
 
-    // Logs table
-    const lt = document.getElementById("dash-logs");
-    lt.innerHTML = logs.length ? logs.map(l=>`
-      <tr>
-        <td class="mono" style="font-size:11px;color:var(--muted2)">${l.sent_at}</td>
-        <td class="mono" style="color:var(--amber)">${esc(l.bl_code)}</td>
-        <td>${esc(l.batch_name)}</td>
-        <td>${statusBadge(l.status)}</td>
-        <td>${l.success
-          ? '<span class="badge badge-green">✓ Успешно</span>'
-          : '<span class="badge badge-red">✗ Ошибка</span>'}</td>
-      </tr>`).join("") :
-      `<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:24px">Логов пока нет</td></tr>`;
   } catch(e) { toast("Ошибка загрузки: "+e.message,"err"); }
 }
 
