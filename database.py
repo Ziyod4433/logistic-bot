@@ -1,4 +1,6 @@
+import html
 import os
+import secrets
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -12,6 +14,7 @@ APP_DATA_DIR = Path(
 )
 APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = os.getenv("DB_PATH") or str(APP_DATA_DIR / "logistic.db")
+PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL") or os.getenv("WEBHOOK_BASE_URL") or "").rstrip("/")
 try:
     TASHKENT_TZ = ZoneInfo("Asia/Tashkent")
 except Exception:
@@ -181,6 +184,7 @@ def init_db():
             bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
             filename TEXT NOT NULL,
             file_path TEXT NOT NULL,
+            public_token TEXT NOT NULL DEFAULT '',
             uploaded_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
@@ -330,6 +334,13 @@ def init_db():
         if not _table_has_column(conn, "bl_codes", column_name):
             conn.execute(f"ALTER TABLE bl_codes ADD COLUMN {column_name} {column_def}")
 
+    file_columns = [
+        ("public_token", "TEXT NOT NULL DEFAULT ''"),
+    ]
+    for column_name, column_def in file_columns:
+        if not _table_has_column(conn, "files", column_name):
+            conn.execute(f"ALTER TABLE files ADD COLUMN {column_name} {column_def}")
+
     communication_rating_columns = [
         ("voter_user_id", "TEXT NOT NULL DEFAULT ''"),
         ("voter_name", "TEXT NOT NULL DEFAULT ''"),
@@ -424,6 +435,15 @@ def init_db():
         WHERE EXISTS (SELECT 1 FROM batches b WHERE b.id = bl_codes.batch_id)
         """
     )
+
+    file_rows = conn.execute(
+        "SELECT id FROM files WHERE public_token IS NULL OR public_token = ''"
+    ).fetchall()
+    for row in file_rows:
+        conn.execute(
+            "UPDATE files SET public_token = ? WHERE id = ?",
+            (_generate_public_token(), row["id"]),
+        )
 
     row = cursor.execute("SELECT id, content FROM message_template WHERE id = 1").fetchone()
     if not row:
@@ -606,6 +626,10 @@ def _to_int(value):
 
 def current_ts():
     return datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _generate_public_token():
+    return secrets.token_urlsafe(24)
 
 
 def record_login_history(username, role="", success=True, ip_address="", user_agent=""):
@@ -951,8 +975,8 @@ def delete_bl(bl_id):
 def add_file(bl_id, filename, file_path):
     conn = get_conn()
     conn.execute(
-        "INSERT INTO files(bl_id, filename, file_path) VALUES(?, ?, ?)",
-        (bl_id, filename, file_path),
+        "INSERT INTO files(bl_id, filename, file_path, public_token) VALUES(?, ?, ?, ?)",
+        (bl_id, filename, file_path, _generate_public_token()),
     )
     conn.commit()
     conn.close()
@@ -965,14 +989,35 @@ def get_files(bl_id):
     return [dict(row) for row in rows]
 
 
+def get_file_by_public_token(public_token):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM files WHERE public_token = ? LIMIT 1",
+        ((public_token or "").strip(),),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def format_packing_list(bl_id) -> str:
     files = get_files(bl_id)
     if not files:
         return "Packing list biriktirilmagan"
-    names = [f.get("filename", "").strip() for f in files if (f.get("filename") or "").strip()]
-    if not names:
+    items = []
+    for file_info in files:
+        name = (file_info.get("filename") or "").strip()
+        if not name:
+            continue
+        token = (file_info.get("public_token") or "").strip()
+        if PUBLIC_BASE_URL and token:
+            url = f"{PUBLIC_BASE_URL}/public/file/{token}"
+            items.append(f'• <a href="{html.escape(url, quote=True)}">{html.escape(name)}</a>')
+        else:
+            items.append(f"• {html.escape(name)}")
+    if not items:
         return "Packing list biriktirilmagan"
-    return ", ".join(names)
+    file_lines = "\n".join(items)
+    return f"Packing list\n{file_lines}"
 
 
 def delete_file(file_id):

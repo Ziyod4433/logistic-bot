@@ -16,6 +16,7 @@ from flask import (
     render_template,
     render_template_string,
     request,
+    send_file,
     session,
     url_for,
 )
@@ -705,6 +706,22 @@ def api_upload(bl_id):
 def api_delete_file(file_id):
     db.delete_file(file_id)
     return jsonify({"ok": True})
+
+
+@app.route("/public/file/<public_token>")
+def public_file(public_token):
+    file_info = db.get_file_by_public_token(public_token)
+    if not file_info:
+        abort(404)
+    file_path = file_info.get("file_path") or ""
+    if not file_path or not os.path.exists(file_path):
+        abort(404)
+    return send_file(
+        file_path,
+        as_attachment=False,
+        download_name=file_info.get("filename") or os.path.basename(file_path),
+        conditional=True,
+    )
 
 
 @app.route("/api/batches/<int:batch_id>/send", methods=["POST"])
