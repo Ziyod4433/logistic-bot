@@ -795,34 +795,57 @@ def api_export_problems():
 
     filter_items = []
     if problem_type:
-        filter_items.append(f"Type: {db.PROBLEM_TYPES.get(problem_type, problem_type)}")
+        filter_items.append(("Тип", db.PROBLEM_TYPES.get(problem_type, problem_type)))
     if date_from:
-        filter_items.append(f"From: {date_from}")
+        filter_items.append(("С", date_from))
     if date_to:
-        filter_items.append(f"To: {date_to}")
+        filter_items.append(("По", date_to))
     if batch_id:
-        filter_items.append(f"Batch ID: {batch_id}")
+        filter_items.append(("Партия", batch_id))
 
-    body_rows = "".join(
-        f"""
-        <tr>
-          <td>{html.escape(row.get('created_at', '') or '-')}</td>
-          <td>{html.escape(row.get('batch_name', '') or '-')}</td>
-          <td>{html.escape(row.get('bl_code', '') or '-')}</td>
-          <td>{html.escape(row.get('client_name', '') or '-')}</td>
-          <td>{html.escape(db.PROBLEM_TYPES.get(row.get('problem_type', ''), row.get('problem_type', '') or '-'))}</td>
-          <td>{html.escape(row.get('description', '') or '-')}</td>
-          <td>{html.escape(row.get('bl_status', '') or '-')}</td>
-          <td>{html.escape(row.get('expected_date', '') or '-')}</td>
-          <td>{html.escape(row.get('actual_date', '') or '-')}</td>
-        </tr>
-        """
-        for row in rows
-    )
+    filters_html = "".join(
+        f'<span class="chip"><span class="chip-label">{html.escape(label)}</span>{html.escape(value)}</span>'
+        for label, value in filter_items
+    ) or '<span class="chip chip-muted">Все инциденты</span>'
+
+    body_rows_list = []
+    for row in rows:
+        problem_type_key = row.get("problem_type", "") or ""
+        problem_label = db.PROBLEM_TYPES.get(problem_type_key, problem_type_key or "—")
+        problem_class = {
+            "damage": "badge-red",
+            "delay": "badge-amber",
+            "shortage": "badge-blue",
+        }.get(problem_type_key, "badge-muted")
+        status_text = row.get("bl_status", "") or "—"
+        status_class = {
+            "Принят": "badge-muted",
+            "Хоргос": "badge-blue",
+            "Алматы": "badge-blue",
+            "В пути до Ташкента": "badge-amber",
+            "Ташкент": "badge-amber",
+            "Доставлен": "badge-green",
+        }.get(status_text, "badge-muted")
+        body_rows_list.append(
+            f"""
+            <tr>
+              <td class="mono">{html.escape(row.get('incident_detected_at', '') or row.get('created_at', '') or '-')}</td>
+              <td>{html.escape(row.get('batch_name', '') or '-')}</td>
+              <td class="mono strong">{html.escape(row.get('bl_code', '') or '-')}</td>
+              <td>{html.escape(row.get('client_name', '') or '-')}</td>
+              <td><span class="badge {problem_class}">{html.escape(problem_label)}</span></td>
+              <td class="desc">{html.escape(row.get('description', '') or '-')}</td>
+              <td><span class="badge {status_class}">{html.escape(status_text)}</span></td>
+              <td>{html.escape(row.get('expected_date', '') or '-')}</td>
+              <td>{html.escape(row.get('actual_date', '') or '-')}</td>
+            </tr>
+            """
+        )
+    body_rows = "".join(body_rows_list)
     if not body_rows:
         body_rows = """
         <tr>
-          <td colspan="9" class="empty">No problems found for the selected filters</td>
+          <td colspan="9" class="empty">Инцидентов по выбранным фильтрам не найдено</td>
         </tr>
         """
 
@@ -832,82 +855,157 @@ def api_export_problems():
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Problems Report</title>
+      <title>BURAQ logistics - Проблемы</title>
       <style>
         :root {
-          --bg: #f4f5f7;
+          --bg: #eef1f6;
           --card: #ffffff;
           --text: #17191f;
           --muted: #667085;
           --line: #d8dde6;
           --accent: #111827;
-          --accent-soft: #eef2f7;
+          --accent-soft: #f5a623;
+          --accent-soft-2: #fff3dd;
+          --danger: #c7344f;
+          --warning: #d97706;
+          --info: #2563eb;
+          --ok: #0f9f6e;
         }
         * { box-sizing: border-box; }
-        body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+        body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: linear-gradient(180deg, #f7f8fb 0%, var(--bg) 100%); color: var(--text); }
         .page { max-width: 1400px; margin: 0 auto; padding: 28px; }
-        .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
-        .title { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
-        .meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
+        .hero {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 20px;
+          margin-bottom: 20px;
+          padding: 24px 26px;
+          border-radius: 24px;
+          background: linear-gradient(135deg, #121722 0%, #1c2433 48%, #141922 100%);
+          color: #fff;
+          box-shadow: 0 24px 60px rgba(17, 24, 39, .18);
+        }
+        .brand { font-size: 12px; font-weight: 800; letter-spacing: .28em; text-transform: uppercase; color: #f6c467; margin-bottom: 10px; }
+        .title { font-size: 32px; font-weight: 800; letter-spacing: -0.03em; }
+        .meta { color: rgba(255,255,255,.72); font-size: 13px; margin-top: 8px; }
+        .hero-stats { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+        .stat {
+          min-width: 138px;
+          padding: 14px 16px;
+          border-radius: 16px;
+          background: rgba(255,255,255,.06);
+          border: 1px solid rgba(255,255,255,.09);
+        }
+        .stat-v { font-size: 24px; font-weight: 800; line-height: 1; color: #fff; }
+        .stat-l { font-size: 11px; margin-top: 8px; color: rgba(255,255,255,.64); text-transform: uppercase; letter-spacing: .12em; }
         .actions { display: flex; gap: 10px; }
-        .btn { border: none; border-radius: 10px; padding: 11px 16px; cursor: pointer; font-size: 14px; font-weight: 700; }
-        .btn-dark { background: var(--accent); color: #fff; }
-        .btn-light { background: var(--accent-soft); color: var(--accent); }
-        .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: 0 10px 30px rgba(15, 23, 42, .06); }
+        .btn { border: none; border-radius: 12px; padding: 11px 16px; cursor: pointer; font-size: 14px; font-weight: 700; }
+        .btn-dark { background: var(--accent-soft); color: #17191f; }
+        .btn-light { background: rgba(255,255,255,.1); color: #fff; border: 1px solid rgba(255,255,255,.12); }
+        .card { background: var(--card); border: 1px solid var(--line); border-radius: 22px; overflow: hidden; box-shadow: 0 16px 40px rgba(15, 23, 42, .06); }
         .card-head { padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 16px; align-items: center; }
         .card-title { font-size: 18px; font-weight: 700; }
-        .filters { color: var(--muted); font-size: 13px; }
+        .filters { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+        .chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 7px 10px;
+          border-radius: 999px;
+          background: var(--accent-soft-2);
+          color: #4b5563;
+          font-size: 12px;
+          font-weight: 600;
+        }
+        .chip-label { color: #111827; font-weight: 800; text-transform: uppercase; font-size: 10px; letter-spacing: .08em; }
+        .chip-muted { background: #eef2f7; }
         table { width: 100%; border-collapse: collapse; }
         th { text-align: left; padding: 14px 16px; background: #f8fafc; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; border-bottom: 1px solid var(--line); }
         td { padding: 14px 16px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 13px; line-height: 1.45; }
+        tbody tr:nth-child(even) td { background: #fbfcfe; }
         tr:last-child td { border-bottom: none; }
+        .mono { font-family: "Courier New", monospace; white-space: nowrap; }
+        .strong { font-weight: 700; color: #111827; }
+        .desc { max-width: 280px; }
+        .badge {
+          display: inline-flex;
+          align-items: center;
+          padding: 5px 10px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: .03em;
+          white-space: nowrap;
+        }
+        .badge-red { background: rgba(199, 52, 79, .12); color: var(--danger); }
+        .badge-amber { background: rgba(217, 119, 6, .12); color: var(--warning); }
+        .badge-blue { background: rgba(37, 99, 235, .12); color: var(--info); }
+        .badge-green { background: rgba(15, 159, 110, .12); color: var(--ok); }
+        .badge-muted { background: #eef2f7; color: #667085; }
         .empty { text-align: center; color: var(--muted); padding: 28px; }
         .footer { margin-top: 14px; color: var(--muted); font-size: 12px; text-align: right; }
         @media print {
           body { background: #fff; }
           .page { max-width: none; padding: 0; }
           .actions { display: none; }
+          .hero { box-shadow: none; margin-bottom: 12px; }
           .card { border: none; box-shadow: none; }
           .card-head { padding-left: 0; padding-right: 0; }
+          .hero-stats { gap: 6px; }
+          .stat { background: rgba(255,255,255,.08); }
           th, td { font-size: 11px; padding: 10px 8px; }
         }
       </style>
     </head>
     <body>
       <div class="page">
-        <div class="toolbar">
+        <div class="hero">
           <div>
-            <div class="title">Problems Report</div>
-            <div class="meta">Exported: {{ exported_at }} / Total rows: {{ rows_count }}</div>
+            <div class="brand">BURAQ logistics</div>
+            <div class="title">Отчёт по проблемам</div>
+            <div class="meta">Сформирован: {{ exported_at }}</div>
           </div>
-          <div class="actions">
-            <button class="btn btn-light" onclick="window.close()">Close</button>
-            <button class="btn btn-dark" onclick="window.print()">Save as PDF</button>
+          <div>
+            <div class="hero-stats">
+              <div class="stat">
+                <div class="stat-v">{{ rows_count }}</div>
+                <div class="stat-l">Инцидентов</div>
+              </div>
+              <div class="stat">
+                <div class="stat-v">{{ exported_at[:10] }}</div>
+                <div class="stat-l">Дата отчёта</div>
+              </div>
+            </div>
+            <div class="actions" style="margin-top:14px;justify-content:flex-end">
+              <button class="btn btn-light" onclick="window.close()">Закрыть</button>
+              <button class="btn btn-dark" onclick="window.print()">Сохранить в PDF</button>
+            </div>
           </div>
         </div>
         <div class="card">
           <div class="card-head">
-            <div class="card-title">Problem List</div>
-            <div class="filters">{{ filters_label }}</div>
+            <div class="card-title">Список инцидентов</div>
+            <div class="filters">{{ filters_html|safe }}</div>
           </div>
           <table>
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Batch</th>
-                <th>BL Code</th>
-                <th>Client</th>
-                <th>Type</th>
-                <th>Description</th>
-                <th>Cargo Status</th>
-                <th>Expected</th>
-                <th>Actual Date</th>
+                <th>Выявлено</th>
+                <th>Партия</th>
+                <th>BL код</th>
+                <th>Клиент</th>
+                <th>Тип</th>
+                <th>Описание</th>
+                <th>Статус груза</th>
+                <th>Ожидаемая</th>
+                <th>Факт дата</th>
               </tr>
             </thead>
             <tbody>{{ body_rows|safe }}</tbody>
           </table>
         </div>
-        <div class="footer">BURAQ logistics ? Problems export</div>
+        <div class="footer">BURAQ logistics · Problems export</div>
       </div>
     </body>
     </html>
@@ -918,7 +1016,7 @@ def api_export_problems():
             report_html,
             exported_at=db.current_ts(),
             rows_count=len(rows),
-            filters_label=" / ".join(filter_items) if filter_items else "No filters",
+            filters_html=filters_html,
             body_rows=body_rows,
         ),
         mimetype="text/html; charset=utf-8",

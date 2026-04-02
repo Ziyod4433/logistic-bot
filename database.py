@@ -562,7 +562,14 @@ def get_batch(batch_id):
         f"""
         SELECT
             b.*,
-            {_delay_days_sql('b')} AS delay_days
+            {_delay_days_sql('b')} AS delay_days,
+            (
+                SELECT MAX(sl.sent_at)
+                FROM send_logs sl
+                JOIN bl_codes bl ON bl.id = sl.bl_id
+                WHERE bl.batch_id = b.id
+                  AND sl.success = 1
+            ) AS last_tracking_at
         FROM batches b
         WHERE b.id = ?
         """,
@@ -1135,6 +1142,7 @@ def get_problems(problem_type="", date_from="", date_to="", batch_id=""):
         f"""
         SELECT
             p.*,
+            p.created_at AS incident_detected_at,
             bl.code AS bl_code,
             bl.client_name,
             bl.chat_id,
