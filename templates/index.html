@@ -1024,7 +1024,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <div id="batch-meta-bar" style="padding:0 18px 14px;color:var(--muted2);font-size:12px"></div>
             <table class="tbl" id="bl-table-wrap">
               <thead><tr>
-                <th>BL код</th><th>Клиент</th><th>Груз</th><th>Chat ID</th><th>Статус</th><th>Файлы</th><th>Действия</th>
+                <th>BL код</th><th>Клиент</th><th>Груз</th><th>Chat ID</th><th>Статус партии</th><th>Файлы</th><th>Действия</th>
               </tr></thead>
               <tbody id="bl-table"></tbody>
             </table>
@@ -1331,6 +1331,19 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     </div>
     <div class="form-row2">
       <div class="form-g">
+        <label>Статус партии</label>
+        <select class="inp" id="new-batch-status">
+          <option value="Принят">🚚 Принят</option>
+          <option value="Хоргос">🛃 Хоргос</option>
+          <option value="Алматы">🏙 Алматы</option>
+          <option value="В пути до Ташкента">🚛 В пути до Ташкента</option>
+          <option value="Ташкент">📦 Ташкент</option>
+          <option value="Доставлен">✅ Доставлен</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row2">
+      <div class="form-g">
         <label>Ожидаемая дата партии</label>
         <input class="inp" type="date" id="new-batch-expected-date">
       </div>
@@ -1353,6 +1366,17 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <div class="form-g">
       <label>Название партии</label>
       <input class="inp" id="edit-batch-name" placeholder="Название партии">
+    </div>
+    <div class="form-g">
+      <label>Статус партии</label>
+      <select class="inp" id="edit-batch-status">
+        <option value="Принят">🚚 Принят</option>
+        <option value="Хоргос">🛃 Хоргос</option>
+        <option value="Алматы">🏙 Алматы</option>
+        <option value="В пути до Ташкента">🚛 В пути до Ташкента</option>
+        <option value="Ташкент">📦 Ташкент</option>
+        <option value="Доставлен">✅ Доставлен</option>
+      </select>
     </div>
     <div class="form-row2">
       <div class="form-g">
@@ -1455,8 +1479,9 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div style="font-size:11px;color:var(--muted2);margin-top:5px">Можно выбрать найденную группу выше или указать chat_id вручную.</div>
     </div>
     <div class="form-g">
-      <label>Статус груза</label>
-      <select class="inp" id="edit-bl-status"></select>
+      <label>Статус партии</label>
+      <div id="edit-bl-batch-status-view" class="inp" style="display:flex;align-items:center;min-height:52px;color:var(--text);background:rgba(255,255,255,.03)"></div>
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Общий статус редактируется в параметрах партии.</div>
     </div>
     <div class="form-row3">
       <div class="form-g">
@@ -1700,7 +1725,13 @@ async function loadDashboard() {
     const bt = document.getElementById("dash-batches");
     bt.innerHTML = batches.length ? batches.slice(0,6).map(b=>`
       <tr>
-        <td><b style="cursor:pointer;color:var(--amber)" onclick="goto('batches');openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</b></td>
+        <td>
+          <b style="cursor:pointer;color:var(--amber)" onclick="goto('batches');openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</b>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+            ${statusBadge(b.status || "Принят")}
+            ${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">Опоздание: ${b.delay_days} дн.</span>` : ``}
+          </div>
+        </td>
         <td><span class="badge badge-muted">${b.bl_count}</span></td>
         <td>
           <div style="display:flex;align-items:center;gap:8px">
@@ -1745,6 +1776,10 @@ function renderBatches(list) {
     <tr>
       <td>
         <span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+          ${statusBadge(b.status || "Принят")}
+          ${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">+${b.delay_days} дн.</span>` : ``}
+        </div>
       </td>
       <td><span class="badge badge-muted">${b.bl_count} BL</span></td>
       <td>
@@ -1772,14 +1807,16 @@ function filterBatches() {
 async function createBatch() {
   if (!ensureEditor()) return;
   const name = document.getElementById("new-batch-name").value.trim();
+  const status = document.getElementById("new-batch-status").value;
   const expected_date = document.getElementById("new-batch-expected-date").value.trim();
   const actual_date = document.getElementById("new-batch-actual-date").value.trim();
   if (!name) { toast("Введи название","err"); return; }
   try {
-    await api("/api/batches","POST",{name, expected_date, actual_date});
+    await api("/api/batches","POST",{name, status, expected_date, actual_date});
     toast("✅ Партия «"+name+"» создана","ok");
     closeModal("create-batch-modal");
     document.getElementById("new-batch-name").value = "";
+    document.getElementById("new-batch-status").value = "Принят";
     document.getElementById("new-batch-expected-date").value = "";
     document.getElementById("new-batch-actual-date").value = "";
     loadBatches(); loadDashboard();
@@ -1823,10 +1860,6 @@ async function loadBatchDetail(batchId) {
     knownChats = chats;
     document.getElementById("detail-title").textContent = data.batch.name || "";
 
-    // Populate statuses select
-    const sel = document.getElementById("edit-bl-status");
-    sel.innerHTML = data.statuses.map(s=>`<option value="${s}">${STATUS_ICO[s]||''} ${s}</option>`).join("");
-
     populateChatSelect("add-bl-chat-select");
     populateChatSelect("edit-bl-chat-select");
     renderKnownChats();
@@ -1837,7 +1870,7 @@ async function loadBatchDetail(batchId) {
 
     const linked = allBL.filter(b=>b.chat_id).length;
     document.getElementById("detail-progress-text").textContent =
-      `${allBL.length} клиентов · ${linked} привязано`;
+      `${allBL.length} клиентов · ${linked} привязано · ${data.batch.status || "Принят"}${Number(data.batch.delay_days || 0) > 0 ? ` · опоздание ${data.batch.delay_days} дн.` : ""}`;
     document.getElementById("add-bl-batch-id").value = batchId;
   } catch(e) { toast(e.message,"err"); }
 }
@@ -1851,7 +1884,7 @@ function renderBL(list, batchName) {
       <td>${renderCargoChips(b)}</td>
       <td>${renderChatCell(b.chat_id)}</td>
       <td>
-        ${statusBadge(b.status)}
+        ${statusBadge(currentBatch?.status || b.status)}
         ${b.is_stuck ? `<div class="kpi-note" style="color:var(--amber)">Статус не менялся долго</div>` : ""}
       </td>
       <td>
@@ -1935,13 +1968,17 @@ function renderBatchMeta(batch) {
     bar.innerHTML = "";
     return;
   }
+  const status = `<span class="badge ${STATUS_BADGE[batch.status] || 'badge badge-muted'}">${STATUS_ICO[batch.status] || '•'} ${esc(batch.status || "Принят")}</span>`;
   const expected = batch.expected_date
     ? `<span class="badge badge-blue">🖥 Ожидаемая дата: ${esc(batch.expected_date)}</span>`
     : `<span class="badge badge-muted">🖥 Ожидаемая дата не указана</span>`;
   const actual = batch.actual_date
     ? `<span class="badge badge-green">✅ Факт дата: ${esc(batch.actual_date)}</span>`
     : `<span class="badge badge-muted">📦 Факт дата не указана</span>`;
-  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${expected}${actual}</div>`;
+  const delay = Number(batch.delay_days || 0) > 0
+    ? `<span class="badge badge-red">⏱ Опоздание: ${batch.delay_days} дн.</span>`
+    : `<span class="badge badge-green">⏱ Без опоздания</span>`;
+  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${status}${expected}${actual}${delay}</div>`;
 }
 
 function renderKnownChats() {
@@ -2161,6 +2198,7 @@ function openEditBatchModal() {
   }
   document.getElementById("edit-batch-id").value = currentBatchId;
   document.getElementById("edit-batch-name").value = currentBatch.name || "";
+  document.getElementById("edit-batch-status").value = currentBatch.status || "Принят";
   document.getElementById("edit-batch-expected-date").value = currentBatch.expected_date || "";
   document.getElementById("edit-batch-actual-date").value = currentBatch.actual_date || "";
   openModal("edit-batch-modal");
@@ -2170,6 +2208,7 @@ async function saveBatchMeta() {
   if (!ensureEditor()) return;
   const batchId = document.getElementById("edit-batch-id").value;
   const name = document.getElementById("edit-batch-name").value.trim();
+  const status = document.getElementById("edit-batch-status").value;
   const expected_date = document.getElementById("edit-batch-expected-date").value.trim();
   const actual_date = document.getElementById("edit-batch-actual-date").value.trim();
   if (!batchId || !name) {
@@ -2177,7 +2216,7 @@ async function saveBatchMeta() {
     return;
   }
   try {
-    await api(`/api/batches/${batchId}`,"PUT",{name, expected_date, actual_date});
+    await api(`/api/batches/${batchId}`,"PUT",{name, status, expected_date, actual_date});
     toast("✅ Параметры партии сохранены","ok");
     closeModal("edit-batch-modal");
     await ensureBatchesLoaded(true);
@@ -2232,7 +2271,7 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-description").value = bl.cargo_description || "";
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
   populateChatSelect("edit-bl-chat-select", bl.chat_id||"");
-  document.getElementById("edit-bl-status").value = bl.status;
+  document.getElementById("edit-bl-batch-status-view").innerHTML = statusBadge(currentBatch?.status || bl.status || "Принят");
   document.getElementById("edit-bl-file-input").dataset.blId = blId;
 
   // Load files
@@ -2271,7 +2310,6 @@ async function saveBL() {
       quantity_places: document.getElementById("edit-bl-quantity").value.trim(),
       cargo_description: document.getElementById("edit-bl-description").value.trim(),
       chat_id:     document.getElementById("edit-bl-chat").value.trim(),
-      status:      document.getElementById("edit-bl-status").value,
     });
     toast("✅ Сохранено","ok");
     closeModal("edit-bl-modal");

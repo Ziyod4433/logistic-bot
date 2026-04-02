@@ -115,6 +115,22 @@ def _late_sql(alias: str = "bl") -> str:
     """
 
 
+def _delay_days_sql(alias: str = "bl") -> str:
+    return f"""
+    CASE
+        WHEN COALESCE({alias}.expected_date, '') = '' THEN 0
+        WHEN COALESCE({alias}.actual_date, '') != ''
+             AND date({alias}.actual_date) > date({alias}.expected_date)
+            THEN CAST(julianday(date({alias}.actual_date)) - julianday(date({alias}.expected_date)) AS INTEGER)
+        WHEN COALESCE({alias}.actual_date, '') = ''
+             AND {alias}.status != 'Доставлен'
+             AND date('now','localtime') > date({alias}.expected_date)
+            THEN CAST(julianday(date('now','localtime')) - julianday(date({alias}.expected_date)) AS INTEGER)
+        ELSE 0
+    END
+    """
+
+
 def _stuck_sql(alias: str = "bl") -> str:
     return f"""
     CASE
@@ -134,8 +150,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE NOT NULL,
+            status TEXT DEFAULT 'Принят',
             expected_date TEXT DEFAULT '',
             actual_date TEXT DEFAULT '',
+            status_updated_at TEXT DEFAULT (datetime('now','localtime')),
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
@@ -289,8 +307,10 @@ def init_db():
     )
 
     batch_columns = [
+        ("status", "TEXT DEFAULT 'Принят'"),
         ("expected_date", "TEXT DEFAULT ''"),
         ("actual_date", "TEXT DEFAULT ''"),
+        ("status_updated_at", "TEXT DEFAULT ''"),
     ]
     for column_name, column_def in batch_columns:
         if not _table_has_column(conn, "batches", column_name):
@@ -330,7 +350,18 @@ def init_db():
     conn.execute(
         """
         UPDATE batches
-        SET expected_date = COALESCE(
+        SET status = COALESCE(
+                NULLIF(status, ''),
+                (
+                    SELECT status
+                    FROM bl_codes bl
+                    WHERE bl.batch_id = batches.id AND COALESCE(bl.status, '') != ''
+                    ORDER BY COALESCE(NULLIF(bl.status_updated_at, ''), bl.created_at) DESC
+                    LIMIT 1
+                ),
+                'Принят'
+            ),
+            expected_date = COALESCE(
                 NULLIF(expected_date, ''),
                 (
                     SELECT expected_date
@@ -351,6 +382,18 @@ def init_db():
                     LIMIT 1
                 ),
                 ''
+            ),
+            status_updated_at = COALESCE(
+                NULLIF(status_updated_at, ''),
+                (
+                    SELECT COALESCE(NULLIF(bl.status_updated_at, ''), bl.created_at)
+                    FROM bl_codes bl
+                    WHERE bl.batch_id = batches.id
+                    ORDER BY COALESCE(NULLIF(bl.status_updated_at, ''), bl.created_at) DESC
+                    LIMIT 1
+                ),
+                created_at,
+                datetime('now','localtime')
             )
         """
     )
@@ -359,6 +402,11 @@ def init_db():
         """
         UPDATE bl_codes
         SET
+            status = COALESCE(
+                (SELECT b.status FROM batches b WHERE b.id = bl_codes.batch_id),
+                status,
+                'Принят'
+            ),
             expected_date = COALESCE(
                 (SELECT b.expected_date FROM batches b WHERE b.id = bl_codes.batch_id),
                 ''
@@ -366,6 +414,12 @@ def init_db():
             actual_date = COALESCE(
                 (SELECT b.actual_date FROM batches b WHERE b.id = bl_codes.batch_id),
                 ''
+            ),
+            status_updated_at = COALESCE(
+                (SELECT b.status_updated_at FROM batches b WHERE b.id = bl_codes.batch_id),
+                status_updated_at,
+                created_at,
+                datetime('now','localtime')
             )
         WHERE EXISTS (SELECT 1 FROM batches b WHERE b.id = bl_codes.batch_id)
         """
@@ -403,13 +457,14 @@ def init_db():
     conn.close()
 
 
-def create_batch(name, expected_date="", actual_date=""):
+def create_batch(name, status="Принят", expected_date="", actual_date=""):
     conn = get_conn()
     try:
         conn.execute(
-            "INSERT INTO batches(name, expected_date, actual_date) VALUES(?, ?, ?)",
+            "INSERT INTO batches(name, status, expected_date, actual_date, status_updated_at) VALUES(?, ?, ?, ?, datetime('now','localtime'))",
             (
                 (name or "").strip(),
+                (status or "Принят").strip(),
                 (expected_date or "").strip(),
                 (actual_date or "").strip(),
             ),
@@ -422,22 +477,30 @@ def create_batch(name, expected_date="", actual_date=""):
         conn.close()
 
 
-def update_batch(batch_id, name, expected_date="", actual_date=""):
+def update_batch(batch_id, name, status="Принят", expected_date="", actual_date=""):
     conn = get_conn()
     try:
+        new_status = (status or "Принят").strip()
         conn.execute(
             """
             UPDATE batches
             SET
                 name = ?,
+                status = ?,
                 expected_date = ?,
-                actual_date = ?
+                actual_date = ?,
+                status_updated_at = CASE
+                    WHEN COALESCE(status, 'Принят') != ? THEN datetime('now','localtime')
+                    ELSE COALESCE(NULLIF(status_updated_at, ''), datetime('now','localtime'))
+                END
             WHERE id = ?
             """,
             (
                 (name or "").strip(),
+                new_status,
                 (expected_date or "").strip(),
                 (actual_date or "").strip(),
+                new_status,
                 batch_id,
             ),
         )
@@ -445,13 +508,20 @@ def update_batch(batch_id, name, expected_date="", actual_date=""):
             """
             UPDATE bl_codes
             SET
+                status = ?,
                 expected_date = ?,
-                actual_date = ?
+                actual_date = ?,
+                status_updated_at = CASE
+                    WHEN COALESCE(status, 'Принят') != ? THEN datetime('now','localtime')
+                    ELSE COALESCE(NULLIF(status_updated_at, ''), datetime('now','localtime'))
+                END
             WHERE batch_id = ?
             """,
             (
+                new_status,
                 (expected_date or "").strip(),
                 (actual_date or "").strip(),
+                new_status,
                 batch_id,
             ),
         )
@@ -472,6 +542,7 @@ def get_batches():
             (SELECT COUNT(*) FROM bl_codes bl WHERE bl.batch_id = b.id) AS bl_count,
             (SELECT COUNT(*) FROM bl_codes bl WHERE bl.batch_id = b.id AND bl.chat_id != '') AS linked_count,
             (SELECT COUNT(*) FROM bl_codes bl WHERE bl.batch_id = b.id AND {_late_sql('bl')} = 1) AS late_count,
+            {_delay_days_sql('b')} AS delay_days,
             (
                 SELECT COUNT(DISTINCT p.bl_id)
                 FROM problems p
@@ -487,7 +558,16 @@ def get_batches():
 
 def get_batch(batch_id):
     conn = get_conn()
-    row = conn.execute("SELECT * FROM batches WHERE id = ?", (batch_id,)).fetchone()
+    row = conn.execute(
+        f"""
+        SELECT
+            b.*,
+            {_delay_days_sql('b')} AS delay_days
+        FROM batches b
+        WHERE b.id = ?
+        """,
+        (batch_id,),
+    ).fetchone()
     conn.close()
     return dict(row) if row else None
 
@@ -634,24 +714,31 @@ def add_bl(
     conn = get_conn()
     try:
         batch_row = conn.execute(
-            "SELECT expected_date, actual_date FROM batches WHERE id = ?",
+            "SELECT status, expected_date, actual_date, status_updated_at FROM batches WHERE id = ?",
             (batch_id,),
         ).fetchone()
+        batch_status = batch_row["status"] if batch_row else "Принят"
         expected_date = batch_row["expected_date"] if batch_row else ""
         actual_date = batch_row["actual_date"] if batch_row else ""
+        status_updated_at = (
+            batch_row["status_updated_at"]
+            if batch_row and batch_row["status_updated_at"]
+            else current_ts()
+        )
         conn.execute(
             """
             INSERT INTO bl_codes(
-                batch_id, code, client_name, chat_id, cargo_type, weight_kg, volume_cbm, quantity_places,
+                batch_id, code, client_name, chat_id, status, cargo_type, weight_kg, volume_cbm, quantity_places,
                 cargo_description, expected_date, actual_date, status_updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 batch_id,
                 code.upper().strip(),
                 client_name.strip(),
                 chat_id.strip(),
+                batch_status,
                 (cargo_type or "").strip(),
                 _to_float(weight_kg),
                 _to_float(volume_cbm),
@@ -659,6 +746,7 @@ def add_bl(
                 (cargo_description or "").strip(),
                 (expected_date or "").strip(),
                 (actual_date or "").strip(),
+                status_updated_at,
             ),
         )
         conn.commit()
@@ -718,7 +806,7 @@ def update_bl(
     bl_id,
     client_name,
     chat_id,
-    status,
+    status=None,
     cargo_type="",
     weight_kg=0,
     volume_cbm=0,
@@ -726,6 +814,11 @@ def update_bl(
     cargo_description="",
 ):
     conn = get_conn()
+    current = conn.execute(
+        "SELECT status FROM bl_codes WHERE id = ?",
+        (bl_id,),
+    ).fetchone()
+    effective_status = (status if status is not None else (current["status"] if current else "Принят")) or "Принят"
     conn.execute(
         """
         UPDATE bl_codes
@@ -747,13 +840,13 @@ def update_bl(
         (
             client_name.strip(),
             chat_id.strip(),
-            status,
+            effective_status,
             (cargo_type or "").strip(),
             _to_float(weight_kg),
             _to_float(volume_cbm),
             _to_int(quantity_places),
             (cargo_description or "").strip(),
-            status,
+            effective_status,
             bl_id,
         ),
     )
@@ -839,8 +932,11 @@ def get_stats():
         "linked": conn.execute("SELECT COUNT(*) FROM bl_codes WHERE chat_id != ''").fetchone()[0],
         "sent": conn.execute("SELECT COUNT(*) FROM send_logs WHERE success = 1").fetchone()[0],
         "failed": conn.execute("SELECT COUNT(*) FROM send_logs WHERE success = 0").fetchone()[0],
-        "delivered": conn.execute("SELECT COUNT(*) FROM bl_codes WHERE status = 'Доставлен'").fetchone()[0],
-        "late": conn.execute(f"SELECT COUNT(*) FROM bl_codes bl WHERE {_late_sql('bl')} = 1").fetchone()[0],
+        "delivered": conn.execute("SELECT COUNT(*) FROM batches WHERE status = 'Доставлен'").fetchone()[0],
+        "late": conn.execute(f"SELECT COUNT(*) FROM batches b WHERE {_late_sql('b')} = 1").fetchone()[0],
+        "delay_days_total": conn.execute(
+            f"SELECT COALESCE(SUM({_delay_days_sql('b')}), 0) FROM batches b"
+        ).fetchone()[0],
         "problematic": conn.execute(
             "SELECT COUNT(DISTINCT bl_id) FROM problems WHERE status = 'open'"
         ).fetchone()[0],
