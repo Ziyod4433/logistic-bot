@@ -1010,7 +1010,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
           <table class="tbl">
             <thead><tr>
-              <th>Название</th><th>BL кодов</th><th>Привязано групп</th><th>Создана</th><th></th>
+              <th>Название</th><th>Статус</th><th>Опоздание</th><th>BL кодов</th><th>Привязано групп</th><th>Создана</th><th></th>
             </tr></thead>
             <tbody id="dash-batches"></tbody>
           </table>
@@ -1037,7 +1037,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
             <table class="tbl">
               <thead><tr>
-                <th>Название партии</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
+                <th>Название партии</th><th>Статус</th><th>Опоздание</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
               </tr></thead>
               <tbody id="batches-table"></tbody>
             </table>
@@ -1779,11 +1779,9 @@ async function loadDashboard() {
       <tr>
         <td>
           <b style="cursor:pointer;color:var(--amber)" onclick="goto('batches');openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</b>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-            ${statusBadge(b.status || "Принят")}
-            ${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">Опоздание: ${b.delay_days} дн.</span>` : ``}
-          </div>
         </td>
+        <td>${statusBadge(b.status || "Принят")}</td>
+        <td>${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">${b.delay_days} дн.</span>` : `<span style="color:var(--muted)">—</span>`}</td>
         <td><span class="badge badge-muted">${b.bl_count}</span></td>
         <td>
           <div style="display:flex;align-items:center;gap:8px">
@@ -1794,7 +1792,7 @@ async function loadDashboard() {
         <td class="mono" style="color:var(--muted2);font-size:11px">${b.created_at}</td>
         <td><button class="btn btn-ghost btn-xs" onclick="goto('batches');openBatchDetail(${b.id},'${esc(b.name)}')">Открыть →</button></td>
       </tr>`).join("") :
-      `<tr><td colspan="5"><div class="empty"><div class="empty-icon">📦</div><p>Партий пока нет. Создай первую!</p></div></td></tr>`;
+      `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📦</div><p>Партий пока нет. Создай первую!</p></div></td></tr>`;
 
   } catch(e) { toast("Ошибка загрузки: "+e.message,"err"); }
 }
@@ -1815,11 +1813,9 @@ function renderBatches(list) {
     <tr>
       <td>
         <span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-          ${statusBadge(b.status || "Принят")}
-          ${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">+${b.delay_days} дн.</span>` : ``}
-        </div>
       </td>
+      <td>${statusBadge(b.status || "Принят")}</td>
+      <td>${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">+${b.delay_days} дн.</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td><span class="badge badge-muted">${b.bl_count} BL</span></td>
       <td>
         <div style="display:flex;align-items:center;gap:8px">
@@ -1835,7 +1831,7 @@ function renderBatches(list) {
         </div>
       </td>
     </tr>`).join("") :
-    `<tr><td colspan="5"><div class="empty"><div class="empty-icon">📦</div><p>Нет партий. Создай первую!</p></div></td></tr>`;
+    `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📦</div><p>Нет партий. Создай первую!</p></div></td></tr>`;
 }
 
 function filterBatches() {
@@ -2022,7 +2018,6 @@ function renderBatchMeta(batch) {
     bar.innerHTML = "";
     return;
   }
-  const status = `<span class="badge ${STATUS_BADGE[batch.status] || 'badge badge-muted'}">${STATUS_ICO[batch.status] || '•'} ${esc(batch.status || "Принят")}</span>`;
   const expected = batch.expected_date
     ? `<span class="badge badge-blue">🖥 Ожидаемая дата: ${esc(batch.expected_date)}</span>`
     : `<span class="badge badge-muted">🖥 Ожидаемая дата не указана</span>`;
@@ -2032,7 +2027,7 @@ function renderBatchMeta(batch) {
   const delay = Number(batch.delay_days || 0) > 0
     ? `<span class="badge badge-red">⏱ Опоздание: ${batch.delay_days} дн.</span>`
     : `<span class="badge badge-green">⏱ Без опоздания</span>`;
-  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${status}${expected}${actual}${delay}</div>`;
+  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${expected}${actual}${delay}</div>`;
 }
 
 function renderKnownChats() {
