@@ -777,6 +777,74 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   margin-bottom: 20px; transition: color .15s;
 }
 .back-btn:hover { color: var(--amber); }
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+.detail-head-left {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.back-btn-hero {
+  appearance: none;
+  border: 1px solid rgba(245,166,35,.32);
+  background: linear-gradient(180deg, rgba(245,166,35,.22), rgba(245,166,35,.12));
+  color: #ffd486;
+  font-family: 'Syne', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  padding: 11px 18px;
+  border-radius: 999px;
+  margin-bottom: 0;
+  box-shadow: 0 12px 28px rgba(245,166,35,.12);
+  transition: transform .15s ease, box-shadow .2s ease, border-color .2s ease, background .2s ease;
+}
+.back-btn-hero:hover {
+  color: #fff0c8;
+  border-color: rgba(245,166,35,.52);
+  background: linear-gradient(180deg, rgba(245,166,35,.3), rgba(245,166,35,.18));
+  transform: translateY(-1px);
+  box-shadow: 0 16px 34px rgba(245,166,35,.18);
+}
+.back-btn-hero .arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(10,12,17,.26);
+  font-size: 15px;
+}
+.detail-tracking-chip {
+  min-width: 250px;
+  max-width: 340px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(245,166,35,.18);
+  background:
+    linear-gradient(180deg, rgba(245,166,35,.1), rgba(245,166,35,0)),
+    rgba(13,16,24,.9);
+  box-shadow: 0 14px 34px rgba(0,0,0,.18);
+}
+.detail-tracking-chip .kicker {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--amber);
+  margin-bottom: 8px;
+}
+.detail-tracking-chip .value {
+  color: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+}
 
 @media (max-width: 1260px) {
   .stats-row { grid-template-columns: repeat(4, minmax(0,1fr)); }
@@ -976,10 +1044,21 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 
         <!-- Batch detail view -->
         <div id="batch-detail">
-          <div class="back-btn" onclick="showBatchList()">← Все партии</div>
-          <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:24px">
-            <div class="page-h" id="detail-title">Партия</div>
-            <div id="detail-progress-text" style="color:var(--muted2);font-size:13px"></div>
+          <div class="detail-head">
+            <div class="detail-head-left">
+              <button type="button" class="back-btn back-btn-hero" onclick="showBatchList()">
+                <span class="arrow">←</span>
+                <span>Назад</span>
+              </button>
+              <div>
+                <div class="page-h" id="detail-title">Партия</div>
+                <div id="detail-progress-text" style="color:var(--muted2);font-size:13px"></div>
+              </div>
+            </div>
+            <div class="detail-tracking-chip" id="detail-tracking-chip">
+              <div class="kicker">Последний трекинг</div>
+              <div class="value">—</div>
+            </div>
           </div>
 
           <div class="card" style="margin-bottom:16px">
@@ -1815,6 +1894,10 @@ function showBatchList() {
   currentBatch = null;
   document.getElementById("batches-list-view").style.display = "";
   document.getElementById("batch-detail").classList.remove("open");
+  const trackingChip = document.getElementById("detail-tracking-chip");
+  if (trackingChip) {
+    trackingChip.innerHTML = `<div class="kicker">Последний трекинг</div><div class="value">—</div>`;
+  }
 }
 
 async function openBatchDetail(id, name) {
@@ -1823,6 +1906,10 @@ async function openBatchDetail(id, name) {
   document.getElementById("batches-list-view").style.display = "none";
   document.getElementById("batch-detail").classList.add("open");
   document.getElementById("detail-title").textContent = name;
+  const trackingChip = document.getElementById("detail-tracking-chip");
+  if (trackingChip) {
+    trackingChip.innerHTML = `<div class="kicker">Последний трекинг</div><div class="value">Загрузка...</div>`;
+  }
   await loadBatchDetail(id);
 }
 
@@ -1836,6 +1923,14 @@ async function loadBatchDetail(batchId) {
     allBL = data.bl_codes;
     knownChats = chats;
     document.getElementById("detail-title").textContent = data.batch.name || "";
+    const trackingChip = document.getElementById("detail-tracking-chip");
+    if (trackingChip) {
+      const lastTracking = data.batch.status_updated_at || data.batch.created_at || "—";
+      trackingChip.innerHTML = `
+        <div class="kicker">Последний трекинг</div>
+        <div class="value">${esc(lastTracking)}</div>
+      `;
+    }
 
     populateChatSelect("add-bl-chat-select");
     populateChatSelect("edit-bl-chat-select");
