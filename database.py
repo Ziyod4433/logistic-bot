@@ -253,6 +253,16 @@ def init_db():
             content TEXT NOT NULL,
             updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
+
+        CREATE TABLE IF NOT EXISTS login_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT '',
+            success INTEGER NOT NULL DEFAULT 1,
+            ip_address TEXT NOT NULL DEFAULT '',
+            user_agent TEXT NOT NULL DEFAULT '',
+            logged_at TEXT NOT NULL DEFAULT ''
+        );
         """
     )
 
@@ -376,6 +386,43 @@ def _to_int(value):
 
 def current_ts():
     return datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def record_login_history(username, role="", success=True, ip_address="", user_agent=""):
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO login_history(username, role, success, ip_address, user_agent, logged_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (username or "").strip(),
+                (role or "").strip(),
+                1 if success else 0,
+                (ip_address or "").strip()[:120],
+                (user_agent or "").strip()[:255],
+                current_ts(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_login_history(limit=200):
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT id, username, role, success, ip_address, user_agent, logged_at
+        FROM login_history
+        ORDER BY logged_at DESC, id DESC
+        LIMIT ?
+        """,
+        (_to_int(limit) or 200,),
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 
 def format_cargo_info(bl: dict) -> str:

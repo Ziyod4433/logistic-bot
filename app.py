@@ -1,4 +1,4 @@
-import html
+﻿import html
 import os
 import secrets
 from functools import wraps
@@ -28,10 +28,16 @@ app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))
 
 ADMIN_LOGIN = os.getenv("ADMIN_LOGIN", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN1_LOGIN = os.getenv("ADMIN1_LOGIN", "Admin1")
+ADMIN1_PASSWORD = os.getenv("ADMIN1_PASSWORD", "Admin6611")
+GUEST_PASSWORD = os.getenv("GUEST_PASSWORD", "Guest6611")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").strip()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 PORT = int(os.getenv("PORT", "5000"))
+
+ROLE_EDITOR = "editor"
+ROLE_VIEWER = "viewer"
 
 ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "docx", "zip"}
 
@@ -65,6 +71,67 @@ def login_required(func):
         return func(*args, **kwargs)
 
     return decorated
+
+
+def editor_required(func):
+    @wraps(func)
+    def decorated(*args, **kwargs):
+        if not session.get("logged_in"):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Login required"}), 401
+            return redirect(url_for("login"))
+        if session.get("role") != ROLE_EDITOR:
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "View-only access"}), 403
+            return redirect(url_for("index"))
+        return func(*args, **kwargs)
+
+    return decorated
+
+
+def get_auth_users():
+    guest_logins = [
+        os.getenv("GUEST1_LOGIN", "Guest1"),
+        os.getenv("GUEST2_LOGIN", "Guest2"),
+        os.getenv("GUEST3_LOGIN", "Guest3"),
+    ]
+    users = {}
+
+    def add_user(username: str, password: str, role: str):
+        username = (username or "").strip()
+        password = (password or "").strip()
+        if username and password:
+            users[username] = {"password": password, "role": role}
+
+    add_user(ADMIN_LOGIN, ADMIN_PASSWORD, ROLE_EDITOR)
+    add_user(ADMIN1_LOGIN, ADMIN1_PASSWORD, ROLE_EDITOR)
+    for guest_login in guest_logins:
+        add_user(guest_login, GUEST_PASSWORD, ROLE_VIEWER)
+
+    return users
+
+
+def get_role_label(role: str) -> str:
+    return "Editor" if role == ROLE_EDITOR else "View only"
+
+
+def get_request_ip() -> str:
+    forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    return (
+        forwarded
+        or (request.headers.get("X-Real-IP") or "").strip()
+        or (request.remote_addr or "").strip()
+    )
+
+
+@app.context_processor
+def inject_auth_context():
+    role = session.get("role", ROLE_VIEWER)
+    return {
+        "is_editor": role == ROLE_EDITOR,
+        "current_role": role,
+        "current_role_label": get_role_label(role) if session.get("logged_in") else "",
+    }
 
 
 def telegram_api(method: str, *, timeout: int = 15, **kwargs):
@@ -368,13 +435,31 @@ def send_bl_package(bl: dict, batch_name: str):
 def login():
     error = None
     if request.method == "POST":
-        username = request.form.get("username", "")
+        username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
-        if username == ADMIN_LOGIN and password == ADMIN_PASSWORD:
+        auth_user = get_auth_users().get(username)
+        role = auth_user["role"] if auth_user else ""
+        if auth_user and password == auth_user["password"]:
+            session.clear()
             session["logged_in"] = True
             session["username"] = username
+            session["role"] = role
+            db.record_login_history(
+                username=username,
+                role=role,
+                success=True,
+                ip_address=get_request_ip(),
+                user_agent=request.headers.get("User-Agent", ""),
+            )
             return redirect(url_for("index"))
-        error = "Неверный логин или пароль"
+        db.record_login_history(
+            username=username,
+            role=role,
+            success=False,
+            ip_address=get_request_ip(),
+            user_agent=request.headers.get("User-Agent", ""),
+        )
+        error = "Invalid login or password"
     return render_template("index.html", login_page=True, error=error)
 
 
@@ -443,7 +528,7 @@ def api_batches():
 
 
 @app.route("/api/batches", methods=["POST"])
-@login_required
+@editor_required
 def api_create_batch():
     data = request.json or {}
     name = (data.get("name") or "").strip()
@@ -455,7 +540,7 @@ def api_create_batch():
 
 
 @app.route("/api/batches/<int:batch_id>", methods=["DELETE"])
-@login_required
+@editor_required
 def api_delete_batch(batch_id):
     db.delete_batch(batch_id)
     return jsonify({"ok": True})
@@ -479,7 +564,7 @@ def api_chats():
 
 
 @app.route("/api/bl", methods=["POST"])
-@login_required
+@editor_required
 def api_add_bl():
     data = request.json or {}
     batch_id = data.get("batch_id")
@@ -516,7 +601,7 @@ def api_add_bl():
 
 
 @app.route("/api/bl/<int:bl_id>", methods=["PUT"])
-@login_required
+@editor_required
 def api_update_bl(bl_id):
     data = request.json or {}
     db.update_bl(
@@ -536,7 +621,7 @@ def api_update_bl(bl_id):
 
 
 @app.route("/api/bl/<int:bl_id>", methods=["DELETE"])
-@login_required
+@editor_required
 def api_delete_bl(bl_id):
     db.delete_bl(bl_id)
     return jsonify({"ok": True})
@@ -549,7 +634,7 @@ def api_files(bl_id):
 
 
 @app.route("/api/bl/<int:bl_id>/files", methods=["POST"])
-@login_required
+@editor_required
 def api_upload(bl_id):
     if "file" not in request.files:
         return jsonify({"error": "Файл не выбран"}), 400
@@ -568,14 +653,14 @@ def api_upload(bl_id):
 
 
 @app.route("/api/files/<int:file_id>", methods=["DELETE"])
-@login_required
+@editor_required
 def api_delete_file(file_id):
     db.delete_file(file_id)
     return jsonify({"ok": True})
 
 
 @app.route("/api/batches/<int:batch_id>/send", methods=["POST"])
-@login_required
+@editor_required
 def api_send_batch(batch_id):
     if not BOT_TOKEN:
         return jsonify({"error": "BOT_TOKEN не настроен в .env"}), 500
@@ -610,7 +695,7 @@ def api_send_batch(batch_id):
 
 
 @app.route("/api/bl/<int:bl_id>/send", methods=["POST"])
-@login_required
+@editor_required
 def api_send_one(bl_id):
     if not BOT_TOKEN:
         return jsonify({"error": "BOT_TOKEN не настроен в .env"}), 500
@@ -640,6 +725,13 @@ def api_logs():
     return jsonify(db.get_logs(limit))
 
 
+@app.route("/api/login-history")
+@editor_required
+def api_login_history():
+    limit = int(request.args.get("limit", 200))
+    return jsonify(db.get_login_history(limit))
+
+
 @app.route("/api/problems")
 @login_required
 def api_problems():
@@ -654,7 +746,7 @@ def api_problems():
 
 
 @app.route("/api/problems", methods=["POST"])
-@login_required
+@editor_required
 def api_create_problem():
     data = request.json or {}
     bl_id = data.get("bl_id")
@@ -861,7 +953,7 @@ def api_communication_rate_template():
 
 
 @app.route("/api/communication-rate/template", methods=["POST"])
-@login_required
+@editor_required
 def api_save_communication_rate_template():
     data = request.json or {}
     content = (data.get("content") or "").strip()
@@ -872,7 +964,7 @@ def api_save_communication_rate_template():
 
 
 @app.route("/api/communication-rate/send", methods=["POST"])
-@login_required
+@editor_required
 def api_send_communication_rate():
     if not BOT_TOKEN:
         return jsonify({"error": "BOT_TOKEN не настроен в .env"}), 500
@@ -929,7 +1021,7 @@ def api_get_template():
 
 
 @app.route("/api/template", methods=["POST"])
-@login_required
+@editor_required
 def api_save_template():
     data = request.json or {}
     content = data.get("content", "").strip()
