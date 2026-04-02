@@ -1063,25 +1063,6 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
           </div>
 
-          <div class="card" style="margin-bottom:16px">
-            <div class="card-h">
-              <span class="card-title">Найденные Telegram группы</span>
-              <div style="display:flex;align-items:center;gap:10px">
-                <span id="known-chat-count" style="font-size:12px;color:var(--muted2)"></span>
-                <button class="btn btn-ghost btn-sm" onclick="loadKnownChats()">↻ Обновить</button>
-              </div>
-            </div>
-            <table class="tbl">
-              <thead><tr>
-                <th>Название</th><th>Chat ID</th><th>Тип</th><th>Привязано</th><th>Статус</th>
-              </tr></thead>
-              <tbody id="known-chats-table"></tbody>
-            </table>
-            <div style="padding:0 20px 18px;color:var(--muted2);font-size:11px">
-              Добавь бота в группу Telegram. Группа появится здесь автоматически. Если группа была добавлена раньше, отправь в группе команду боту или добавь его заново.
-            </div>
-          </div>
-
           <!-- BL Controls -->
           <div class="card">
             <div class="card-h">
@@ -1936,7 +1917,6 @@ async function loadBatchDetail(batchId) {
 
     populateChatSelect("add-bl-chat-select");
     populateChatSelect("edit-bl-chat-select");
-    renderKnownChats();
     renderChatsPage();
     updatePendingChatBanner();
     renderBL(allBL, data.batch.name);
@@ -1944,7 +1924,7 @@ async function loadBatchDetail(batchId) {
 
     const linked = allBL.filter(b=>b.chat_id).length;
     document.getElementById("detail-progress-text").textContent =
-      `${allBL.length} клиентов · ${linked} привязано · ${data.batch.status || "Принят"}${Number(data.batch.delay_days || 0) > 0 ? ` · опоздание ${data.batch.delay_days} дн.` : ""}`;
+      `${allBL.length} клиентов · ${linked} привязано`;
     document.getElementById("add-bl-batch-id").value = batchId;
   } catch(e) { toast(e.message,"err"); }
 }
