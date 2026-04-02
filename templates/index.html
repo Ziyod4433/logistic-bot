@@ -1236,10 +1236,17 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               <div style="margin-bottom:12px">
                 <div style="font-size:11px;color:var(--muted2);margin-bottom:8px">Доступные переменные (нажми чтобы вставить):</div>
                 <span class="var-pill" onclick="insertVar('{batch_name}')">{batch_name}</span>
+                <span class="var-pill" onclick="insertVar('{batch_date}')">{batch_date}</span>
                 <span class="var-pill" onclick="insertVar('{bl_code}')">{bl_code}</span>
                 <span class="var-pill" onclick="insertVar('{client_name}')">{client_name}</span>
                 <span class="var-pill" onclick="insertVar('{status}')">{status}</span>
                 <span class="var-pill" onclick="insertVar('{cargo_info}')">{cargo_info}</span>
+                <span class="var-pill" onclick="insertVar('{cargo_type}')">{cargo_type}</span>
+                <span class="var-pill" onclick="insertVar('{weight_kg}')">{weight_kg}</span>
+                <span class="var-pill" onclick="insertVar('{volume_m3}')">{volume_m3}</span>
+                <span class="var-pill" onclick="insertVar('{places}')">{places}</span>
+                <span class="var-pill" onclick="insertVar('{description}')">{description}</span>
+                <span class="var-pill" onclick="insertVar('{expected_date}')">{expected_date}</span>
                 <span class="var-pill" onclick="insertVar('{status_detail}')">{status_detail}</span>
               </div>
               <div class="form-g">
@@ -2704,13 +2711,29 @@ async function loadTemplate() {
 
 function updatePreview() {
   const tmpl = document.getElementById("tpl-content").value;
-  const preview = tmpl
-    .replace(/{batch_name}/g, "07.02.2026")
-    .replace(/{bl_code}/g, "BL171")
-    .replace(/{client_name}/g, "ООО Пример")
-    .replace(/{status}/g, "Алматы")
-    .replace(/{cargo_info}/g, "Вид товара: Электроника\nВес: 1200 кг\nОбъём: 8.5 м³\nКоличество: 48 мест\nОписание: Смартфоны и аксессуары")
-    .replace(/{status_detail}/g, "🏙 Груз прибыл в Алматы. Идёт сортировка...");
+  const previewData = {
+    "{batch_name}": "07.02.2026",
+    "{batch_date}": "07.02.2026",
+    "{bl_code}": "BL171",
+    "{client_name}": "Buraq Client Group",
+    "{status}": "Almatyda",
+    "{cargo_type}": "Elektronika",
+    "{weight_kg}": "1200",
+    "{volume_cbm}": "8.5",
+    "{volume_m3}": "8.5",
+    "{quantity_places}": "48",
+    "{places}": "48",
+    "{cargo_description}": "Smartfonlar va aksessuarlar",
+    "{description}": "Smartfonlar va aksessuarlar",
+    "{expected_date}": "2026-04-08",
+    "{actual_date}": "",
+    "{cargo_info}": "• Tovar turi: Elektronika\n• Og'irligi: 1200 kg\n• Hajmi: 8.5 m³\n• Joylar soni: 48\n• Tavsif: Smartfonlar va aksessuarlar",
+    "{status_detail}": "🚛 Yuk Almatyga yetib keldi va keyingi jo'natishga tayyorlanmoqda."
+  };
+  const preview = Object.entries(previewData).reduce(
+    (text, [token, value]) => text.replaceAll(token, value),
+    tmpl
+  );
   document.getElementById("tpl-preview").textContent = preview;
 }
 

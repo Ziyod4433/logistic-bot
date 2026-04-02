@@ -33,7 +33,7 @@ PROBLEM_TYPES = {
     "other": "Другое",
 }
 
-DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
+LEGACY_DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 📦 BL код: {bl_code}
 👤 Клиент: {client_name}
 
@@ -43,6 +43,26 @@ DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 
 ---
 По вопросам обращайтесь к вашему менеджеру."""
+
+DEFAULT_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
+
+⬇️ Quyida yukingiz bo‘yicha treking ma’lumotlari keltirilgan:
+
+📌 Partiya: {batch_date}
+
+🕯 Yuk haqida ma'lumot:
+{cargo_info}
+
+🔖 Holati: {status}
+🖥 Kutilayotgan sana: {expected_date}
+
+{status_detail}
+
+📎 Tovar bo'yicha: Packing list
+
+📞 Mas'ul menejer: Ziyodilla
+📲 95-975-66-11
+📱 @Ziyodilla_Tracking_Manager"""
 
 DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Опрос за {month_key}
 
@@ -297,9 +317,20 @@ def init_db():
         """
     )
 
-    row = cursor.execute("SELECT id FROM message_template WHERE id = 1").fetchone()
+    row = cursor.execute("SELECT id, content FROM message_template WHERE id = 1").fetchone()
     if not row:
         cursor.execute("INSERT INTO message_template(id, content) VALUES(1, ?)", (DEFAULT_TEMPLATE,))
+    else:
+        current_template = (row["content"] or "").strip()
+        if not current_template or current_template == LEGACY_DEFAULT_TEMPLATE.strip():
+            cursor.execute(
+                """
+                UPDATE message_template
+                SET content = ?, updated_at = datetime('now','localtime')
+                WHERE id = 1
+                """,
+                (DEFAULT_TEMPLATE,),
+            )
 
     row = cursor.execute("SELECT id FROM communication_rate_template WHERE id = 1").fetchone()
     if not row:
@@ -429,25 +460,56 @@ def format_cargo_info(bl: dict) -> str:
     parts = []
     cargo_type = (bl.get("cargo_type") or "").strip()
     if cargo_type:
-        parts.append(f"Вид товара: {cargo_type}")
+        parts.append(f"• Tovar turi: {cargo_type}")
 
     weight = _to_float(bl.get("weight_kg"))
     if weight:
-        parts.append(f"Вес: {weight:g} кг")
+        parts.append(f"• Og'irligi: {weight:g} kg")
 
     volume = _to_float(bl.get("volume_cbm"))
     if volume:
-        parts.append(f"Объём: {volume:g} м³")
+        parts.append(f"• Hajmi: {volume:g} m³")
 
     quantity = _to_int(bl.get("quantity_places"))
     if quantity:
-        parts.append(f"Количество: {quantity} мест")
+        parts.append(f"• Joylar soni: {quantity}")
 
     description = (bl.get("cargo_description") or "").strip()
     if description:
-        parts.append(f"Описание: {description}")
+        parts.append(f"• Tavsif: {description}")
 
-    return "\n".join(parts) if parts else "Грузовые параметры не указаны."
+    return "\n".join(parts) if parts else "• Yuk bo'yicha ma'lumot kiritilmagan."
+
+
+class _TemplateContext(dict):
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
+def _inject_cargo_info_placeholder(template: str) -> str:
+    if "{cargo_info}" in template:
+        return template
+
+    for anchor in ("{batch_date}", "{batch_name}"):
+        anchor_pos = template.find(anchor)
+        if anchor_pos != -1:
+            line_end = template.find("\n", anchor_pos)
+            insert_at = len(template) if line_end == -1 else line_end + 1
+            return template[:insert_at] + "\n🕯 Yuk haqida ma'lumot:\n{cargo_info}\n" + template[insert_at:]
+
+    status_pos = template.find("{status}")
+    if status_pos != -1:
+        line_start = template.rfind("\n", 0, status_pos)
+        insert_at = 0 if line_start == -1 else line_start + 1
+        return template[:insert_at] + "🕯 Yuk haqida ma'lumot:\n{cargo_info}\n\n" + template[insert_at:]
+
+    return template + "\n\n🕯 Yuk haqida ma'lumot:\n{cargo_info}"
+
+
+def _normalize_template_value(value):
+    if value is None:
+        return ""
+    return str(value)
 
 
 def add_bl(
@@ -712,17 +774,37 @@ def save_status_detail(status, detail):
 
 
 def render_message(bl: dict, batch_name: str) -> str:
-    template = get_template()
+    template = _inject_cargo_info_placeholder(get_template())
     details = get_status_details()
     status = bl.get("status", "Принят")
-    return template.format(
-        batch_name=batch_name,
-        bl_code=bl.get("code", ""),
-        client_name=bl.get("client_name", ""),
-        status=status,
-        cargo_info=format_cargo_info(bl),
-        status_detail=details.get(status, ""),
+    cargo_type = (bl.get("cargo_type") or "").strip()
+    weight_value = _to_float(bl.get("weight_kg"))
+    volume_value = _to_float(bl.get("volume_cbm"))
+    places_value = _to_int(bl.get("quantity_places"))
+    description = (bl.get("cargo_description") or "").strip()
+    expected_date = (bl.get("expected_date") or "").strip()
+    actual_date = (bl.get("actual_date") or "").strip()
+
+    context = _TemplateContext(
+        batch_name=_normalize_template_value(batch_name),
+        batch_date=_normalize_template_value(batch_name),
+        bl_code=_normalize_template_value(bl.get("code", "")),
+        client_name=_normalize_template_value(bl.get("client_name", "")),
+        status=_normalize_template_value(status),
+        cargo_info=_normalize_template_value(format_cargo_info(bl)),
+        cargo_type=_normalize_template_value(cargo_type),
+        weight_kg=_normalize_template_value(f"{weight_value:g}" if weight_value else ""),
+        volume_cbm=_normalize_template_value(f"{volume_value:g}" if volume_value else ""),
+        volume_m3=_normalize_template_value(f"{volume_value:g}" if volume_value else ""),
+        quantity_places=_normalize_template_value(places_value if places_value else ""),
+        places=_normalize_template_value(places_value if places_value else ""),
+        cargo_description=_normalize_template_value(description),
+        description=_normalize_template_value(description),
+        expected_date=_normalize_template_value(expected_date),
+        actual_date=_normalize_template_value(actual_date),
+        status_detail=_normalize_template_value(details.get(status, "")),
     )
+    return template.format_map(context)
 
 
 def set_chat_state(chat_id, state):
