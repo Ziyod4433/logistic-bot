@@ -1564,9 +1564,9 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <div class="form-g">
       <label>Файлы (документы клиента)</label>
       <div id="edit-bl-files" style="margin-bottom:10px"></div>
-      <input type="file" id="edit-bl-file-input" style="display:none" onchange="uploadFile()">
+      <input type="file" id="edit-bl-file-input" style="display:none" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.xlsm,.doc,.docx,.zip" onchange="uploadFile()">
       <button class="btn btn-ghost btn-sm editor-only" onclick="document.getElementById('edit-bl-file-input').click()">📎 Добавить файл</button>
-      <span style="font-size:11px;color:var(--muted2);margin-left:8px">PDF, DOCX, XLSX, PNG, JPG, ZIP</span>
+      <span style="font-size:11px;color:var(--muted2);margin-left:8px">PDF, DOC, DOCX, XLS, XLSX, XLSM, PNG, JPG, ZIP</span>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('edit-bl-modal')">Отмена</button>

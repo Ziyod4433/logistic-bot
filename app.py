@@ -3,6 +3,8 @@ import os
 import secrets
 from functools import wraps
 
+import mimetypes
+
 import requests as req
 from dotenv import load_dotenv
 from flask import (
@@ -39,7 +41,7 @@ PORT = int(os.getenv("PORT", "5000"))
 ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
 
-ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "docx", "zip"}
+ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "xlsm", "doc", "docx", "zip"}
 
 TRACK_BUTTON = "📦 Статус моего груза"
 CANCEL_BUTTON = "❌ Отмена"
@@ -158,14 +160,28 @@ def telegram_send_message(chat_id, text: str, reply_markup: dict | None = None):
 
 
 def telegram_send_document(chat_id, file_path: str, filename: str):
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Файл не найден: {file_path}")
+
+    safe_filename = filename or os.path.basename(file_path)
+    mime_type = mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
     with open(file_path, "rb") as file_handle:
         response = req.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
-            data={"chat_id": chat_id},
-            files={"document": (filename, file_handle)},
+            data={
+                "chat_id": chat_id,
+                "disable_content_type_detection": "true",
+            },
+            files={"document": (safe_filename, file_handle, mime_type)},
             timeout=30,
         )
-    response.raise_for_status()
+    if not response.ok:
+        try:
+            payload = response.json()
+            description = payload.get("description") or response.text
+        except ValueError:
+            description = response.text
+        raise RuntimeError(description)
     return response.json()
 
 
@@ -670,6 +686,8 @@ def api_upload(bl_id):
         return jsonify({"error": "Файл не выбран"}), 400
 
     uploaded_file = request.files["file"]
+    if not uploaded_file.filename:
+        return jsonify({"error": "Выбери файл для загрузки"}), 400
     ext = uploaded_file.filename.rsplit(".", 1)[-1].lower() if "." in uploaded_file.filename else ""
     if ext not in ALLOWED_EXT:
         return jsonify({"error": f"Тип файла .{ext} не разрешён"}), 400
