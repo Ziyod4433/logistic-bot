@@ -910,12 +910,13 @@ def delete_file(file_id):
 
 def add_log(bl_id, bl_code, batch_name, chat_id, status, success, error_msg=""):
     conn = get_conn()
+    sent_at = current_ts()
     conn.execute(
         """
-        INSERT INTO send_logs(bl_id, bl_code, batch_name, chat_id, status, success, error_msg)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO send_logs(bl_id, bl_code, batch_name, chat_id, status, success, error_msg, sent_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (bl_id, bl_code, batch_name, chat_id, status, 1 if success else 0, error_msg),
+        (bl_id, bl_code, batch_name, chat_id, status, 1 if success else 0, error_msg, sent_at),
     )
     conn.commit()
     conn.close()
@@ -1107,12 +1108,13 @@ def create_problem(bl_id, problem_type, description=""):
         conn.close()
         return False
 
+    created_at = current_ts()
     conn.execute(
         """
         INSERT INTO problems(bl_id, batch_id, problem_type, description, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'open', datetime('now','localtime'), datetime('now','localtime'))
+        VALUES (?, ?, ?, ?, 'open', ?, ?)
         """,
-        (bl["id"], bl["batch_id"], problem_type, (description or "").strip()),
+        (bl["id"], bl["batch_id"], problem_type, (description or "").strip(), created_at, created_at),
     )
     conn.commit()
     conn.close()
