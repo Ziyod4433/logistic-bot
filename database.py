@@ -815,14 +815,15 @@ def _inject_cargo_info_placeholder(template: str) -> str:
 
 def _inject_arrival_eta_placeholder(template: str) -> str:
     template = (template or "").replace("\r\n", "\n")
-    replacements = [
-        ("🇺🇿 Yetib kelish vaqti: {arrival_eta}", "🇺🇿 {arrival_eta_label}: {arrival_eta}"),
-        ("🇺🇿 Yetib kelish vaqti: {expected_date}", "🇺🇿 {arrival_eta_label}: {arrival_eta}"),
-        ("🖥 Kutilayotgan sana: {expected_date}", "🇺🇿 {arrival_eta_label}: {arrival_eta}"),
+    regex_replacements = [
+        (r"🇺🇿\s*Yetib kelish vaqti\s*:\s*\{arrival_eta\}", "🇺🇿 {arrival_eta_label}: {arrival_eta}"),
+        (r"🇺🇿\s*Yetib kelish vaqti\s*:\s*\{expected_date\}", "🇺🇿 {arrival_eta_label}: {arrival_eta}"),
+        (r"🖥\s*Kutilayotgan sana\s*:\s*\{expected_date\}", "🇺🇿 {arrival_eta_label}: {arrival_eta}"),
     ]
-    for source, target in replacements:
-        if source in template:
-            return template.replace(source, target, 1)
+    for pattern, target in regex_replacements:
+        updated = re.sub(pattern, target, template, count=1)
+        if updated != template:
+            return updated
     return template
 
 
@@ -1364,6 +1365,12 @@ def render_message(bl: dict, batch_name: str) -> str:
         status_detail="",
     )
     rendered = template.format_map(context)
+    rendered = re.sub(
+        r"🇺🇿\s*Yetib kelish vaqti\s*:",
+        f"🇺🇿 {arrival_eta_label}:",
+        rendered,
+        count=1,
+    )
     rendered = re.sub(r"\n{3,}", "\n\n", rendered)
     rendered = re.sub(r"\n{2,}(📎\s*Tovar bo'yicha:)", r"\n\1", rendered)
     return rendered.strip()
