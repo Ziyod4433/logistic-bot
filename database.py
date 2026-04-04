@@ -76,9 +76,8 @@ DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’
 {cargo_info}
 ━━━━━━━━━━━━━━━
 📲Aloqa uchun:
-Ziyodilla
 📞 -95-975-66-11
-✈️ @Ziyodilla_Tracking_Manager
+@Ziyodilla_Tracking_Manager
 ━━━━━━━━━━━━━━━
 🖇Tovar bo'yicha packing list⤵️
 {packing_list}"""
