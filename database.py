@@ -71,11 +71,11 @@ DEFAULT_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
 🔖 Holati: {status}
 🖥 Kutilayotgan sana: {expected_date}
 
-📎 Tovar bo'yicha: {packing_list}
-
 📞 Mas'ul menejer: Ziyodilla
 📲 95-975-66-11
-📱 @Ziyodilla_Tracking_Manager"""
+📱 @Ziyodilla_Tracking_Manager
+
+📎 Tovar bo'yicha: {packing_list}"""
 
 DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Опрос за {month_key}
 
@@ -784,7 +784,7 @@ def _inject_cargo_info_placeholder(template: str) -> str:
 
 def _inject_packing_list_placeholder(template: str) -> str:
     if "{packing_list}" in template or "{bl_files}" in template:
-        return template
+        return _move_packing_list_placeholder_to_end(template)
     variants = [
         ("📎 Tovar bo'yicha: Packing list", "📎 Tovar bo'yicha: {packing_list}"),
         ("📎Tovar bo'yicha: Packing list", "📎Tovar bo'yicha: {packing_list}"),
@@ -793,10 +793,42 @@ def _inject_packing_list_placeholder(template: str) -> str:
     ]
     for source, target in variants:
         if source in template:
-            return template.replace(source, target, 1)
+            template = template.replace(source, target, 1)
+            return _move_packing_list_placeholder_to_end(template)
     if "Packing list" in template:
-        return template.replace("Packing list", "{packing_list}", 1)
-    return template + "\n\n📎 Tovar bo'yicha: {packing_list}"
+        template = template.replace("Packing list", "{packing_list}", 1)
+        return _move_packing_list_placeholder_to_end(template)
+    return _move_packing_list_placeholder_to_end(template + "\n\n📎 Tovar bo'yicha: {packing_list}")
+
+
+def _move_packing_list_placeholder_to_end(template: str) -> str:
+    template = (template or "").replace("\r\n", "\n")
+    lines = template.split("\n")
+    kept_lines = []
+    packing_lines = []
+    capture_following = False
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if "{packing_list}" in stripped or "{bl_files}" in stripped:
+            capture_following = True
+            continue
+        if capture_following and stripped.startswith("•"):
+            continue
+        if capture_following and not stripped:
+            capture_following = False
+            continue
+        if capture_following:
+            capture_following = False
+        kept_lines.append(line)
+
+    while kept_lines and not kept_lines[-1].strip():
+        kept_lines.pop()
+
+    kept_lines.append("")
+    kept_lines.append("📎 Tovar bo'yicha: {packing_list}")
+    return "\n".join(kept_lines)
 
 
 def _normalize_template_value(value):
