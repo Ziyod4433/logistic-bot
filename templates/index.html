@@ -1388,8 +1388,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <select class="inp" id="new-batch-status">
           <option value="Xitoy">🇨🇳 Xitoy</option>
           <option value="Horgos (Qozoq)">🛃 Horgos (Qozoq)</option>
-          <option value="Kashgar (Qirg'iz)">🛃 Kashgar (Qirg'iz)</option>
-          <option value="Altynko'l">🚛 Altynko'l</option>
+          <option value="Nurjo'li">🚛 Nurjo'li</option>
           <option value="Jarkent">🚛 Jarkent</option>
           <option value="Almata">🏙 Almata</option>
           <option value="Taraz">🚛 Taraz</option>
@@ -1397,9 +1396,10 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           <option value="Qonusbay">🚛 Qonusbay</option>
           <option value="Saryagash">🚛 Saryagash</option>
           <option value="Yallama">🛃 Yallama</option>
+          <option value="Kashgar (Qirg'iz)">🛃 Kashgar (Qirg'iz)</option>
           <option value="Irkeshtam">🛃 Irkeshtam</option>
           <option value="Osh">🚛 Osh</option>
-          <option value="Chuqur">🚛 Chuqur</option>
+          <option value="Chuqursoy">🚛 Chuqursoy</option>
           <option value="Dostlik">🛃 Dostlik</option>
           <option value="Andijon">🚛 Andijon</option>
           <option value="Tashkent">📦 Tashkent</option>
@@ -1437,8 +1437,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <select class="inp" id="edit-batch-status">
         <option value="Xitoy">🇨🇳 Xitoy</option>
         <option value="Horgos (Qozoq)">🛃 Horgos (Qozoq)</option>
-        <option value="Kashgar (Qirg'iz)">🛃 Kashgar (Qirg'iz)</option>
-        <option value="Altynko'l">🚛 Altynko'l</option>
+        <option value="Nurjo'li">🚛 Nurjo'li</option>
         <option value="Jarkent">🚛 Jarkent</option>
         <option value="Almata">🏙 Almata</option>
         <option value="Taraz">🚛 Taraz</option>
@@ -1446,9 +1445,10 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <option value="Qonusbay">🚛 Qonusbay</option>
         <option value="Saryagash">🚛 Saryagash</option>
         <option value="Yallama">🛃 Yallama</option>
+        <option value="Kashgar (Qirg'iz)">🛃 Kashgar (Qirg'iz)</option>
         <option value="Irkeshtam">🛃 Irkeshtam</option>
         <option value="Osh">🚛 Osh</option>
-        <option value="Chuqur">🚛 Chuqur</option>
+        <option value="Chuqursoy">🚛 Chuqursoy</option>
         <option value="Dostlik">🛃 Dostlik</option>
         <option value="Andijon">🚛 Andijon</option>
         <option value="Tashkent">📦 Tashkent</option>
@@ -1695,8 +1695,7 @@ const CURRENT_ROLE = {{ current_role|tojson }};
 const STATUSES = [
   "Xitoy",
   "Horgos (Qozoq)",
-  "Kashgar (Qirg'iz)",
-  "Altynko'l",
+  "Nurjo'li",
   "Jarkent",
   "Almata",
   "Taraz",
@@ -1704,9 +1703,10 @@ const STATUSES = [
   "Qonusbay",
   "Saryagash",
   "Yallama",
+  "Kashgar (Qirg'iz)",
   "Irkeshtam",
   "Osh",
-  "Chuqur",
+  "Chuqursoy",
   "Dostlik",
   "Andijon",
   "Tashkent",
@@ -1722,8 +1722,7 @@ const PROBLEM_TYPES = {
 const STATUS_BADGE = {
   "Xitoy":              "badge s-accepted",
   "Horgos (Qozoq)":     "badge s-khorgos",
-  "Kashgar (Qirg'iz)":  "badge s-khorgos",
-  "Altynko'l":          "badge s-road",
+  "Nurjo'li":           "badge s-road",
   "Jarkent":            "badge s-road",
   "Almata":             "badge s-almaty",
   "Taraz":              "badge s-road",
@@ -1731,9 +1730,10 @@ const STATUS_BADGE = {
   "Qonusbay":           "badge s-road",
   "Saryagash":          "badge s-road",
   "Yallama":            "badge s-tashkent",
+  "Kashgar (Qirg'iz)":  "badge s-khorgos",
   "Irkeshtam":          "badge s-khorgos",
   "Osh":                "badge s-road",
-  "Chuqur":             "badge s-road",
+  "Chuqursoy":          "badge s-road",
   "Dostlik":            "badge s-tashkent",
   "Andijon":            "badge s-road",
   "Tashkent":           "badge s-tashkent",
@@ -1742,8 +1742,7 @@ const STATUS_BADGE = {
 const STATUS_ICO = {
   "Xitoy":"🇨🇳",
   "Horgos (Qozoq)":"🛃",
-  "Kashgar (Qirg'iz)":"🛃",
-  "Altynko'l":"🚛",
+  "Nurjo'li":"🚛",
   "Jarkent":"🚛",
   "Almata":"🏙",
   "Taraz":"🚛",
@@ -1751,9 +1750,10 @@ const STATUS_ICO = {
   "Qonusbay":"🚛",
   "Saryagash":"🚛",
   "Yallama":"🛃",
+  "Kashgar (Qirg'iz)":"🛃",
   "Irkeshtam":"🛃",
   "Osh":"🚛",
-  "Chuqur":"🚛",
+  "Chuqursoy":"🚛",
   "Dostlik":"🛃",
   "Andijon":"🚛",
   "Tashkent":"📦",

@@ -24,8 +24,7 @@ except Exception:
 STATUSES = [
     "Xitoy",
     "Horgos (Qozoq)",
-    "Kashgar (Qirg'iz)",
-    "Altynko'l",
+    "Nurjo'li",
     "Jarkent",
     "Almata",
     "Taraz",
@@ -33,9 +32,10 @@ STATUSES = [
     "Qonusbay",
     "Saryagash",
     "Yallama",
+    "Kashgar (Qirg'iz)",
     "Irkeshtam",
     "Osh",
-    "Chuqur",
+    "Chuqursoy",
     "Dostlik",
     "Andijon",
     "Tashkent",
@@ -95,8 +95,7 @@ DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Опрос за {month_key}
 DEFAULT_STATUS_DETAILS = {
     "Xitoy": "🇨🇳 Yuk Xitoydagi jo'nash nuqtasida tayyorlanmoqda va marshrutga chiqarilmoqda.",
     "Horgos (Qozoq)": "🛃 Yuk Horgos orqali Qozoq yo'nalishiga kirdi. Chegara va bojxona jarayoni ketmoqda.",
-    "Kashgar (Qirg'iz)": "🛃 Yuk Kashgar orqali Qirg'iz yo'nalishiga kirdi. Yo'l haydovchi tomonidan tanlangan marshrut bo'yicha davom etmoqda.",
-    "Altynko'l": "🚛 Yuk Altynko'l hududidan o'tmoqda.",
+    "Nurjo'li": "🚛 Yuk Nurjo'li hududidan o'tmoqda.",
     "Jarkent": "🚛 Yuk Jarkent hududidan o'tmoqda.",
     "Almata": "🏙 Yuk Almata shahriga yetib keldi yoki shu yo'nalishda harakatlanmoqda.",
     "Taraz": "🚛 Yuk Taraz yo'nalishida harakatlanmoqda.",
@@ -104,9 +103,10 @@ DEFAULT_STATUS_DETAILS = {
     "Qonusbay": "🚛 Yuk Qonusbay nazorat nuqtasi orqali o'tmoqda.",
     "Saryagash": "🚛 Yuk Saryagash yo'nalishida harakatlanmoqda.",
     "Yallama": "🛃 Yuk Yallama chegara nuqtasiga yaqinlashdi yoki u yerdan o'tmoqda.",
+    "Kashgar (Qirg'iz)": "🛃 Yuk Kashgar orqali Qirg'iz yo'nalishiga kirdi. Yo'l haydovchi tomonidan tanlangan marshrut bo'yicha davom etmoqda.",
     "Irkeshtam": "🛃 Yuk Irkeshtam orqali Qirg'iz yo'nalishida o'tmoqda.",
     "Osh": "🚛 Yuk Osh yo'nalishida harakatlanmoqda.",
-    "Chuqur": "🚛 Yuk Chuqur yo'nalishida harakatlanmoqda.",
+    "Chuqursoy": "🚛 Yuk Chuqursoy yo'nalishida harakatlanmoqda.",
     "Dostlik": "🛃 Yuk Dostlik chegara nuqtasiga yaqinlashdi yoki u yerdan o'tmoqda.",
     "Andijon": "🚛 Yuk Andijon yo'nalishida harakatlanmoqda.",
     "Tashkent": "📦 Yuk Tashkentga yetib keldi. Tushirish yoki topshirish jarayoni boshlanmoqda.",
@@ -508,6 +508,8 @@ def init_db():
         "Алматы": "Almata",
         "В пути до Ташкента": "Yallama",
         "Ташкент": "Tashkent",
+        "Altynko'l": "Nurjo'li",
+        "Chuqur": "Chuqursoy",
     }
     for old_status, new_status in legacy_status_map.items():
         cursor.execute("UPDATE batches SET status = ? WHERE status = ?", (new_status, old_status))
