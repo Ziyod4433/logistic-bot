@@ -71,8 +71,6 @@ DEFAULT_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
 🔖 Holati: {status}
 🖥 Kutilayotgan sana: {expected_date}
 
-{status_detail}
-
 📎 Tovar bo'yicha: {packing_list}
 
 📞 Mas'ul menejer: Ziyodilla
@@ -1237,7 +1235,10 @@ def save_status_detail(status, detail):
 
 def render_message(bl: dict, batch_name: str) -> str:
     template = _inject_packing_list_placeholder(_inject_cargo_info_placeholder(get_template()))
-    details = get_status_details()
+    template = template.replace("\r\n", "\n")
+    template = template.replace("\n\n{status_detail}", "")
+    template = template.replace("{status_detail}\n\n", "")
+    template = template.replace("{status_detail}", "")
     status = bl.get("status", "Xitoy")
     cargo_type = (bl.get("cargo_type") or "").strip()
     weight_value = _to_float(bl.get("weight_kg"))
@@ -1267,9 +1268,12 @@ def render_message(bl: dict, batch_name: str) -> str:
         actual_date=_normalize_template_value(actual_date),
         packing_list=_normalize_template_value(packing_list),
         bl_files=_normalize_template_value(packing_list),
-        status_detail=_normalize_template_value(details.get(status, "")),
+        status_detail="",
     )
-    return template.format_map(context)
+    rendered = template.format_map(context)
+    rendered = re.sub(r"\n{3,}", "\n\n", rendered)
+    rendered = re.sub(r"\n{2,}(📎\s*Tovar bo'yicha:)", r"\n\1", rendered)
+    return rendered.strip()
 
 
 def set_chat_state(chat_id, state):
