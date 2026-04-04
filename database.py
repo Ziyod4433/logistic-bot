@@ -71,7 +71,7 @@ DEFAULT_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
 {cargo_info}
 
 🔖 Holati: {status}
-🖥 Kutilayotgan sana: {expected_date}
+🇺🇿 Yetib kelish vaqti: {arrival_eta}
 
 📞 Mas'ul menejer: Ziyodilla
 📲 95-975-66-11
@@ -181,6 +181,7 @@ def init_db():
             status TEXT DEFAULT 'Xitoy',
             expected_date TEXT DEFAULT '',
             actual_date TEXT DEFAULT '',
+            eta_to_toshkent TEXT DEFAULT '',
             status_updated_at TEXT DEFAULT (datetime('now','localtime')),
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
@@ -340,6 +341,7 @@ def init_db():
         ("status", "TEXT DEFAULT 'Xitoy'"),
         ("expected_date", "TEXT DEFAULT ''"),
         ("actual_date", "TEXT DEFAULT ''"),
+        ("eta_to_toshkent", "TEXT DEFAULT ''"),
         ("status_updated_at", "TEXT DEFAULT ''"),
     ]
     for column_name, column_def in batch_columns:
@@ -520,16 +522,17 @@ def init_db():
     conn.close()
 
 
-def create_batch(name, status="Xitoy", expected_date="", actual_date=""):
+def create_batch(name, status="Xitoy", expected_date="", actual_date="", eta_to_toshkent=""):
     conn = get_conn()
     try:
         conn.execute(
-            "INSERT INTO batches(name, status, expected_date, actual_date, status_updated_at) VALUES(?, ?, ?, ?, datetime('now','localtime'))",
+            "INSERT INTO batches(name, status, expected_date, actual_date, eta_to_toshkent, status_updated_at) VALUES(?, ?, ?, ?, ?, datetime('now','localtime'))",
             (
                 (name or "").strip(),
                 (status or "Xitoy").strip(),
                 (expected_date or "").strip(),
                 (actual_date or "").strip(),
+                (eta_to_toshkent or "").strip(),
             ),
         )
         conn.commit()
@@ -540,7 +543,7 @@ def create_batch(name, status="Xitoy", expected_date="", actual_date=""):
         conn.close()
 
 
-def update_batch(batch_id, name, status="Xitoy", expected_date="", actual_date=""):
+def update_batch(batch_id, name, status="Xitoy", expected_date="", actual_date="", eta_to_toshkent=""):
     conn = get_conn()
     try:
         new_status = (status or "Xitoy").strip()
@@ -552,6 +555,7 @@ def update_batch(batch_id, name, status="Xitoy", expected_date="", actual_date="
                 status = ?,
                 expected_date = ?,
                 actual_date = ?,
+                eta_to_toshkent = ?,
                 status_updated_at = CASE
                     WHEN COALESCE(status, 'Xitoy') != ? THEN datetime('now','localtime')
                     ELSE COALESCE(NULLIF(status_updated_at, ''), datetime('now','localtime'))
@@ -563,6 +567,7 @@ def update_batch(batch_id, name, status="Xitoy", expected_date="", actual_date="
                 new_status,
                 (expected_date or "").strip(),
                 (actual_date or "").strip(),
+                (eta_to_toshkent or "").strip(),
                 new_status,
                 batch_id,
             ),
@@ -1291,6 +1296,9 @@ def render_message(bl: dict, batch_name: str) -> str:
     expected_date = (bl.get("expected_date") or "").strip()
     actual_date = (bl.get("actual_date") or "").strip()
     packing_list = format_packing_list(bl.get("id"))
+    batch = get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
+    arrival_eta = ((batch or {}).get("eta_to_toshkent") or "").strip()
+    arrival_eta_value = arrival_eta or expected_date
 
     context = _TemplateContext(
         batch_name=_normalize_template_value(batch_name),
@@ -1307,7 +1315,8 @@ def render_message(bl: dict, batch_name: str) -> str:
         places=_normalize_template_value(places_value if places_value else ""),
         cargo_description=_normalize_template_value(description),
         description=_normalize_template_value(description),
-        expected_date=_normalize_template_value(expected_date),
+        expected_date=_normalize_template_value(arrival_eta_value),
+        arrival_eta=_normalize_template_value(arrival_eta_value),
         actual_date=_normalize_template_value(actual_date),
         packing_list=_normalize_template_value(packing_list),
         bl_files=_normalize_template_value(packing_list),

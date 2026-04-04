@@ -1077,7 +1077,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <div id="batch-meta-bar" style="padding:0 18px 14px;color:var(--muted2);font-size:12px"></div>
             <table class="tbl" id="bl-table-wrap">
               <thead><tr>
-                <th>BL код</th><th>Клиент</th><th>Груз</th><th>Chat ID</th><th>Статус партии</th><th>Файлы</th><th>Действия</th>
+                <th>BL код</th><th>Клиент</th><th>Груз</th><th>Chat ID</th><th>Файлы</th><th>Действия</th>
               </tr></thead>
               <tbody id="bl-table"></tbody>
             </table>
@@ -1418,6 +1418,11 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <input class="inp" type="date" id="new-batch-actual-date">
       </div>
     </div>
+    <div class="form-g">
+      <label>🇺🇿 Yetib kelish vaqti</label>
+      <input class="inp" id="new-batch-arrival-eta" placeholder="например: 2-3 kun">
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Это ручной срок до Toshkent. Он будет отправляться клиенту в шаблоне после строки «Yetib kelish vaqti».</div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('create-batch-modal')">Отмена</button>
       <button class="btn btn-amber editor-only" onclick="createBatch()">Создать</button>
@@ -1466,6 +1471,11 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <label>Факт дата партии</label>
         <input class="inp" type="date" id="edit-batch-actual-date">
       </div>
+    </div>
+    <div class="form-g">
+      <label>🇺🇿 Yetib kelish vaqti</label>
+      <input class="inp" id="edit-batch-arrival-eta" placeholder="например: 2-3 kun">
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Укажи вручную, сколько осталось до прибытия в Toshkent. Этот текст попадёт в клиентское сообщение.</div>
     </div>
     <div style="font-size:11px;color:var(--muted2);line-height:1.6">
       Эти даты будут общими для всей партии и автоматически применятся ко всем BL внутри неё.
@@ -1556,11 +1566,6 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <label>Chat ID</label>
       <input class="inp mono" id="edit-bl-chat" placeholder="-1001234567890">
       <div style="font-size:11px;color:var(--muted2);margin-top:5px">Можно выбрать найденную группу выше или указать chat_id вручную.</div>
-    </div>
-    <div class="form-g">
-      <label>Статус партии</label>
-      <div id="edit-bl-batch-status-view" class="inp" style="display:flex;align-items:center;min-height:52px;color:var(--text);background:rgba(255,255,255,.03)"></div>
-      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Общий статус редактируется в параметрах партии.</div>
     </div>
     <div class="form-row3">
       <div class="form-g">
@@ -1951,15 +1956,17 @@ async function createBatch() {
   const status = document.getElementById("new-batch-status").value;
   const expected_date = document.getElementById("new-batch-expected-date").value.trim();
   const actual_date = document.getElementById("new-batch-actual-date").value.trim();
+  const eta_to_toshkent = document.getElementById("new-batch-arrival-eta").value.trim();
   if (!name) { toast("Введи название","err"); return; }
   try {
-    await api("/api/batches","POST",{name, status, expected_date, actual_date});
+    await api("/api/batches","POST",{name, status, expected_date, actual_date, eta_to_toshkent});
     toast("✅ Партия «"+name+"» создана","ok");
     closeModal("create-batch-modal");
     document.getElementById("new-batch-name").value = "";
     document.getElementById("new-batch-status").value = "Xitoy";
     document.getElementById("new-batch-expected-date").value = "";
     document.getElementById("new-batch-actual-date").value = "";
+    document.getElementById("new-batch-arrival-eta").value = "";
     loadBatches(); loadDashboard();
   } catch(e) { toast(e.message,"err"); }
 }
@@ -2040,10 +2047,6 @@ function renderBL(list, batchName) {
       <td>${renderCargoChips(b)}</td>
       <td>${renderChatCell(b.chat_id)}</td>
       <td>
-        ${statusBadge(currentBatch?.status || b.status)}
-        ${b.is_stuck ? `<div class="kpi-note" style="color:var(--amber)">Статус не менялся долго</div>` : ""}
-      </td>
-      <td>
         ${b.file_count > 0
           ? `<span class="badge badge-blue">📎 ${b.file_count}</span>`
           : `<span style="color:var(--muted);font-size:11px">нет</span>`}
@@ -2061,7 +2064,7 @@ function renderBL(list, batchName) {
         </div>
       </td>
     </tr>`).join("") :
-    `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
+    `<tr><td colspan="6"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
   renderBatchTotals(list);
 }
 
@@ -2131,10 +2134,13 @@ function renderBatchMeta(batch) {
   const actual = batch.actual_date
     ? `<span class="badge badge-green">✅ Факт дата: ${esc(batch.actual_date)}</span>`
     : `<span class="badge badge-muted">📦 Факт дата не указана</span>`;
+  const arrivalEta = batch.eta_to_toshkent
+    ? `<span class="badge badge-amber">🇺🇿 Yetib kelish vaqti: ${esc(batch.eta_to_toshkent)}</span>`
+    : `<span class="badge badge-muted">🇺🇿 Yetib kelish vaqti не указан</span>`;
   const delay = Number(batch.delay_days || 0) > 0
     ? `<span class="badge badge-red">⏱ Опоздание: ${batch.delay_days} дн.</span>`
     : `<span class="badge badge-green">⏱ Без опоздания</span>`;
-  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${expected}${actual}${delay}</div>`;
+  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${expected}${actual}${arrivalEta}${delay}</div>`;
 }
 
 function renderKnownChats() {
@@ -2357,6 +2363,7 @@ function openEditBatchModal() {
   document.getElementById("edit-batch-status").value = currentBatch.status || "Xitoy";
   document.getElementById("edit-batch-expected-date").value = currentBatch.expected_date || "";
   document.getElementById("edit-batch-actual-date").value = currentBatch.actual_date || "";
+  document.getElementById("edit-batch-arrival-eta").value = currentBatch.eta_to_toshkent || "";
   openModal("edit-batch-modal");
 }
 
@@ -2367,12 +2374,13 @@ async function saveBatchMeta() {
   const status = document.getElementById("edit-batch-status").value;
   const expected_date = document.getElementById("edit-batch-expected-date").value.trim();
   const actual_date = document.getElementById("edit-batch-actual-date").value.trim();
+  const eta_to_toshkent = document.getElementById("edit-batch-arrival-eta").value.trim();
   if (!batchId || !name) {
     toast("Название партии обязательно","err");
     return;
   }
   try {
-    await api(`/api/batches/${batchId}`,"PUT",{name, status, expected_date, actual_date});
+    await api(`/api/batches/${batchId}`,"PUT",{name, status, expected_date, actual_date, eta_to_toshkent});
     toast("✅ Параметры партии сохранены","ok");
     closeModal("edit-batch-modal");
     await ensureBatchesLoaded(true);
@@ -2427,7 +2435,6 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-description").value = bl.cargo_description || "";
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
   populateChatSelect("edit-bl-chat-select", bl.chat_id||"");
-  document.getElementById("edit-bl-batch-status-view").innerHTML = statusBadge(currentBatch?.status || bl.status || "Xitoy");
   document.getElementById("edit-bl-file-input").dataset.blId = blId;
 
   // Load files
@@ -3035,7 +3042,8 @@ function updatePreview() {
     "{places}": "48",
     "{cargo_description}": "Smartfonlar va aksessuarlar",
     "{description}": "Smartfonlar va aksessuarlar",
-    "{expected_date}": "2026-04-08",
+    "{expected_date}": "2-3 kun",
+    "{arrival_eta}": "2-3 kun",
     "{actual_date}": "",
     "{packing_list}": "packing_list_BL171.pdf",
     "{cargo_info}": "• Tovar turi: Elektronika\n• Og'irligi: 1200 kg\n• Hajmi: 8.5 m³\n• Joylar soni: 48\n• Tavsif: Smartfonlar va aksessuarlar",
