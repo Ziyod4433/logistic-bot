@@ -22,11 +22,23 @@ except Exception:
     TASHKENT_TZ = timezone(timedelta(hours=5))
 
 STATUSES = [
-    "Принят",
-    "Хоргос",
-    "Алматы",
-    "В пути до Ташкента",
-    "Ташкент",
+    "Xitoy",
+    "Horgos (Qozoq)",
+    "Kashgar (Qirg'iz)",
+    "Altynko'l",
+    "Jarkent",
+    "Almata",
+    "Taraz",
+    "Shimkent",
+    "Qonusbay",
+    "Saryagash",
+    "Yallama",
+    "Irkeshtam",
+    "Osh",
+    "Chuqur",
+    "Dostlik",
+    "Andijon",
+    "Tashkent",
     "Доставлен",
 ]
 
@@ -81,12 +93,24 @@ DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Опрос за {month_key}
 Эта оценка не будет показана в группе. Её увидит только админ панели."""
 
 DEFAULT_STATUS_DETAILS = {
-    "Принят": "✅ Груз принят к перевозке и оформляется на складе отправления.",
-    "Хоргос": "🛃 Груз находится на таможне Хоргос. Ожидайте прохождения контроля в течение 1-3 дней.",
-    "Алматы": "🏙 Груз прибыл в Алматы. Идёт сортировка и подготовка к дальнейшей отправке.",
-    "В пути до Ташкента": "🚛 Груз в пути до Ташкента. Ориентировочное время прибытия — 1-2 дня.",
-    "Ташкент": "📦 Груз прибыл в Ташкент. Подготовка к выдаче клиенту.",
-    "Доставлен": "✅ Груз успешно доставлен. Спасибо, что выбрали нас!",
+    "Xitoy": "🇨🇳 Yuk Xitoydagi jo'nash nuqtasida tayyorlanmoqda va marshrutga chiqarilmoqda.",
+    "Horgos (Qozoq)": "🛃 Yuk Horgos orqali Qozoq yo'nalishiga kirdi. Chegara va bojxona jarayoni ketmoqda.",
+    "Kashgar (Qirg'iz)": "🛃 Yuk Kashgar orqali Qirg'iz yo'nalishiga kirdi. Yo'l haydovchi tomonidan tanlangan marshrut bo'yicha davom etmoqda.",
+    "Altynko'l": "🚛 Yuk Altynko'l hududidan o'tmoqda.",
+    "Jarkent": "🚛 Yuk Jarkent hududidan o'tmoqda.",
+    "Almata": "🏙 Yuk Almata shahriga yetib keldi yoki shu yo'nalishda harakatlanmoqda.",
+    "Taraz": "🚛 Yuk Taraz yo'nalishida harakatlanmoqda.",
+    "Shimkent": "🚛 Yuk Shimkent yo'nalishida harakatlanmoqda.",
+    "Qonusbay": "🚛 Yuk Qonusbay nazorat nuqtasi orqali o'tmoqda.",
+    "Saryagash": "🚛 Yuk Saryagash yo'nalishida harakatlanmoqda.",
+    "Yallama": "🛃 Yuk Yallama chegara nuqtasiga yaqinlashdi yoki u yerdan o'tmoqda.",
+    "Irkeshtam": "🛃 Yuk Irkeshtam orqali Qirg'iz yo'nalishida o'tmoqda.",
+    "Osh": "🚛 Yuk Osh yo'nalishida harakatlanmoqda.",
+    "Chuqur": "🚛 Yuk Chuqur yo'nalishida harakatlanmoqda.",
+    "Dostlik": "🛃 Yuk Dostlik chegara nuqtasiga yaqinlashdi yoki u yerdan o'tmoqda.",
+    "Andijon": "🚛 Yuk Andijon yo'nalishida harakatlanmoqda.",
+    "Tashkent": "📦 Yuk Tashkentga yetib keldi. Tushirish yoki topshirish jarayoni boshlanmoqda.",
+    "Доставлен": "✅ Yuk muvaffaqiyatli topshirildi.",
 }
 
 STUCK_DAYS = 5
@@ -154,7 +178,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT UNIQUE NOT NULL,
-            status TEXT DEFAULT 'Принят',
+            status TEXT DEFAULT 'Xitoy',
             expected_date TEXT DEFAULT '',
             actual_date TEXT DEFAULT '',
             status_updated_at TEXT DEFAULT (datetime('now','localtime')),
@@ -167,7 +191,7 @@ def init_db():
             code TEXT NOT NULL,
             client_name TEXT DEFAULT '',
             chat_id TEXT DEFAULT '',
-            status TEXT DEFAULT 'Принят',
+            status TEXT DEFAULT 'Xitoy',
             cargo_type TEXT DEFAULT '',
             weight_kg REAL NOT NULL DEFAULT 0,
             volume_cbm REAL NOT NULL DEFAULT 0,
@@ -313,7 +337,7 @@ def init_db():
     )
 
     batch_columns = [
-        ("status", "TEXT DEFAULT 'Принят'"),
+        ("status", "TEXT DEFAULT 'Xitoy'"),
         ("expected_date", "TEXT DEFAULT ''"),
         ("actual_date", "TEXT DEFAULT ''"),
         ("status_updated_at", "TEXT DEFAULT ''"),
@@ -373,7 +397,7 @@ def init_db():
                     ORDER BY COALESCE(NULLIF(bl.status_updated_at, ''), bl.created_at) DESC
                     LIMIT 1
                 ),
-                'Принят'
+                'Xitoy'
             ),
             expected_date = COALESCE(
                 NULLIF(expected_date, ''),
@@ -419,7 +443,7 @@ def init_db():
             status = COALESCE(
                 (SELECT b.status FROM batches b WHERE b.id = bl_codes.batch_id),
                 status,
-                'Принят'
+                'Xitoy'
             ),
             expected_date = COALESCE(
                 (SELECT b.expected_date FROM batches b WHERE b.id = bl_codes.batch_id),
@@ -478,18 +502,29 @@ def init_db():
             (status_name, detail),
         )
 
+    legacy_status_map = {
+        "Принят": "Xitoy",
+        "Хоргос": "Horgos (Qozoq)",
+        "Алматы": "Almata",
+        "В пути до Ташкента": "Yallama",
+        "Ташкент": "Tashkent",
+    }
+    for old_status, new_status in legacy_status_map.items():
+        cursor.execute("UPDATE batches SET status = ? WHERE status = ?", (new_status, old_status))
+        cursor.execute("UPDATE bl_codes SET status = ? WHERE status = ?", (new_status, old_status))
+
     conn.commit()
     conn.close()
 
 
-def create_batch(name, status="Принят", expected_date="", actual_date=""):
+def create_batch(name, status="Xitoy", expected_date="", actual_date=""):
     conn = get_conn()
     try:
         conn.execute(
             "INSERT INTO batches(name, status, expected_date, actual_date, status_updated_at) VALUES(?, ?, ?, ?, datetime('now','localtime'))",
             (
                 (name or "").strip(),
-                (status or "Принят").strip(),
+                (status or "Xitoy").strip(),
                 (expected_date or "").strip(),
                 (actual_date or "").strip(),
             ),
@@ -502,10 +537,10 @@ def create_batch(name, status="Принят", expected_date="", actual_date=""):
         conn.close()
 
 
-def update_batch(batch_id, name, status="Принят", expected_date="", actual_date=""):
+def update_batch(batch_id, name, status="Xitoy", expected_date="", actual_date=""):
     conn = get_conn()
     try:
-        new_status = (status or "Принят").strip()
+        new_status = (status or "Xitoy").strip()
         conn.execute(
             """
             UPDATE batches
@@ -515,7 +550,7 @@ def update_batch(batch_id, name, status="Принят", expected_date="", actual
                 expected_date = ?,
                 actual_date = ?,
                 status_updated_at = CASE
-                    WHEN COALESCE(status, 'Принят') != ? THEN datetime('now','localtime')
+                    WHEN COALESCE(status, 'Xitoy') != ? THEN datetime('now','localtime')
                     ELSE COALESCE(NULLIF(status_updated_at, ''), datetime('now','localtime'))
                 END
             WHERE id = ?
@@ -537,7 +572,7 @@ def update_batch(batch_id, name, status="Принят", expected_date="", actual
                 expected_date = ?,
                 actual_date = ?,
                 status_updated_at = CASE
-                    WHEN COALESCE(status, 'Принят') != ? THEN datetime('now','localtime')
+                    WHEN COALESCE(status, 'Xitoy') != ? THEN datetime('now','localtime')
                     ELSE COALESCE(NULLIF(status_updated_at, ''), datetime('now','localtime'))
                 END
             WHERE batch_id = ?
@@ -788,7 +823,7 @@ def add_bl(
             "SELECT status, expected_date, actual_date, status_updated_at FROM batches WHERE id = ?",
             (batch_id,),
         ).fetchone()
-        batch_status = batch_row["status"] if batch_row else "Принят"
+        batch_status = batch_row["status"] if batch_row else "Xitoy"
         expected_date = batch_row["expected_date"] if batch_row else ""
         actual_date = batch_row["actual_date"] if batch_row else ""
         status_updated_at = (
@@ -889,7 +924,7 @@ def update_bl(
         "SELECT status FROM bl_codes WHERE id = ?",
         (bl_id,),
     ).fetchone()
-    effective_status = (status if status is not None else (current["status"] if current else "Принят")) or "Принят"
+    effective_status = (status if status is not None else (current["status"] if current else "Xitoy")) or "Xitoy"
     conn.execute(
         """
         UPDATE bl_codes
@@ -980,7 +1015,7 @@ def move_bl_to_batch(bl_id, target_batch_id):
             """,
             (
                 target_batch_id,
-                target_batch["status"] or "Принят",
+                target_batch["status"] or "Xitoy",
                 (target_batch["expected_date"] or "").strip(),
                 (target_batch["actual_date"] or "").strip(),
                 target_status_updated_at,
@@ -1202,7 +1237,7 @@ def save_status_detail(status, detail):
 def render_message(bl: dict, batch_name: str) -> str:
     template = _inject_packing_list_placeholder(_inject_cargo_info_placeholder(get_template()))
     details = get_status_details()
-    status = bl.get("status", "Принят")
+    status = bl.get("status", "Xitoy")
     cargo_type = (bl.get("cargo_type") or "").strip()
     weight_value = _to_float(bl.get("weight_kg"))
     volume_value = _to_float(bl.get("volume_cbm"))

@@ -587,7 +587,7 @@ def api_batches():
 def api_create_batch():
     data = request.json or {}
     name = (data.get("name") or "").strip()
-    status = (data.get("status") or "Принят").strip() or "Принят"
+    status = (data.get("status") or "Xitoy").strip() or "Xitoy"
     expected_date = (data.get("expected_date") or "").strip()
     actual_date = (data.get("actual_date") or "").strip()
     if not name:
@@ -602,7 +602,7 @@ def api_create_batch():
 def api_update_batch(batch_id):
     data = request.json or {}
     name = (data.get("name") or "").strip()
-    status = (data.get("status") or "Принят").strip() or "Принят"
+    status = (data.get("status") or "Xitoy").strip() or "Xitoy"
     if not name:
         return jsonify({"error": "Имя партии обязательно"}), 400
     if not db.update_batch(
@@ -911,11 +911,23 @@ def api_export_problems():
         }.get(problem_type_key, "badge-muted")
         status_text = row.get("bl_status", "") or "—"
         status_class = {
-            "Принят": "badge-muted",
-            "Хоргос": "badge-blue",
-            "Алматы": "badge-blue",
-            "В пути до Ташкента": "badge-amber",
-            "Ташкент": "badge-amber",
+            "Xitoy": "badge-muted",
+            "Horgos (Qozoq)": "badge-blue",
+            "Kashgar (Qirg'iz)": "badge-blue",
+            "Altynko'l": "badge-amber",
+            "Jarkent": "badge-amber",
+            "Almata": "badge-blue",
+            "Taraz": "badge-amber",
+            "Shimkent": "badge-amber",
+            "Qonusbay": "badge-amber",
+            "Saryagash": "badge-amber",
+            "Yallama": "badge-blue",
+            "Irkeshtam": "badge-blue",
+            "Osh": "badge-amber",
+            "Chuqur": "badge-amber",
+            "Dostlik": "badge-blue",
+            "Andijon": "badge-amber",
+            "Tashkent": "badge-amber",
             "Доставлен": "badge-green",
         }.get(status_text, "badge-muted")
         body_rows_list.append(

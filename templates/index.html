@@ -1386,11 +1386,23 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="form-g">
         <label>Статус партии</label>
         <select class="inp" id="new-batch-status">
-          <option value="Принят">🚚 Принят</option>
-          <option value="Хоргос">🛃 Хоргос</option>
-          <option value="Алматы">🏙 Алматы</option>
-          <option value="В пути до Ташкента">🚛 В пути до Ташкента</option>
-          <option value="Ташкент">📦 Ташкент</option>
+          <option value="Xitoy">🇨🇳 Xitoy</option>
+          <option value="Horgos (Qozoq)">🛃 Horgos (Qozoq)</option>
+          <option value="Kashgar (Qirg'iz)">🛃 Kashgar (Qirg'iz)</option>
+          <option value="Altynko'l">🚛 Altynko'l</option>
+          <option value="Jarkent">🚛 Jarkent</option>
+          <option value="Almata">🏙 Almata</option>
+          <option value="Taraz">🚛 Taraz</option>
+          <option value="Shimkent">🚛 Shimkent</option>
+          <option value="Qonusbay">🚛 Qonusbay</option>
+          <option value="Saryagash">🚛 Saryagash</option>
+          <option value="Yallama">🛃 Yallama</option>
+          <option value="Irkeshtam">🛃 Irkeshtam</option>
+          <option value="Osh">🚛 Osh</option>
+          <option value="Chuqur">🚛 Chuqur</option>
+          <option value="Dostlik">🛃 Dostlik</option>
+          <option value="Andijon">🚛 Andijon</option>
+          <option value="Tashkent">📦 Tashkent</option>
           <option value="Доставлен">✅ Доставлен</option>
         </select>
       </div>
@@ -1423,11 +1435,23 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <div class="form-g">
       <label>Статус партии</label>
       <select class="inp" id="edit-batch-status">
-        <option value="Принят">🚚 Принят</option>
-        <option value="Хоргос">🛃 Хоргос</option>
-        <option value="Алматы">🏙 Алматы</option>
-        <option value="В пути до Ташкента">🚛 В пути до Ташкента</option>
-        <option value="Ташкент">📦 Ташкент</option>
+        <option value="Xitoy">🇨🇳 Xitoy</option>
+        <option value="Horgos (Qozoq)">🛃 Horgos (Qozoq)</option>
+        <option value="Kashgar (Qirg'iz)">🛃 Kashgar (Qirg'iz)</option>
+        <option value="Altynko'l">🚛 Altynko'l</option>
+        <option value="Jarkent">🚛 Jarkent</option>
+        <option value="Almata">🏙 Almata</option>
+        <option value="Taraz">🚛 Taraz</option>
+        <option value="Shimkent">🚛 Shimkent</option>
+        <option value="Qonusbay">🚛 Qonusbay</option>
+        <option value="Saryagash">🚛 Saryagash</option>
+        <option value="Yallama">🛃 Yallama</option>
+        <option value="Irkeshtam">🛃 Irkeshtam</option>
+        <option value="Osh">🚛 Osh</option>
+        <option value="Chuqur">🚛 Chuqur</option>
+        <option value="Dostlik">🛃 Dostlik</option>
+        <option value="Andijon">🚛 Andijon</option>
+        <option value="Tashkent">📦 Tashkent</option>
         <option value="Доставлен">✅ Доставлен</option>
       </select>
     </div>
@@ -1668,7 +1692,26 @@ let communicationRecipients = [];
 let selectedCommunicationChats = new Set();
 const IS_EDITOR = {{ 'true' if is_editor else 'false' }};
 const CURRENT_ROLE = {{ current_role|tojson }};
-const STATUSES = ["Принят","Хоргос","Алматы","В пути до Ташкента","Ташкент","Доставлен"];
+const STATUSES = [
+  "Xitoy",
+  "Horgos (Qozoq)",
+  "Kashgar (Qirg'iz)",
+  "Altynko'l",
+  "Jarkent",
+  "Almata",
+  "Taraz",
+  "Shimkent",
+  "Qonusbay",
+  "Saryagash",
+  "Yallama",
+  "Irkeshtam",
+  "Osh",
+  "Chuqur",
+  "Dostlik",
+  "Andijon",
+  "Tashkent",
+  "Доставлен"
+];
 const PROBLEM_TYPES = {
   damage: "Повреждение",
   delay: "Опоздание",
@@ -1677,16 +1720,44 @@ const PROBLEM_TYPES = {
 };
 
 const STATUS_BADGE = {
-  "Принят":             "badge s-accepted",
-  "Хоргос":             "badge s-khorgos",
-  "Алматы":             "badge s-almaty",
-  "В пути до Ташкента": "badge s-road",
-  "Ташкент":            "badge s-tashkent",
+  "Xitoy":              "badge s-accepted",
+  "Horgos (Qozoq)":     "badge s-khorgos",
+  "Kashgar (Qirg'iz)":  "badge s-khorgos",
+  "Altynko'l":          "badge s-road",
+  "Jarkent":            "badge s-road",
+  "Almata":             "badge s-almaty",
+  "Taraz":              "badge s-road",
+  "Shimkent":           "badge s-road",
+  "Qonusbay":           "badge s-road",
+  "Saryagash":          "badge s-road",
+  "Yallama":            "badge s-tashkent",
+  "Irkeshtam":          "badge s-khorgos",
+  "Osh":                "badge s-road",
+  "Chuqur":             "badge s-road",
+  "Dostlik":            "badge s-tashkent",
+  "Andijon":            "badge s-road",
+  "Tashkent":           "badge s-tashkent",
   "Доставлен":          "badge s-done",
 };
 const STATUS_ICO = {
-  "Принят":"📥","Хоргос":"🛃","Алматы":"🏙",
-  "В пути до Ташкента":"🚛","Ташкент":"📦","Доставлен":"✅"
+  "Xitoy":"🇨🇳",
+  "Horgos (Qozoq)":"🛃",
+  "Kashgar (Qirg'iz)":"🛃",
+  "Altynko'l":"🚛",
+  "Jarkent":"🚛",
+  "Almata":"🏙",
+  "Taraz":"🚛",
+  "Shimkent":"🚛",
+  "Qonusbay":"🚛",
+  "Saryagash":"🚛",
+  "Yallama":"🛃",
+  "Irkeshtam":"🛃",
+  "Osh":"🚛",
+  "Chuqur":"🚛",
+  "Dostlik":"🛃",
+  "Andijon":"🚛",
+  "Tashkent":"📦",
+  "Доставлен":"✅"
 };
 
 // ── Fetch helper ──────────────────────────────────────────
@@ -1810,7 +1881,7 @@ async function loadDashboard() {
         <td>
           <b style="cursor:pointer;color:var(--amber)" onclick="goto('batches');openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</b>
         </td>
-        <td>${statusBadge(b.status || "Принят")}</td>
+        <td>${statusBadge(b.status || "Xitoy")}</td>
         <td>${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">${b.delay_days} дн.</span>` : `<span style="color:var(--muted)">—</span>`}</td>
         <td><span class="badge badge-muted">${b.bl_count}</span></td>
         <td>
@@ -1844,7 +1915,7 @@ function renderBatches(list) {
       <td>
         <span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span>
       </td>
-      <td>${statusBadge(b.status || "Принят")}</td>
+      <td>${statusBadge(b.status || "Xitoy")}</td>
       <td>${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">+${b.delay_days} дн.</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td><span class="badge badge-muted">${b.bl_count} BL</span></td>
       <td>
@@ -1881,7 +1952,7 @@ async function createBatch() {
     toast("✅ Партия «"+name+"» создана","ok");
     closeModal("create-batch-modal");
     document.getElementById("new-batch-name").value = "";
-    document.getElementById("new-batch-status").value = "Принят";
+    document.getElementById("new-batch-status").value = "Xitoy";
     document.getElementById("new-batch-expected-date").value = "";
     document.getElementById("new-batch-actual-date").value = "";
     loadBatches(); loadDashboard();
@@ -2278,7 +2349,7 @@ function openEditBatchModal() {
   }
   document.getElementById("edit-batch-id").value = currentBatchId;
   document.getElementById("edit-batch-name").value = currentBatch.name || "";
-  document.getElementById("edit-batch-status").value = currentBatch.status || "Принят";
+  document.getElementById("edit-batch-status").value = currentBatch.status || "Xitoy";
   document.getElementById("edit-batch-expected-date").value = currentBatch.expected_date || "";
   document.getElementById("edit-batch-actual-date").value = currentBatch.actual_date || "";
   openModal("edit-batch-modal");
@@ -2351,7 +2422,7 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-description").value = bl.cargo_description || "";
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
   populateChatSelect("edit-bl-chat-select", bl.chat_id||"");
-  document.getElementById("edit-bl-batch-status-view").innerHTML = statusBadge(currentBatch?.status || bl.status || "Принят");
+  document.getElementById("edit-bl-batch-status-view").innerHTML = statusBadge(currentBatch?.status || bl.status || "Xitoy");
   document.getElementById("edit-bl-file-input").dataset.blId = blId;
 
   // Load files
@@ -2950,7 +3021,7 @@ function updatePreview() {
     "{batch_date}": "07.02.2026",
     "{bl_code}": "BL171",
     "{client_name}": "Buraq Client Group",
-    "{status}": "Almatyda",
+    "{status}": "Horgos (Qozoq)",
     "{cargo_type}": "Elektronika",
     "{weight_kg}": "1200",
     "{volume_cbm}": "8.5",
@@ -2963,7 +3034,7 @@ function updatePreview() {
     "{actual_date}": "",
     "{packing_list}": "packing_list_BL171.pdf",
     "{cargo_info}": "• Tovar turi: Elektronika\n• Og'irligi: 1200 kg\n• Hajmi: 8.5 m³\n• Joylar soni: 48\n• Tavsif: Smartfonlar va aksessuarlar",
-    "{status_detail}": "🚛 Yuk Almatyga yetib keldi va keyingi jo'natishga tayyorlanmoqda."
+    "{status_detail}": "🛃 Yuk Horgos orqali Qozoq yo'nalishiga kirdi. Chegara va bojxona jarayoni ketmoqda."
   };
   const preview = Object.entries(previewData).reduce(
     (text, [token, value]) => text.replaceAll(token, value),
