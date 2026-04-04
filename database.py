@@ -67,7 +67,7 @@ DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’
 🆔 BL-kod: <b>{bl_code}</b>
 
 📍 Joriy holati:
--{status}
+-<b>{status}</b>
 
 ⏳{arrival_eta_label}:
 -<b>{arrival_eta}</b>
@@ -75,10 +75,10 @@ DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’
 📄 Yuk haqida ma'lumotlar:
 {cargo_info}
 ━━━━━━━━━━━━━━━
-👨‍💼 Ma'sul menejer:
+📲Aloqa uchun:
 Ziyodilla
 📞 -95-975-66-11
-📲 @Ziyodilla_Tracking_Manager
+✈️ @Ziyodilla_Tracking_Manager
 ━━━━━━━━━━━━━━━
 🖇Tovar bo'yicha packing list⤵️
 {packing_list}"""
