@@ -1387,6 +1387,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <label>Статус партии</label>
         <select class="inp" id="new-batch-status">
           <option value="Xitoy">🇨🇳 Xitoy</option>
+          <option value="Yiwu">🏭 Yiwu</option>
+          <option value="Zhongshan">🏭 Zhongshan</option>
           <option value="Horgos (Qozoq)">🛃 Horgos (Qozoq)</option>
           <option value="Nurjo'li">🚛 Nurjo'li</option>
           <option value="Jarkent">🚛 Jarkent</option>
@@ -1435,6 +1437,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <label>Статус партии</label>
       <select class="inp" id="edit-batch-status">
         <option value="Xitoy">🇨🇳 Xitoy</option>
+        <option value="Yiwu">🏭 Yiwu</option>
+        <option value="Zhongshan">🏭 Zhongshan</option>
         <option value="Horgos (Qozoq)">🛃 Horgos (Qozoq)</option>
         <option value="Nurjo'li">🚛 Nurjo'li</option>
         <option value="Jarkent">🚛 Jarkent</option>
@@ -1692,6 +1696,8 @@ const IS_EDITOR = {{ 'true' if is_editor else 'false' }};
 const CURRENT_ROLE = {{ current_role|tojson }};
 const STATUSES = [
   "Xitoy",
+  "Yiwu",
+  "Zhongshan",
   "Horgos (Qozoq)",
   "Nurjo'li",
   "Jarkent",
@@ -1718,6 +1724,8 @@ const PROBLEM_TYPES = {
 
 const STATUS_BADGE = {
   "Xitoy":              "badge s-accepted",
+  "Yiwu":               "badge s-accepted",
+  "Zhongshan":          "badge s-accepted",
   "Horgos (Qozoq)":     "badge s-khorgos",
   "Nurjo'li":           "badge s-road",
   "Jarkent":            "badge s-road",
@@ -1737,6 +1745,8 @@ const STATUS_BADGE = {
 };
 const STATUS_ICO = {
   "Xitoy":"🇨🇳",
+  "Yiwu":"🏭",
+  "Zhongshan":"🏭",
   "Horgos (Qozoq)":"🛃",
   "Nurjo'li":"🚛",
   "Jarkent":"🚛",

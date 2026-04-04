@@ -23,6 +23,8 @@ except Exception:
 
 STATUSES = [
     "Xitoy",
+    "Yiwu",
+    "Zhongshan",
     "Horgos (Qozoq)",
     "Nurjo'li",
     "Jarkent",
@@ -91,6 +93,8 @@ DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Опрос за {month_key}
 
 DEFAULT_STATUS_DETAILS = {
     "Xitoy": "🇨🇳 Yuk Xitoydagi jo'nash nuqtasida tayyorlanmoqda va marshrutga chiqarilmoqda.",
+    "Yiwu": "🏭 Yuk Yiwu omboridan jo'natishga tayyorlanmoqda.",
+    "Zhongshan": "🏭 Yuk Zhongshan omboridan jo'natishga tayyorlanmoqda.",
     "Horgos (Qozoq)": "🛃 Yuk Horgos orqali Qozoq yo'nalishiga kirdi. Chegara va bojxona jarayoni ketmoqda.",
     "Nurjo'li": "🚛 Yuk Nurjo'li hududidan o'tmoqda.",
     "Jarkent": "🚛 Yuk Jarkent hududidan o'tmoqda.",

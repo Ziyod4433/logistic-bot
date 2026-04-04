@@ -912,6 +912,8 @@ def api_export_problems():
         status_text = row.get("bl_status", "") or "—"
         status_class = {
             "Xitoy": "badge-muted",
+            "Yiwu": "badge-muted",
+            "Zhongshan": "badge-muted",
             "Horgos (Qozoq)": "badge-blue",
             "Kashgar (Qirg'iz)": "badge-blue",
             "Altynko'l": "badge-amber",
