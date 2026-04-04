@@ -61,7 +61,9 @@ LEGACY_DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 ---
 По вопросам обращайтесь к вашему менеджеру."""
 
-DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:⤵️
+DEFAULT_TEMPLATE = """👋Assalomu alaykum hurmatli mijoz!
+
+📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:⤵️
 ━━━━━━━━━━━━━━━
 🚛 Partiya: <b>{batch_date}</b>
 🆔 BL-kod: <b>{bl_code}</b>
@@ -77,7 +79,7 @@ DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’
 ━━━━━━━━━━━━━━━
 📲Aloqa uchun:
 📞 -95-975-66-11
-@Ziyodilla_Tracking_Manager
+📩 @Ziyodilla_Tracking_Manager
 ━━━━━━━━━━━━━━━
 🖇Tovar bo'yicha packing list⤵️
 {packing_list}"""
