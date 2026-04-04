@@ -62,9 +62,7 @@ LEGACY_DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 По вопросам обращайтесь к вашему менеджеру."""
 
 DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:
-
-━━━━━━━━━━━━━━━━━━━
-
+━━━━━━━━━━━━━━━
 🚛 Partiya: {batch_date}
 🆔 BL-kod: {bl_code}
 
@@ -73,17 +71,15 @@ DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’
 
 ⏳{arrival_eta_label}:
 -{arrival_eta}
-━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━
 📄 Yuk haqida ma'lumotlar:
 {cargo_info}
-
-━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━
 👨‍💼 Ma'sul menejer:
 Ziyodilla
 📞 +998 95 975 66 11
 📲 @Ziyodilla_Tracking_Manager
-━━━━━━━━━━━━━━━━━━━
-
+━━━━━━━━━━━━━━━
 🖇Tovar bo'yicha packing list⤵️
 {packing_list}"""
 
@@ -892,12 +888,22 @@ def _move_packing_list_placeholder_to_end(template: str) -> str:
     template = (template or "").replace("\r\n", "\n")
     lines = template.split("\n")
     kept_lines = []
-    packing_lines = []
     capture_following = False
+    packing_label_variants = {
+        "🖇Tovar bo'yicha packing list⤵️",
+        "🖇 Tovar bo'yicha packing list ⤵️",
+        "📎 Tovar bo'yicha: Packing list",
+        "📎Tovar bo'yicha: Packing list",
+        "📎 Tovar bo'yicha packing list",
+        "📎Tovar bo'yicha packing list",
+    }
 
     for raw_line in lines:
         line = raw_line.rstrip()
         stripped = line.strip()
+        if stripped in packing_label_variants:
+            capture_following = True
+            continue
         if "{packing_list}" in stripped or "{bl_files}" in stripped:
             capture_following = True
             continue
@@ -913,8 +919,6 @@ def _move_packing_list_placeholder_to_end(template: str) -> str:
     while kept_lines and not kept_lines[-1].strip():
         kept_lines.pop()
 
-    kept_lines.append("")
-    kept_lines.append("")
     kept_lines.append("🖇Tovar bo'yicha packing list⤵️")
     kept_lines.append("{packing_list}")
     return "\n".join(kept_lines)
@@ -1419,12 +1423,12 @@ def render_message(bl: dict, batch_name: str) -> str:
         count=1,
     )
     rendered = re.sub(r"\n{3,}", "\n\n", rendered)
-    rendered = re.sub(
-        r"\n+(🖇\s*Tovar bo'yicha packing list\s*⤵️|🖇Tovar bo'yicha packing list⤵️)",
-        r"\n\n\1",
-        rendered,
-        count=1,
-    )
+    rendered = rendered.replace("━━━━━━━━━━━━━━━━━━━", "━━━━━━━━━━━━━━━")
+    rendered = rendered.replace("📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:\n\n", "📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:\n")
+    rendered = rendered.replace("━━━━━━━━━━━━━━━\n\n🚛 Partiya:", "━━━━━━━━━━━━━━━\n🚛 Partiya:")
+    rendered = rendered.replace("📲 @Ziyodilla_Tracking_Manager\n\n━━━━━━━━━━━━━━━", "📲 @Ziyodilla_Tracking_Manager\n━━━━━━━━━━━━━━━")
+    rendered = rendered.replace("━━━━━━━━━━━━━━━\n\n🖇Tovar bo'yicha packing list⤵️", "━━━━━━━━━━━━━━━\n🖇Tovar bo'yicha packing list⤵️")
+    rendered = re.sub(r"\n*🖇Tovar bo'yicha packing list⤵️(?:\n*🖇Tovar bo'yicha packing list⤵️)+", "\n🖇Tovar bo'yicha packing list⤵️", rendered)
     return rendered.strip()
 
 
