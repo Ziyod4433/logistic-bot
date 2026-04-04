@@ -722,7 +722,18 @@ def _inject_cargo_info_placeholder(template: str) -> str:
 def _inject_packing_list_placeholder(template: str) -> str:
     if "{packing_list}" in template or "{bl_files}" in template:
         return template
-    return template.replace("📎 Tovar bo'yicha: Packing list", "📎 Tovar bo'yicha: {packing_list}")
+    variants = [
+        ("📎 Tovar bo'yicha: Packing list", "📎 Tovar bo'yicha: {packing_list}"),
+        ("📎Tovar bo'yicha: Packing list", "📎Tovar bo'yicha: {packing_list}"),
+        ("📎 Tovar bo'yicha:Packing list", "📎 Tovar bo'yicha:{packing_list}"),
+        ("📎Tovar bo'yicha:Packing list", "📎Tovar bo'yicha:{packing_list}"),
+    ]
+    for source, target in variants:
+        if source in template:
+            return template.replace(source, target, 1)
+    if "Packing list" in template:
+        return template.replace("Packing list", "{packing_list}", 1)
+    return template + "\n\n📎 Tovar bo'yicha: {packing_list}"
 
 
 def _normalize_template_value(value):
@@ -999,6 +1010,13 @@ def get_file_by_public_token(public_token):
     return dict(row) if row else None
 
 
+def get_file_by_id(file_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def format_packing_list(bl_id) -> str:
     files = get_files(bl_id)
     if not files:
@@ -1008,7 +1026,8 @@ def format_packing_list(bl_id) -> str:
         name = (file_info.get("filename") or "").strip()
         if not name:
             continue
-        items.append(f"• {html.escape(name)}")
+        display_name = html.escape(name.replace("_", " "))
+        items.append(f"/f{file_info['id']} | {display_name}")
     if not items:
         return "Packing list biriktirilmagan"
     file_lines = "\n".join(items)
