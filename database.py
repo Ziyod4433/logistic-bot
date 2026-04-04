@@ -73,11 +73,12 @@ DEFAULT_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
 🔖 Holati: <b>{status}</b>
 🇺🇿 {arrival_eta_label}: <b>{arrival_eta}</b>
 
-📞 Mas'ul menejer: Ziyodilla
+📞 Ma'sul menejer: Ziyodilla
 📲 95-975-66-11
 📱 @Ziyodilla_Tracking_Manager
 
-📎 Tovar bo'yicha: {packing_list}"""
+🖇 Tovar bo'yicha packing list ⤵️
+{packing_list}"""
 
 DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Опрос за {month_key}
 
@@ -835,6 +836,7 @@ def _inject_packing_list_placeholder(template: str) -> str:
         ("📎Tovar bo'yicha: Packing list", "📎Tovar bo'yicha: {packing_list}"),
         ("📎 Tovar bo'yicha:Packing list", "📎 Tovar bo'yicha:{packing_list}"),
         ("📎Tovar bo'yicha:Packing list", "📎Tovar bo'yicha:{packing_list}"),
+        ("🖇 Tovar bo'yicha packing list ⤵️", "🖇 Tovar bo'yicha packing list ⤵️\n{packing_list}"),
     ]
     for source, target in variants:
         if source in template:
@@ -843,7 +845,7 @@ def _inject_packing_list_placeholder(template: str) -> str:
     if "Packing list" in template:
         template = template.replace("Packing list", "{packing_list}", 1)
         return _move_packing_list_placeholder_to_end(template)
-    return _move_packing_list_placeholder_to_end(template + "\n\n📎 Tovar bo'yicha: {packing_list}")
+    return _move_packing_list_placeholder_to_end(template + "\n\n🖇 Tovar bo'yicha packing list ⤵️\n{packing_list}")
 
 
 def _move_packing_list_placeholder_to_end(template: str) -> str:
@@ -872,7 +874,9 @@ def _move_packing_list_placeholder_to_end(template: str) -> str:
         kept_lines.pop()
 
     kept_lines.append("")
-    kept_lines.append("📎 Tovar bo'yicha: {packing_list}")
+    kept_lines.append("")
+    kept_lines.append("🖇 Tovar bo'yicha packing list ⤵️")
+    kept_lines.append("{packing_list}")
     return "\n".join(kept_lines)
 
 
@@ -1208,8 +1212,7 @@ def format_packing_list(bl_id) -> str:
         items.append(f"• {html.escape(prettify_file_name(name))}")
     if not items:
         return "Packing list biriktirilmagan"
-    file_lines = "\n".join(items)
-    return f"Packing list\n{file_lines}"
+    return "\n".join(items)
 
 
 def delete_file(file_id):
@@ -1380,7 +1383,12 @@ def render_message(bl: dict, batch_name: str) -> str:
         count=1,
     )
     rendered = re.sub(r"\n{3,}", "\n\n", rendered)
-    rendered = re.sub(r"\n{2,}(📎\s*Tovar bo'yicha:)", r"\n\1", rendered)
+    rendered = re.sub(
+        r"\n+(🖇\s*Tovar bo'yicha packing list\s*⤵️)",
+        r"\n\n\1",
+        rendered,
+        count=1,
+    )
     return rendered.strip()
 
 
