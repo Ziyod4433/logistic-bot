@@ -927,7 +927,7 @@ def api_export_problems():
             "Chuqur": "badge-amber",
             "Dostlik": "badge-blue",
             "Andijon": "badge-amber",
-            "Tashkent": "badge-amber",
+            "Toshkent": "badge-amber",
             "Доставлен": "badge-green",
         }.get(status_text, "badge-muted")
         body_rows_list.append(
