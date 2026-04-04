@@ -65,13 +65,13 @@ DEFAULT_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
 
 ⬇️ Quyida yukingiz bo‘yicha treking ma’lumotlari keltirilgan:
 
-📌 Partiya: {batch_date}
+📌 Partiya: <b>{batch_date}</b>
 
 🕯 Yuk haqida ma'lumot:
 {cargo_info}
 
-🔖 Holati: {status}
-🇺🇿 {arrival_eta_label}: {arrival_eta}
+🔖 Holati: <b>{status}</b>
+🇺🇿 {arrival_eta_label}: <b>{arrival_eta}</b>
 
 📞 Mas'ul menejer: Ziyodilla
 📲 95-975-66-11
@@ -767,25 +767,25 @@ def format_cargo_info(bl: dict) -> str:
     parts = []
     cargo_type = (bl.get("cargo_type") or "").strip()
     if cargo_type:
-        parts.append(f"• Tovar turi: {cargo_type}")
+        parts.append(f"• Tovar turi: <b>{html.escape(cargo_type, quote=False)}</b>")
 
     weight = _to_float(bl.get("weight_kg"))
     if weight:
-        parts.append(f"• Og'irligi: {weight:g} kg")
+        parts.append(f"• Og'irligi: <b>{weight:g} kg</b>")
 
     volume = _to_float(bl.get("volume_cbm"))
     if volume:
-        parts.append(f"• Hajmi: {volume:g} m³")
+        parts.append(f"• Hajmi: <b>{volume:g} m³</b>")
 
     quantity = _to_int(bl.get("quantity_places"))
     if quantity:
-        parts.append(f"• Joylar soni: {quantity}")
+        parts.append(f"• Joylar soni: <b>{quantity}</b>")
 
     description = (bl.get("cargo_description") or "").strip()
     if description:
-        parts.append(f"• Tavsif: {description}")
+        parts.append(f"• Tavsif: <b>{html.escape(description, quote=False)}</b>")
 
-    return "\n".join(parts) if parts else "• Yuk bo'yicha ma'lumot kiritilmagan."
+    return "\n".join(parts) if parts else "• <b>Yuk bo'yicha ma'lumot kiritilmagan.</b>"
 
 
 class _TemplateContext(dict):
@@ -879,7 +879,7 @@ def _move_packing_list_placeholder_to_end(template: str) -> str:
 def _normalize_template_value(value):
     if value is None:
         return ""
-    return str(value)
+    return html.escape(str(value), quote=False)
 
 
 def add_bl(
@@ -1347,7 +1347,7 @@ def render_message(bl: dict, batch_name: str) -> str:
         bl_code=_normalize_template_value(bl.get("code", "")),
         client_name=_normalize_template_value(bl.get("client_name", "")),
         status=_normalize_template_value(_message_status_label(status)),
-        cargo_info=_normalize_template_value(format_cargo_info(bl)),
+        cargo_info=format_cargo_info(bl),
         cargo_type=_normalize_template_value(cargo_type),
         weight_kg=_normalize_template_value(f"{weight_value:g}" if weight_value else ""),
         volume_cbm=_normalize_template_value(f"{volume_value:g}" if volume_value else ""),
@@ -1368,6 +1368,14 @@ def render_message(bl: dict, batch_name: str) -> str:
     rendered = re.sub(
         r"🇺🇿\s*Yetib kelish vaqti\s*:",
         f"🇺🇿 {arrival_eta_label}:",
+        rendered,
+        count=1,
+    )
+    rendered = re.sub(r"(?m)^(📌\s*Partiya:\s*)(?!<b>)(.+)$", r"\1<b>\2</b>", rendered, count=1)
+    rendered = re.sub(r"(?m)^(🔖\s*(?:Holati|Hozirgi holati):\s*)(?!<b>)(.+)$", r"\1<b>\2</b>", rendered, count=1)
+    rendered = re.sub(
+        r"(?m)^(🇺🇿\s*[^:\n]+:\s*)(?!<b>)(.+)$",
+        r"\1<b>\2</b>",
         rendered,
         count=1,
     )
