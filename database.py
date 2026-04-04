@@ -117,8 +117,8 @@ DEFAULT_STATUS_DETAILS = {
 }
 
 ETA_DESTINATION_LABELS = {
-    "Toshkent": "Toshkentga yetib borish vaqti",
-    "Horgos (Qozoq)": "Horgosga yetib borish vaqti",
+    "Toshkent": "Toshkentga yetib kelish vaqti",
+    "Horgos (Qozoq)": "Horgosga yetib kelish vaqti",
 }
 
 DEFAULT_ETA_DESTINATION = "Toshkent"
