@@ -2772,12 +2772,12 @@ function renderCommunicationRecipientsTable(totalRows=0) {
   if (!table) return;
   const recipientsCard = table.closest(".card");
   const headRow = table.closest("table")?.querySelector("thead tr");
-  if (headRow) headRow.innerHTML = "<th>&#9745;</th><th>Клиент</th><th>Chat ID</th><th>Статус</th>";
+  if (headRow) headRow.innerHTML = "<th>&#9745;</th><th>Telegram группа</th><th>Chat ID</th><th>Статус</th>";
   const title = recipientsCard?.querySelector(".card-title");
   if (title) title.innerHTML = "&#128101; Кому отправить";
 
   if (!communicationRecipients.length) {
-    table.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="empty-icon">&#128172;</div><p>Нет клиентских групп с chat_id для опроса</p></div></td></tr>`;
+    table.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="empty-icon">&#128172;</div><p>Нет Telegram-групп, доступных для опроса</p></div></td></tr>`;
     updateCommunicationCount(totalRows);
     return;
   }

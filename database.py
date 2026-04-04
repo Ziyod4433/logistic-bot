@@ -1671,23 +1671,43 @@ def get_communication_recipients():
     rows = conn.execute(
         """
         SELECT
-            bl.id AS bl_id,
-            bl.batch_id,
-            bl.chat_id,
-            COALESCE(NULLIF(TRIM(tc.title), ''), NULLIF(TRIM(bl.client_name), ''), bl.code) AS client_name,
-            b.name AS batch_name
-        FROM bl_codes bl
-        JOIN batches b ON b.id = bl.batch_id
-        LEFT JOIN telegram_chats tc ON tc.chat_id = bl.chat_id
-        WHERE bl.chat_id != ''
-          AND bl.id = (
-              SELECT bl2.id
-              FROM bl_codes bl2
-              WHERE bl2.chat_id = bl.chat_id
-              ORDER BY bl2.created_at DESC
-              LIMIT 1
-          )
-        ORDER BY client_name COLLATE NOCASE ASC
+            c.chat_id,
+            COALESCE(
+                NULLIF(TRIM(c.title), ''),
+                NULLIF(TRIM(c.username), ''),
+                c.chat_id
+            ) AS client_name,
+            c.title AS chat_title,
+            c.chat_type,
+            c.username,
+            c.last_seen_at,
+            (
+                SELECT bl2.id
+                FROM bl_codes bl2
+                WHERE bl2.chat_id = c.chat_id
+                ORDER BY bl2.created_at DESC
+                LIMIT 1
+            ) AS bl_id,
+            (
+                SELECT bl2.batch_id
+                FROM bl_codes bl2
+                WHERE bl2.chat_id = c.chat_id
+                ORDER BY bl2.created_at DESC
+                LIMIT 1
+            ) AS batch_id,
+            (
+                SELECT b.name
+                FROM bl_codes bl2
+                LEFT JOIN batches b ON b.id = bl2.batch_id
+                WHERE bl2.chat_id = c.chat_id
+                ORDER BY bl2.created_at DESC
+                LIMIT 1
+            ) AS batch_name
+        FROM telegram_chats c
+        WHERE c.chat_id != ''
+          AND c.is_active = 1
+        ORDER BY
+            COALESCE(NULLIF(TRIM(c.title), ''), NULLIF(TRIM(c.username), ''), c.chat_id) COLLATE NOCASE ASC
         """
     ).fetchall()
     conn.close()
