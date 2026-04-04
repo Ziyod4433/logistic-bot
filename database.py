@@ -821,6 +821,22 @@ def _inject_cargo_info_placeholder(template: str) -> str:
     return template + "\n\n🕯 Yuk haqida ma'lumot:\n{cargo_info}"
 
 
+def _inject_bl_code_placeholder(template: str) -> str:
+    if "{bl_code}" in template:
+        return template
+
+    template = (template or "").replace("\r\n", "\n")
+    patterns = [
+        r"(🚛\s*Partiya:\s*[^\n]+)",
+        r"(📌\s*Partiya:\s*[^\n]+)",
+    ]
+    for pattern in patterns:
+        updated = re.sub(pattern, r"\1\n🆔 BL kodi: {bl_code}", template, count=1)
+        if updated != template:
+            return updated
+    return template
+
+
 def _inject_arrival_eta_placeholder(template: str) -> str:
     template = (template or "").replace("\r\n", "\n")
     regex_replacements = [
@@ -1331,7 +1347,9 @@ def _message_status_label(status: str) -> str:
 def render_message(bl: dict, batch_name: str) -> str:
     template = _inject_packing_list_placeholder(
         _inject_arrival_eta_placeholder(
-            _inject_cargo_info_placeholder(get_template())
+            _inject_cargo_info_placeholder(
+                _inject_bl_code_placeholder(get_template())
+            )
         )
     )
     template = template.replace("\r\n", "\n")
