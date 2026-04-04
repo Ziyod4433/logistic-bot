@@ -61,23 +61,23 @@ LEGACY_DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 ---
 По вопросам обращайтесь к вашему менеджеру."""
 
-DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:
+DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:⤵️
 ━━━━━━━━━━━━━━━
-🚛 Partiya: {batch_date}
-🆔 BL-kod: {bl_code}
+🚛 Partiya: <b>{batch_date}</b>
+🆔 BL-kod: <b>{bl_code}</b>
 
 📍 Joriy holati:
 -{status}
 
 ⏳{arrival_eta_label}:
--{arrival_eta}
+-<b>{arrival_eta}</b>
 ━━━━━━━━━━━━━━━
 📄 Yuk haqida ma'lumotlar:
 {cargo_info}
 ━━━━━━━━━━━━━━━
 👨‍💼 Ma'sul menejer:
 Ziyodilla
-📞 +998 95 975 66 11
+📞 -95-975-66-11
 📲 @Ziyodilla_Tracking_Manager
 ━━━━━━━━━━━━━━━
 🖇Tovar bo'yicha packing list⤵️
@@ -771,23 +771,23 @@ def format_cargo_info(bl: dict) -> str:
     parts = []
     cargo_type = (bl.get("cargo_type") or "").strip()
     if cargo_type:
-        parts.append(f"• Tovar turi: {html.escape(cargo_type, quote=False)}")
+        parts.append(f"• Tovar turi: <b>{html.escape(cargo_type, quote=False)}</b>")
 
     weight = _to_float(bl.get("weight_kg"))
     if weight:
-        parts.append(f"• Og'irligi: {weight:g} kg")
+        parts.append(f"• Og'irligi: <b>{weight:g} kg</b>")
 
     volume = _to_float(bl.get("volume_cbm"))
     if volume:
-        parts.append(f"• Hajmi: {volume:g} m³")
+        parts.append(f"• Hajmi: <b>{volume:g} m³</b>")
 
     quantity = _to_int(bl.get("quantity_places"))
     if quantity:
-        parts.append(f"• Joylar soni: {quantity}")
+        parts.append(f"• Joylar soni: <b>{quantity}</b>")
 
     description = (bl.get("cargo_description") or "").strip()
     if description:
-        parts.append(f"• Tavsif: {html.escape(description, quote=False)}")
+        parts.append(f"• Tavsif: <b>{html.escape(description, quote=False)}</b>")
 
     return "\n".join(parts)
 
