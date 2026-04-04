@@ -78,7 +78,7 @@ DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’
 {cargo_info}
 
 ━━━━━━━━━━━━━━━━━━━
-👨‍💼 Mas’ul menejer:
+👨‍💼 Ma'sul menejer:
 Ziyodilla
 📞 +998 95 975 66 11
 📲 @Ziyodilla_Tracking_Manager
@@ -837,6 +837,22 @@ def _inject_bl_code_placeholder(template: str) -> str:
     return template
 
 
+def _normalize_client_template(template: str) -> str:
+    text = (template or "").replace("\r\n", "\n").strip()
+    legacy_markers = [
+        "Assalomu alaykum hurmatli mijoz",
+        "Assalomu alaykum, hurmatli mijoz",
+        "Quyida yukingiz bo'yicha treking ma'lumotlari keltirilgan",
+        "Quyida yukingiz bo‘yicha treking ma’lumotlari keltirilgan",
+        "Hozirgi holati:",
+        "Yuk haqida ma'lumot:",
+        "Yuk haqida ma’lumot:",
+    ]
+    if any(marker in text for marker in legacy_markers):
+        return DEFAULT_TEMPLATE
+    return text or DEFAULT_TEMPLATE
+
+
 def _inject_arrival_eta_placeholder(template: str) -> str:
     template = (template or "").replace("\r\n", "\n")
     regex_replacements = [
@@ -1348,7 +1364,9 @@ def render_message(bl: dict, batch_name: str) -> str:
     template = _inject_packing_list_placeholder(
         _inject_arrival_eta_placeholder(
             _inject_cargo_info_placeholder(
-                _inject_bl_code_placeholder(get_template())
+                _inject_bl_code_placeholder(
+                    _normalize_client_template(get_template())
+                )
             )
         )
     )
