@@ -66,6 +66,7 @@ DEFAULT_TEMPLATE = """👋Assalomu alaykum hurmatli mijoz!
 📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:⤵️
 ━━━━━━━━━━━━━━━
 🚛 Partiya: <b>{batch_date}</b>
+🗓Bugungi sana: <b>{today_date}</b>
 🆔 BL-kod: <b>{bl_code}</b>
 
 📍 Joriy holati:
@@ -834,6 +835,22 @@ def _inject_bl_code_placeholder(template: str) -> str:
     return template
 
 
+def _inject_today_date_placeholder(template: str) -> str:
+    if "{today_date}" in template:
+        return template
+
+    template = (template or "").replace("\r\n", "\n")
+    patterns = [
+        r"(🚛\s*Partiya:\s*[^\n]+)",
+        r"(📌\s*Partiya:\s*[^\n]+)",
+    ]
+    for pattern in patterns:
+        updated = re.sub(pattern, r"\1\n🗓Bugungi sana: <b>{today_date}</b>", template, count=1)
+        if updated != template:
+            return updated
+    return template
+
+
 def _normalize_client_template(template: str) -> str:
     text = (template or "").replace("\r\n", "\n").strip()
     legacy_markers = [
@@ -1386,8 +1403,10 @@ def render_message(bl: dict, batch_name: str) -> str:
     template = _inject_packing_list_placeholder(
         _inject_arrival_eta_placeholder(
             _inject_cargo_info_placeholder(
-                _inject_bl_code_placeholder(
+                _inject_today_date_placeholder(
+                    _inject_bl_code_placeholder(
                     _normalize_client_template(get_template())
+                    )
                 )
             )
         )
@@ -1409,10 +1428,12 @@ def render_message(bl: dict, batch_name: str) -> str:
     arrival_eta = ((batch or {}).get("eta_to_toshkent") or "").strip()
     arrival_eta_value = arrival_eta or expected_date
     arrival_eta_label = _eta_destination_label((batch or {}).get("eta_destination") or "")
+    today_date = datetime.now(TASHKENT_TZ).strftime("%d.%m.%Y")
 
     context = _TemplateContext(
         batch_name=_normalize_template_value(batch_name),
         batch_date=_normalize_template_value(batch_name),
+        today_date=_normalize_template_value(today_date),
         bl_code=_normalize_template_value(bl.get("code", "")),
         client_name=_normalize_template_value(bl.get("client_name", "")),
         status=_normalize_template_value(_message_status_label(status)),
