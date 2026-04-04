@@ -73,20 +73,19 @@ DEFAULT_TEMPLATE = """Assalomu alaykum, hurmatli mijoz! 👋
 📍 Joriy holati:
 -<b>{status}</b>
 
-⏳ {arrival_eta_label}:
+⏳{arrival_eta_label}:
 -<b>{arrival_eta}</b>
-
 ━━━━━━━━━━━━━━━━━━━
-📄 Yuk haqida:
+📄 Yuk haqida ma'lumotlar:
 {cargo_info}
 
 ━━━━━━━━━━━━━━━━━━━
-👨‍💼 Ma'sul menejer:
+👨‍💼 Mas’ul menejer:
 Ziyodilla
 📞 +998 95 975 66 11
 📲 @Ziyodilla_Tracking_Manager
-
 ━━━━━━━━━━━━━━━━━━━
+
 🖇Tovar bo'yicha packing list⤵️
 {packing_list}"""
 
@@ -125,8 +124,8 @@ DEFAULT_STATUS_DETAILS = {
 }
 
 ETA_DESTINATION_LABELS = {
-    "Toshkent": "Toshkentga taxminiy yetib kelish vaqti",
-    "Horgos (Qozoq)": "Horgosga taxminiy yetib kelish vaqti",
+    "Toshkent": "Toshkentga yetib borish vaqti",
+    "Horgos (Qozoq)": "Horgosga yetib borish vaqti",
 }
 
 DEFAULT_ETA_DESTINATION = "Toshkent"
@@ -796,7 +795,7 @@ def format_cargo_info(bl: dict) -> str:
     if description:
         parts.append(f"• Tavsif: <b>{html.escape(description, quote=False)}</b>")
 
-    return "\n".join(parts) if parts else "<b>Ma'lumot kiritilmagan</b>"
+    return "\n".join(parts)
 
 
 class _TemplateContext(dict):
@@ -1382,14 +1381,6 @@ def render_message(bl: dict, batch_name: str) -> str:
     rendered = re.sub(
         r"🇺🇿\s*Yetib kelish vaqti\s*:",
         f"🇺🇿 {arrival_eta_label}:",
-        rendered,
-        count=1,
-    )
-    rendered = re.sub(r"(?m)^(📌\s*Partiya:\s*)(?!<b>)(.+)$", r"\1<b>\2</b>", rendered, count=1)
-    rendered = re.sub(r"(?m)^(🔖\s*(?:Holati|Hozirgi holati):\s*)(?!<b>)(.+)$", r"\1<b>\2</b>", rendered, count=1)
-    rendered = re.sub(
-        r"(?m)^(🇺🇿\s*[^:\n]+:\s*)(?!<b>)(.+)$",
-        r"\1<b>\2</b>",
         rendered,
         count=1,
     )
