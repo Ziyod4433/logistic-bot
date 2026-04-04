@@ -66,7 +66,7 @@ DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’
 ━━━━━━━━━━━━━━━━━━━
 
 🚛 Partiya: {batch_date}
-🆔 BL kodi: {bl_code}
+🆔 BL-kod: {bl_code}
 
 📍 Joriy holati:
 -{status}
@@ -831,7 +831,7 @@ def _inject_bl_code_placeholder(template: str) -> str:
         r"(📌\s*Partiya:\s*[^\n]+)",
     ]
     for pattern in patterns:
-        updated = re.sub(pattern, r"\1\n🆔 BL kodi: {bl_code}", template, count=1)
+        updated = re.sub(pattern, r"\1\n🆔 BL-kod: {bl_code}", template, count=1)
         if updated != template:
             return updated
     return template
