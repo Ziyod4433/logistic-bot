@@ -1027,7 +1027,7 @@ def format_packing_list(bl_id) -> str:
         if not name:
             continue
         display_name = html.escape(name.replace("_", " "))
-        items.append(f"/f{file_info['id']} | {display_name}")
+        items.append(f"• {display_name}")
     if not items:
         return "Packing list biriktirilmagan"
     file_lines = "\n".join(items)
