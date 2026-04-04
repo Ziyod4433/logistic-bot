@@ -61,23 +61,33 @@ LEGACY_DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 ---
 По вопросам обращайтесь к вашему менеджеру."""
 
-DEFAULT_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
+DEFAULT_TEMPLATE = """Assalomu alaykum, hurmatli mijoz! 👋
 
-⬇️ Quyida yukingiz bo‘yicha treking ma’lumotlari keltirilgan:
+📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:
 
-📌 Partiya: <b>{batch_date}</b>
+━━━━━━━━━━━━━━━━━━━
 
-🕯 Yuk haqida ma'lumot:
+🚛 Partiya: <b>{batch_date}</b>
+🆔 BL kodi: <b>{bl_code}</b>
+
+📍 Joriy holati:
+-<b>{status}</b>
+
+⏳ {arrival_eta_label}:
+-<b>{arrival_eta}</b>
+
+━━━━━━━━━━━━━━━━━━━
+📄 Yuk haqida:
 {cargo_info}
 
-🔖 Holati: <b>{status}</b>
-🇺🇿 {arrival_eta_label}: <b>{arrival_eta}</b>
+━━━━━━━━━━━━━━━━━━━
+👨‍💼 Ma'sul menejer:
+Ziyodilla
+📞 +998 95 975 66 11
+📲 @Ziyodilla_Tracking_Manager
 
-📞 Ma'sul menejer: Ziyodilla
-📲 95-975-66-11
-📱 @Ziyodilla_Tracking_Manager
-
-🖇 Tovar bo'yicha packing list ⤵️
+━━━━━━━━━━━━━━━━━━━
+🖇Tovar bo'yicha packing list⤵️
 {packing_list}"""
 
 DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Опрос за {month_key}
@@ -786,7 +796,7 @@ def format_cargo_info(bl: dict) -> str:
     if description:
         parts.append(f"• Tavsif: <b>{html.escape(description, quote=False)}</b>")
 
-    return "\n".join(parts) if parts else "• <b>Yuk bo'yicha ma'lumot kiritilmagan.</b>"
+    return "\n".join(parts) if parts else "<b>Ma'lumot kiritilmagan</b>"
 
 
 class _TemplateContext(dict):
@@ -836,7 +846,8 @@ def _inject_packing_list_placeholder(template: str) -> str:
         ("📎Tovar bo'yicha: Packing list", "📎Tovar bo'yicha: {packing_list}"),
         ("📎 Tovar bo'yicha:Packing list", "📎 Tovar bo'yicha:{packing_list}"),
         ("📎Tovar bo'yicha:Packing list", "📎Tovar bo'yicha:{packing_list}"),
-        ("🖇 Tovar bo'yicha packing list ⤵️", "🖇 Tovar bo'yicha packing list ⤵️\n{packing_list}"),
+        ("🖇Tovar bo'yicha packing list⤵️", "🖇Tovar bo'yicha packing list⤵️\n{packing_list}"),
+        ("🖇 Tovar bo'yicha packing list ⤵️", "🖇Tovar bo'yicha packing list⤵️\n{packing_list}"),
     ]
     for source, target in variants:
         if source in template:
@@ -845,7 +856,7 @@ def _inject_packing_list_placeholder(template: str) -> str:
     if "Packing list" in template:
         template = template.replace("Packing list", "{packing_list}", 1)
         return _move_packing_list_placeholder_to_end(template)
-    return _move_packing_list_placeholder_to_end(template + "\n\n🖇 Tovar bo'yicha packing list ⤵️\n{packing_list}")
+    return _move_packing_list_placeholder_to_end(template + "\n\n🖇Tovar bo'yicha packing list⤵️\n{packing_list}")
 
 
 def _move_packing_list_placeholder_to_end(template: str) -> str:
@@ -875,7 +886,7 @@ def _move_packing_list_placeholder_to_end(template: str) -> str:
 
     kept_lines.append("")
     kept_lines.append("")
-    kept_lines.append("🖇 Tovar bo'yicha packing list ⤵️")
+    kept_lines.append("🖇Tovar bo'yicha packing list⤵️")
     kept_lines.append("{packing_list}")
     return "\n".join(kept_lines)
 
@@ -1384,7 +1395,7 @@ def render_message(bl: dict, batch_name: str) -> str:
     )
     rendered = re.sub(r"\n{3,}", "\n\n", rendered)
     rendered = re.sub(
-        r"\n+(🖇\s*Tovar bo'yicha packing list\s*⤵️)",
+        r"\n+(🖇\s*Tovar bo'yicha packing list\s*⤵️|🖇Tovar bo'yicha packing list⤵️)",
         r"\n\n\1",
         rendered,
         count=1,
