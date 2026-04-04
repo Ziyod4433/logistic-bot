@@ -1,5 +1,6 @@
 import html
 import os
+import re
 import secrets
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
@@ -185,6 +186,7 @@ def init_db():
             filename TEXT NOT NULL,
             file_path TEXT NOT NULL,
             public_token TEXT NOT NULL DEFAULT '',
+            command_alias TEXT NOT NULL DEFAULT '',
             uploaded_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
@@ -336,6 +338,7 @@ def init_db():
 
     file_columns = [
         ("public_token", "TEXT NOT NULL DEFAULT ''"),
+        ("command_alias", "TEXT NOT NULL DEFAULT ''"),
     ]
     for column_name, column_def in file_columns:
         if not _table_has_column(conn, "files", column_name):
@@ -437,12 +440,14 @@ def init_db():
     )
 
     file_rows = conn.execute(
-        "SELECT id FROM files WHERE public_token IS NULL OR public_token = ''"
+        "SELECT id, filename FROM files WHERE public_token IS NULL OR public_token = '' OR command_alias IS NULL OR command_alias = ''"
     ).fetchall()
     for row in file_rows:
+        public_token = _generate_public_token()
+        command_alias = _generate_command_alias(row["filename"], row["id"])
         conn.execute(
-            "UPDATE files SET public_token = ? WHERE id = ?",
-            (_generate_public_token(), row["id"]),
+            "UPDATE files SET public_token = COALESCE(NULLIF(public_token, ''), ?), command_alias = COALESCE(NULLIF(command_alias, ''), ?) WHERE id = ?",
+            (public_token, command_alias, row["id"]),
         )
 
     row = cursor.execute("SELECT id, content FROM message_template WHERE id = 1").fetchone()
@@ -630,6 +635,21 @@ def current_ts():
 
 def _generate_public_token():
     return secrets.token_urlsafe(24)
+
+
+def _slugify_file_command(filename: str) -> str:
+    stem = (filename or "").strip()
+    if "." in stem:
+        stem = stem.rsplit(".", 1)[0]
+    stem = stem.replace("&", " and ")
+    stem = re.sub(r"[^A-Za-z0-9]+", "_", stem).strip("_").lower()
+    stem = re.sub(r"_+", "_", stem)
+    return stem[:28] if stem else "file"
+
+
+def _generate_command_alias(filename: str, file_id: int) -> str:
+    base = _slugify_file_command(filename)
+    return f"{base}_{file_id}"
 
 
 def record_login_history(username, role="", success=True, ip_address="", user_agent=""):
@@ -985,9 +1005,14 @@ def delete_bl(bl_id):
 
 def add_file(bl_id, filename, file_path):
     conn = get_conn()
-    conn.execute(
-        "INSERT INTO files(bl_id, filename, file_path, public_token) VALUES(?, ?, ?, ?)",
+    cursor = conn.execute(
+        "INSERT INTO files(bl_id, filename, file_path, public_token, command_alias) VALUES(?, ?, ?, ?, '')",
         (bl_id, filename, file_path, _generate_public_token()),
+    )
+    file_id = cursor.lastrowid
+    conn.execute(
+        "UPDATE files SET command_alias = ? WHERE id = ?",
+        (_generate_command_alias(filename, file_id), file_id),
     )
     conn.commit()
     conn.close()
@@ -1017,6 +1042,16 @@ def get_file_by_id(file_id):
     return dict(row) if row else None
 
 
+def get_file_by_command_alias(command_alias):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM files WHERE command_alias = ? LIMIT 1",
+        (((command_alias or "").strip().lstrip("/").lower()),),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def format_packing_list(bl_id) -> str:
     files = get_files(bl_id)
     if not files:
@@ -1026,8 +1061,10 @@ def format_packing_list(bl_id) -> str:
         name = (file_info.get("filename") or "").strip()
         if not name:
             continue
-        display_name = html.escape(name.replace("_", " "))
-        items.append(f"• {display_name}")
+        alias = (file_info.get("command_alias") or "").strip()
+        if not alias:
+            alias = _generate_command_alias(name, file_info["id"])
+        items.append(f"/{alias}")
     if not items:
         return "Packing list biriktirilmagan"
     file_lines = "\n".join(items)
