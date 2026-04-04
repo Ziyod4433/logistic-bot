@@ -61,20 +61,18 @@ LEGACY_DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 ---
 По вопросам обращайтесь к вашему менеджеру."""
 
-DEFAULT_TEMPLATE = """Assalomu alaykum, hurmatli mijoz! 👋
-
-📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:
+DEFAULT_TEMPLATE = """📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:
 
 ━━━━━━━━━━━━━━━━━━━
 
-🚛 Partiya: <b>{batch_date}</b>
-🆔 BL kodi: <b>{bl_code}</b>
+🚛 Partiya: {batch_date}
+🆔 BL kodi: {bl_code}
 
 📍 Joriy holati:
--<b>{status}</b>
+-{status}
 
 ⏳{arrival_eta_label}:
--<b>{arrival_eta}</b>
+-{arrival_eta}
 ━━━━━━━━━━━━━━━━━━━
 📄 Yuk haqida ma'lumotlar:
 {cargo_info}
@@ -777,23 +775,23 @@ def format_cargo_info(bl: dict) -> str:
     parts = []
     cargo_type = (bl.get("cargo_type") or "").strip()
     if cargo_type:
-        parts.append(f"• Tovar turi: <b>{html.escape(cargo_type, quote=False)}</b>")
+        parts.append(f"• Tovar turi: {html.escape(cargo_type, quote=False)}")
 
     weight = _to_float(bl.get("weight_kg"))
     if weight:
-        parts.append(f"• Og'irligi: <b>{weight:g} kg</b>")
+        parts.append(f"• Og'irligi: {weight:g} kg")
 
     volume = _to_float(bl.get("volume_cbm"))
     if volume:
-        parts.append(f"• Hajmi: <b>{volume:g} m³</b>")
+        parts.append(f"• Hajmi: {volume:g} m³")
 
     quantity = _to_int(bl.get("quantity_places"))
     if quantity:
-        parts.append(f"• Joylar soni: <b>{quantity}</b>")
+        parts.append(f"• Joylar soni: {quantity}")
 
     description = (bl.get("cargo_description") or "").strip()
     if description:
-        parts.append(f"• Tavsif: <b>{html.escape(description, quote=False)}</b>")
+        parts.append(f"• Tavsif: {html.escape(description, quote=False)}")
 
     return "\n".join(parts)
 
