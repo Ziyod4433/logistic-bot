@@ -32,13 +32,12 @@ STATUSES = [
     "Qonusbay",
     "Saryagash",
     "Yallama",
+    "Tashkent",
     "Kashgar (Qirg'iz)",
     "Irkeshtam",
     "Osh",
-    "Chuqursoy",
     "Dostlik",
     "Andijon",
-    "Tashkent",
     "Доставлен",
 ]
 
@@ -103,13 +102,12 @@ DEFAULT_STATUS_DETAILS = {
     "Qonusbay": "🚛 Yuk Qonusbay nazorat nuqtasi orqali o'tmoqda.",
     "Saryagash": "🚛 Yuk Saryagash yo'nalishida harakatlanmoqda.",
     "Yallama": "🛃 Yuk Yallama chegara nuqtasiga yaqinlashdi yoki u yerdan o'tmoqda.",
+    "Tashkent": "📦 Yuk Tashkentga yetib keldi. Tushirish yoki topshirish jarayoni boshlanmoqda.",
     "Kashgar (Qirg'iz)": "🛃 Yuk Kashgar orqali Qirg'iz yo'nalishiga kirdi. Yo'l haydovchi tomonidan tanlangan marshrut bo'yicha davom etmoqda.",
     "Irkeshtam": "🛃 Yuk Irkeshtam orqali Qirg'iz yo'nalishida o'tmoqda.",
     "Osh": "🚛 Yuk Osh yo'nalishida harakatlanmoqda.",
-    "Chuqursoy": "🚛 Yuk Chuqursoy yo'nalishida harakatlanmoqda.",
     "Dostlik": "🛃 Yuk Dostlik chegara nuqtasiga yaqinlashdi yoki u yerdan o'tmoqda.",
     "Andijon": "🚛 Yuk Andijon yo'nalishida harakatlanmoqda.",
-    "Tashkent": "📦 Yuk Tashkentga yetib keldi. Tushirish yoki topshirish jarayoni boshlanmoqda.",
     "Доставлен": "✅ Yuk muvaffaqiyatli topshirildi.",
 }
 
@@ -509,7 +507,8 @@ def init_db():
         "В пути до Ташкента": "Yallama",
         "Ташкент": "Tashkent",
         "Altynko'l": "Nurjo'li",
-        "Chuqur": "Chuqursoy",
+        "Chuqur": "Dostlik",
+        "Chuqursoy": "Dostlik",
     }
     for old_status, new_status in legacy_status_map.items():
         cursor.execute("UPDATE batches SET status = ? WHERE status = ?", (new_status, old_status))
