@@ -2448,7 +2448,7 @@ async function moveBLToBatch() {
 
 async function deleteBL(id) {
   if (!ensureEditor()) return;
-  if (!confirm("Удалить BL код?")) return;
+  if (!confirm("Удалить BL код?\n\nБудут удалены:\n• сам BL\n• прикреплённые файлы\n• связанные инциденты\n\nИстория отправок останется в логах.")) return;
   try {
     await api("/api/bl/"+id,"DELETE");
     toast("Удалено","ok");

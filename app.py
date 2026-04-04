@@ -694,7 +694,10 @@ def api_update_bl(bl_id):
 @app.route("/api/bl/<int:bl_id>", methods=["DELETE"])
 @editor_required
 def api_delete_bl(bl_id):
-    db.delete_bl(bl_id)
+    try:
+        db.delete_bl(bl_id)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
     return jsonify({"ok": True})
 
 

@@ -1007,9 +1007,33 @@ def move_bl_to_batch(bl_id, target_batch_id):
 
 def delete_bl(bl_id):
     conn = get_conn()
-    conn.execute("DELETE FROM bl_codes WHERE id = ?", (bl_id,))
-    conn.commit()
-    conn.close()
+    try:
+        file_rows = conn.execute(
+            "SELECT id, file_path FROM files WHERE bl_id = ?",
+            (bl_id,),
+        ).fetchall()
+
+        conn.execute("UPDATE send_logs SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
+        conn.execute("UPDATE communication_survey_sends SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
+        conn.execute("UPDATE communication_survey_dispatches SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
+        conn.execute("UPDATE communication_ratings SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
+        conn.execute("UPDATE communication_rating_events SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
+
+        conn.execute("DELETE FROM problems WHERE bl_id = ?", (bl_id,))
+        conn.execute("DELETE FROM files WHERE bl_id = ?", (bl_id,))
+        conn.execute("DELETE FROM bl_codes WHERE id = ?", (bl_id,))
+        conn.commit()
+
+        for row in file_rows:
+            file_path = row["file_path"]
+            if not file_path:
+                continue
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+    finally:
+        conn.close()
 
 
 def add_file(bl_id, filename, file_path):
