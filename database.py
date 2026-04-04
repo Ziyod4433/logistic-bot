@@ -71,7 +71,7 @@ DEFAULT_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
 {cargo_info}
 
 🔖 Holati: {status}
-🇺🇿 Yetib kelish vaqti: {arrival_eta}
+🇺🇿 {arrival_eta_label}: {arrival_eta}
 
 📞 Mas'ul menejer: Ziyodilla
 📲 95-975-66-11
@@ -112,6 +112,13 @@ DEFAULT_STATUS_DETAILS = {
     "Andijon": "🚛 Yuk Andijon yo'nalishida harakatlanmoqda.",
     "Доставлен": "✅ Yuk muvaffaqiyatli topshirildi.",
 }
+
+ETA_DESTINATION_LABELS = {
+    "Toshkent": "Toshkentga taxminiy yetib kelish vaqti",
+    "Horgos (Qozoq)": "Horgosga taxminiy yetib kelish vaqti",
+}
+
+DEFAULT_ETA_DESTINATION = "Toshkent"
 
 STUCK_DAYS = 5
 
@@ -170,6 +177,20 @@ def _stuck_sql(alias: str = "bl") -> str:
     """
 
 
+def _normalize_eta_destination(value: str) -> str:
+    normalized = (value or "").strip()
+    if normalized in ETA_DESTINATION_LABELS:
+        return normalized
+    return DEFAULT_ETA_DESTINATION
+
+
+def _eta_destination_label(value: str) -> str:
+    return ETA_DESTINATION_LABELS.get(
+        _normalize_eta_destination(value),
+        ETA_DESTINATION_LABELS[DEFAULT_ETA_DESTINATION],
+    )
+
+
 def init_db():
     conn = get_conn()
     cursor = conn.cursor()
@@ -182,6 +203,7 @@ def init_db():
             expected_date TEXT DEFAULT '',
             actual_date TEXT DEFAULT '',
             eta_to_toshkent TEXT DEFAULT '',
+            eta_destination TEXT DEFAULT 'Toshkent',
             status_updated_at TEXT DEFAULT (datetime('now','localtime')),
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
@@ -342,6 +364,7 @@ def init_db():
         ("expected_date", "TEXT DEFAULT ''"),
         ("actual_date", "TEXT DEFAULT ''"),
         ("eta_to_toshkent", "TEXT DEFAULT ''"),
+        ("eta_destination", "TEXT DEFAULT 'Toshkent'"),
         ("status_updated_at", "TEXT DEFAULT ''"),
     ]
     for column_name, column_def in batch_columns:
@@ -522,17 +545,16 @@ def init_db():
     conn.close()
 
 
-def create_batch(name, status="Xitoy", expected_date="", actual_date="", eta_to_toshkent=""):
+def create_batch(name, status="Xitoy", eta_to_toshkent="", eta_destination="Toshkent"):
     conn = get_conn()
     try:
         conn.execute(
-            "INSERT INTO batches(name, status, expected_date, actual_date, eta_to_toshkent, status_updated_at) VALUES(?, ?, ?, ?, ?, datetime('now','localtime'))",
+            "INSERT INTO batches(name, status, expected_date, actual_date, eta_to_toshkent, eta_destination, status_updated_at) VALUES(?, ?, '', '', ?, ?, datetime('now','localtime'))",
             (
                 (name or "").strip(),
                 (status or "Xitoy").strip(),
-                (expected_date or "").strip(),
-                (actual_date or "").strip(),
                 (eta_to_toshkent or "").strip(),
+                _normalize_eta_destination(eta_destination),
             ),
         )
         conn.commit()
@@ -543,19 +565,24 @@ def create_batch(name, status="Xitoy", expected_date="", actual_date="", eta_to_
         conn.close()
 
 
-def update_batch(batch_id, name, status="Xitoy", expected_date="", actual_date="", eta_to_toshkent=""):
+def update_batch(batch_id, name, status="Xitoy", eta_to_toshkent="", eta_destination="Toshkent"):
     conn = get_conn()
     try:
         new_status = (status or "Xitoy").strip()
+        current_batch = conn.execute(
+            "SELECT expected_date, actual_date FROM batches WHERE id = ?",
+            (batch_id,),
+        ).fetchone()
+        expected_date = (current_batch["expected_date"] if current_batch else "") or ""
+        actual_date = (current_batch["actual_date"] if current_batch else "") or ""
         conn.execute(
             """
             UPDATE batches
             SET
                 name = ?,
                 status = ?,
-                expected_date = ?,
-                actual_date = ?,
                 eta_to_toshkent = ?,
+                eta_destination = ?,
                 status_updated_at = CASE
                     WHEN COALESCE(status, 'Xitoy') != ? THEN datetime('now','localtime')
                     ELSE COALESCE(NULLIF(status_updated_at, ''), datetime('now','localtime'))
@@ -565,9 +592,8 @@ def update_batch(batch_id, name, status="Xitoy", expected_date="", actual_date="
             (
                 (name or "").strip(),
                 new_status,
-                (expected_date or "").strip(),
-                (actual_date or "").strip(),
                 (eta_to_toshkent or "").strip(),
+                _normalize_eta_destination(eta_destination),
                 new_status,
                 batch_id,
             ),
@@ -577,8 +603,6 @@ def update_batch(batch_id, name, status="Xitoy", expected_date="", actual_date="
             UPDATE bl_codes
             SET
                 status = ?,
-                expected_date = ?,
-                actual_date = ?,
                 status_updated_at = CASE
                     WHEN COALESCE(status, 'Xitoy') != ? THEN datetime('now','localtime')
                     ELSE COALESCE(NULLIF(status_updated_at, ''), datetime('now','localtime'))
@@ -587,8 +611,6 @@ def update_batch(batch_id, name, status="Xitoy", expected_date="", actual_date="
             """,
             (
                 new_status,
-                (expected_date or "").strip(),
-                (actual_date or "").strip(),
                 new_status,
                 batch_id,
             ),
@@ -789,6 +811,19 @@ def _inject_cargo_info_placeholder(template: str) -> str:
         return template[:insert_at] + "🕯 Yuk haqida ma'lumot:\n{cargo_info}\n\n" + template[insert_at:]
 
     return template + "\n\n🕯 Yuk haqida ma'lumot:\n{cargo_info}"
+
+
+def _inject_arrival_eta_placeholder(template: str) -> str:
+    template = (template or "").replace("\r\n", "\n")
+    replacements = [
+        ("🇺🇿 Yetib kelish vaqti: {arrival_eta}", "🇺🇿 {arrival_eta_label}: {arrival_eta}"),
+        ("🇺🇿 Yetib kelish vaqti: {expected_date}", "🇺🇿 {arrival_eta_label}: {arrival_eta}"),
+        ("🖥 Kutilayotgan sana: {expected_date}", "🇺🇿 {arrival_eta_label}: {arrival_eta}"),
+    ]
+    for source, target in replacements:
+        if source in template:
+            return template.replace(source, target, 1)
+    return template
 
 
 def _inject_packing_list_placeholder(template: str) -> str:
@@ -1282,7 +1317,11 @@ def _message_status_label(status: str) -> str:
 
 
 def render_message(bl: dict, batch_name: str) -> str:
-    template = _inject_packing_list_placeholder(_inject_cargo_info_placeholder(get_template()))
+    template = _inject_packing_list_placeholder(
+        _inject_arrival_eta_placeholder(
+            _inject_cargo_info_placeholder(get_template())
+        )
+    )
     template = template.replace("\r\n", "\n")
     template = template.replace("\n\n{status_detail}", "")
     template = template.replace("{status_detail}\n\n", "")
@@ -1299,6 +1338,7 @@ def render_message(bl: dict, batch_name: str) -> str:
     batch = get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
     arrival_eta = ((batch or {}).get("eta_to_toshkent") or "").strip()
     arrival_eta_value = arrival_eta or expected_date
+    arrival_eta_label = _eta_destination_label((batch or {}).get("eta_destination") or "")
 
     context = _TemplateContext(
         batch_name=_normalize_template_value(batch_name),
@@ -1317,6 +1357,7 @@ def render_message(bl: dict, batch_name: str) -> str:
         description=_normalize_template_value(description),
         expected_date=_normalize_template_value(arrival_eta_value),
         arrival_eta=_normalize_template_value(arrival_eta_value),
+        arrival_eta_label=_normalize_template_value(arrival_eta_label),
         actual_date=_normalize_template_value(actual_date),
         packing_list=_normalize_template_value(packing_list),
         bl_files=_normalize_template_value(packing_list),

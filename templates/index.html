@@ -1408,20 +1408,18 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         </select>
       </div>
     </div>
-    <div class="form-row2">
-      <div class="form-g">
-        <label>Ожидаемая дата партии</label>
-        <input class="inp" type="date" id="new-batch-expected-date">
-      </div>
-      <div class="form-g">
-        <label>Факт дата партии</label>
-        <input class="inp" type="date" id="new-batch-actual-date">
-      </div>
+    <div class="form-g">
+      <label>Taxminiy yetib kelish muddati</label>
+      <input class="inp" id="new-batch-arrival-eta" placeholder="например: 18-25 kun">
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Укажи вручную, сколько осталось до выбранной конечной точки.</div>
     </div>
     <div class="form-g">
-      <label>🇺🇿 Yetib kelish vaqti</label>
-      <input class="inp" id="new-batch-arrival-eta" placeholder="например: 2-3 kun">
-      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Это ручной срок до Toshkent. Он будет отправляться клиенту в шаблоне после строки «Yetib kelish vaqti».</div>
+      <label>Qaysi nuqtaga</label>
+      <input type="hidden" id="new-batch-arrival-target" value="Toshkent">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button type="button" class="btn btn-amber btn-sm" id="new-batch-target-toshkent" onclick="setArrivalTarget('new-batch','Toshkent')">Toshkentga taxminiy yetib kelish vaqti</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-horgos" onclick="setArrivalTarget('new-batch','Horgos (Qozoq)')">Horgosga taxminiy yetib kelish vaqti</button>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('create-batch-modal')">Отмена</button>
@@ -1462,23 +1460,21 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <option value="Доставлен">✅ Доставлен</option>
       </select>
     </div>
-    <div class="form-row2">
-      <div class="form-g">
-        <label>Ожидаемая дата партии</label>
-        <input class="inp" type="date" id="edit-batch-expected-date">
-      </div>
-      <div class="form-g">
-        <label>Факт дата партии</label>
-        <input class="inp" type="date" id="edit-batch-actual-date">
-      </div>
+    <div class="form-g">
+      <label>Taxminiy yetib kelish muddati</label>
+      <input class="inp" id="edit-batch-arrival-eta" placeholder="например: 18-25 kun">
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Укажи вручную, сколько осталось до выбранной конечной точки. Этот текст попадёт в клиентское сообщение.</div>
     </div>
     <div class="form-g">
-      <label>🇺🇿 Yetib kelish vaqti</label>
-      <input class="inp" id="edit-batch-arrival-eta" placeholder="например: 2-3 kun">
-      <div style="font-size:11px;color:var(--muted2);margin-top:5px">Укажи вручную, сколько осталось до прибытия в Toshkent. Этот текст попадёт в клиентское сообщение.</div>
+      <label>Qaysi nuqtaga</label>
+      <input type="hidden" id="edit-batch-arrival-target" value="Toshkent">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button type="button" class="btn btn-amber btn-sm" id="edit-batch-target-toshkent" onclick="setArrivalTarget('edit-batch','Toshkent')">Toshkentga taxminiy yetib kelish vaqti</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-horgos" onclick="setArrivalTarget('edit-batch','Horgos (Qozoq)')">Horgosga taxminiy yetib kelish vaqti</button>
+      </div>
     </div>
     <div style="font-size:11px;color:var(--muted2);line-height:1.6">
-      Эти даты будут общими для всей партии и автоматически применятся ко всем BL внутри неё.
+      Статус и этот срок будут общими для всей партии.
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('edit-batch-modal')">Отмена</button>
@@ -1950,23 +1946,44 @@ function filterBatches() {
   renderBatches(allBatches.filter(b=>b.name.toLowerCase().includes(q)));
 }
 
+function getArrivalTargetLabel(value) {
+  return value === "Horgos (Qozoq)"
+    ? "Horgosga taxminiy yetib kelish vaqti"
+    : "Toshkentga taxminiy yetib kelish vaqti";
+}
+
+function setArrivalTarget(prefix, value) {
+  const normalized = value === "Horgos (Qozoq)" ? "Horgos (Qozoq)" : "Toshkent";
+  const hidden = document.getElementById(`${prefix}-arrival-target`);
+  if (hidden) hidden.value = normalized;
+
+  const toshkentBtn = document.getElementById(`${prefix}-target-toshkent`);
+  const horgosBtn = document.getElementById(`${prefix}-target-horgos`);
+  const isToshkent = normalized === "Toshkent";
+
+  if (toshkentBtn) {
+    toshkentBtn.className = isToshkent ? "btn btn-amber btn-sm" : "btn btn-ghost btn-sm";
+  }
+  if (horgosBtn) {
+    horgosBtn.className = isToshkent ? "btn btn-ghost btn-sm" : "btn btn-amber btn-sm";
+  }
+}
+
 async function createBatch() {
   if (!ensureEditor()) return;
   const name = document.getElementById("new-batch-name").value.trim();
   const status = document.getElementById("new-batch-status").value;
-  const expected_date = document.getElementById("new-batch-expected-date").value.trim();
-  const actual_date = document.getElementById("new-batch-actual-date").value.trim();
   const eta_to_toshkent = document.getElementById("new-batch-arrival-eta").value.trim();
+  const eta_destination = document.getElementById("new-batch-arrival-target").value.trim() || "Toshkent";
   if (!name) { toast("Введи название","err"); return; }
   try {
-    await api("/api/batches","POST",{name, status, expected_date, actual_date, eta_to_toshkent});
+    await api("/api/batches","POST",{name, status, eta_to_toshkent, eta_destination});
     toast("✅ Партия «"+name+"» создана","ok");
     closeModal("create-batch-modal");
     document.getElementById("new-batch-name").value = "";
     document.getElementById("new-batch-status").value = "Xitoy";
-    document.getElementById("new-batch-expected-date").value = "";
-    document.getElementById("new-batch-actual-date").value = "";
     document.getElementById("new-batch-arrival-eta").value = "";
+    setArrivalTarget("new-batch", "Toshkent");
     loadBatches(); loadDashboard();
   } catch(e) { toast(e.message,"err"); }
 }
@@ -2128,19 +2145,14 @@ function renderBatchMeta(batch) {
     bar.innerHTML = "";
     return;
   }
-  const expected = batch.expected_date
-    ? `<span class="badge badge-blue">🖥 Ожидаемая дата: ${esc(batch.expected_date)}</span>`
-    : `<span class="badge badge-muted">🖥 Ожидаемая дата не указана</span>`;
-  const actual = batch.actual_date
-    ? `<span class="badge badge-green">✅ Факт дата: ${esc(batch.actual_date)}</span>`
-    : `<span class="badge badge-muted">📦 Факт дата не указана</span>`;
+  const etaLabel = getArrivalTargetLabel(batch.eta_destination || "Toshkent");
   const arrivalEta = batch.eta_to_toshkent
-    ? `<span class="badge badge-amber">🇺🇿 Yetib kelish vaqti: ${esc(batch.eta_to_toshkent)}</span>`
-    : `<span class="badge badge-muted">🇺🇿 Yetib kelish vaqti не указан</span>`;
+    ? `<span class="badge badge-amber">🇺🇿 ${esc(etaLabel)}: ${esc(batch.eta_to_toshkent)}</span>`
+    : `<span class="badge badge-muted">🇺🇿 ${esc(etaLabel)} не указан</span>`;
   const delay = Number(batch.delay_days || 0) > 0
     ? `<span class="badge badge-red">⏱ Опоздание: ${batch.delay_days} дн.</span>`
-    : `<span class="badge badge-green">⏱ Без опоздания</span>`;
-  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${expected}${actual}${arrivalEta}${delay}</div>`;
+    : ``;
+  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${arrivalEta}${delay}</div>`;
 }
 
 function renderKnownChats() {
@@ -2361,9 +2373,8 @@ function openEditBatchModal() {
   document.getElementById("edit-batch-id").value = currentBatchId;
   document.getElementById("edit-batch-name").value = currentBatch.name || "";
   document.getElementById("edit-batch-status").value = currentBatch.status || "Xitoy";
-  document.getElementById("edit-batch-expected-date").value = currentBatch.expected_date || "";
-  document.getElementById("edit-batch-actual-date").value = currentBatch.actual_date || "";
   document.getElementById("edit-batch-arrival-eta").value = currentBatch.eta_to_toshkent || "";
+  setArrivalTarget("edit-batch", currentBatch.eta_destination || "Toshkent");
   openModal("edit-batch-modal");
 }
 
@@ -2372,15 +2383,14 @@ async function saveBatchMeta() {
   const batchId = document.getElementById("edit-batch-id").value;
   const name = document.getElementById("edit-batch-name").value.trim();
   const status = document.getElementById("edit-batch-status").value;
-  const expected_date = document.getElementById("edit-batch-expected-date").value.trim();
-  const actual_date = document.getElementById("edit-batch-actual-date").value.trim();
   const eta_to_toshkent = document.getElementById("edit-batch-arrival-eta").value.trim();
+  const eta_destination = document.getElementById("edit-batch-arrival-target").value.trim() || "Toshkent";
   if (!batchId || !name) {
     toast("Название партии обязательно","err");
     return;
   }
   try {
-    await api(`/api/batches/${batchId}`,"PUT",{name, status, expected_date, actual_date, eta_to_toshkent});
+    await api(`/api/batches/${batchId}`,"PUT",{name, status, eta_to_toshkent, eta_destination});
     toast("✅ Параметры партии сохранены","ok");
     closeModal("edit-batch-modal");
     await ensureBatchesLoaded(true);
@@ -3044,6 +3054,7 @@ function updatePreview() {
     "{description}": "Smartfonlar va aksessuarlar",
     "{expected_date}": "2-3 kun",
     "{arrival_eta}": "2-3 kun",
+    "{arrival_eta_label}": "Toshkentga taxminiy yetib kelish vaqti",
     "{actual_date}": "",
     "{packing_list}": "packing_list_BL171.pdf",
     "{cargo_info}": "• Tovar turi: Elektronika\n• Og'irligi: 1200 kg\n• Hajmi: 8.5 m³\n• Joylar soni: 48\n• Tavsif: Smartfonlar va aksessuarlar",
