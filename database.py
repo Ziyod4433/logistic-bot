@@ -652,6 +652,15 @@ def _generate_command_alias(filename: str, file_id: int) -> str:
     return f"{base}_{file_id}"
 
 
+def prettify_file_name(filename: str) -> str:
+    value = (filename or "").strip()
+    if "." in value:
+        value = value.rsplit(".", 1)[0]
+    value = value.replace("_", " ")
+    value = re.sub(r"\s+", " ", value).strip()
+    return value or "Fayl"
+
+
 def record_login_history(username, role="", success=True, ip_address="", user_agent=""):
     conn = get_conn()
     try:
@@ -1061,10 +1070,7 @@ def format_packing_list(bl_id) -> str:
         name = (file_info.get("filename") or "").strip()
         if not name:
             continue
-        alias = (file_info.get("command_alias") or "").strip()
-        if not alias:
-            alias = _generate_command_alias(name, file_info["id"])
-        items.append(f"/{alias}")
+        items.append(f"• {html.escape(prettify_file_name(name))}")
     if not items:
         return "Packing list biriktirilmagan"
     file_lines = "\n".join(items)

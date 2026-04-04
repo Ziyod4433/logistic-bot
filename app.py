@@ -49,6 +49,7 @@ TRACK_BUTTON = "📦 Статус моего груза"
 CANCEL_BUTTON = "❌ Отмена"
 STATE_WAITING_BL = "waiting_bl"
 COMM_RATE_PREFIX = "comm_rate"
+FILE_PREFIX = "file"
 
 MAIN_REPLY_MARKUP = {
     "keyboard": [[{"text": TRACK_BUTTON}]],
@@ -226,6 +227,25 @@ def communication_rating_markup(dispatch_id: int):
     }
 
 
+def bl_file_markup(bl_id: int):
+    files = db.get_files(bl_id)
+    buttons = []
+    row = []
+    for file_info in files:
+        token = (file_info.get("public_token") or "").strip()
+        label = db.prettify_file_name(file_info.get("filename") or "")
+        if not token or not label:
+            continue
+        short_label = label if len(label) <= 28 else f"{label[:25]}..."
+        row.append({"text": f"📄 {short_label}", "callback_data": f"{FILE_PREFIX}:{token}"})
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    return {"inline_keyboard": buttons} if buttons else None
+
+
 def communication_rating_label(score: int) -> str:
     return {
         1: "YOMON",
@@ -259,6 +279,19 @@ def handle_callback_query(callback_query: dict):
     message_id = message.get("message_id")
 
     if not callback_id or not data or not chat_id:
+        return
+
+    if data.startswith(f"{FILE_PREFIX}:"):
+        token = data.split(":", 1)[1].strip()
+        file_info = db.get_file_by_public_token(token)
+        if not file_info:
+            telegram_answer_callback_query(callback_id, "Файл не найден")
+            return
+        try:
+            telegram_send_document(chat_id, file_info["file_path"], file_info["filename"])
+            telegram_answer_callback_query(callback_id, "Файл отправлен")
+        except Exception as exc:
+            telegram_answer_callback_query(callback_id, f"Ошибка: {str(exc)[:120]}")
         return
 
     if not data.startswith(f"{COMM_RATE_PREFIX}:"):
@@ -333,7 +366,7 @@ def remember_group_chat(chat: dict, is_active: bool = True):
 
 def send_bl_status(chat_id, bl: dict):
     text = db.render_message(bl, bl["batch_name"])
-    telegram_send_message(chat_id, text, reply_markup=MAIN_REPLY_MARKUP)
+    telegram_send_message(chat_id, text, reply_markup=bl_file_markup(bl["id"]) or MAIN_REPLY_MARKUP)
 
 
 def send_requested_file(chat_id, file_info: dict | None):
@@ -442,7 +475,11 @@ def send_bl_package(bl: dict, batch_name: str):
         return False, "Нет chat_id"
 
     try:
-        telegram_send_message(bl["chat_id"], db.render_message(bl, batch_name))
+        telegram_send_message(
+            bl["chat_id"],
+            db.render_message(bl, batch_name),
+            reply_markup=bl_file_markup(bl["id"]),
+        )
     except Exception as exc:
         return False, str(exc)
 
