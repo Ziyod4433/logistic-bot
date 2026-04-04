@@ -1269,6 +1269,13 @@ def save_status_detail(status, detail):
     conn.close()
 
 
+def _message_status_label(status: str) -> str:
+    value = (status or "").strip()
+    if value in {"Yiwu", "Zhongshan"}:
+        return f"{value} omborimizdan yo'lga chiqib ketdi"
+    return value
+
+
 def render_message(bl: dict, batch_name: str) -> str:
     template = _inject_packing_list_placeholder(_inject_cargo_info_placeholder(get_template()))
     template = template.replace("\r\n", "\n")
@@ -1290,7 +1297,7 @@ def render_message(bl: dict, batch_name: str) -> str:
         batch_date=_normalize_template_value(batch_name),
         bl_code=_normalize_template_value(bl.get("code", "")),
         client_name=_normalize_template_value(bl.get("client_name", "")),
-        status=_normalize_template_value(status),
+        status=_normalize_template_value(_message_status_label(status)),
         cargo_info=_normalize_template_value(format_cargo_info(bl)),
         cargo_type=_normalize_template_value(cargo_type),
         weight_kg=_normalize_template_value(f"{weight_value:g}" if weight_value else ""),
