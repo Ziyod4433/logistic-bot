@@ -1033,6 +1033,23 @@ def find_bl_by_code(code):
     return dict(row) if row else None
 
 
+def find_latest_bl_by_chat(chat_id):
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT bl.*, b.name AS batch_name
+        FROM bl_codes bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE bl.chat_id = ?
+        ORDER BY bl.created_at DESC
+        LIMIT 1
+        """,
+        (str(chat_id),),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def update_bl(
     bl_id,
     client_name,

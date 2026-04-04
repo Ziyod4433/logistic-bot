@@ -45,7 +45,7 @@ ROLE_VIEWER = "viewer"
 
 ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "xlsm", "doc", "docx", "zip"}
 
-TRACK_BUTTON = "📦 Статус моего груза"
+TRACK_BUTTON = "Yuk holati"
 CANCEL_BUTTON = "❌ Отмена"
 STATE_WAITING_BL = "waiting_bl"
 COMM_RATE_PREFIX = "comm_rate"
@@ -438,10 +438,15 @@ def handle_telegram_message(message: dict):
             return
 
     if text == TRACK_BUTTON:
+        latest_bl = db.find_latest_bl_by_chat(chat_id)
+        if latest_bl:
+            db.clear_chat_state(chat_id)
+            send_bl_status(chat_id, latest_bl)
+            return
         db.set_chat_state(chat_id, STATE_WAITING_BL)
         telegram_send_message(
             chat_id,
-            "Введи <b>BL-код</b> своего груза.\n\nНапример: <code>BL171</code>",
+            "Yukingizning <b>BL-kod</b>ini yuboring.\n\nMasalan: <code>BL171</code>",
             reply_markup=CANCEL_REPLY_MARKUP,
         )
         return
