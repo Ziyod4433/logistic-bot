@@ -213,6 +213,7 @@ def init_db():
             actual_date TEXT DEFAULT '',
             eta_to_toshkent TEXT DEFAULT '',
             eta_destination TEXT DEFAULT 'Toshkent',
+            client_delivery_date TEXT DEFAULT '',
             status_updated_at TEXT DEFAULT (datetime('now','localtime')),
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
@@ -374,6 +375,7 @@ def init_db():
         ("actual_date", "TEXT DEFAULT ''"),
         ("eta_to_toshkent", "TEXT DEFAULT ''"),
         ("eta_destination", "TEXT DEFAULT 'Toshkent'"),
+        ("client_delivery_date", "TEXT DEFAULT ''"),
         ("status_updated_at", "TEXT DEFAULT ''"),
     ]
     for column_name, column_def in batch_columns:
@@ -466,7 +468,8 @@ def init_db():
                 ),
                 created_at,
                 datetime('now','localtime')
-            )
+            ),
+            client_delivery_date = COALESCE(NULLIF(client_delivery_date, ''), NULLIF(actual_date, ''), '')
         """
     )
 
@@ -555,16 +558,23 @@ def init_db():
     conn.close()
 
 
-def create_batch(name, status="Xitoy", eta_to_toshkent="", eta_destination="Toshkent"):
+def create_batch(
+    name,
+    status="Xitoy",
+    eta_to_toshkent="",
+    eta_destination="Toshkent",
+    client_delivery_date="",
+):
     conn = get_conn()
     try:
         conn.execute(
-            "INSERT INTO batches(name, status, expected_date, actual_date, eta_to_toshkent, eta_destination, status_updated_at) VALUES(?, ?, '', '', ?, ?, datetime('now','localtime'))",
+            "INSERT INTO batches(name, status, expected_date, actual_date, eta_to_toshkent, eta_destination, client_delivery_date, status_updated_at) VALUES(?, ?, '', '', ?, ?, ?, datetime('now','localtime'))",
             (
                 (name or "").strip(),
                 (status or "Xitoy").strip(),
                 (eta_to_toshkent or "").strip(),
                 _normalize_eta_destination(eta_destination),
+                (client_delivery_date or "").strip(),
             ),
         )
         conn.commit()
@@ -575,16 +585,17 @@ def create_batch(name, status="Xitoy", eta_to_toshkent="", eta_destination="Tosh
         conn.close()
 
 
-def update_batch(batch_id, name, status="Xitoy", eta_to_toshkent="", eta_destination="Toshkent"):
+def update_batch(
+    batch_id,
+    name,
+    status="Xitoy",
+    eta_to_toshkent="",
+    eta_destination="Toshkent",
+    client_delivery_date="",
+):
     conn = get_conn()
     try:
         new_status = (status or "Xitoy").strip()
-        current_batch = conn.execute(
-            "SELECT expected_date, actual_date FROM batches WHERE id = ?",
-            (batch_id,),
-        ).fetchone()
-        expected_date = (current_batch["expected_date"] if current_batch else "") or ""
-        actual_date = (current_batch["actual_date"] if current_batch else "") or ""
         conn.execute(
             """
             UPDATE batches
@@ -593,6 +604,7 @@ def update_batch(batch_id, name, status="Xitoy", eta_to_toshkent="", eta_destina
                 status = ?,
                 eta_to_toshkent = ?,
                 eta_destination = ?,
+                client_delivery_date = ?,
                 status_updated_at = CASE
                     WHEN COALESCE(status, 'Xitoy') != ? THEN datetime('now','localtime')
                     ELSE COALESCE(NULLIF(status_updated_at, ''), datetime('now','localtime'))
@@ -604,6 +616,7 @@ def update_batch(batch_id, name, status="Xitoy", eta_to_toshkent="", eta_destina
                 new_status,
                 (eta_to_toshkent or "").strip(),
                 _normalize_eta_destination(eta_destination),
+                (client_delivery_date or "").strip(),
                 new_status,
                 batch_id,
             ),
@@ -643,6 +656,7 @@ def get_batches():
             (SELECT COUNT(*) FROM bl_codes bl WHERE bl.batch_id = b.id AND bl.chat_id != '') AS linked_count,
             (SELECT COUNT(*) FROM bl_codes bl WHERE bl.batch_id = b.id AND {_late_sql('bl')} = 1) AS late_count,
             {_delay_days_sql('b')} AS delay_days,
+            CASE WHEN COALESCE(b.client_delivery_date, '') != '' THEN 1 ELSE 0 END AS is_inactive,
             (
                 SELECT COUNT(DISTINCT p.bl_id)
                 FROM problems p
@@ -663,6 +677,7 @@ def get_batch(batch_id):
         SELECT
             b.*,
             {_delay_days_sql('b')} AS delay_days,
+            CASE WHEN COALESCE(b.client_delivery_date, '') != '' THEN 1 ELSE 0 END AS is_inactive,
             (
                 SELECT MAX(sl.sent_at)
                 FROM send_logs sl

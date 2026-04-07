@@ -595,9 +595,10 @@ def api_create_batch():
     status = (data.get("status") or "Xitoy").strip() or "Xitoy"
     eta_to_toshkent = (data.get("eta_to_toshkent") or "").strip()
     eta_destination = (data.get("eta_destination") or "Toshkent").strip() or "Toshkent"
+    client_delivery_date = (data.get("client_delivery_date") or "").strip()
     if not name:
         return jsonify({"error": "Имя партии обязательно"}), 400
-    if not db.create_batch(name, status, eta_to_toshkent, eta_destination):
+    if not db.create_batch(name, status, eta_to_toshkent, eta_destination, client_delivery_date):
         return jsonify({"error": "Партия с таким именем уже существует"}), 400
     return jsonify({"ok": True})
 
@@ -608,6 +609,7 @@ def api_update_batch(batch_id):
     data = request.json or {}
     name = (data.get("name") or "").strip()
     status = (data.get("status") or "Xitoy").strip() or "Xitoy"
+    client_delivery_date = (data.get("client_delivery_date") or "").strip()
     if not name:
         return jsonify({"error": "Имя партии обязательно"}), 400
     if not db.update_batch(
@@ -616,6 +618,7 @@ def api_update_batch(batch_id):
         status,
         (data.get("eta_to_toshkent") or "").strip(),
         (data.get("eta_destination") or "Toshkent").strip() or "Toshkent",
+        client_delivery_date,
     ):
         return jsonify({"error": "Партия с таким именем уже существует"}), 400
     return jsonify({"ok": True})

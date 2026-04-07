@@ -1010,7 +1010,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
           <table class="tbl">
             <thead><tr>
-              <th>Название</th><th>Статус</th><th>Опоздание</th><th>BL кодов</th><th>Привязано групп</th><th>Создана</th><th></th>
+              <th>Название</th><th>Статус</th><th>Опоздание</th><th>Проблемы</th><th>BL кодов</th><th>Привязано групп</th><th>Создана</th><th></th>
             </tr></thead>
             <tbody id="dash-batches"></tbody>
           </table>
@@ -1029,17 +1029,35 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           <div class="page-h">Партии <em>/ Управление</em></div>
           <div class="card">
             <div class="card-h">
-              <span class="card-title">Все партии</span>
+              <span class="card-title">Управление партиями</span>
               <div style="display:flex;gap:10px;align-items:center">
                 <input class="search" placeholder="🔍 Поиск..." id="batch-search" oninput="filterBatches()">
                 <button class="btn btn-amber btn-sm editor-only" onclick="openModal('create-batch-modal')">+ Создать партию</button>
               </div>
             </div>
+          </div>
+          <div class="card" style="margin-top:16px">
+            <div class="card-h">
+              <span class="card-title">Активные партии</span>
+              <span id="active-batches-count" style="font-size:12px;color:var(--muted2)"></span>
+            </div>
             <table class="tbl">
               <thead><tr>
-                <th>Название партии</th><th>Статус</th><th>Опоздание</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
+                <th>Название партии</th><th>Статус</th><th>Опоздание</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
               </tr></thead>
-              <tbody id="batches-table"></tbody>
+              <tbody id="batches-active-table"></tbody>
+            </table>
+          </div>
+          <div class="card" style="margin-top:16px">
+            <div class="card-h">
+              <span class="card-title">Неактивные партии</span>
+              <span id="inactive-batches-count" style="font-size:12px;color:var(--muted2)"></span>
+            </div>
+            <table class="tbl">
+              <thead><tr>
+                <th>Название партии</th><th>Дата доставки клиентам</th><th>Прибытие в Toshkent</th><th>Общий срок</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
+              </tr></thead>
+              <tbody id="batches-inactive-table"></tbody>
             </table>
           </div>
         </div>
@@ -1478,6 +1496,11 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-mijoz" onclick="setArrivalTarget('edit-batch','Mijozga yetib borish')">Mijozga yetib borish vaqti</button>
       </div>
     </div>
+    <div class="form-g">
+      <label>Дата доставки клиентам</label>
+      <input class="inp" id="edit-batch-client-delivery-date" placeholder="например: 18.04.2026">
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">После сохранения этой даты партия автоматически перейдёт в раздел неактивных.</div>
+    </div>
     <div style="font-size:11px;color:var(--muted2);line-height:1.6">
       Статус и этот срок будут общими для всей партии.
     </div>
@@ -1893,13 +1916,15 @@ async function loadDashboard() {
 
     // Batches table
     const bt = document.getElementById("dash-batches");
-    bt.innerHTML = batches.length ? batches.slice(0,6).map(b=>`
+    const activeBatches = batches.filter(b => !isInactiveBatch(b));
+    bt.innerHTML = activeBatches.length ? activeBatches.slice(0,6).map(b=>`
       <tr>
         <td>
           <b style="cursor:pointer;color:var(--amber)" onclick="goto('batches');openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</b>
         </td>
         <td>${statusBadge(b.status || "Xitoy")}</td>
         <td>${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">${b.delay_days} дн.</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+        <td>${b.problem_count ? `<span class="badge badge-red">${b.problem_count}</span>` : `<span style="color:var(--muted)">0</span>`}</td>
         <td><span class="badge badge-muted">${b.bl_count}</span></td>
         <td>
           <div style="display:flex;align-items:center;gap:8px">
@@ -1910,7 +1935,7 @@ async function loadDashboard() {
         <td class="mono" style="color:var(--muted2);font-size:11px">${b.created_at}</td>
         <td><button class="btn btn-ghost btn-xs" onclick="goto('batches');openBatchDetail(${b.id},'${esc(b.name)}')">Открыть →</button></td>
       </tr>`).join("") :
-      `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📦</div><p>Партий пока нет. Создай первую!</p></div></td></tr>`;
+      `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📦</div><p>Активных партий пока нет.</p></div></td></tr>`;
 
   } catch(e) { toast("Ошибка загрузки: "+e.message,"err"); }
 }
@@ -1926,35 +1951,105 @@ async function loadBatches() {
 }
 
 function renderBatches(list) {
-  const t = document.getElementById("batches-table");
-  t.innerHTML = list.length ? list.map(b=>`
-    <tr>
-      <td>
-        <span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span>
-      </td>
-      <td>${statusBadge(b.status || "Xitoy")}</td>
-      <td>${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">+${b.delay_days} дн.</span>` : `<span style="color:var(--muted)">—</span>`}</td>
-      <td><span class="badge badge-muted">${b.bl_count} BL</span></td>
-      <td>
-        <div style="display:flex;align-items:center;gap:8px">
-          <div class="prog-bar" style="width:70px"><div class="prog-fill" style="width:${b.bl_count?Math.round(b.linked_count/b.bl_count*100):0}%"></div></div>
-          <span style="font-size:11px;color:var(--muted2)">${b.linked_count}/${b.bl_count}</span>
-        </div>
-      </td>
-      <td class="mono" style="font-size:11px;color:var(--muted2)">${b.created_at}</td>
-      <td>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-blue btn-xs" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">Открыть</button>
-          <button class="btn btn-red btn-xs editor-only" onclick="deleteBatch(${b.id},'${esc(b.name)}')">✕</button>
-        </div>
-      </td>
-    </tr>`).join("") :
-    `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📦</div><p>Нет партий. Создай первую!</p></div></td></tr>`;
+  const activeTable = document.getElementById("batches-active-table");
+  const inactiveTable = document.getElementById("batches-inactive-table");
+  const activeCount = document.getElementById("active-batches-count");
+  const inactiveCount = document.getElementById("inactive-batches-count");
+  const active = list.filter(b => !isInactiveBatch(b));
+  const inactive = list.filter(b => isInactiveBatch(b));
+  if (activeCount) activeCount.textContent = `${active.length} партий`;
+  if (inactiveCount) inactiveCount.textContent = `${inactive.length} партий`;
+  if (activeTable) activeTable.innerHTML = renderActiveBatchRows(active);
+  if (inactiveTable) inactiveTable.innerHTML = renderInactiveBatchRows(inactive);
 }
 
 function filterBatches() {
   const q = document.getElementById("batch-search").value.toLowerCase();
-  renderBatches(allBatches.filter(b=>b.name.toLowerCase().includes(q)));
+  renderBatches(allBatches.filter(b=>
+    (b.name || "").toLowerCase().includes(q) ||
+    (b.status || "").toLowerCase().includes(q) ||
+    (b.client_delivery_date || "").toLowerCase().includes(q)
+  ));
+}
+
+function isInactiveBatch(batch) {
+  return Boolean((batch?.client_delivery_date || "").trim()) || Boolean(Number(batch?.is_inactive || 0));
+}
+
+function renderBatchRowActions(batch) {
+  return `
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-blue btn-xs" onclick="openBatchDetail(${batch.id},'${esc(batch.name)}')">Открыть</button>
+      <button class="btn btn-red btn-xs editor-only" onclick="deleteBatch(${batch.id},'${esc(batch.name)}')">✕</button>
+    </div>
+  `;
+}
+
+function renderBatchLinkedCell(batch) {
+  return `
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="prog-bar" style="width:70px"><div class="prog-fill" style="width:${batch.bl_count?Math.round(batch.linked_count/batch.bl_count*100):0}%"></div></div>
+      <span style="font-size:11px;color:var(--muted2)">${batch.linked_count}/${batch.bl_count}</span>
+    </div>
+  `;
+}
+
+function renderProblemsCell(batch) {
+  return batch.problem_count
+    ? `<span class="badge badge-red">${batch.problem_count}</span>`
+    : `<span style="color:var(--muted)">0</span>`;
+}
+
+function parseFlexibleDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    return new Date(raw.slice(0, 10) + "T00:00:00");
+  }
+  const dot = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (dot) {
+    return new Date(`${dot[3]}-${dot[2]}-${dot[1]}T00:00:00`);
+  }
+  return null;
+}
+
+function getTotalDeliveryTerm(batch) {
+  const start = parseFlexibleDate(batch.created_at);
+  const end = parseFlexibleDate(batch.client_delivery_date);
+  if (!start || !end) return "";
+  const diff = Math.round((end - start) / 86400000);
+  return diff >= 0 ? `${diff} kun` : "";
+}
+
+function renderActiveBatchRows(list) {
+  return list.length ? list.map(b=>`
+    <tr>
+      <td><span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span></td>
+      <td>${statusBadge(b.status || "Xitoy")}</td>
+      <td>${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">+${b.delay_days} дн.</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+      <td>${renderProblemsCell(b)}</td>
+      <td><span class="badge badge-muted">${b.bl_count} BL</span></td>
+      <td>${renderBatchLinkedCell(b)}</td>
+      <td class="mono" style="font-size:11px;color:var(--muted2)">${b.created_at}</td>
+      <td>${renderBatchRowActions(b)}</td>
+    </tr>`).join("") :
+    `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📦</div><p>Активных партий пока нет.</p></div></td></tr>`;
+}
+
+function renderInactiveBatchRows(list) {
+  return list.length ? list.map(b=>`
+    <tr>
+      <td><span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span></td>
+      <td>${b.client_delivery_date ? `<span class="badge badge-green">📅 ${esc(b.client_delivery_date)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+      <td>${b.eta_to_toshkent ? `<span class="badge badge-amber">🇺🇿 ${esc(b.eta_to_toshkent)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+      <td>${getTotalDeliveryTerm(b) ? `<span class="badge badge-blue">${esc(getTotalDeliveryTerm(b))}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+      <td>${renderProblemsCell(b)}</td>
+      <td><span class="badge badge-muted">${b.bl_count} BL</span></td>
+      <td>${renderBatchLinkedCell(b)}</td>
+      <td class="mono" style="font-size:11px;color:var(--muted2)">${b.created_at}</td>
+      <td>${renderBatchRowActions(b)}</td>
+    </tr>`).join("") :
+    `<tr><td colspan="9"><div class="empty"><div class="empty-icon">📦</div><p>Неактивных партий пока нет.</p></div></td></tr>`;
 }
 
 function getArrivalTargetLabel(value) {
@@ -2169,7 +2264,10 @@ function renderBatchMeta(batch) {
   const delay = Number(batch.delay_days || 0) > 0
     ? `<span class="badge badge-red">⏱ Опоздание: ${batch.delay_days} дн.</span>`
     : ``;
-  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${arrivalEta}${delay}</div>`;
+  const clientDeliveryDate = batch.client_delivery_date
+    ? `<span class="badge badge-green">📅 Дата доставки клиентам: ${esc(batch.client_delivery_date)}</span>`
+    : ``;
+  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${arrivalEta}${delay}${clientDeliveryDate}</div>`;
 }
 
 function renderKnownChats() {
@@ -2392,6 +2490,7 @@ function openEditBatchModal() {
   document.getElementById("edit-batch-status").value = currentBatch.status || "Xitoy";
   document.getElementById("edit-batch-arrival-eta").value = currentBatch.eta_to_toshkent || "";
   setArrivalTarget("edit-batch", currentBatch.eta_destination || "Toshkent");
+  document.getElementById("edit-batch-client-delivery-date").value = currentBatch.client_delivery_date || "";
   openModal("edit-batch-modal");
 }
 
@@ -2402,12 +2501,17 @@ async function saveBatchMeta() {
   const status = document.getElementById("edit-batch-status").value;
   const eta_to_toshkent = document.getElementById("edit-batch-arrival-eta").value.trim();
   const eta_destination = document.getElementById("edit-batch-arrival-target").value.trim() || "Toshkent";
+  const client_delivery_date = document.getElementById("edit-batch-client-delivery-date").value.trim();
   if (!batchId || !name) {
     toast("Название партии обязательно","err");
     return;
   }
+  const wasInactive = Boolean((currentBatch?.client_delivery_date || "").trim());
+  if (!wasInactive && client_delivery_date) {
+    if (!confirm("После сохранения даты доставки клиентам партия перейдёт в раздел неактивных. Продолжить?")) return;
+  }
   try {
-    await api(`/api/batches/${batchId}`,"PUT",{name, status, eta_to_toshkent, eta_destination});
+    await api(`/api/batches/${batchId}`,"PUT",{name, status, eta_to_toshkent, eta_destination, client_delivery_date});
     toast("✅ Параметры партии сохранены","ok");
     closeModal("edit-batch-modal");
     await ensureBatchesLoaded(true);
