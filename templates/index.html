@@ -1420,6 +1420,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <button type="button" class="btn btn-amber btn-sm" id="new-batch-target-toshkent" onclick="setArrivalTarget('new-batch','Toshkent')">Toshkentga taxminiy yetib kelish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-horgos" onclick="setArrivalTarget('new-batch','Horgos (Qozoq)')">Horgosga taxminiy yetib kelish vaqti</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-qozoq-fura" onclick="setArrivalTarget('new-batch','Qozoq furaga ortilish')">Qozoq furaga ortilish vaqti</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-mijoz" onclick="setArrivalTarget('new-batch','Mijozga yetib borish')">Mijozga yetib borish vaqti</button>
       </div>
     </div>
     <div class="modal-actions">
@@ -1472,6 +1474,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <button type="button" class="btn btn-amber btn-sm" id="edit-batch-target-toshkent" onclick="setArrivalTarget('edit-batch','Toshkent')">Toshkentga taxminiy yetib kelish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-horgos" onclick="setArrivalTarget('edit-batch','Horgos (Qozoq)')">Horgosga taxminiy yetib kelish vaqti</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-qozoq-fura" onclick="setArrivalTarget('edit-batch','Qozoq furaga ortilish')">Qozoq furaga ortilish vaqti</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-mijoz" onclick="setArrivalTarget('edit-batch','Mijozga yetib borish')">Mijozga yetib borish vaqti</button>
       </div>
     </div>
     <div style="font-size:11px;color:var(--muted2);line-height:1.6">
@@ -1954,26 +1958,32 @@ function filterBatches() {
 }
 
 function getArrivalTargetLabel(value) {
-  return value === "Horgos (Qozoq)"
-    ? "Horgosga taxminiy yetib kelish vaqti"
-    : "Toshkentga taxminiy yetib kelish vaqti";
+  if (value === "Horgos (Qozoq)") return "Horgosga taxminiy yetib kelish vaqti";
+  if (value === "Qozoq furaga ortilish") return "Qozoq furaga ortilish vaqti";
+  if (value === "Mijozga yetib borish") return "Mijozga yetib borish vaqti";
+  return "Toshkentga taxminiy yetib kelish vaqti";
 }
 
 function setArrivalTarget(prefix, value) {
-  const normalized = value === "Horgos (Qozoq)" ? "Horgos (Qozoq)" : "Toshkent";
+  const normalized =
+    value === "Horgos (Qozoq)" ? "Horgos (Qozoq)"
+    : value === "Qozoq furaga ortilish" ? "Qozoq furaga ortilish"
+    : value === "Mijozga yetib borish" ? "Mijozga yetib borish"
+    : "Toshkent";
   const hidden = document.getElementById(`${prefix}-arrival-target`);
   if (hidden) hidden.value = normalized;
-
-  const toshkentBtn = document.getElementById(`${prefix}-target-toshkent`);
-  const horgosBtn = document.getElementById(`${prefix}-target-horgos`);
-  const isToshkent = normalized === "Toshkent";
-
-  if (toshkentBtn) {
-    toshkentBtn.className = isToshkent ? "btn btn-amber btn-sm" : "btn btn-ghost btn-sm";
-  }
-  if (horgosBtn) {
-    horgosBtn.className = isToshkent ? "btn btn-ghost btn-sm" : "btn btn-amber btn-sm";
-  }
+  const options = [
+    { key: "Toshkent", buttonId: `${prefix}-target-toshkent` },
+    { key: "Horgos (Qozoq)", buttonId: `${prefix}-target-horgos` },
+    { key: "Qozoq furaga ortilish", buttonId: `${prefix}-target-qozoq-fura` },
+    { key: "Mijozga yetib borish", buttonId: `${prefix}-target-mijoz` },
+  ];
+  options.forEach(option => {
+    const btn = document.getElementById(option.buttonId);
+    if (btn) {
+      btn.className = option.key === normalized ? "btn btn-amber btn-sm" : "btn btn-ghost btn-sm";
+    }
+  });
 }
 
 async function createBatch() {
