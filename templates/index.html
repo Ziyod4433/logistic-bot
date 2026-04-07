@@ -1546,6 +1546,10 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   <div class="modal">
     <div class="modal-title">Редактировать <em id="edit-bl-title">BL</em></div>
     <input type="hidden" id="edit-bl-id">
+    <div class="form-g">
+      <label>BL код</label>
+      <input class="inp mono" id="edit-bl-code" placeholder="BL171">
+    </div>
     <div class="form-row2">
       <div class="form-g">
         <label>Имя клиента</label>
@@ -2437,6 +2441,7 @@ async function openEditBL(blId) {
   editingBLId = blId;
   document.getElementById("edit-bl-title").textContent = bl.code;
   document.getElementById("edit-bl-id").value = blId;
+  document.getElementById("edit-bl-code").value = bl.code || "";
   document.getElementById("edit-bl-client").value = bl.client_name||"";
   document.getElementById("edit-bl-cargo-type").value = bl.cargo_type || "";
   document.getElementById("edit-bl-weight").value = bl.weight_kg || "";
@@ -2479,8 +2484,11 @@ async function saveBL() {
   if (!ensureEditor()) return;
   const id = editingBLId;
   if (!id) return;
+  const code = document.getElementById("edit-bl-code").value.trim();
+  if (!code) { toast("BL код обязателен","err"); return; }
   try {
     await api("/api/bl/"+id,"PUT",{
+      code,
       client_name: document.getElementById("edit-bl-client").value.trim(),
       cargo_type: document.getElementById("edit-bl-cargo-type").value.trim(),
       weight_kg: document.getElementById("edit-bl-weight").value.trim(),

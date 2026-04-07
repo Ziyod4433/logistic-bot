@@ -1069,6 +1069,7 @@ def find_latest_bl_by_chat(chat_id):
 
 def update_bl(
     bl_id,
+    code,
     client_name,
     chat_id,
     status=None,
@@ -1080,14 +1081,37 @@ def update_bl(
 ):
     conn = get_conn()
     current = conn.execute(
-        "SELECT status FROM bl_codes WHERE id = ?",
+        "SELECT batch_id, status FROM bl_codes WHERE id = ?",
         (bl_id,),
     ).fetchone()
+    if not current:
+        conn.close()
+        raise ValueError("BL не найден")
+
+    normalized_code = (code or "").strip().upper()
+    if not normalized_code:
+        conn.close()
+        raise ValueError("BL код обязателен")
+
+    duplicate = conn.execute(
+        """
+        SELECT 1
+        FROM bl_codes
+        WHERE batch_id = ? AND UPPER(code) = UPPER(?) AND id != ?
+        LIMIT 1
+        """,
+        (current["batch_id"], normalized_code, bl_id),
+    ).fetchone()
+    if duplicate:
+        conn.close()
+        raise ValueError("В этой партии уже есть такой BL код")
+
     effective_status = (status if status is not None else (current["status"] if current else "Xitoy")) or "Xitoy"
     conn.execute(
         """
         UPDATE bl_codes
         SET
+            code = ?,
             client_name = ?,
             chat_id = ?,
             status = ?,
@@ -1103,6 +1127,7 @@ def update_bl(
         WHERE id = ?
         """,
         (
+            normalized_code,
             client_name.strip(),
             chat_id.strip(),
             effective_status,

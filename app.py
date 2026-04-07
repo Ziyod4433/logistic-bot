@@ -682,17 +682,21 @@ def api_add_bl():
 @editor_required
 def api_update_bl(bl_id):
     data = request.json or {}
-    db.update_bl(
-        bl_id,
-        data.get("client_name", ""),
-        data.get("chat_id", ""),
-        data.get("status"),
-        data.get("cargo_type", ""),
-        data.get("weight_kg", 0),
-        data.get("volume_cbm", 0),
-        data.get("quantity_places", 0),
-        data.get("cargo_description", ""),
-    )
+    try:
+        db.update_bl(
+            bl_id,
+            data.get("code", ""),
+            data.get("client_name", ""),
+            data.get("chat_id", ""),
+            data.get("status"),
+            data.get("cargo_type", ""),
+            data.get("weight_kg", 0),
+            data.get("volume_cbm", 0),
+            data.get("quantity_places", 0),
+            data.get("cargo_description", ""),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True})
 
 
