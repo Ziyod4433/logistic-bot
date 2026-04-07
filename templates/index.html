@@ -1174,10 +1174,11 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <div class="filter-bar">
               <select class="inp" id="problem-filter-type" onchange="loadProblemsPage()">
                 <option value="">Все типы</option>
-                <option value="damage">Повреждение</option>
-                <option value="delay">Опоздание</option>
-                <option value="shortage">Недостача</option>
-                <option value="other">Другое</option>
+                <option value="damage">Shikastlanish</option>
+                <option value="delay">Kechikish</option>
+                <option value="shortage">Kamomad</option>
+                <option value="packing_damage">Qadoq buzilishi</option>
+                <option value="other">Boshqa</option>
               </select>
               <input class="inp" type="date" id="problem-filter-from" onchange="loadProblemsPage()">
               <input class="inp" type="date" id="problem-filter-to" onchange="loadProblemsPage()">
@@ -1647,10 +1648,11 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <div class="form-g">
       <label>Тип проблемы</label>
       <select class="inp" id="problem-type">
-        <option value="delay">Опоздание</option>
-        <option value="damage">Повреждение</option>
-        <option value="shortage">Недостача</option>
-        <option value="other">Другое</option>
+        <option value="delay">Kechikish</option>
+        <option value="damage">Shikastlanish</option>
+        <option value="shortage">Kamomad</option>
+        <option value="packing_damage">Qadoq buzilishi</option>
+        <option value="other">Boshqa</option>
       </select>
     </div>
     <div class="form-g">
@@ -1721,10 +1723,11 @@ const STATUSES = [
   "Доставлен"
 ];
 const PROBLEM_TYPES = {
-  damage: "Повреждение",
-  delay: "Опоздание",
-  shortage: "Недостача",
-  other: "Другое",
+  damage: "Shikastlanish",
+  delay: "Kechikish",
+  shortage: "Kamomad",
+  packing_damage: "Qadoq buzilishi",
+  other: "Boshqa",
 };
 
 const STATUS_BADGE = {
@@ -2591,6 +2594,8 @@ function problemBadge(type) {
       ? "badge badge-amber"
       : type === "shortage"
         ? "badge badge-purple"
+        : type === "packing_damage"
+          ? "badge badge-blue"
         : "badge badge-blue";
   return `<span class="${cls}">${label}</span>`;
 }

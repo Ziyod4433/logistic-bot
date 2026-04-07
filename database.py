@@ -44,10 +44,11 @@ STATUSES = [
 ]
 
 PROBLEM_TYPES = {
-    "damage": "Повреждение",
-    "delay": "Опоздание",
-    "shortage": "Недостача",
-    "other": "Другое",
+    "damage": "Shikastlanish",
+    "delay": "Kechikish",
+    "shortage": "Kamomad",
+    "packing_damage": "Qadoq buzilishi",
+    "other": "Boshqa",
 }
 
 LEGACY_DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
