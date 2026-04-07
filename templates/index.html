@@ -1043,7 +1043,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
             <table class="tbl">
               <thead><tr>
-                <th>Название партии</th><th>Статус</th><th>Опоздание</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
+                <th>Партия</th><th>Статус</th><th>Опоздание</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
               </tr></thead>
               <tbody id="batches-active-table"></tbody>
             </table>
@@ -1055,7 +1055,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
             <table class="tbl">
               <thead><tr>
-                <th>Название партии</th><th>Дата доставки клиентам</th><th>Прибытие в Toshkent</th><th>Общий срок</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
+                <th>Партия</th><th>Дата доставки клиентам</th><th>Прибытие в Toshkent</th><th>Общий срок</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
               </tr></thead>
               <tbody id="batches-inactive-table"></tbody>
             </table>
@@ -1398,8 +1398,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   <div class="modal" style="width:400px">
     <div class="modal-title">Новая <em>партия</em></div>
     <div class="form-g">
-      <label>Название партии</label>
-      <input class="inp" id="new-batch-name" placeholder="напр. 07.02.2026 или FEB-01">
+      <label>Партия</label>
+      <input class="inp" type="date" id="new-batch-name">
     </div>
     <div class="form-row2">
       <div class="form-g">
@@ -1454,8 +1454,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <div class="modal-title">Параметры <em>партии</em></div>
     <input type="hidden" id="edit-batch-id">
     <div class="form-g">
-      <label>Название партии</label>
-      <input class="inp" id="edit-batch-name" placeholder="Название партии">
+      <label>Партия</label>
+      <input class="inp" type="date" id="edit-batch-name">
     </div>
     <div class="form-g">
       <label>Статус партии</label>
@@ -2025,8 +2025,21 @@ function formatDisplayDate(value) {
   return `${dd}.${mm}.${yyyy}`;
 }
 
+function toDateInputValue(value) {
+  const dt = parseFlexibleDate(value);
+  if (!dt || Number.isNaN(dt.getTime())) return "";
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function normalizeBatchNameDate(value) {
+  return formatDisplayDate(value) || String(value || "").trim();
+}
+
 function getTotalDeliveryTerm(batch) {
-  const start = parseFlexibleDate(batch.route_started_at);
+  const start = parseFlexibleDate(batch.name);
   const end = parseFlexibleDate(batch.client_delivery_date);
   if (!start || !end) return "";
   const diff = Math.floor((end - start) / 86400000);
@@ -2095,11 +2108,11 @@ function setArrivalTarget(prefix, value) {
 
 async function createBatch() {
   if (!ensureEditor()) return;
-  const name = document.getElementById("new-batch-name").value.trim();
+  const name = normalizeBatchNameDate(document.getElementById("new-batch-name").value.trim());
   const status = document.getElementById("new-batch-status").value;
   const eta_to_toshkent = document.getElementById("new-batch-arrival-eta").value.trim();
   const eta_destination = document.getElementById("new-batch-arrival-target").value.trim() || "Toshkent";
-  if (!name) { toast("Введи название","err"); return; }
+  if (!name) { toast("Выбери дату партии","err"); return; }
   try {
     await api("/api/batches","POST",{name, status, eta_to_toshkent, eta_destination});
     toast("✅ Партия «"+name+"» создана","ok");
@@ -2498,7 +2511,7 @@ function openEditBatchModal() {
     return;
   }
   document.getElementById("edit-batch-id").value = currentBatchId;
-  document.getElementById("edit-batch-name").value = currentBatch.name || "";
+  document.getElementById("edit-batch-name").value = toDateInputValue(currentBatch.name || "");
   document.getElementById("edit-batch-status").value = currentBatch.status || "Xitoy";
   document.getElementById("edit-batch-arrival-eta").value = currentBatch.eta_to_toshkent || "";
   setArrivalTarget("edit-batch", currentBatch.eta_destination || "Toshkent");
@@ -2509,13 +2522,13 @@ function openEditBatchModal() {
 async function saveBatchMeta() {
   if (!ensureEditor()) return;
   const batchId = document.getElementById("edit-batch-id").value;
-  const name = document.getElementById("edit-batch-name").value.trim();
+  const name = normalizeBatchNameDate(document.getElementById("edit-batch-name").value.trim());
   const status = document.getElementById("edit-batch-status").value;
   const eta_to_toshkent = document.getElementById("edit-batch-arrival-eta").value.trim();
   const eta_destination = document.getElementById("edit-batch-arrival-target").value.trim() || "Toshkent";
   const client_delivery_date = document.getElementById("edit-batch-client-delivery-date").value.trim();
   if (!batchId || !name) {
-    toast("Название партии обязательно","err");
+    toast("Дата партии обязательна","err");
     return;
   }
   const wasInactive = Boolean((currentBatch?.client_delivery_date || "").trim());
