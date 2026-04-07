@@ -214,6 +214,8 @@ def init_db():
             eta_to_toshkent TEXT DEFAULT '',
             eta_destination TEXT DEFAULT 'Toshkent',
             client_delivery_date TEXT DEFAULT '',
+            route_started_at TEXT DEFAULT '',
+            toshkent_arrived_at TEXT DEFAULT '',
             status_updated_at TEXT DEFAULT (datetime('now','localtime')),
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
@@ -376,6 +378,8 @@ def init_db():
         ("eta_to_toshkent", "TEXT DEFAULT ''"),
         ("eta_destination", "TEXT DEFAULT 'Toshkent'"),
         ("client_delivery_date", "TEXT DEFAULT ''"),
+        ("route_started_at", "TEXT DEFAULT ''"),
+        ("toshkent_arrived_at", "TEXT DEFAULT ''"),
         ("status_updated_at", "TEXT DEFAULT ''"),
     ]
     for column_name, column_def in batch_columns:
@@ -469,7 +473,23 @@ def init_db():
                 created_at,
                 datetime('now','localtime')
             ),
-            client_delivery_date = COALESCE(NULLIF(client_delivery_date, ''), NULLIF(actual_date, ''), '')
+            client_delivery_date = COALESCE(NULLIF(client_delivery_date, ''), NULLIF(actual_date, ''), ''),
+            route_started_at = COALESCE(
+                NULLIF(route_started_at, ''),
+                CASE
+                    WHEN status IN ('Yiwu', 'Zhongshan')
+                        THEN COALESCE(NULLIF(status_updated_at, ''), created_at, datetime('now','localtime'))
+                    ELSE ''
+                END
+            ),
+            toshkent_arrived_at = COALESCE(
+                NULLIF(toshkent_arrived_at, ''),
+                CASE
+                    WHEN status = 'Toshkent(Chuqursoy ULS da)'
+                        THEN COALESCE(NULLIF(status_updated_at, ''), created_at, datetime('now','localtime'))
+                    ELSE ''
+                END
+            )
         """
     )
 
@@ -568,13 +588,15 @@ def create_batch(
     conn = get_conn()
     try:
         conn.execute(
-            "INSERT INTO batches(name, status, expected_date, actual_date, eta_to_toshkent, eta_destination, client_delivery_date, status_updated_at) VALUES(?, ?, '', '', ?, ?, ?, datetime('now','localtime'))",
+            "INSERT INTO batches(name, status, expected_date, actual_date, eta_to_toshkent, eta_destination, client_delivery_date, route_started_at, toshkent_arrived_at, status_updated_at) VALUES(?, ?, '', '', ?, ?, ?, ?, ?, datetime('now','localtime'))",
             (
                 (name or "").strip(),
                 (status or "Xitoy").strip(),
                 (eta_to_toshkent or "").strip(),
                 _normalize_eta_destination(eta_destination),
                 (client_delivery_date or "").strip(),
+                current_ts() if (status or "Xitoy").strip() in ("Yiwu", "Zhongshan") else "",
+                current_ts() if (status or "Xitoy").strip() == "Toshkent(Chuqursoy ULS da)" else "",
             ),
         )
         conn.commit()
@@ -605,6 +627,16 @@ def update_batch(
                 eta_to_toshkent = ?,
                 eta_destination = ?,
                 client_delivery_date = ?,
+                route_started_at = CASE
+                    WHEN COALESCE(route_started_at, '') != '' THEN route_started_at
+                    WHEN ? IN ('Yiwu', 'Zhongshan') THEN datetime('now','localtime')
+                    ELSE COALESCE(route_started_at, '')
+                END,
+                toshkent_arrived_at = CASE
+                    WHEN COALESCE(toshkent_arrived_at, '') != '' THEN toshkent_arrived_at
+                    WHEN ? = 'Toshkent(Chuqursoy ULS da)' THEN datetime('now','localtime')
+                    ELSE COALESCE(toshkent_arrived_at, '')
+                END,
                 status_updated_at = CASE
                     WHEN COALESCE(status, 'Xitoy') != ? THEN datetime('now','localtime')
                     ELSE COALESCE(NULLIF(status_updated_at, ''), datetime('now','localtime'))
@@ -617,6 +649,8 @@ def update_batch(
                 (eta_to_toshkent or "").strip(),
                 _normalize_eta_destination(eta_destination),
                 (client_delivery_date or "").strip(),
+                new_status,
+                new_status,
                 new_status,
                 batch_id,
             ),
