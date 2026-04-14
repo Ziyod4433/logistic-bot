@@ -50,7 +50,6 @@ CANCEL_BUTTON = "❌ Отмена"
 STATE_WAITING_BL = "waiting_bl"
 COMM_RATE_PREFIX = "comm_rate"
 FILE_PREFIX = "file"
-TRACK_CALLBACK = "track_status"
 
 MAIN_REPLY_MARKUP = {
     "keyboard": [[{"text": TRACK_BUTTON}]],
@@ -68,10 +67,6 @@ CANCEL_REPLY_MARKUP = {
 
 REMOVE_REPLY_MARKUP = {
     "remove_keyboard": True,
-}
-
-GROUP_TRACK_INLINE_MARKUP = {
-    "inline_keyboard": [[{"text": TRACK_BUTTON, "callback_data": TRACK_CALLBACK}]],
 }
 
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER") or os.path.join(str(db.APP_DATA_DIR), "uploads")
@@ -258,20 +253,6 @@ def bl_file_markup(bl_id: int):
     return {"inline_keyboard": buttons} if buttons else None
 
 
-def chat_id_is_group(chat_id) -> bool:
-    return str(chat_id or "").startswith("-")
-
-
-def merge_inline_markups(*markups: dict | None):
-    rows = []
-    for markup in markups:
-        if not markup:
-            continue
-        for row in markup.get("inline_keyboard", []):
-            rows.append(row)
-    return {"inline_keyboard": rows} if rows else None
-
-
 def clear_group_reply_keyboard(chat_id):
     try:
         response = telegram_send_message(chat_id, "ㅤ", reply_markup=REMOVE_REPLY_MARKUP)
@@ -283,16 +264,6 @@ def clear_group_reply_keyboard(chat_id):
                 pass
     except Exception:
         pass
-
-
-def send_group_track_prompt(chat_id, text: str | None = None, clear_keyboard: bool = False):
-    if clear_keyboard:
-        clear_group_reply_keyboard(chat_id)
-    telegram_send_message(
-        chat_id,
-        text or "Yukning joriy holatini olish uchun quyidagi tugmani bosing.",
-        reply_markup=GROUP_TRACK_INLINE_MARKUP,
-    )
 
 
 def communication_rating_label(score: int) -> str:
@@ -328,22 +299,6 @@ def handle_callback_query(callback_query: dict):
     message_id = message.get("message_id")
 
     if not callback_id or not data or not chat_id:
-        return
-
-    if data == TRACK_CALLBACK:
-        latest_bl = db.find_latest_bl_by_chat(chat_id)
-        if latest_bl:
-            db.clear_chat_state(chat_id)
-            telegram_answer_callback_query(callback_id, "Yuk holati yuborildi")
-            send_bl_status(chat_id, latest_bl)
-            return
-        db.set_chat_state(chat_id, STATE_WAITING_BL)
-        telegram_answer_callback_query(callback_id, "BL-kodni yuboring")
-        telegram_send_message(
-            chat_id,
-            "Yukingizning <b>BL-kod</b>ini yuboring.\n\nMasalan: <code>BL171</code>",
-            reply_markup=REMOVE_REPLY_MARKUP if chat_id_is_group(chat_id) else CANCEL_REPLY_MARKUP,
-        )
         return
 
     if data.startswith(f"{FILE_PREFIX}:"):
@@ -431,13 +386,6 @@ def remember_group_chat(chat: dict, is_active: bool = True):
 
 def send_bl_status(chat_id, bl: dict):
     text = db.render_message(bl, bl["batch_name"])
-    if chat_id_is_group(chat_id):
-        telegram_send_message(
-            chat_id,
-            text,
-            reply_markup=merge_inline_markups(bl_file_markup(bl["id"]), GROUP_TRACK_INLINE_MARKUP),
-        )
-        return
     telegram_send_message(chat_id, text, reply_markup=bl_file_markup(bl["id"]) or MAIN_REPLY_MARKUP)
 
 
@@ -477,7 +425,6 @@ def handle_bl_lookup(chat_id, raw_code: str):
 def handle_telegram_message(message: dict):
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
-    chat_type = chat.get("type")
     text = (message.get("text") or "").strip()
 
     remember_group_chat(chat, is_active=True)
@@ -487,13 +434,6 @@ def handle_telegram_message(message: dict):
 
     if text == "/start":
         db.clear_chat_state(chat_id)
-        if chat_type in {"group", "supergroup"}:
-            send_group_track_prompt(
-                chat_id,
-                "Yukning joriy holatini olish uchun quyidagi tugmani bosing.",
-                clear_keyboard=True,
-            )
-            return
         telegram_send_message(
             chat_id,
             "Привет!\n\n"
@@ -518,8 +458,6 @@ def handle_telegram_message(message: dict):
             return
 
     if text == TRACK_BUTTON:
-        if chat_type in {"group", "supergroup"}:
-            clear_group_reply_keyboard(chat_id)
         latest_bl = db.find_latest_bl_by_chat(chat_id)
         if latest_bl:
             db.clear_chat_state(chat_id)
@@ -560,9 +498,6 @@ def handle_my_chat_member_update(chat_update: dict):
         return
     if not is_active:
         clear_group_reply_keyboard(chat_id)
-        return
-    if new_status in {"member", "administrator"}:
-        send_group_track_prompt(chat_id, clear_keyboard=True)
 
 
 def send_bl_package(bl: dict, batch_name: str):
