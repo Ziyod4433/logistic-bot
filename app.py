@@ -46,17 +46,16 @@ ROLE_VIEWER = "viewer"
 ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "xlsm", "doc", "docx", "zip"}
 
 TRACK_BUTTON = "Yuk holati"
+TRACK_BUTTON_LABELS = {
+    "uz_latn": "Yuk holati",
+    "uz_cyrl": "Юк ҳолати",
+    "ru": "Статус груза",
+}
+TRACK_BUTTON_TEXTS = set(TRACK_BUTTON_LABELS.values())
 CANCEL_BUTTON = "❌ Отмена"
 STATE_WAITING_BL = "waiting_bl"
 COMM_RATE_PREFIX = "comm_rate"
 FILE_PREFIX = "file"
-
-MAIN_REPLY_MARKUP = {
-    "keyboard": [[{"text": TRACK_BUTTON}]],
-    "resize_keyboard": True,
-    "one_time_keyboard": False,
-    "is_persistent": True,
-}
 
 CANCEL_REPLY_MARKUP = {
     "keyboard": [[{"text": CANCEL_BUTTON}]],
@@ -75,11 +74,37 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 db.init_db()
 
 
-def get_group_welcome_text() -> str:
+def normalize_message_language(language: str | None) -> str:
+    language = (language or "").strip().lower()
+    if language in TRACK_BUTTON_LABELS:
+        return language
+    return getattr(db, "DEFAULT_MESSAGE_LANGUAGE", "uz_latn")
+
+
+def get_track_button_text(*, chat_id=None, language: str | None = None) -> str:
+    normalized_language = normalize_message_language(language)
+    if chat_id is not None and language is None:
+        bl = db.find_latest_active_bl_by_chat(chat_id) or db.find_latest_bl_by_chat(chat_id)
+        if bl:
+            normalized_language = normalize_message_language(bl.get("message_language"))
+    return TRACK_BUTTON_LABELS.get(normalized_language, TRACK_BUTTON)
+
+
+def build_main_reply_markup(*, chat_id=None, language: str | None = None) -> dict:
+    return {
+        "keyboard": [[{"text": get_track_button_text(chat_id=chat_id, language=language)}]],
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+        "is_persistent": True,
+    }
+
+
+def get_group_welcome_text(button_text: str | None = None) -> str:
+    button_text = (button_text or TRACK_BUTTON).upper()
     return (
         "👋Assalomu alaykum hurmatli mijoz! \n\n"
         "🤖Ushbu bot yuklaringiz bo‘yicha ma’lumotlarni tez va qulay tarzda olish uchun yaratilgan.\n\n"
-        "✅MENYUDA paydo bo'lgan \"YUK HOLATI\" tugmasini bosish orqali siz ushbu platformada quyidagi imkoniyatlardan foydalanasiz:\n\n"
+        f"✅MENYUDA paydo bo'lgan \"{button_text}\" tugmasini bosish orqali siz ushbu platformada quyidagi imkoniyatlardan foydalanasiz:\n\n"
         "• yuk statusini kuzatasiz\n"
         "• yetkazib berish jarayonini nazorat qilasiz\n"
         "• yangilanishlarni olasiz\n"
@@ -280,6 +305,23 @@ def clear_group_reply_keyboard(chat_id):
         pass
 
 
+def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
+    try:
+        response = telegram_send_message(
+            chat_id,
+            "ㅤ",
+            reply_markup=build_main_reply_markup(chat_id=chat_id, language=language),
+        )
+        message_id = (((response or {}).get("result") or {}).get("message_id"))
+        if message_id:
+            try:
+                telegram_delete_message(chat_id, message_id)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def communication_rating_label(score: int) -> str:
     return {
         1: "YOMON",
@@ -402,8 +444,15 @@ def send_bl_status(chat_id, bl: dict):
     text = db.render_message(bl, bl["batch_name"])
     batch = db.get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
     show_packing_list = not db.is_customer_delivery_eta((batch or {}).get("eta_destination") or "")
+    language = normalize_message_language(bl.get("message_language"))
     reply_markup = bl_file_markup(bl["id"]) if show_packing_list else None
-    telegram_send_message(chat_id, text, reply_markup=reply_markup or MAIN_REPLY_MARKUP)
+    telegram_send_message(
+        chat_id,
+        text,
+        reply_markup=reply_markup or build_main_reply_markup(chat_id=chat_id, language=language),
+    )
+    if reply_markup:
+        refresh_track_reply_keyboard(chat_id, language=language)
 
 
 def send_requested_file(chat_id, file_info: dict | None):
@@ -452,12 +501,13 @@ def handle_telegram_message(message: dict):
 
     if text == "/start":
         db.clear_chat_state(chat_id)
+        button_text = get_track_button_text(chat_id=chat_id)
         telegram_send_message(
             chat_id,
-            get_group_welcome_text()
+            get_group_welcome_text(button_text)
             if chat_type in {"group", "supergroup"}
             else "Привет!\n\nНажми кнопку ниже, чтобы узнать текущий статус своего груза.",
-            reply_markup=MAIN_REPLY_MARKUP,
+            reply_markup=build_main_reply_markup(chat_id=chat_id),
         )
         return
 
@@ -476,7 +526,7 @@ def handle_telegram_message(message: dict):
             send_requested_file(chat_id, file_info)
             return
 
-    if text == TRACK_BUTTON:
+    if text in TRACK_BUTTON_TEXTS:
         latest_active_bl = db.find_latest_active_bl_by_chat(chat_id)
         if latest_active_bl:
             db.clear_chat_state(chat_id)
@@ -488,7 +538,7 @@ def handle_telegram_message(message: dict):
             telegram_send_message(
                 chat_id,
                 "Hozirgi vaqtda yo'lda kelayotkan yukingiz mavjud emas",
-                reply_markup=MAIN_REPLY_MARKUP,
+                reply_markup=build_main_reply_markup(chat_id=chat_id),
             )
             return
         db.set_chat_state(chat_id, STATE_WAITING_BL)
@@ -504,7 +554,7 @@ def handle_telegram_message(message: dict):
         telegram_send_message(
             chat_id,
             "Запрос отменён.",
-            reply_markup=MAIN_REPLY_MARKUP,
+            reply_markup=build_main_reply_markup(chat_id=chat_id),
         )
         return
 
@@ -530,7 +580,12 @@ def handle_my_chat_member_update(chat_update: dict):
         return
     if new_status in {"member", "administrator"} and old_status in {"", "left", "kicked"}:
         try:
-            telegram_send_message(chat_id, get_group_welcome_text(), reply_markup=MAIN_REPLY_MARKUP)
+            button_text = get_track_button_text(chat_id=chat_id)
+            telegram_send_message(
+                chat_id,
+                get_group_welcome_text(button_text),
+                reply_markup=build_main_reply_markup(chat_id=chat_id),
+            )
         except Exception:
             pass
 
@@ -540,11 +595,15 @@ def send_bl_package(bl: dict, batch_name: str):
         return False, "Нет chat_id"
 
     try:
+        language = normalize_message_language(bl.get("message_language"))
+        reply_markup = bl_file_markup(bl["id"])
         telegram_send_message(
             bl["chat_id"],
             db.render_message(bl, batch_name),
-            reply_markup=bl_file_markup(bl["id"]),
+            reply_markup=reply_markup or build_main_reply_markup(chat_id=bl["chat_id"], language=language),
         )
+        if reply_markup:
+            refresh_track_reply_keyboard(bl["chat_id"], language=language)
     except Exception as exc:
         return False, str(exc)
 
