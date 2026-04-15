@@ -327,6 +327,15 @@ def _eta_destination_label(value: str, language: str = DEFAULT_MESSAGE_LANGUAGE)
     )
 
 
+def _packing_list_label(language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
+    normalized_language = _normalize_message_language(language)
+    if normalized_language == "uz_cyrl":
+        return "🖇Товар бўйича packing list⤵️"
+    if normalized_language == "ru":
+        return "🖇Packing list по товару⤵️"
+    return "🖇Tovar bo'yicha packing list⤵️"
+
+
 def _normalize_message_language(value: str) -> str:
     normalized = (value or "").strip().lower()
     if normalized in MESSAGE_LANGUAGES:
@@ -1824,6 +1833,15 @@ def render_message(bl: dict, batch_name: str) -> str:
     if is_customer_delivery:
         rendered = re.sub(r"\n*🖇Tovar bo'yicha packing list⤵️.*$", "", rendered, flags=re.S)
         rendered = re.sub(r"\n━━━━━━━━━━━━━━━\s*$", "", rendered)
+    else:
+        packing_label = _packing_list_label(language)
+        rendered = re.sub(
+            r"\n*🖇[^\n]*packing list[^\n]*(?:\n(?:• .*|Packing list[^\n]*))*\s*$",
+            "",
+            rendered,
+            flags=re.I | re.M,
+        )
+        rendered = rendered.rstrip() + f"\n{packing_label}\n{packing_list}"
     return rendered.strip()
 
 
