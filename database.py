@@ -75,6 +75,14 @@ PROBLEM_TYPES = {
     "other": "Boshqa",
 }
 
+MESSAGE_LANGUAGES = {
+    "uz_latn": "O'zbekcha (lotin)",
+    "uz_cyrl": "Ўзбекча (кирилл)",
+    "ru": "Русский",
+}
+
+DEFAULT_MESSAGE_LANGUAGE = "uz_latn"
+
 LEGACY_DEFAULT_TEMPLATE = """🗓 Дата загрузки: {batch_name}
 📦 BL код: {bl_code}
 👤 Клиент: {client_name}
@@ -154,6 +162,92 @@ ETA_DESTINATION_LABELS = {
     "Mijozga yetib borish": "Mijozga yetib borish vaqti",
 }
 
+ETA_DESTINATION_LABELS_LOCALIZED = {
+    "uz_latn": ETA_DESTINATION_LABELS,
+    "uz_cyrl": {
+        "Toshkent": "Тошкентга етиб келиш вақти",
+        "Horgos (Qozoq)": "Хоргосга етиб келиш вақти",
+        "Qozoq furaga ortilish": "Қозоқ фурага ортилиш вақти",
+        "Mijozga yetib borish": "Мижозга етиб бориш вақти",
+    },
+    "ru": {
+        "Toshkent": "Срок прибытия в Ташкент",
+        "Horgos (Qozoq)": "Срок прибытия в Хоргос",
+        "Qozoq furaga ortilish": "Срок погрузки на казахскую фуру",
+        "Mijozga yetib borish": "Срок доставки клиенту",
+    },
+}
+
+STATUS_MESSAGE_LABELS = {
+    "uz_cyrl": {
+        "Xitoy": "Хитой",
+        "Horgos (Qozoq)": "Хоргос (Қозоқ)",
+        "Nurjo'li": "Нуржўли",
+        "Jarkent": "Жаркент",
+        "Almata": "Алмата",
+        "Taraz": "Тараз",
+        "Shimkent": "Шимкент",
+        "Qonusbay": "Қонусбай",
+        "Saryagash": "Сариоғаш",
+        "Yallama": "Яллама",
+        "Toshkent(Chuqursoy ULS da)": "Тошкент(Чуқурсой ULS да)",
+        "Kashgar (Qirg'iz)": "Кашгар (Қирғиз)",
+        "Irkeshtam": "Иркештам",
+        "Osh": "Ош",
+        "Dostlik": "Дўстлик",
+        "Andijon": "Андижон",
+        DELIVERED_STATUS: "Мижозга етказиб берилди",
+        LEGACY_DELIVERED_STATUS: "Мижозга етказиб берилди",
+    },
+    "ru": {
+        "Xitoy": "Китай",
+        "Horgos (Qozoq)": "Хоргос (Казахстан)",
+        "Nurjo'li": "Нуржоли",
+        "Jarkent": "Жаркент",
+        "Almata": "Алматы",
+        "Taraz": "Тараз",
+        "Shimkent": "Шымкент",
+        "Qonusbay": "Конысбай",
+        "Saryagash": "Сарыагаш",
+        "Yallama": "Яллама",
+        "Toshkent(Chuqursoy ULS da)": "Ташкент (Чукурсой ULS)",
+        "Kashgar (Qirg'iz)": "Кашгар (Кыргызстан)",
+        "Irkeshtam": "Иркештам",
+        "Osh": "Ош",
+        "Dostlik": "Достлик",
+        "Andijon": "Андижан",
+        DELIVERED_STATUS: "Доставлено клиенту",
+        LEGACY_DELIVERED_STATUS: "Доставлено клиенту",
+    },
+}
+
+TEMPLATE_LOCALIZATION = {
+    "uz_cyrl": {
+        "👋Assalomu alaykum hurmatli mijoz!": "👋Ассалому алайкум ҳурматли мижоз!",
+        "📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:⤵️": "📦 Сизнинг юкингиз бўйича янгиланган трекинг маълумотлари:⤵️",
+        "🚛 Partiya:": "🚛 Партия:",
+        "🗓Bugungi sana:": "🗓Бугунги сана:",
+        "🆔 BL-kod:": "🆔 BL-код:",
+        "📍 Joriy holati:": "📍 Жорий ҳолати:",
+        "📄 Yuk haqida ma'lumotlar:": "📄 Юк ҳақида маълумотлар:",
+        "📲Aloqa uchun:": "📲Алоқа учун:",
+        "🖇Tovar bo'yicha packing list⤵️": "🖇Товар бўйича packing list⤵️",
+        "Packing list biriktirilmagan": "Packing list бириктирилмаган",
+    },
+    "ru": {
+        "👋Assalomu alaykum hurmatli mijoz!": "👋Здравствуйте, уважаемый клиент!",
+        "📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:⤵️": "📦 Обновлённая информация по трекингу вашего груза:⤵️",
+        "🚛 Partiya:": "🚛 Партия:",
+        "🗓Bugungi sana:": "🗓Дата обновления:",
+        "🆔 BL-kod:": "🆔 BL-код:",
+        "📍 Joriy holati:": "📍 Текущий статус:",
+        "📄 Yuk haqida ma'lumotlar:": "📄 Информация о грузе:",
+        "📲Aloqa uchun:": "📲Для связи:",
+        "🖇Tovar bo'yicha packing list⤵️": "🖇Packing list по товару⤵️",
+        "Packing list biriktirilmagan": "Packing list не прикреплён",
+    },
+}
+
 DEFAULT_ETA_DESTINATION = "Toshkent"
 
 STUCK_DAYS = 5
@@ -220,11 +314,24 @@ def _normalize_eta_destination(value: str) -> str:
     return DEFAULT_ETA_DESTINATION
 
 
-def _eta_destination_label(value: str) -> str:
-    return ETA_DESTINATION_LABELS.get(
-        _normalize_eta_destination(value),
-        ETA_DESTINATION_LABELS[DEFAULT_ETA_DESTINATION],
+def _eta_destination_label(value: str, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
+    normalized_language = _normalize_message_language(language)
+    labels = ETA_DESTINATION_LABELS_LOCALIZED.get(
+        normalized_language,
+        ETA_DESTINATION_LABELS_LOCALIZED[DEFAULT_MESSAGE_LANGUAGE],
     )
+    normalized_destination = _normalize_eta_destination(value)
+    return labels.get(
+        normalized_destination,
+        labels.get(DEFAULT_ETA_DESTINATION, ETA_DESTINATION_LABELS[DEFAULT_ETA_DESTINATION]),
+    )
+
+
+def _normalize_message_language(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in MESSAGE_LANGUAGES:
+        return normalized
+    return DEFAULT_MESSAGE_LANGUAGE
 
 
 def is_customer_delivery_eta(value: str) -> bool:
@@ -270,6 +377,7 @@ def init_db():
             client_name TEXT DEFAULT '',
             chat_id TEXT DEFAULT '',
             status TEXT DEFAULT 'Xitoy',
+            message_language TEXT DEFAULT 'uz_latn',
             cargo_type TEXT DEFAULT '',
             weight_kg REAL NOT NULL DEFAULT 0,
             volume_cbm REAL NOT NULL DEFAULT 0,
@@ -435,6 +543,7 @@ def init_db():
         ("volume_cbm", "REAL NOT NULL DEFAULT 0"),
         ("quantity_places", "INTEGER NOT NULL DEFAULT 0"),
         ("cargo_description", "TEXT DEFAULT ''"),
+        ("message_language", "TEXT DEFAULT 'uz_latn'"),
         ("expected_date", "TEXT DEFAULT ''"),
         ("actual_date", "TEXT DEFAULT ''"),
         ("status_updated_at", "TEXT DEFAULT ''"),
@@ -867,27 +976,55 @@ def get_login_history(limit=200):
     return [dict(row) for row in rows]
 
 
-def format_cargo_info(bl: dict) -> str:
+def _cargo_labels(language: str) -> dict:
+    lang = _normalize_message_language(language)
+    if lang == "uz_cyrl":
+        return {
+            "cargo_type": "Tovar turi",
+            "weight": "Оғирлиги",
+            "volume": "Ҳажми",
+            "places": "Жойлар сони",
+            "description": "Тавсиф",
+        }
+    if lang == "ru":
+        return {
+            "cargo_type": "Тип товара",
+            "weight": "Вес",
+            "volume": "Объём",
+            "places": "Количество мест",
+            "description": "Описание",
+        }
+    return {
+        "cargo_type": "Tovar turi",
+        "weight": "Og'irligi",
+        "volume": "Hajmi",
+        "places": "Joylar soni",
+        "description": "Tavsif",
+    }
+
+
+def format_cargo_info(bl: dict, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
+    labels = _cargo_labels(language)
     parts = []
     cargo_type = (bl.get("cargo_type") or "").strip()
     if cargo_type:
-        parts.append(f"• Tovar turi: <b>{html.escape(cargo_type, quote=False)}</b>")
+        parts.append(f"• {labels['cargo_type']}: <b>{html.escape(cargo_type, quote=False)}</b>")
 
     weight = _to_float(bl.get("weight_kg"))
     if weight:
-        parts.append(f"• Og'irligi: <b>{weight:g} kg</b>")
+        parts.append(f"• {labels['weight']}: <b>{weight:g} kg</b>")
 
     volume = _to_float(bl.get("volume_cbm"))
     if volume:
-        parts.append(f"• Hajmi: <b>{volume:g} m³</b>")
+        parts.append(f"• {labels['volume']}: <b>{volume:g} m³</b>")
 
     quantity = _to_int(bl.get("quantity_places"))
     if quantity:
-        parts.append(f"• Joylar soni: <b>{quantity}</b>")
+        parts.append(f"• {labels['places']}: <b>{quantity}</b>")
 
     description = (bl.get("cargo_description") or "").strip()
     if description:
-        parts.append(f"• Tavsif: <b>{html.escape(description, quote=False)}</b>")
+        parts.append(f"• {labels['description']}: <b>{html.escape(description, quote=False)}</b>")
 
     return "\n".join(parts)
 
@@ -1056,6 +1193,7 @@ def add_bl(
     volume_cbm=0,
     quantity_places=0,
     cargo_description="",
+    message_language=DEFAULT_MESSAGE_LANGUAGE,
 ):
     conn = get_conn()
     try:
@@ -1074,10 +1212,10 @@ def add_bl(
         conn.execute(
             """
             INSERT INTO bl_codes(
-                batch_id, code, client_name, chat_id, status, cargo_type, weight_kg, volume_cbm, quantity_places,
+                batch_id, code, client_name, chat_id, status, message_language, cargo_type, weight_kg, volume_cbm, quantity_places,
                 cargo_description, expected_date, actual_date, status_updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 batch_id,
@@ -1085,6 +1223,7 @@ def add_bl(
                 client_name.strip(),
                 chat_id.strip(),
                 batch_status,
+                _normalize_message_language(message_language),
                 (cargo_type or "").strip(),
                 _to_float(weight_kg),
                 _to_float(volume_cbm),
@@ -1194,6 +1333,7 @@ def update_bl(
     volume_cbm=0,
     quantity_places=0,
     cargo_description="",
+    message_language=DEFAULT_MESSAGE_LANGUAGE,
 ):
     conn = get_conn()
     current = conn.execute(
@@ -1231,6 +1371,7 @@ def update_bl(
             client_name = ?,
             chat_id = ?,
             status = ?,
+            message_language = ?,
             cargo_type = ?,
             weight_kg = ?,
             volume_cbm = ?,
@@ -1247,6 +1388,7 @@ def update_bl(
             client_name.strip(),
             chat_id.strip(),
             effective_status,
+            _normalize_message_language(message_language),
             (cargo_type or "").strip(),
             _to_float(weight_kg),
             _to_float(volume_cbm),
@@ -1420,9 +1562,14 @@ def get_file_by_command_alias(command_alias):
     return dict(row) if row else None
 
 
-def format_packing_list(bl_id) -> str:
+def format_packing_list(bl_id, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
+    normalized_language = _normalize_message_language(language)
     files = get_files(bl_id)
     if not files:
+        if normalized_language == "uz_cyrl":
+            return "Packing list бириктирилмаган"
+        if normalized_language == "ru":
+            return "Packing list не прикреплён"
         return "Packing list biriktirilmagan"
     items = []
     for file_info in files:
@@ -1431,6 +1578,10 @@ def format_packing_list(bl_id) -> str:
             continue
         items.append(f"• {html.escape(prettify_file_name(name))}")
     if not items:
+        if normalized_language == "uz_cyrl":
+            return "Packing list бириктирилмаган"
+        if normalized_language == "ru":
+            return "Packing list не прикреплён"
         return "Packing list biriktirilmagan"
     return "\n".join(items)
 
@@ -1533,23 +1684,55 @@ def save_status_detail(status, detail):
     conn.close()
 
 
-def _message_status_label(status: str) -> str:
+def _message_status_label(status: str, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
     value = (status or "").strip()
-    if _is_delivered_status(value):
-        return DELIVERED_STATUS
+    normalized_language = _normalize_message_language(language)
     if value in {"Yiwu", "Zhongshan"}:
+        if normalized_language == "uz_cyrl":
+            return f"{'Иву' if value == 'Yiwu' else 'Жонгшан'} омборимиздан йўлга чиқиб кетди"
+        if normalized_language == "ru":
+            return f"Груз выехал с нашего склада в {'Иу' if value == 'Yiwu' else 'Чжуншань'}"
         return f"{value} omborimizdan yo'lga chiqib ketdi"
+    if _is_delivered_status(value):
+        value = DELIVERED_STATUS
+    localized = STATUS_MESSAGE_LABELS.get(normalized_language, {}).get(value)
+    if localized:
+        return localized
     return value
 
 
-def _apply_customer_delivery_note(rendered: str, show_note: bool) -> str:
+def _localize_template(template: str, language: str) -> str:
+    normalized_language = _normalize_message_language(language)
+    if normalized_language == DEFAULT_MESSAGE_LANGUAGE:
+        return template
+    localized = template
+    for source, target in TEMPLATE_LOCALIZATION.get(normalized_language, {}).items():
+        localized = localized.replace(source, target)
+    return localized
+
+
+def _apply_customer_delivery_note(rendered: str, show_note: bool, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
     if not show_note:
         return rendered
-    note = (
-        "❗️Eslatma\n"
-        "-<b>Hurmatli mijoz, yukni qabul qilib olganingizdan so‘ng 2–3 kun ichida uni tekshirishingizni so‘raymiz.\n"
-        "Agarda shikast yetkan yukingiz bo'lsa ko‘rsatilgan muddatdan kechikmagan holda habar berishingiz so'raymiz,aks xolda kompensatsiya jarayoni cho‘zilishi mumkin.</b>\n"
-    )
+    normalized_language = _normalize_message_language(language)
+    if normalized_language == "uz_cyrl":
+        note = (
+            "❗️Eslatma\n"
+            "-<b>Ҳурматли мижоз, юкни қабул қилиб олганингиздан сўнг 2–3 кун ичида уни текширишингизни сўраймиз.\n"
+            "Агарда шикаст етган юкингиз бўлса кўрсатилган муддатдан кечикмаган ҳолда хабар беришингизни сўраймиз, акс ҳолда компенсация жараёни чўзилиши мумкин.</b>\n"
+        )
+    elif normalized_language == "ru":
+        note = (
+            "❗️Примечание\n"
+            "-<b>Уважаемый клиент, просим проверить груз в течение 2–3 дней после получения.\n"
+            "Если у вас есть повреждённый груз, просим сообщить об этом без задержки в указанный срок, иначе процесс компенсации может затянуться.</b>\n"
+        )
+    else:
+        note = (
+            "❗️Eslatma\n"
+            "-<b>Hurmatli mijoz, yukni qabul qilib olganingizdan so‘ng 2–3 kun ichida uni tekshirishingizni so‘raymiz.\n"
+            "Agarda shikast yetkan yukingiz bo'lsa ko‘rsatilgan muddatdan kechikmagan holda habar berishingiz so'raymiz,aks xolda kompensatsiya jarayoni cho‘zilishi mumkin.</b>\n"
+        )
     if re.search(r"(⏳[^\n]*:\n-[^\n]+\n?)", rendered):
         return re.sub(
             r"(⏳[^\n]*:\n-[^\n]+\n?)",
@@ -1566,12 +1749,13 @@ def _apply_customer_delivery_note(rendered: str, show_note: bool) -> str:
 
 
 def render_message(bl: dict, batch_name: str) -> str:
+    language = _normalize_message_language(bl.get("message_language"))
     template = _inject_packing_list_placeholder(
         _inject_arrival_eta_placeholder(
             _inject_cargo_info_placeholder(
                 _inject_today_date_placeholder(
                     _inject_bl_code_placeholder(
-                    _normalize_client_template(get_template())
+                    _localize_template(_normalize_client_template(get_template()), language)
                     )
                 )
             )
@@ -1592,10 +1776,10 @@ def render_message(bl: dict, batch_name: str) -> str:
     batch = get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
     eta_destination = ((batch or {}).get("eta_destination") or "").strip()
     is_customer_delivery = is_customer_delivery_eta(eta_destination)
-    packing_list = "" if is_customer_delivery else format_packing_list(bl.get("id"))
+    packing_list = "" if is_customer_delivery else format_packing_list(bl.get("id"), language)
     arrival_eta = ((batch or {}).get("eta_to_toshkent") or "").strip()
     arrival_eta_value = arrival_eta or expected_date
-    arrival_eta_label = _eta_destination_label(eta_destination)
+    arrival_eta_label = _eta_destination_label(eta_destination, language)
     today_date = datetime.now(TASHKENT_TZ).strftime("%d.%m.%Y")
 
     context = _TemplateContext(
@@ -1604,8 +1788,8 @@ def render_message(bl: dict, batch_name: str) -> str:
         today_date=_normalize_template_value(today_date),
         bl_code=_normalize_template_value(bl.get("code", "")),
         client_name=_normalize_template_value(bl.get("client_name", "")),
-        status=_normalize_template_value(_message_status_label(status)),
-        cargo_info=format_cargo_info(bl),
+        status=_normalize_template_value(_message_status_label(status, language)),
+        cargo_info=format_cargo_info(bl, language),
         cargo_type=_normalize_template_value(cargo_type),
         weight_kg=_normalize_template_value(f"{weight_value:g}" if weight_value else ""),
         volume_cbm=_normalize_template_value(f"{volume_value:g}" if volume_value else ""),
@@ -1625,11 +1809,11 @@ def render_message(bl: dict, batch_name: str) -> str:
     rendered = template.format_map(context)
     rendered = re.sub(
         r"🇺🇿\s*Yetib kelish vaqti\s*:",
-        f"🇺🇿 {arrival_eta_label}:",
+        f"⏳ {arrival_eta_label}:",
         rendered,
         count=1,
     )
-    rendered = _apply_customer_delivery_note(rendered, is_customer_delivery)
+    rendered = _apply_customer_delivery_note(rendered, is_customer_delivery, language)
     rendered = re.sub(r"\n{3,}", "\n\n", rendered)
     rendered = rendered.replace("━━━━━━━━━━━━━━━━━━━", "━━━━━━━━━━━━━━━")
     rendered = rendered.replace("📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:\n\n", "📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:\n")

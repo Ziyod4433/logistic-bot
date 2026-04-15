@@ -716,6 +716,7 @@ def api_add_bl():
     code = (data.get("code") or "").strip()
     client_name = (data.get("client_name") or "").strip()
     chat_id = (data.get("chat_id") or "").strip()
+    message_language = (data.get("message_language") or "").strip()
     cargo_type = (data.get("cargo_type") or "").strip()
     weight_kg = data.get("weight_kg", 0)
     volume_cbm = data.get("volume_cbm", 0)
@@ -735,6 +736,7 @@ def api_add_bl():
         volume_cbm,
         quantity_places,
         cargo_description,
+        message_language,
     ):
         return jsonify({"error": "BL-код уже существует в этой партии"}), 400
 
@@ -757,6 +759,7 @@ def api_update_bl(bl_id):
             data.get("volume_cbm", 0),
             data.get("quantity_places", 0),
             data.get("cargo_description", ""),
+            data.get("message_language", ""),
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400

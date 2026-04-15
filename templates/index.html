@@ -1549,6 +1549,15 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       </div>
     </div>
     <div class="form-g">
+      <label>Til / Язык</label>
+      <input type="hidden" id="add-bl-language" value="uz_latn">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button type="button" class="btn btn-amber btn-sm" id="add-bl-lang-uz-latn" onclick="setBLLanguage('add-bl','uz_latn')">O'zbekcha (lotin)</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="add-bl-lang-uz-cyrl" onclick="setBLLanguage('add-bl','uz_cyrl')">Ўзбекча (кирилл)</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="add-bl-lang-ru" onclick="setBLLanguage('add-bl','ru')">Русский</button>
+      </div>
+    </div>
+    <div class="form-g">
       <label>Найденная группа Telegram</label>
       <select class="inp" id="add-bl-chat-select" onchange="applySelectedChat('add')">
         <option value="">Выбери группу из списка</option>
@@ -1615,6 +1624,15 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="form-g">
         <label>Описание</label>
         <input class="inp" id="edit-bl-description" placeholder="Свободное описание груза">
+      </div>
+    </div>
+    <div class="form-g">
+      <label>Til / Язык</label>
+      <input type="hidden" id="edit-bl-language" value="uz_latn">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button type="button" class="btn btn-amber btn-sm" id="edit-bl-lang-uz-latn" onclick="setBLLanguage('edit-bl','uz_latn')">O'zbekcha (lotin)</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="edit-bl-lang-uz-cyrl" onclick="setBLLanguage('edit-bl','uz_cyrl')">Ўзбекча (кирилл)</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="edit-bl-lang-ru" onclick="setBLLanguage('edit-bl','ru')">Русский</button>
       </div>
     </div>
     <hr class="divider">
@@ -2105,6 +2123,26 @@ function setArrivalTarget(prefix, value) {
   });
 }
 
+function setBLLanguage(prefix, value) {
+  const normalized =
+    value === "uz_cyrl" ? "uz_cyrl"
+    : value === "ru" ? "ru"
+    : "uz_latn";
+  const hidden = document.getElementById(`${prefix}-language`);
+  if (hidden) hidden.value = normalized;
+  const options = [
+    { key: "uz_latn", buttonId: `${prefix}-lang-uz-latn` },
+    { key: "uz_cyrl", buttonId: `${prefix}-lang-uz-cyrl` },
+    { key: "ru", buttonId: `${prefix}-lang-ru` },
+  ];
+  options.forEach(option => {
+    const btn = document.getElementById(option.buttonId);
+    if (btn) {
+      btn.className = option.key === normalized ? "btn btn-amber btn-sm" : "btn btn-ghost btn-sm";
+    }
+  });
+}
+
 async function createBatch() {
   if (!ensureEditor()) return;
   const name = normalizeBatchNameDate(document.getElementById("new-batch-name").value.trim());
@@ -2497,6 +2535,7 @@ function openAddBLModal() {
   document.getElementById("add-bl-volume").value = "";
   document.getElementById("add-bl-quantity").value = "";
   document.getElementById("add-bl-description").value = "";
+  setBLLanguage("add-bl", "uz_latn");
   const pendingChatId = pendingChatTransfer?.chat_id || "";
   document.getElementById("add-bl-chat").value = pendingChatId;
   populateChatSelect("add-bl-chat-select", pendingChatId);
@@ -2554,6 +2593,7 @@ async function addBL() {
   const volume_cbm  = document.getElementById("add-bl-volume").value.trim();
   const quantity_places = document.getElementById("add-bl-quantity").value.trim();
   const cargo_description = document.getElementById("add-bl-description").value.trim();
+  const message_language = document.getElementById("add-bl-language").value.trim() || "uz_latn";
   const chat_id     = document.getElementById("add-bl-chat").value.trim();
   if (!code) { toast("BL код обязателен","err"); return; }
   try {
@@ -2566,6 +2606,7 @@ async function addBL() {
       volume_cbm,
       quantity_places,
       cargo_description,
+      message_language,
       chat_id
     });
     toast("✅ BL код "+code+" добавлен","ok");
@@ -2589,6 +2630,7 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-volume").value = bl.volume_cbm || "";
   document.getElementById("edit-bl-quantity").value = bl.quantity_places || "";
   document.getElementById("edit-bl-description").value = bl.cargo_description || "";
+  setBLLanguage("edit-bl", bl.message_language || "uz_latn");
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
   populateChatSelect("edit-bl-chat-select", bl.chat_id||"");
   document.getElementById("edit-bl-file-input").dataset.blId = blId;
@@ -2636,6 +2678,7 @@ async function saveBL() {
       volume_cbm: document.getElementById("edit-bl-volume").value.trim(),
       quantity_places: document.getElementById("edit-bl-quantity").value.trim(),
       cargo_description: document.getElementById("edit-bl-description").value.trim(),
+      message_language: document.getElementById("edit-bl-language").value.trim() || "uz_latn",
       chat_id:     document.getElementById("edit-bl-chat").value.trim(),
     });
     toast("✅ Сохранено","ok");
