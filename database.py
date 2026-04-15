@@ -43,6 +43,10 @@ STATUSES = [
     "Доставлен",
 ]
 
+LEGACY_DELIVERED_STATUS = STATUSES[-1]
+DELIVERED_STATUS = "Mijozga yetkazib berildi"
+STATUSES = [DELIVERED_STATUS if item == LEGACY_DELIVERED_STATUS else item for item in STATUSES]
+
 PROBLEM_TYPES = {
     "damage": "Shikastlanish",
     "delay": "Kechikish",
@@ -119,6 +123,9 @@ DEFAULT_STATUS_DETAILS = {
     "Andijon": "🚛 Yuk Andijon yo'nalishida harakatlanmoqda.",
     "Доставлен": "✅ Yuk muvaffaqiyatli topshirildi.",
 }
+
+DEFAULT_STATUS_DETAILS[DELIVERED_STATUS] = "✅ Yuk mijozga yetkazib berildi."
+DEFAULT_STATUS_DETAILS[LEGACY_DELIVERED_STATUS] = DEFAULT_STATUS_DETAILS[DELIVERED_STATUS]
 
 ETA_DESTINATION_LABELS = {
     "Toshkent": "Toshkentga yetib kelish vaqti",
@@ -198,6 +205,18 @@ def _eta_destination_label(value: str) -> str:
         _normalize_eta_destination(value),
         ETA_DESTINATION_LABELS[DEFAULT_ETA_DESTINATION],
     )
+
+
+def _is_delivered_status(value: str) -> bool:
+    normalized = (value or "").strip()
+    return normalized in {LEGACY_DELIVERED_STATUS, DELIVERED_STATUS}
+
+
+def _normalize_status(value: str) -> str:
+    normalized = (value or "Xitoy").strip() or "Xitoy"
+    if normalized == DELIVERED_STATUS:
+        return LEGACY_DELIVERED_STATUS
+    return normalized
 
 
 def init_db():
@@ -569,6 +588,7 @@ def init_db():
         "Altynko'l": "Nurjo'li",
         "Chuqur": "Dostlik",
         "Chuqursoy": "Dostlik",
+        DELIVERED_STATUS: LEGACY_DELIVERED_STATUS,
     }
     for old_status, new_status in legacy_status_map.items():
         cursor.execute("UPDATE batches SET status = ? WHERE status = ?", (new_status, old_status))
@@ -587,16 +607,17 @@ def create_batch(
 ):
     conn = get_conn()
     try:
+        status = _normalize_status(status)
         conn.execute(
             "INSERT INTO batches(name, status, expected_date, actual_date, eta_to_toshkent, eta_destination, client_delivery_date, route_started_at, toshkent_arrived_at, status_updated_at) VALUES(?, ?, '', '', ?, ?, ?, ?, ?, datetime('now','localtime'))",
             (
                 (name or "").strip(),
-                (status or "Xitoy").strip(),
+                status,
                 (eta_to_toshkent or "").strip(),
                 _normalize_eta_destination(eta_destination),
                 (client_delivery_date or "").strip(),
-                current_ts() if (status or "Xitoy").strip() in ("Yiwu", "Zhongshan") else "",
-                current_ts() if (status or "Xitoy").strip() == "Toshkent(Chuqursoy ULS da)" else "",
+                current_ts() if status in ("Yiwu", "Zhongshan") else "",
+                current_ts() if status == "Toshkent(Chuqursoy ULS da)" else "",
             ),
         )
         conn.commit()
@@ -617,7 +638,7 @@ def update_batch(
 ):
     conn = get_conn()
     try:
-        new_status = (status or "Xitoy").strip()
+        new_status = _normalize_status(status)
         conn.execute(
             """
             UPDATE batches
@@ -1472,6 +1493,8 @@ def save_status_detail(status, detail):
 
 def _message_status_label(status: str) -> str:
     value = (status or "").strip()
+    if _is_delivered_status(value):
+        return DELIVERED_STATUS
     if value in {"Yiwu", "Zhongshan"}:
         return f"{value} omborimizdan yo'lga chiqib ketdi"
     return value
@@ -1494,6 +1517,7 @@ def render_message(bl: dict, batch_name: str) -> str:
     template = template.replace("{status_detail}\n\n", "")
     template = template.replace("{status_detail}", "")
     status = bl.get("status", "Xitoy")
+    is_delivered = _is_delivered_status(status)
     cargo_type = (bl.get("cargo_type") or "").strip()
     weight_value = _to_float(bl.get("weight_kg"))
     volume_value = _to_float(bl.get("volume_cbm"))
@@ -1504,7 +1528,7 @@ def render_message(bl: dict, batch_name: str) -> str:
     packing_list = format_packing_list(bl.get("id"))
     batch = get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
     arrival_eta = ((batch or {}).get("eta_to_toshkent") or "").strip()
-    arrival_eta_value = arrival_eta or expected_date
+    arrival_eta_value = "" if is_delivered else (arrival_eta or expected_date)
     arrival_eta_label = _eta_destination_label((batch or {}).get("eta_destination") or "")
     today_date = datetime.now(TASHKENT_TZ).strftime("%d.%m.%Y")
 
@@ -1539,6 +1563,8 @@ def render_message(bl: dict, batch_name: str) -> str:
         rendered,
         count=1,
     )
+    if is_delivered:
+        rendered = re.sub(r"\n*⏳[^\n]*:\n-[^\n]*\n?", "\n", rendered, count=1)
     rendered = re.sub(r"\n{3,}", "\n\n", rendered)
     rendered = rendered.replace("━━━━━━━━━━━━━━━━━━━", "━━━━━━━━━━━━━━━")
     rendered = rendered.replace("📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:\n\n", "📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:\n")

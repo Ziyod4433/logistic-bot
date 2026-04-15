@@ -1423,7 +1423,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           <option value="Osh">🚛 Osh</option>
           <option value="Dostlik">🛃 Dostlik</option>
           <option value="Andijon">🚛 Andijon</option>
-          <option value="Доставлен">✅ Доставлен</option>
+          <option value="Доставлен">✅ Mijozga yetkazib berildi</option>
         </select>
       </div>
     </div>
@@ -1478,7 +1478,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <option value="Osh">🚛 Osh</option>
         <option value="Dostlik">🛃 Dostlik</option>
         <option value="Andijon">🚛 Andijon</option>
-        <option value="Доставлен">✅ Доставлен</option>
+        <option value="Доставлен">✅ Mijozga yetkazib berildi</option>
       </select>
     </div>
     <div class="form-g">
@@ -1747,7 +1747,7 @@ const STATUSES = [
   "Osh",
   "Dostlik",
   "Andijon",
-  "Доставлен"
+  "Mijozga yetkazib berildi"
 ];
 const PROBLEM_TYPES = {
   damage: "Shikastlanish",
@@ -1777,6 +1777,7 @@ const STATUS_BADGE = {
   "Dostlik":            "badge s-tashkent",
   "Andijon":            "badge s-road",
   "Доставлен":          "badge s-done",
+  "Mijozga yetkazib berildi": "badge s-done",
 };
 const STATUS_ICO = {
   "Xitoy":"🇨🇳",
@@ -1797,7 +1798,8 @@ const STATUS_ICO = {
   "Osh":"🚛",
   "Dostlik":"🛃",
   "Andijon":"🚛",
-  "Доставлен":"✅"
+  "Доставлен":"✅",
+  "Mijozga yetkazib berildi":"✅"
 };
 
 // ── Fetch helper ──────────────────────────────────────────
@@ -3181,7 +3183,7 @@ async function loadTemplate() {
     const container = document.getElementById("status-details-form");
     container.innerHTML = data.statuses.map(s=>`
       <div class="form-g">
-        <label>${STATUS_ICO[s]||''} ${s}</label>
+        <label>${STATUS_ICO[s]||''} ${statusLabel(s)}</label>
         <textarea class="inp" id="sd-${s.replace(/ /g,'_')}" rows="2" style="min-height:56px;font-size:12px">${esc(data.status_details[s]||'')}</textarea>
       </div>`).join("") +
       `<button class="btn btn-amber btn-sm editor-only" onclick="saveTemplate()">💾 Сохранить всё</button>`;
@@ -3292,7 +3294,11 @@ async function loadLogs() {
 function statusBadge(s) {
   const cls = STATUS_BADGE[s] || "badge badge-muted";
   const ico = STATUS_ICO[s] || "•";
-  return `<span class="${cls}">${ico} ${s}</span>`;
+  return `<span class="${cls}">${ico} ${statusLabel(s)}</span>`;
+}
+
+function statusLabel(s) {
+  return s === "Доставлен" ? "Mijozga yetkazib berildi" : s;
 }
 
 function esc(str) {
