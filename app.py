@@ -52,6 +52,11 @@ TRACK_BUTTON_LABELS = {
     "ru": "Статус груза",
 }
 TRACK_BUTTON_TEXTS = set(TRACK_BUTTON_LABELS.values())
+NO_ACTIVE_CARGO_MESSAGES = {
+    "uz_latn": "Hozirgi vaqtda yo'lda kelayotgan yukingiz mavjud emas",
+    "uz_cyrl": "Ҳозирги вақтда йўлда келаётган юкингиз мавжуд эмас",
+    "ru": "В данный момент у вас нет груза в пути",
+}
 CANCEL_BUTTON = "❌ Отмена"
 STATE_WAITING_BL = "waiting_bl"
 COMM_RATE_PREFIX = "comm_rate"
@@ -122,6 +127,11 @@ def get_group_welcome_text(button_text: str | None = None) -> str:
         "🎥 Ниже представлена короткая видеоинструкция по использованию бота.\n\n"
         "Рекомендуем посмотреть её один раз 👇"
     )
+
+
+def get_no_active_cargo_text(language: str | None = None) -> str:
+    normalized_language = normalize_message_language(language)
+    return NO_ACTIVE_CARGO_MESSAGES.get(normalized_language, NO_ACTIVE_CARGO_MESSAGES["uz_latn"])
 
 
 def login_required(func):
@@ -547,8 +557,11 @@ def handle_telegram_message(message: dict):
             db.clear_chat_state(chat_id)
             telegram_send_message(
                 chat_id,
-                "Hozirgi vaqtda yo'lda kelayotkan yukingiz mavjud emas",
-                reply_markup=build_main_reply_markup(chat_id=chat_id),
+                get_no_active_cargo_text(latest_bl.get("message_language")),
+                reply_markup=build_main_reply_markup(
+                    chat_id=chat_id,
+                    language=latest_bl.get("message_language"),
+                ),
             )
             return
         db.set_chat_state(chat_id, STATE_WAITING_BL)
