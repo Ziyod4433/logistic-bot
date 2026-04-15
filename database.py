@@ -1521,6 +1521,22 @@ def _message_status_label(status: str) -> str:
     return value
 
 
+def _apply_delivered_message_note(rendered: str, is_delivered: bool) -> str:
+    if not is_delivered:
+        return rendered
+    note = (
+        "❗️Eslatma\n"
+        "-<b>Hurmatli mijoz, yukni qabul qilib olganingizdan so‘ng 2–3 kun ichida uni tekshirishingizni so‘raymiz.\n"
+        "Yuqorida ko‘rsatilgan muddatdan kechikkan taqdirda, kompensatsiya jarayoni cho‘zilishi mumkin.</b>\n"
+    )
+    return re.sub(
+        r"(📍\s*Joriy holati:\n-[^\n]+\n?)",
+        r"\1\n" + note,
+        rendered,
+        count=1,
+    )
+
+
 def render_message(bl: dict, batch_name: str) -> str:
     template = _inject_packing_list_placeholder(
         _inject_arrival_eta_placeholder(
@@ -1586,6 +1602,7 @@ def render_message(bl: dict, batch_name: str) -> str:
     )
     if is_delivered:
         rendered = re.sub(r"\n*⏳[^\n]*:\n-[^\n]*\n?", "\n", rendered, count=1)
+    rendered = _apply_delivered_message_note(rendered, is_delivered)
     rendered = re.sub(r"\n{3,}", "\n\n", rendered)
     rendered = rendered.replace("━━━━━━━━━━━━━━━━━━━", "━━━━━━━━━━━━━━━")
     rendered = rendered.replace("📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:\n\n", "📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:\n")
