@@ -1639,6 +1639,7 @@ def render_message(bl: dict, batch_name: str) -> str:
     rendered = re.sub(r"\n*🖇Tovar bo'yicha packing list⤵️(?:\n*🖇Tovar bo'yicha packing list⤵️)+", "\n🖇Tovar bo'yicha packing list⤵️", rendered)
     if is_customer_delivery:
         rendered = re.sub(r"\n*🖇Tovar bo'yicha packing list⤵️.*$", "", rendered, flags=re.S)
+        rendered = re.sub(r"\n━━━━━━━━━━━━━━━\s*$", "", rendered)
     return rendered.strip()
 
 
