@@ -75,6 +75,20 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 db.init_db()
 
 
+def get_group_welcome_text() -> str:
+    return (
+        "👋Assalomu alaykum hurmatli mijoz! \n\n"
+        "🤖Ushbu bot yuklaringiz bo‘yicha ma’lumotlarni tez va qulay tarzda olish uchun yaratilgan.\n\n"
+        "✅MENYUDA paydo bo'lgan \"YUK HOLATI\" tugmasini bosish orqali siz ushbu platformada quyidagi imkoniyatlardan foydalanasiz:\n\n"
+        "• yuk statusini kuzatasiz\n"
+        "• yetkazib berish jarayonini nazorat qilasiz\n"
+        "• yangilanishlarni olasiz\n"
+        "• menejer bilan bog‘lanasiz\n\n"
+        "🎥 Botdan foydalanish bo‘yicha qisqa videoqo‘llanma quyida taqdim etilgan.\n\n"
+        "Bir marta ko‘rib chiqish tavsiya etiladi 👇"
+    )
+
+
 def login_required(func):
     @wraps(func)
     def decorated(*args, **kwargs):
@@ -425,6 +439,7 @@ def handle_bl_lookup(chat_id, raw_code: str):
 def handle_telegram_message(message: dict):
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
+    chat_type = chat.get("type")
     text = (message.get("text") or "").strip()
 
     remember_group_chat(chat, is_active=True)
@@ -436,8 +451,9 @@ def handle_telegram_message(message: dict):
         db.clear_chat_state(chat_id)
         telegram_send_message(
             chat_id,
-            "Привет!\n\n"
-            "Нажми кнопку ниже, чтобы узнать текущий статус своего груза.",
+            get_group_welcome_text()
+            if chat_type in {"group", "supergroup"}
+            else "Привет!\n\nНажми кнопку ниже, чтобы узнать текущий статус своего груза.",
             reply_markup=MAIN_REPLY_MARKUP,
         )
         return
@@ -491,6 +507,7 @@ def handle_my_chat_member_update(chat_update: dict):
     if chat_type not in {"group", "supergroup"}:
         return
 
+    old_status = ((chat_update.get("old_chat_member") or {}).get("status") or "").lower()
     new_status = ((chat_update.get("new_chat_member") or {}).get("status") or "").lower()
     is_active = new_status not in {"left", "kicked"}
     remember_group_chat(chat, is_active=is_active)
@@ -498,6 +515,12 @@ def handle_my_chat_member_update(chat_update: dict):
         return
     if not is_active:
         clear_group_reply_keyboard(chat_id)
+        return
+    if new_status in {"member", "administrator"} and old_status in {"", "left", "kicked"}:
+        try:
+            telegram_send_message(chat_id, get_group_welcome_text(), reply_markup=MAIN_REPLY_MARKUP)
+        except Exception:
+            pass
 
 
 def send_bl_package(bl: dict, batch_name: str):
