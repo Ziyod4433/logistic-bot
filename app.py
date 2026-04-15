@@ -54,8 +54,8 @@ FILE_PREFIX = "file"
 MAIN_REPLY_MARKUP = {
     "keyboard": [[{"text": TRACK_BUTTON}]],
     "resize_keyboard": True,
-    "one_time_keyboard": True,
-    "is_persistent": False,
+    "one_time_keyboard": False,
+    "is_persistent": True,
 }
 
 CANCEL_REPLY_MARKUP = {
