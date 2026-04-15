@@ -35,6 +35,7 @@ STATUSES = [
     "Saryagash",
     "Yallama",
     "Toshkent(Chuqursoy ULS da)",
+    "Р”РѕСЃС‚Р°РІР»РµРЅ",
     "Kashgar (Qirg'iz)",
     "Irkeshtam",
     "Osh",
@@ -45,7 +46,27 @@ STATUSES = [
 
 LEGACY_DELIVERED_STATUS = STATUSES[-1]
 DELIVERED_STATUS = "Mijozga yetkazib berildi"
-STATUSES = [DELIVERED_STATUS if item == LEGACY_DELIVERED_STATUS else item for item in STATUSES]
+STATUSES = [
+    "Xitoy",
+    "Yiwu",
+    "Zhongshan",
+    "Horgos (Qozoq)",
+    "Nurjo'li",
+    "Jarkent",
+    "Almata",
+    "Taraz",
+    "Shimkent",
+    "Qonusbay",
+    "Saryagash",
+    "Yallama",
+    "Toshkent(Chuqursoy ULS da)",
+    DELIVERED_STATUS,
+    "Kashgar (Qirg'iz)",
+    "Irkeshtam",
+    "Osh",
+    "Dostlik",
+    "Andijon",
+]
 
 PROBLEM_TYPES = {
     "damage": "Shikastlanish",
