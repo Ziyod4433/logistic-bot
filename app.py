@@ -400,7 +400,10 @@ def remember_group_chat(chat: dict, is_active: bool = True):
 
 def send_bl_status(chat_id, bl: dict):
     text = db.render_message(bl, bl["batch_name"])
-    telegram_send_message(chat_id, text, reply_markup=bl_file_markup(bl["id"]) or MAIN_REPLY_MARKUP)
+    batch = db.get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
+    show_packing_list = not db.is_customer_delivery_eta((batch or {}).get("eta_destination") or "")
+    reply_markup = bl_file_markup(bl["id"]) if show_packing_list else None
+    telegram_send_message(chat_id, text, reply_markup=reply_markup or MAIN_REPLY_MARKUP)
 
 
 def send_requested_file(chat_id, file_info: dict | None):
@@ -474,10 +477,19 @@ def handle_telegram_message(message: dict):
             return
 
     if text == TRACK_BUTTON:
+        latest_active_bl = db.find_latest_active_bl_by_chat(chat_id)
+        if latest_active_bl:
+            db.clear_chat_state(chat_id)
+            send_bl_status(chat_id, latest_active_bl)
+            return
         latest_bl = db.find_latest_bl_by_chat(chat_id)
         if latest_bl:
             db.clear_chat_state(chat_id)
-            send_bl_status(chat_id, latest_bl)
+            telegram_send_message(
+                chat_id,
+                "Hozirgi vaqtda yo'lda kelayotkan yukingiz mavjud emas",
+                reply_markup=MAIN_REPLY_MARKUP,
+            )
             return
         db.set_chat_state(chat_id, STATE_WAITING_BL)
         telegram_send_message(

@@ -60,7 +60,6 @@ STATUSES = [
     "Saryagash",
     "Yallama",
     "Toshkent(Chuqursoy ULS da)",
-    DELIVERED_STATUS,
     "Kashgar (Qirg'iz)",
     "Irkeshtam",
     "Osh",
@@ -226,6 +225,10 @@ def _eta_destination_label(value: str) -> str:
         _normalize_eta_destination(value),
         ETA_DESTINATION_LABELS[DEFAULT_ETA_DESTINATION],
     )
+
+
+def is_customer_delivery_eta(value: str) -> bool:
+    return _normalize_eta_destination(value) == "Mijozga yetib borish"
 
 
 def _is_delivered_status(value: str) -> bool:
@@ -1162,6 +1165,24 @@ def find_latest_bl_by_chat(chat_id):
     return dict(row) if row else None
 
 
+def find_latest_active_bl_by_chat(chat_id):
+    conn = get_conn()
+    row = conn.execute(
+        """
+        SELECT bl.*, b.name AS batch_name
+        FROM bl_codes bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE bl.chat_id = ?
+          AND COALESCE(b.client_delivery_date, '') = ''
+        ORDER BY bl.created_at DESC
+        LIMIT 1
+        """,
+        (str(chat_id),),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def update_bl(
     bl_id,
     code,
@@ -1521,14 +1542,21 @@ def _message_status_label(status: str) -> str:
     return value
 
 
-def _apply_delivered_message_note(rendered: str, is_delivered: bool) -> str:
-    if not is_delivered:
+def _apply_customer_delivery_note(rendered: str, show_note: bool) -> str:
+    if not show_note:
         return rendered
     note = (
         "❗️Eslatma\n"
         "-<b>Hurmatli mijoz, yukni qabul qilib olganingizdan so‘ng 2–3 kun ichida uni tekshirishingizni so‘raymiz.\n"
-        "Yuqorida ko‘rsatilgan muddatdan kechikkan taqdirda, kompensatsiya jarayoni cho‘zilishi mumkin.</b>\n"
+        "Agarda shikast yetkan yukingiz bo'lsa ko‘rsatilgan muddatdan kechikmagan holda habar berishingiz so'raymiz,aks xolda kompensatsiya jarayoni cho‘zilishi mumkin.</b>\n"
     )
+    if re.search(r"(⏳[^\n]*:\n-[^\n]+\n?)", rendered):
+        return re.sub(
+            r"(⏳[^\n]*:\n-[^\n]+\n?)",
+            r"\1\n" + note,
+            rendered,
+            count=1,
+        )
     return re.sub(
         r"(📍\s*Joriy holati:\n-[^\n]+\n?)",
         r"\1\n" + note,
@@ -1554,7 +1582,6 @@ def render_message(bl: dict, batch_name: str) -> str:
     template = template.replace("{status_detail}\n\n", "")
     template = template.replace("{status_detail}", "")
     status = bl.get("status", "Xitoy")
-    is_delivered = _is_delivered_status(status)
     cargo_type = (bl.get("cargo_type") or "").strip()
     weight_value = _to_float(bl.get("weight_kg"))
     volume_value = _to_float(bl.get("volume_cbm"))
@@ -1562,11 +1589,13 @@ def render_message(bl: dict, batch_name: str) -> str:
     description = (bl.get("cargo_description") or "").strip()
     expected_date = (bl.get("expected_date") or "").strip()
     actual_date = (bl.get("actual_date") or "").strip()
-    packing_list = format_packing_list(bl.get("id"))
     batch = get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
+    eta_destination = ((batch or {}).get("eta_destination") or "").strip()
+    is_customer_delivery = is_customer_delivery_eta(eta_destination)
+    packing_list = "" if is_customer_delivery else format_packing_list(bl.get("id"))
     arrival_eta = ((batch or {}).get("eta_to_toshkent") or "").strip()
-    arrival_eta_value = "" if is_delivered else (arrival_eta or expected_date)
-    arrival_eta_label = _eta_destination_label((batch or {}).get("eta_destination") or "")
+    arrival_eta_value = arrival_eta or expected_date
+    arrival_eta_label = _eta_destination_label(eta_destination)
     today_date = datetime.now(TASHKENT_TZ).strftime("%d.%m.%Y")
 
     context = _TemplateContext(
@@ -1600,9 +1629,7 @@ def render_message(bl: dict, batch_name: str) -> str:
         rendered,
         count=1,
     )
-    if is_delivered:
-        rendered = re.sub(r"\n*⏳[^\n]*:\n-[^\n]*\n?", "\n", rendered, count=1)
-    rendered = _apply_delivered_message_note(rendered, is_delivered)
+    rendered = _apply_customer_delivery_note(rendered, is_customer_delivery)
     rendered = re.sub(r"\n{3,}", "\n\n", rendered)
     rendered = rendered.replace("━━━━━━━━━━━━━━━━━━━", "━━━━━━━━━━━━━━━")
     rendered = rendered.replace("📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:\n\n", "📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:\n")
@@ -1610,6 +1637,8 @@ def render_message(bl: dict, batch_name: str) -> str:
     rendered = rendered.replace("📲 @Ziyodilla_Tracking_Manager\n\n━━━━━━━━━━━━━━━", "📲 @Ziyodilla_Tracking_Manager\n━━━━━━━━━━━━━━━")
     rendered = rendered.replace("━━━━━━━━━━━━━━━\n\n🖇Tovar bo'yicha packing list⤵️", "━━━━━━━━━━━━━━━\n🖇Tovar bo'yicha packing list⤵️")
     rendered = re.sub(r"\n*🖇Tovar bo'yicha packing list⤵️(?:\n*🖇Tovar bo'yicha packing list⤵️)+", "\n🖇Tovar bo'yicha packing list⤵️", rendered)
+    if is_customer_delivery:
+        rendered = re.sub(r"\n*🖇Tovar bo'yicha packing list⤵️.*$", "", rendered, flags=re.S)
     return rendered.strip()
 
 
