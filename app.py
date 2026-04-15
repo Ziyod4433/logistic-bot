@@ -110,7 +110,17 @@ def get_group_welcome_text(button_text: str | None = None) -> str:
         "• yangilanishlarni olasiz\n"
         "• menejer bilan bog‘lanasiz\n\n"
         "🎥 Botdan foydalanish bo‘yicha qisqa videoqo‘llanma quyida taqdim etilgan.\n\n"
-        "Bir marta ko‘rib chiqish tavsiya etiladi 👇"
+        "Bir marta ko‘rib chiqish tavsiya etiladi 👇\n\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "👋Здравствуйте, уважаемый клиент!\n\n"
+        "🤖Этот бот создан для того, чтобы вы могли быстро и удобно получать информацию по вашим грузам.\n\n"
+        f"✅Нажав на появившуюся в МЕНЮ кнопку \"{button_text}\", вы сможете:\n\n"
+        "• отслеживать статус груза\n"
+        "• контролировать процесс доставки\n"
+        "• получать обновления\n"
+        "• связываться с менеджером\n\n"
+        "🎥 Ниже представлена короткая видеоинструкция по использованию бота.\n\n"
+        "Рекомендуем посмотреть её один раз 👇"
     )
 
 
