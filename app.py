@@ -197,6 +197,21 @@ def telegram_unix_to_local(value) -> str:
         return db.current_ts()
 
 
+def get_responsible_response_role(bl: dict | None, sender_id: str, admin_ids: set[str] | None = None) -> str:
+    sender_value = str(sender_id or "").strip()
+    if not sender_value:
+        return ""
+    moderator_id = str((bl or {}).get("moderator_tg_id") or "").strip()
+    sales_manager_id = str((bl or {}).get("sales_manager_tg_id") or "").strip()
+    if moderator_id and sender_value == moderator_id:
+        return "moderator"
+    if sales_manager_id and sender_value == sales_manager_id:
+        return "sales_manager"
+    if not moderator_id and not sales_manager_id and admin_ids and sender_value in admin_ids:
+        return "moderator"
+    return ""
+
+
 def track_moderator_response_metrics(message: dict):
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
@@ -226,6 +241,8 @@ def track_moderator_response_metrics(message: dict):
         "bl_id": linked_bl.get("id") if linked_bl else None,
         "batch_id": linked_bl.get("batch_id") if linked_bl else None,
         "batch_name": linked_bl.get("batch_name") if linked_bl else "",
+        "assigned_moderator_id": linked_bl.get("moderator_tg_id") if linked_bl else "",
+        "assigned_sales_manager_id": linked_bl.get("sales_manager_tg_id") if linked_bl else "",
     }
 
     normalized_text = text.strip()
@@ -249,11 +266,8 @@ def track_moderator_response_metrics(message: dict):
             requested_at=telegram_unix_to_local(reply_to.get("date")),
         )
 
-        should_mark_answer = is_admin_sender or (admin_ids and reply_sender_id_str not in admin_ids and sender_id_str in admin_ids)
-        if not admin_ids:
-            should_mark_answer = True
-
-        if should_mark_answer:
+        response_role = get_responsible_response_role(linked_bl, sender_id_str, admin_ids)
+        if response_role:
             db.mark_moderator_response(
                 chat_id=chat_id,
                 request_message_id=reply_to.get("message_id"),
@@ -262,10 +276,11 @@ def track_moderator_response_metrics(message: dict):
                 responder_username=sender.get("username") or "",
                 response_text=normalized_text,
                 responded_at=telegram_unix_to_local(message.get("date")),
+                response_role=response_role,
             )
         return
 
-    if is_admin_sender:
+    if is_admin_sender or get_responsible_response_role(linked_bl, sender_id_str, admin_ids):
         return
 
     db.record_moderator_request(
@@ -947,6 +962,8 @@ def api_add_bl():
     client_name = (data.get("client_name") or "").strip()
     chat_id = (data.get("chat_id") or "").strip()
     message_language = (data.get("message_language") or "").strip()
+    moderator_tg_id = (data.get("moderator_tg_id") or "").strip()
+    sales_manager_tg_id = (data.get("sales_manager_tg_id") or "").strip()
     cargo_type = (data.get("cargo_type") or "").strip()
     weight_kg = data.get("weight_kg", 0)
     volume_cbm = data.get("volume_cbm", 0)
@@ -961,6 +978,8 @@ def api_add_bl():
         code,
         client_name,
         chat_id,
+        moderator_tg_id,
+        sales_manager_tg_id,
         cargo_type,
         weight_kg,
         volume_cbm,
@@ -984,6 +1003,8 @@ def api_update_bl(bl_id):
             data.get("client_name", ""),
             data.get("chat_id", ""),
             data.get("status"),
+            data.get("moderator_tg_id", ""),
+            data.get("sales_manager_tg_id", ""),
             data.get("cargo_type", ""),
             data.get("weight_kg", 0),
             data.get("volume_cbm", 0),
@@ -1464,6 +1485,7 @@ def api_moderator_response():
             status=(request.args.get("status") or "").strip(),
             date_from=(request.args.get("date_from") or "").strip(),
             date_to=(request.args.get("date_to") or "").strip(),
+            role=(request.args.get("role") or "").strip(),
             limit=int(request.args.get("limit", 300)),
         )
     )

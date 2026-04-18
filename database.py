@@ -387,6 +387,8 @@ def init_db():
             chat_id TEXT DEFAULT '',
             status TEXT DEFAULT 'Xitoy',
             message_language TEXT DEFAULT 'uz_latn',
+            moderator_tg_id TEXT DEFAULT '',
+            sales_manager_tg_id TEXT DEFAULT '',
             cargo_type TEXT DEFAULT '',
             weight_kg REAL NOT NULL DEFAULT 0,
             volume_cbm REAL NOT NULL DEFAULT 0,
@@ -542,12 +544,15 @@ def init_db():
             batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
             batch_name TEXT NOT NULL DEFAULT '',
             requested_at TEXT NOT NULL DEFAULT '',
+            assigned_moderator_id TEXT NOT NULL DEFAULT '',
+            assigned_sales_manager_id TEXT NOT NULL DEFAULT '',
             responded_at TEXT NOT NULL DEFAULT '',
             responder_user_id TEXT NOT NULL DEFAULT '',
             responder_name TEXT NOT NULL DEFAULT '',
             responder_username TEXT NOT NULL DEFAULT '',
             response_text TEXT NOT NULL DEFAULT '',
             response_seconds INTEGER NOT NULL DEFAULT 0,
+            response_role TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'open',
             UNIQUE(chat_id, request_message_id)
         );
@@ -576,6 +581,8 @@ def init_db():
         ("quantity_places", "INTEGER NOT NULL DEFAULT 0"),
         ("cargo_description", "TEXT DEFAULT ''"),
         ("message_language", "TEXT DEFAULT 'uz_latn'"),
+        ("moderator_tg_id", "TEXT DEFAULT ''"),
+        ("sales_manager_tg_id", "TEXT DEFAULT ''"),
         ("expected_date", "TEXT DEFAULT ''"),
         ("actual_date", "TEXT DEFAULT ''"),
         ("status_updated_at", "TEXT DEFAULT ''"),
@@ -600,6 +607,15 @@ def init_db():
     for column_name, column_def in communication_rating_columns:
         if not _table_has_column(conn, "communication_ratings", column_name):
             conn.execute(f"ALTER TABLE communication_ratings ADD COLUMN {column_name} {column_def}")
+
+    moderator_request_columns = [
+        ("assigned_moderator_id", "TEXT NOT NULL DEFAULT ''"),
+        ("assigned_sales_manager_id", "TEXT NOT NULL DEFAULT ''"),
+        ("response_role", "TEXT NOT NULL DEFAULT ''"),
+    ]
+    for column_name, column_def in moderator_request_columns:
+        if not _table_has_column(conn, "moderator_response_requests", column_name):
+            conn.execute(f"ALTER TABLE moderator_response_requests ADD COLUMN {column_name} {column_def}")
 
     conn.execute(
         """
@@ -1057,6 +1073,8 @@ def record_moderator_request(
     batch_id=None,
     batch_name="",
     requested_at="",
+    assigned_moderator_id="",
+    assigned_sales_manager_id="",
 ):
     if not chat_id or request_message_id in (None, ""):
         return False
@@ -1067,9 +1085,10 @@ def record_moderator_request(
             INSERT OR IGNORE INTO moderator_response_requests(
                 chat_id, chat_title, request_message_id,
                 request_user_id, request_user_name, request_username, request_text,
-                bl_id, batch_id, batch_name, requested_at
+                bl_id, batch_id, batch_name, requested_at,
+                assigned_moderator_id, assigned_sales_manager_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(chat_id).strip(),
@@ -1083,6 +1102,8 @@ def record_moderator_request(
                 batch_id,
                 (batch_name or "").strip(),
                 (requested_at or current_ts()).strip(),
+                str(assigned_moderator_id or "").strip(),
+                str(assigned_sales_manager_id or "").strip(),
             ),
         )
         conn.commit()
@@ -1099,6 +1120,7 @@ def mark_moderator_response(
     responder_username="",
     response_text="",
     responded_at="",
+    response_role="",
 ):
     if not chat_id or request_message_id in (None, ""):
         return False
@@ -1134,6 +1156,7 @@ def mark_moderator_response(
                 responder_username = ?,
                 response_text = ?,
                 response_seconds = ?,
+                response_role = ?,
                 status = 'answered'
             WHERE id = ?
             """,
@@ -1144,6 +1167,7 @@ def mark_moderator_response(
                 (responder_username or "").strip().lstrip("@"),
                 (response_text or "").strip(),
                 response_seconds,
+                (response_role or "").strip(),
                 row["id"],
             ),
         )
@@ -1153,7 +1177,7 @@ def mark_moderator_response(
         conn.close()
 
 
-def get_moderator_response_stats(status="", date_from="", date_to="", limit=300):
+def get_moderator_response_stats(status="", date_from="", date_to="", role="", limit=300):
     conn = get_conn()
     filters = []
     params = []
@@ -1168,6 +1192,19 @@ def get_moderator_response_stats(status="", date_from="", date_to="", limit=300)
     if (date_to or "").strip():
         filters.append("date(mr.requested_at) <= date(?)")
         params.append((date_to or "").strip())
+
+    normalized_role = (role or "").strip().lower()
+    role_assignment_sql = ""
+    if normalized_role == "moderator":
+        role_assignment_sql = "COALESCE(mr.assigned_moderator_id, '') != ''"
+    elif normalized_role == "sales_manager":
+        role_assignment_sql = "COALESCE(mr.assigned_sales_manager_id, '') != ''"
+
+    if role_assignment_sql:
+        filters.append(
+            f"((mr.status = 'open' AND {role_assignment_sql}) OR mr.response_role = ?)"
+        )
+        params.append(normalized_role)
 
     where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
 
@@ -1231,6 +1268,7 @@ def get_moderator_response_stats(status="", date_from="", date_to="", limit=300)
             "avg_response_seconds": _to_float(summary["avg_response_seconds"]) if summary and summary["avg_response_seconds"] is not None else 0,
             "avg_response_label": format_response_duration(summary["avg_response_seconds"]) if summary and summary["avg_response_seconds"] is not None else "0 min",
         },
+        "role": normalized_role,
         "rows": row_dicts,
     }
 
@@ -1447,6 +1485,8 @@ def add_bl(
     code,
     client_name="",
     chat_id="",
+    moderator_tg_id="",
+    sales_manager_tg_id="",
     cargo_type="",
     weight_kg=0,
     volume_cbm=0,
@@ -1471,10 +1511,10 @@ def add_bl(
         conn.execute(
             """
             INSERT INTO bl_codes(
-                batch_id, code, client_name, chat_id, status, message_language, cargo_type, weight_kg, volume_cbm, quantity_places,
-                cargo_description, expected_date, actual_date, status_updated_at
+                batch_id, code, client_name, chat_id, status, message_language, moderator_tg_id, sales_manager_tg_id,
+                cargo_type, weight_kg, volume_cbm, quantity_places, cargo_description, expected_date, actual_date, status_updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 batch_id,
@@ -1483,6 +1523,8 @@ def add_bl(
                 chat_id.strip(),
                 batch_status,
                 _normalize_message_language(message_language),
+                str(moderator_tg_id or "").strip(),
+                str(sales_manager_tg_id or "").strip(),
                 (cargo_type or "").strip(),
                 _to_float(weight_kg),
                 _to_float(volume_cbm),
@@ -1587,6 +1629,8 @@ def update_bl(
     client_name,
     chat_id,
     status=None,
+    moderator_tg_id="",
+    sales_manager_tg_id="",
     cargo_type="",
     weight_kg=0,
     volume_cbm=0,
@@ -1631,6 +1675,8 @@ def update_bl(
             chat_id = ?,
             status = ?,
             message_language = ?,
+            moderator_tg_id = ?,
+            sales_manager_tg_id = ?,
             cargo_type = ?,
             weight_kg = ?,
             volume_cbm = ?,
@@ -1648,6 +1694,8 @@ def update_bl(
             chat_id.strip(),
             effective_status,
             _normalize_message_language(message_language),
+            str(moderator_tg_id or "").strip(),
+            str(sales_manager_tg_id or "").strip(),
             (cargo_type or "").strip(),
             _to_float(weight_kg),
             _to_float(volume_cbm),

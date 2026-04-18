@@ -1238,9 +1238,13 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <div class="page-h">Скорость ответа <em>/ Moderator</em></div>
 
         <div class="card">
-          <div class="card-h">
-            <span class="card-title">Реакция на сообщения клиентов</span>
-            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <div class="card-h">
+        <span class="card-title">Реакция на сообщения клиентов</span>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <select class="inp" id="moderator-response-role" style="margin:0;min-width:220px" onchange="loadModeratorResponsePage()">
+                <option value="moderator">Статистика модератора</option>
+                <option value="sales_manager">Статистика менеджера по продажам</option>
+              </select>
               <select class="inp" id="moderator-response-status" style="margin:0;min-width:180px" onchange="loadModeratorResponsePage()">
                 <option value="">Все обращения</option>
                 <option value="open">Без ответа</option>
@@ -1260,8 +1264,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <div class="info-grid-3" style="margin-top:12px">
               <div class="mini-stat"><div class="mini-stat-v" id="mr-average">0 min</div><div class="mini-stat-l">Среднее время ответа</div></div>
             </div>
-            <div class="kpi-note" style="margin-top:12px">
-              Считается только когда клиент пишет в группу, а модератор отвечает reply-ответом на сообщение. Модератор определяется как администратор группы.
+            <div class="kpi-note" style="margin-top:12px" id="moderator-response-note">
+              Считается только когда клиент пишет в группу, а ответственный отвечает reply-ответом на сообщение. Роль определяется по Telegram ID, который указан в BL.
             </div>
           </div>
         </div>
@@ -1616,6 +1620,16 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <input class="inp mono" id="add-bl-chat" placeholder="-1001234567890">
       <div style="font-size:11px;color:var(--muted2);margin-top:5px">Поле заполнится само после выбора группы выше. При необходимости можно ввести ID вручную.</div>
     </div>
+    <div class="form-row2">
+      <div class="form-g">
+        <label>Telegram ID модератора</label>
+        <input class="inp mono" id="add-bl-moderator-id" placeholder="например: 123456789">
+      </div>
+      <div class="form-g">
+        <label>Telegram ID менеджера по продажам</label>
+        <input class="inp mono" id="add-bl-sales-manager-id" placeholder="например: 987654321">
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('add-bl-modal')">Отмена</button>
       <button class="btn btn-amber editor-only" onclick="addBL()">Добавить</button>
@@ -1648,6 +1662,16 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <label>Chat ID</label>
       <input class="inp mono" id="edit-bl-chat" placeholder="-1001234567890">
       <div style="font-size:11px;color:var(--muted2);margin-top:5px">Можно выбрать найденную группу выше или указать chat_id вручную.</div>
+    </div>
+    <div class="form-row2">
+      <div class="form-g">
+        <label>Telegram ID модератора</label>
+        <input class="inp mono" id="edit-bl-moderator-id" placeholder="например: 123456789">
+      </div>
+      <div class="form-g">
+        <label>Telegram ID менеджера по продажам</label>
+        <input class="inp mono" id="edit-bl-sales-manager-id" placeholder="например: 987654321">
+      </div>
     </div>
     <div class="form-row3">
       <div class="form-g">
@@ -2580,6 +2604,8 @@ function openAddBLModal() {
   if (!ensureEditor()) return;
   document.getElementById("add-bl-code").value = "";
   document.getElementById("add-bl-client").value = "";
+  document.getElementById("add-bl-moderator-id").value = "";
+  document.getElementById("add-bl-sales-manager-id").value = "";
   document.getElementById("add-bl-cargo-type").value = "";
   document.getElementById("add-bl-weight").value = "";
   document.getElementById("add-bl-volume").value = "";
@@ -2638,6 +2664,8 @@ async function addBL() {
   const batch_id    = document.getElementById("add-bl-batch-id").value;
   const code        = document.getElementById("add-bl-code").value.trim();
   const client_name = document.getElementById("add-bl-client").value.trim();
+  const moderator_tg_id = document.getElementById("add-bl-moderator-id").value.trim();
+  const sales_manager_tg_id = document.getElementById("add-bl-sales-manager-id").value.trim();
   const cargo_type  = document.getElementById("add-bl-cargo-type").value.trim();
   const weight_kg   = document.getElementById("add-bl-weight").value.trim();
   const volume_cbm  = document.getElementById("add-bl-volume").value.trim();
@@ -2651,6 +2679,8 @@ async function addBL() {
       batch_id:parseInt(batch_id),
       code,
       client_name,
+      moderator_tg_id,
+      sales_manager_tg_id,
       cargo_type,
       weight_kg,
       volume_cbm,
@@ -2675,6 +2705,8 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-id").value = blId;
   document.getElementById("edit-bl-code").value = bl.code || "";
   document.getElementById("edit-bl-client").value = bl.client_name||"";
+  document.getElementById("edit-bl-moderator-id").value = bl.moderator_tg_id || "";
+  document.getElementById("edit-bl-sales-manager-id").value = bl.sales_manager_tg_id || "";
   document.getElementById("edit-bl-cargo-type").value = bl.cargo_type || "";
   document.getElementById("edit-bl-weight").value = bl.weight_kg || "";
   document.getElementById("edit-bl-volume").value = bl.volume_cbm || "";
@@ -2723,6 +2755,8 @@ async function saveBL() {
     await api("/api/bl/"+id,"PUT",{
       code,
       client_name: document.getElementById("edit-bl-client").value.trim(),
+      moderator_tg_id: document.getElementById("edit-bl-moderator-id").value.trim(),
+      sales_manager_tg_id: document.getElementById("edit-bl-sales-manager-id").value.trim(),
       cargo_type: document.getElementById("edit-bl-cargo-type").value.trim(),
       weight_kg: document.getElementById("edit-bl-weight").value.trim(),
       volume_cbm: document.getElementById("edit-bl-volume").value.trim(),
@@ -3070,10 +3104,12 @@ function trimModeratorText(value, maxLength=110) {
 
 async function loadModeratorResponsePage() {
   try {
+    const role = document.getElementById("moderator-response-role")?.value || "moderator";
     const status = document.getElementById("moderator-response-status")?.value || "";
     const dateFrom = document.getElementById("moderator-response-from")?.value || "";
     const dateTo = document.getElementById("moderator-response-to")?.value || "";
     const params = new URLSearchParams();
+    if (role) params.set("role", role);
     if (status) params.set("status", status);
     if (dateFrom) params.set("date_from", dateFrom);
     if (dateTo) params.set("date_to", dateTo);
@@ -3088,6 +3124,15 @@ async function loadModeratorResponsePage() {
     document.getElementById("mr-open").textContent = summary.open_requests || 0;
     document.getElementById("mr-average").textContent = summary.avg_response_label || "0 min";
     document.getElementById("moderator-response-count").textContent = `${rows.length} строк`;
+    const titleSuffix = role === "sales_manager" ? "Менеджер по продажам" : "Модератор";
+    const pageTitle = document.querySelector("#page-moderator-response .page-h");
+    if (pageTitle) pageTitle.innerHTML = `Скорость ответа <em>/ ${titleSuffix}</em>`;
+    const note = document.getElementById("moderator-response-note");
+    if (note) {
+      note.textContent = role === "sales_manager"
+        ? "Считается только когда клиент пишет в группу, а назначенный менеджер по продажам отвечает reply-ответом на сообщение. Роль определяется по Telegram ID, который указан в BL."
+        : "Считается только когда клиент пишет в группу, а назначенный модератор отвечает reply-ответом на сообщение. Роль определяется по Telegram ID, который указан в BL.";
+    }
 
     const table = document.getElementById("moderator-response-table");
     table.innerHTML = rows.length ? rows.map(row => `
