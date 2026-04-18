@@ -1270,9 +1270,12 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <div class="card" style="margin-top:16px">
           <div class="card-h">
             <span class="card-title">Ответственные по группам</span>
-            <button class="btn btn-ghost btn-sm" onclick="loadModeratorResponsePage()">↻ Обновить</button>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-sm" id="moderator-assignments-toggle" onclick="toggleModeratorAssignments()" aria-expanded="false">▸ Развернуть</button>
+              <button class="btn btn-ghost btn-sm" onclick="loadModeratorResponsePage()">↻ Обновить</button>
+            </div>
           </div>
-          <div class="card-body">
+          <div class="card-body" id="moderator-response-assignments-wrap" style="display:none">
             <div class="kpi-note" style="margin-bottom:14px">
               В списке показываются участники, которых бот уже увидел в этой группе. Именно их можно назначать ответственными.
             </div>
@@ -3105,11 +3108,21 @@ function renderModeratorAssignmentSelect(chatId, role, selectedValue, members) {
   `;
 }
 
+function toggleModeratorAssignments(forceOpen = null) {
+  const wrap = document.getElementById("moderator-response-assignments-wrap");
+  const toggle = document.getElementById("moderator-assignments-toggle");
+  if (!wrap || !toggle) return;
+  const shouldOpen = forceOpen === null ? wrap.style.display === "none" : !!forceOpen;
+  wrap.style.display = shouldOpen ? "block" : "none";
+  toggle.textContent = shouldOpen ? "▾ Свернуть" : "▸ Развернуть";
+  toggle.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+}
+
 function renderModeratorAssignments(groups) {
   const table = document.getElementById("moderator-response-assignments");
   if (!table) return;
   if (!groups.length) {
-    table.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="empty-icon">👥</div><p>Telegram-группы пока не найдены</p></div></td></tr>`;
+    table.innerHTML = `<tr><td colspan="3"><div class="empty"><div class="empty-icon">👥</div><p>Telegram-группы пока не найдены</p></div></td></tr>`;
     return;
   }
   table.innerHTML = groups.map(group => {
