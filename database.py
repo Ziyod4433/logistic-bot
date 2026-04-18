@@ -1266,7 +1266,9 @@ def get_moderator_response_stats(status="", date_from="", date_to="", role="", l
             COUNT(*) AS total_requests,
             SUM(CASE WHEN mr.status = 'answered' THEN 1 ELSE 0 END) AS answered_requests,
             SUM(CASE WHEN mr.status = 'open' THEN 1 ELSE 0 END) AS open_requests,
-            ROUND(AVG(CASE WHEN mr.status = 'answered' THEN mr.response_seconds END), 1) AS avg_response_seconds
+            ROUND(AVG(CASE WHEN mr.status = 'answered' THEN mr.response_seconds END), 1) AS avg_response_seconds,
+            MIN(CASE WHEN mr.status = 'answered' THEN mr.response_seconds END) AS fastest_response_seconds,
+            MAX(CASE WHEN mr.status = 'answered' THEN mr.response_seconds END) AS slowest_response_seconds
         FROM moderator_response_requests mr
         {where_sql}
         """,
@@ -1319,6 +1321,10 @@ def get_moderator_response_stats(status="", date_from="", date_to="", role="", l
             "open_requests": _to_int(summary["open_requests"]) if summary else 0,
             "avg_response_seconds": _to_float(summary["avg_response_seconds"]) if summary and summary["avg_response_seconds"] is not None else 0,
             "avg_response_label": format_response_duration(summary["avg_response_seconds"]) if summary and summary["avg_response_seconds"] is not None else "0 min",
+            "fastest_response_seconds": _to_int(summary["fastest_response_seconds"]) if summary and summary["fastest_response_seconds"] is not None else 0,
+            "fastest_response_label": format_response_duration(summary["fastest_response_seconds"]) if summary and summary["fastest_response_seconds"] is not None else "—",
+            "slowest_response_seconds": _to_int(summary["slowest_response_seconds"]) if summary and summary["slowest_response_seconds"] is not None else 0,
+            "slowest_response_label": format_response_duration(summary["slowest_response_seconds"]) if summary and summary["slowest_response_seconds"] is not None else "—",
         },
         "role": normalized_role,
         "rows": row_dicts,

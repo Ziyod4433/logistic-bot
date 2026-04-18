@@ -933,7 +933,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="nav-section">Мониторинг</div>
       <div class="nav-link" onclick="goto('problems')"><span class="ico">⚠️</span> Проблемы</div>
       <div class="nav-link" onclick="goto('notifications')"><span class="ico">🔔</span> Уведомления</div>
-      <div class="nav-link" onclick="goto('moderator-response')"><span class="ico">⏱️</span> Скорость ответа</div>
+      <div class="nav-link" onclick="goto('moderator-response')"><span class="ico">⏱️</span> Mean Response Time</div>
       <div class="nav-link" onclick="goto('communication-rate')"><span class="ico">💬</span> Moderator Score</div>
       <div class="nav-section">Настройки</div>
       <div class="nav-link" onclick="goto('template')"><span class="ico">✏️</span> Шаблон</div>
@@ -1235,7 +1235,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       </div>
 
       <div class="page" id="page-moderator-response">
-        <div class="page-h">Скорость ответа <em>/ Moderator</em></div>
+        <div class="page-h">Mean Response Time <em>/ Moderator</em></div>
 
         <div class="card">
           <div class="card-h">
@@ -1260,6 +1260,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
             <div class="info-grid-3" style="margin-top:12px">
               <div class="mini-stat"><div class="mini-stat-v" id="mr-average">0 min</div><div class="mini-stat-l">Среднее время ответа</div></div>
+              <div class="mini-stat"><div class="mini-stat-v" id="mr-fastest">—</div><div class="mini-stat-l">Самый быстрый ответ</div></div>
+              <div class="mini-stat"><div class="mini-stat-v" id="mr-slowest">—</div><div class="mini-stat-l">Самый поздний ответ</div></div>
             </div>
             <div class="kpi-note" style="margin-top:12px" id="moderator-response-note">
               Считается только когда клиент пишет в группу, а ответственный отвечает reply-ответом на сообщение. Ответственный назначается для самой Telegram-группы.
@@ -1926,7 +1928,7 @@ function goto(page) {
     chats:"Telegram группы",
     problems:"Проблемы",
     notifications:"Уведомления",
-    "moderator-response":"Скорость ответа",
+    "moderator-response":"Mean Response Time",
     "communication-rate":"Moderator Score",
     template:"Шаблон сообщений",
     logs:"Логи отправки",
@@ -3192,9 +3194,11 @@ async function loadModeratorResponsePage() {
     document.getElementById("mr-answered").textContent = summary.answered_requests || 0;
     document.getElementById("mr-open").textContent = summary.open_requests || 0;
     document.getElementById("mr-average").textContent = summary.avg_response_label || "0 min";
+    document.getElementById("mr-fastest").textContent = summary.fastest_response_label || "—";
+    document.getElementById("mr-slowest").textContent = summary.slowest_response_label || "—";
     document.getElementById("moderator-response-count").textContent = `${rows.length} строк`;
     const pageTitle = document.querySelector("#page-moderator-response .page-h");
-    if (pageTitle) pageTitle.innerHTML = `Скорость ответа <em>/ Модератор</em>`;
+    if (pageTitle) pageTitle.innerHTML = `Mean Response Time <em>/ Moderator</em>`;
     const note = document.getElementById("moderator-response-note");
     if (note) {
       note.textContent = "Считается только когда клиент пишет в группу, а назначенный модератор отвечает reply-ответом на сообщение. Период выше фильтрует статистику по дате запроса.";
