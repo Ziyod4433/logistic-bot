@@ -1288,8 +1288,16 @@ def get_moderator_response_stats(status="", date_from="", date_to="", role="", l
                     LIMIT 1
                 ),
                 mr.chat_id
-            ) AS resolved_chat_title
+            ) AS resolved_chat_title,
+            COALESCE(NULLIF(req_member.display_name, ''), NULLIF(mr.request_user_name, ''), '') AS resolved_request_user_name,
+            COALESCE(NULLIF(req_member.username, ''), NULLIF(mr.request_username, ''), '') AS resolved_request_username,
+            COALESCE(NULLIF(resp_member.display_name, ''), NULLIF(mr.responder_name, ''), '') AS resolved_responder_name,
+            COALESCE(NULLIF(resp_member.username, ''), NULLIF(mr.responder_username, ''), '') AS resolved_responder_username
         FROM moderator_response_requests mr
+        LEFT JOIN telegram_chat_members req_member
+            ON req_member.chat_id = mr.chat_id AND req_member.user_id = mr.request_user_id
+        LEFT JOIN telegram_chat_members resp_member
+            ON resp_member.chat_id = mr.chat_id AND resp_member.user_id = mr.responder_user_id
         {where_sql}
         ORDER BY mr.requested_at DESC, mr.id DESC
         LIMIT ?
@@ -1302,13 +1310,13 @@ def get_moderator_response_stats(status="", date_from="", date_to="", role="", l
     for row in rows:
         item = dict(row)
         item["requester_display"] = _telegram_actor_name(
-            item.get("request_user_name"),
-            item.get("request_username"),
+            item.get("resolved_request_user_name"),
+            item.get("resolved_request_username"),
             item.get("request_user_id"),
         )
         item["responder_display"] = _telegram_actor_name(
-            item.get("responder_name"),
-            item.get("responder_username"),
+            item.get("resolved_responder_name"),
+            item.get("resolved_responder_username"),
             item.get("responder_user_id"),
         )
         item["response_duration"] = format_response_duration(item.get("response_seconds"))
