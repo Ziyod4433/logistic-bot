@@ -1293,7 +1293,10 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <div class="card">
           <div class="card-h">
             <span class="card-title">Журнал обращений</span>
-            <span id="moderator-response-count" style="font-size:12px;color:var(--muted2)"></span>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-sm editor-only" onclick="clearModeratorResponseJournal()">Очистить журнал</button>
+              <span id="moderator-response-count" style="font-size:12px;color:var(--muted2)"></span>
+            </div>
           </div>
           <table class="tbl">
             <thead><tr>
@@ -3223,6 +3226,22 @@ async function loadModeratorResponsePage() {
     `).join("") : `<tr><td colspan="8"><div class="empty"><div class="empty-icon">⏱️</div><p>Запросов по выбранным фильтрам пока нет</p></div></td></tr>`;
   } catch(e) {
     toast(e.message,"err");
+  }
+}
+
+async function clearModeratorResponseJournal() {
+  if (!IS_EDITOR) return;
+  if (!confirm("Очистить весь текущий журнал обращений? Это действие удалит все записи без возможности восстановления.")) return;
+  try {
+    const result = await api("/api/moderator-response/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    toast(`Журнал очищен: удалено ${result.deleted_count || 0} записей`);
+    await loadModeratorResponsePage();
+  } catch (e) {
+    toast(e.message, "err");
   }
 }
 

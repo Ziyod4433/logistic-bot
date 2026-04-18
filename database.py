@@ -1331,6 +1331,18 @@ def get_moderator_response_stats(status="", date_from="", date_to="", role="", l
     }
 
 
+def clear_moderator_response_requests():
+    conn = get_conn()
+    try:
+        deleted = conn.execute("SELECT COUNT(*) AS cnt FROM moderator_response_requests").fetchone()
+        conn.execute("DELETE FROM moderator_response_requests")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'moderator_response_requests'")
+        conn.commit()
+        return _to_int(deleted["cnt"]) if deleted else 0
+    finally:
+        conn.close()
+
+
 def _cargo_labels(language: str) -> dict:
     lang = _normalize_message_language(language)
     if lang == "uz_cyrl":

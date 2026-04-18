@@ -1554,6 +1554,13 @@ def api_save_moderator_response_assignments():
     return jsonify({"ok": True})
 
 
+@app.route("/api/moderator-response/clear", methods=["POST"])
+@editor_required
+def api_clear_moderator_response():
+    deleted_count = db.clear_moderator_response_requests()
+    return jsonify({"ok": True, "deleted_count": deleted_count})
+
+
 @app.route("/api/communication-rate")
 @login_required
 def api_communication_rate():
