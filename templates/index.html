@@ -933,6 +933,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="nav-section">Мониторинг</div>
       <div class="nav-link" onclick="goto('problems')"><span class="ico">⚠️</span> Проблемы</div>
       <div class="nav-link" onclick="goto('notifications')"><span class="ico">🔔</span> Уведомления</div>
+      <div class="nav-link" onclick="goto('moderator-response')"><span class="ico">⏱️</span> Скорость ответа</div>
       <div class="nav-link" onclick="goto('communication-rate')"><span class="ico">💬</span> Moderator Score</div>
       <div class="nav-section">Настройки</div>
       <div class="nav-link" onclick="goto('template')"><span class="ico">✏️</span> Шаблон</div>
@@ -1230,6 +1231,52 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           <div class="card-body">
             <div class="notif-list" id="notifications-list"></div>
           </div>
+        </div>
+      </div>
+
+      <div class="page" id="page-moderator-response">
+        <div class="page-h">Скорость ответа <em>/ Moderator</em></div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Реакция на сообщения клиентов</span>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <select class="inp" id="moderator-response-status" style="margin:0;min-width:180px" onchange="loadModeratorResponsePage()">
+                <option value="">Все обращения</option>
+                <option value="open">Без ответа</option>
+                <option value="answered">С ответом</option>
+              </select>
+              <input class="inp" type="date" id="moderator-response-from" style="margin:0;min-width:150px" onchange="loadModeratorResponsePage()">
+              <input class="inp" type="date" id="moderator-response-to" style="margin:0;min-width:150px" onchange="loadModeratorResponsePage()">
+              <button class="btn btn-ghost btn-sm" onclick="loadModeratorResponsePage()">↻ Обновить</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="info-grid-3">
+              <div class="mini-stat"><div class="mini-stat-v" id="mr-total">0</div><div class="mini-stat-l">Всего запросов</div></div>
+              <div class="mini-stat"><div class="mini-stat-v" id="mr-answered">0</div><div class="mini-stat-l">С ответом</div></div>
+              <div class="mini-stat"><div class="mini-stat-v" id="mr-open">0</div><div class="mini-stat-l">Без ответа</div></div>
+            </div>
+            <div class="info-grid-3" style="margin-top:12px">
+              <div class="mini-stat"><div class="mini-stat-v" id="mr-average">0 min</div><div class="mini-stat-l">Среднее время ответа</div></div>
+            </div>
+            <div class="kpi-note" style="margin-top:12px">
+              Считается только когда клиент пишет в группу, а модератор отвечает reply-ответом на сообщение. Модератор определяется как администратор группы.
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Журнал обращений</span>
+            <span id="moderator-response-count" style="font-size:12px;color:var(--muted2)"></span>
+          </div>
+          <table class="tbl">
+            <thead><tr>
+              <th>Группа</th><th>Клиент</th><th>Запрос</th><th>Получен</th><th>Ответил</th><th>Ответ</th><th>Время реакции</th><th>Партия</th>
+            </tr></thead>
+            <tbody id="moderator-response-table"></tbody>
+          </table>
         </div>
       </div>
 
@@ -1856,6 +1903,7 @@ function goto(page) {
     chats:"Telegram группы",
     problems:"Проблемы",
     notifications:"Уведомления",
+    "moderator-response":"Скорость ответа",
     "communication-rate":"Moderator Score",
     template:"Шаблон сообщений",
     logs:"Логи отправки",
@@ -1869,6 +1917,7 @@ function goto(page) {
   if (page==="chats")      loadChatsPage();
   if (page==="problems")   loadProblemsPage();
   if (page==="notifications") loadNotificationsPage();
+  if (page==="moderator-response") loadModeratorResponsePage();
   if (page==="communication-rate") loadCommunicationRatePage();
   if (page==="template")   loadTemplate();
   if (page==="logs")       loadLogs();
@@ -1886,6 +1935,7 @@ function refreshPage() {
   else if (id==="chats") loadChatsPage();
   else if (id==="problems") loadProblemsPage();
   else if (id==="notifications") loadNotificationsPage();
+  else if (id==="moderator-response") loadModeratorResponsePage();
   else if (id==="communication-rate") loadCommunicationRatePage();
   else if (id==="logs")  loadLogs();
   else if (id==="login-history") loadLoginHistory();
@@ -2995,6 +3045,69 @@ async function loadNotificationsPage() {
       </div>`).join("") :
       `<div class="empty" style="padding:16px"><div class="empty-icon">🔔</div><p>Новых уведомлений нет</p></div>`;
   } catch(e) { toast(e.message,"err"); }
+}
+
+function formatModeratorActor(name, username, userId) {
+  const title = String(name || "").trim() || (String(username || "").trim() ? `@${String(username || "").trim()}` : String(userId || "").trim());
+  const meta = String(username || "").trim()
+    ? `@${esc(String(username || "").trim())}`
+    : (String(userId || "").trim() ? `ID ${esc(String(userId || "").trim())}` : "");
+  if (!title) return `<span style="color:var(--muted)">—</span>`;
+  return `
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <span style="font-weight:600">${esc(title)}</span>
+      ${meta ? `<span class="mono" style="font-size:11px;color:var(--muted2)">${meta}</span>` : ""}
+    </div>
+  `;
+}
+
+function trimModeratorText(value, maxLength=110) {
+  const text = String(value || "").trim();
+  if (!text) return `<span style="color:var(--muted)">—</span>`;
+  if (text.length <= maxLength) return esc(text);
+  return `${esc(text.slice(0, maxLength - 1))}…`;
+}
+
+async function loadModeratorResponsePage() {
+  try {
+    const status = document.getElementById("moderator-response-status")?.value || "";
+    const dateFrom = document.getElementById("moderator-response-from")?.value || "";
+    const dateTo = document.getElementById("moderator-response-to")?.value || "";
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (dateTo) params.set("date_to", dateTo);
+    params.set("limit", "300");
+
+    const data = await api("/api/moderator-response" + (params.toString() ? `?${params.toString()}` : ""));
+    const summary = data.summary || {};
+    const rows = data.rows || [];
+
+    document.getElementById("mr-total").textContent = summary.total_requests || 0;
+    document.getElementById("mr-answered").textContent = summary.answered_requests || 0;
+    document.getElementById("mr-open").textContent = summary.open_requests || 0;
+    document.getElementById("mr-average").textContent = summary.avg_response_label || "0 min";
+    document.getElementById("moderator-response-count").textContent = `${rows.length} строк`;
+
+    const table = document.getElementById("moderator-response-table");
+    table.innerHTML = rows.length ? rows.map(row => `
+      <tr>
+        <td>
+          <div style="font-weight:600">${esc(row.resolved_chat_title || row.chat_title || row.chat_id || "—")}</div>
+          <div class="mono" style="font-size:11px;color:var(--muted2)">${esc(row.chat_id || "")}</div>
+        </td>
+        <td>${formatModeratorActor(row.request_user_name, row.request_username, row.request_user_id)}</td>
+        <td style="max-width:280px">${trimModeratorText(row.request_text)}</td>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(row.requested_at || "—")}</td>
+        <td>${row.status === "answered" ? formatModeratorActor(row.responder_name, row.responder_username, row.responder_user_id) : `<span style="color:var(--muted)">—</span>`}</td>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${row.responded_at ? esc(row.responded_at) : `<span style="color:var(--muted)">ожидается</span>`}</td>
+        <td>${row.status === "answered" ? `<span class="badge badge-green">${esc(row.response_duration || "0 min")}</span>` : `<span class="badge badge-amber">в ожидании</span>`}</td>
+        <td>${row.batch_name ? `<div style="font-weight:600">${esc(row.batch_name)}</div>${row.bl_id ? `<div class="mono" style="font-size:11px;color:var(--muted2)">BL linked</div>` : ""}` : `<span style="color:var(--muted)">—</span>`}</td>
+      </tr>
+    `).join("") : `<tr><td colspan="8"><div class="empty"><div class="empty-icon">⏱️</div><p>Запросов по выбранным фильтрам пока нет</p></div></td></tr>`;
+  } catch(e) {
+    toast(e.message,"err");
+  }
 }
 
 function getCommunicationMonthValue() {

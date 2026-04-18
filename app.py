@@ -2,6 +2,8 @@
 import os
 import secrets
 import re
+import time
+from datetime import datetime
 from functools import wraps
 
 import mimetypes
@@ -39,6 +41,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").strip()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 PORT = int(os.getenv("PORT", "5000"))
+CHAT_ADMIN_CACHE_TTL = 300
+CHAT_ADMIN_CACHE = {}
 
 ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
@@ -132,6 +136,149 @@ def get_group_welcome_text(button_text: str | None = None) -> str:
 def get_no_active_cargo_text(language: str | None = None) -> str:
     normalized_language = normalize_message_language(language)
     return NO_ACTIVE_CARGO_MESSAGES.get(normalized_language, NO_ACTIVE_CARGO_MESSAGES["uz_latn"])
+
+
+def get_chat_admin_ids(chat_id):
+    cache_key = str(chat_id)
+    cached = CHAT_ADMIN_CACHE.get(cache_key)
+    now = time.time()
+    if cached and now - cached.get("loaded_at", 0) < CHAT_ADMIN_CACHE_TTL:
+        return cached.get("admin_ids", set())
+
+    admin_ids = set()
+    try:
+        payload = telegram_api("getChatAdministrators", json={"chat_id": chat_id})
+        for member in (payload or {}).get("result", []):
+            user = member.get("user") or {}
+            user_id = user.get("id")
+            if user_id is not None:
+                admin_ids.add(str(user_id))
+    except Exception:
+        if cached:
+            return cached.get("admin_ids", set())
+    CHAT_ADMIN_CACHE[cache_key] = {"loaded_at": now, "admin_ids": admin_ids}
+    return admin_ids
+
+
+def extract_telegram_message_text(message: dict) -> str:
+    text = (message.get("text") or message.get("caption") or "").strip()
+    if text:
+        return text
+    if message.get("photo"):
+        return "[photo]"
+    if message.get("video"):
+        return "[video]"
+    if message.get("voice"):
+        return "[voice]"
+    if message.get("audio"):
+        return "[audio]"
+    if message.get("sticker"):
+        return "[sticker]"
+    document = message.get("document") or {}
+    if document:
+        filename = (document.get("file_name") or "").strip()
+        return f"[document] {filename}".strip()
+    return ""
+
+
+def telegram_user_name(user: dict) -> str:
+    if not user:
+        return ""
+    full_name = " ".join(
+        part for part in [user.get("first_name") or "", user.get("last_name") or ""] if part
+    ).strip()
+    return full_name or ""
+
+
+def telegram_unix_to_local(value) -> str:
+    try:
+        return datetime.fromtimestamp(int(value), db.TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return db.current_ts()
+
+
+def track_moderator_response_metrics(message: dict):
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    chat_type = chat.get("type")
+    if chat_type not in {"group", "supergroup"} or not chat_id:
+        return
+
+    sender = message.get("from") or {}
+    sender_id = sender.get("id")
+    if sender.get("is_bot") or sender_id is None:
+        return
+
+    text = extract_telegram_message_text(message)
+    if not text:
+        return
+
+    admin_ids = get_chat_admin_ids(chat_id)
+    sender_id_str = str(sender_id)
+    is_admin_sender = sender_id_str in admin_ids if admin_ids else False
+    reply_to = message.get("reply_to_message") or {}
+    reply_sender = reply_to.get("from") or {}
+    reply_sender_id = reply_sender.get("id")
+    reply_sender_id_str = str(reply_sender_id) if reply_sender_id is not None else ""
+
+    linked_bl = db.find_latest_active_bl_by_chat(chat_id) or db.find_latest_bl_by_chat(chat_id)
+    linked_context = {
+        "bl_id": linked_bl.get("id") if linked_bl else None,
+        "batch_id": linked_bl.get("batch_id") if linked_bl else None,
+        "batch_name": linked_bl.get("batch_name") if linked_bl else "",
+    }
+
+    normalized_text = text.strip()
+    if normalized_text in TRACK_BUTTON_TEXTS or normalized_text == CANCEL_BUTTON:
+        return
+    if normalized_text.startswith("/start") or normalized_text.startswith("/chatid"):
+        return
+    if re.match(r"^/([A-Za-z0-9_]+)(?:@\w+)?$", normalized_text):
+        return
+
+    if reply_to and reply_sender_id_str and reply_sender_id_str != sender_id_str and not reply_sender.get("is_bot"):
+        db.record_moderator_request(
+            chat_id=chat_id,
+            chat_title=chat.get("title") or "",
+            request_message_id=reply_to.get("message_id"),
+            request_user_id=reply_sender_id_str,
+            request_user_name=telegram_user_name(reply_sender),
+            request_username=reply_sender.get("username") or "",
+            request_text=extract_telegram_message_text(reply_to),
+            **linked_context,
+            requested_at=telegram_unix_to_local(reply_to.get("date")),
+        )
+
+        should_mark_answer = is_admin_sender or (admin_ids and reply_sender_id_str not in admin_ids and sender_id_str in admin_ids)
+        if not admin_ids:
+            should_mark_answer = True
+
+        if should_mark_answer:
+            db.mark_moderator_response(
+                chat_id=chat_id,
+                request_message_id=reply_to.get("message_id"),
+                responder_user_id=sender_id_str,
+                responder_name=telegram_user_name(sender),
+                responder_username=sender.get("username") or "",
+                response_text=normalized_text,
+                responded_at=telegram_unix_to_local(message.get("date")),
+            )
+        return
+
+    if is_admin_sender:
+        return
+
+    db.record_moderator_request(
+        chat_id=chat_id,
+        chat_title=chat.get("title") or "",
+        request_message_id=message.get("message_id"),
+        request_user_id=sender_id_str,
+        request_user_name=telegram_user_name(sender),
+        request_username=sender.get("username") or "",
+        request_text=normalized_text,
+        **linked_context,
+        requested_at=telegram_unix_to_local(message.get("date")),
+    )
 
 
 def login_required(func):
@@ -706,6 +853,7 @@ def telegram_webhook():
 
     message = update.get("message") or update.get("edited_message")
     if message:
+        track_moderator_response_metrics(message)
         handle_telegram_message(message)
     return jsonify({"ok": True})
 
@@ -1306,6 +1454,19 @@ def api_client_detail(client_name):
 def api_notifications():
     limit = int(request.args.get("limit", 30))
     return jsonify(db.get_notifications(limit))
+
+
+@app.route("/api/moderator-response")
+@login_required
+def api_moderator_response():
+    return jsonify(
+        db.get_moderator_response_stats(
+            status=(request.args.get("status") or "").strip(),
+            date_from=(request.args.get("date_from") or "").strip(),
+            date_to=(request.args.get("date_to") or "").strip(),
+            limit=int(request.args.get("limit", 300)),
+        )
+    )
 
 
 @app.route("/api/communication-rate")

@@ -528,6 +528,29 @@ def init_db():
             user_agent TEXT NOT NULL DEFAULT '',
             logged_at TEXT NOT NULL DEFAULT ''
         );
+
+        CREATE TABLE IF NOT EXISTS moderator_response_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            chat_title TEXT NOT NULL DEFAULT '',
+            request_message_id TEXT NOT NULL,
+            request_user_id TEXT NOT NULL DEFAULT '',
+            request_user_name TEXT NOT NULL DEFAULT '',
+            request_username TEXT NOT NULL DEFAULT '',
+            request_text TEXT NOT NULL DEFAULT '',
+            bl_id INTEGER REFERENCES bl_codes(id) ON DELETE SET NULL,
+            batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+            batch_name TEXT NOT NULL DEFAULT '',
+            requested_at TEXT NOT NULL DEFAULT '',
+            responded_at TEXT NOT NULL DEFAULT '',
+            responder_user_id TEXT NOT NULL DEFAULT '',
+            responder_name TEXT NOT NULL DEFAULT '',
+            responder_username TEXT NOT NULL DEFAULT '',
+            response_text TEXT NOT NULL DEFAULT '',
+            response_seconds INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'open',
+            UNIQUE(chat_id, request_message_id)
+        );
         """
     )
 
@@ -920,6 +943,43 @@ def current_ts():
     return datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def parse_local_ts(value: str):
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TASHKENT_TZ)
+    except ValueError:
+        return None
+
+
+def format_response_duration(seconds) -> str:
+    total = _to_int(seconds)
+    if total <= 0:
+        return "0 min"
+    days, remainder = divmod(total, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, _ = divmod(remainder, 60)
+    parts = []
+    if days:
+        parts.append(f"{days} kun")
+    if hours:
+        parts.append(f"{hours} soat")
+    if minutes or not parts:
+        parts.append(f"{minutes} min")
+    return " ".join(parts)
+
+
+def _telegram_actor_name(user_name="", username="", user_id="") -> str:
+    display_name = (user_name or "").strip()
+    if display_name:
+        return display_name
+    username = (username or "").strip()
+    if username:
+        return f"@{username}"
+    return str(user_id or "").strip()
+
+
 def _generate_public_token():
     return secrets.token_urlsafe(24)
 
@@ -983,6 +1043,196 @@ def get_login_history(limit=200):
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def record_moderator_request(
+    chat_id,
+    chat_title="",
+    request_message_id="",
+    request_user_id="",
+    request_user_name="",
+    request_username="",
+    request_text="",
+    bl_id=None,
+    batch_id=None,
+    batch_name="",
+    requested_at="",
+):
+    if not chat_id or request_message_id in (None, ""):
+        return False
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO moderator_response_requests(
+                chat_id, chat_title, request_message_id,
+                request_user_id, request_user_name, request_username, request_text,
+                bl_id, batch_id, batch_name, requested_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(chat_id).strip(),
+                (chat_title or "").strip(),
+                str(request_message_id).strip(),
+                str(request_user_id or "").strip(),
+                (request_user_name or "").strip(),
+                (request_username or "").strip().lstrip("@"),
+                (request_text or "").strip(),
+                bl_id,
+                batch_id,
+                (batch_name or "").strip(),
+                (requested_at or current_ts()).strip(),
+            ),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def mark_moderator_response(
+    chat_id,
+    request_message_id,
+    responder_user_id="",
+    responder_name="",
+    responder_username="",
+    response_text="",
+    responded_at="",
+):
+    if not chat_id or request_message_id in (None, ""):
+        return False
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, requested_at, status
+            FROM moderator_response_requests
+            WHERE chat_id = ? AND request_message_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (str(chat_id).strip(), str(request_message_id).strip()),
+        ).fetchone()
+        if not row or row["status"] == "answered":
+            return False
+
+        responded_value = (responded_at or current_ts()).strip()
+        requested_dt = parse_local_ts(row["requested_at"])
+        responded_dt = parse_local_ts(responded_value)
+        response_seconds = 0
+        if requested_dt and responded_dt:
+            response_seconds = max(0, int((responded_dt - requested_dt).total_seconds()))
+
+        conn.execute(
+            """
+            UPDATE moderator_response_requests
+            SET
+                responded_at = ?,
+                responder_user_id = ?,
+                responder_name = ?,
+                responder_username = ?,
+                response_text = ?,
+                response_seconds = ?,
+                status = 'answered'
+            WHERE id = ?
+            """,
+            (
+                responded_value,
+                str(responder_user_id or "").strip(),
+                (responder_name or "").strip(),
+                (responder_username or "").strip().lstrip("@"),
+                (response_text or "").strip(),
+                response_seconds,
+                row["id"],
+            ),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def get_moderator_response_stats(status="", date_from="", date_to="", limit=300):
+    conn = get_conn()
+    filters = []
+    params = []
+
+    normalized_status = (status or "").strip().lower()
+    if normalized_status in {"open", "answered"}:
+        filters.append("mr.status = ?")
+        params.append(normalized_status)
+    if (date_from or "").strip():
+        filters.append("date(mr.requested_at) >= date(?)")
+        params.append((date_from or "").strip())
+    if (date_to or "").strip():
+        filters.append("date(mr.requested_at) <= date(?)")
+        params.append((date_to or "").strip())
+
+    where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
+
+    summary = conn.execute(
+        f"""
+        SELECT
+            COUNT(*) AS total_requests,
+            SUM(CASE WHEN mr.status = 'answered' THEN 1 ELSE 0 END) AS answered_requests,
+            SUM(CASE WHEN mr.status = 'open' THEN 1 ELSE 0 END) AS open_requests,
+            ROUND(AVG(CASE WHEN mr.status = 'answered' THEN mr.response_seconds END), 1) AS avg_response_seconds
+        FROM moderator_response_requests mr
+        {where_sql}
+        """,
+        params,
+    ).fetchone()
+
+    rows = conn.execute(
+        f"""
+        SELECT
+            mr.*,
+            COALESCE(
+                NULLIF(mr.chat_title, ''),
+                (
+                    SELECT tc.title
+                    FROM telegram_chats tc
+                    WHERE tc.chat_id = mr.chat_id
+                    LIMIT 1
+                ),
+                mr.chat_id
+            ) AS resolved_chat_title
+        FROM moderator_response_requests mr
+        {where_sql}
+        ORDER BY mr.requested_at DESC, mr.id DESC
+        LIMIT ?
+        """,
+        [*params, _to_int(limit) or 300],
+    ).fetchall()
+    conn.close()
+
+    row_dicts = []
+    for row in rows:
+        item = dict(row)
+        item["requester_display"] = _telegram_actor_name(
+            item.get("request_user_name"),
+            item.get("request_username"),
+            item.get("request_user_id"),
+        )
+        item["responder_display"] = _telegram_actor_name(
+            item.get("responder_name"),
+            item.get("responder_username"),
+            item.get("responder_user_id"),
+        )
+        item["response_duration"] = format_response_duration(item.get("response_seconds"))
+        row_dicts.append(item)
+
+    return {
+        "summary": {
+            "total_requests": _to_int(summary["total_requests"]) if summary else 0,
+            "answered_requests": _to_int(summary["answered_requests"]) if summary else 0,
+            "open_requests": _to_int(summary["open_requests"]) if summary else 0,
+            "avg_response_seconds": _to_float(summary["avg_response_seconds"]) if summary and summary["avg_response_seconds"] is not None else 0,
+            "avg_response_label": format_response_duration(summary["avg_response_seconds"]) if summary and summary["avg_response_seconds"] is not None else "0 min",
+        },
+        "rows": row_dicts,
+    }
 
 
 def _cargo_labels(language: str) -> dict:
