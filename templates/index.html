@@ -1281,7 +1281,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
             <table class="tbl">
               <thead><tr>
-                <th>Группа</th><th>Модератор</th><th>Менеджер по продажам</th><th>Замечено участников</th>
+                <th>Группа</th><th>Модератор</th><th>Замечено участников</th>
               </tr></thead>
               <tbody id="moderator-response-assignments"></tbody>
             </table>
@@ -3132,7 +3132,6 @@ function renderModeratorAssignments(groups) {
           ${linkedHint}
         </td>
         <td>${renderModeratorAssignmentSelect(chatId, "moderator", group.moderator_tg_id, members)}</td>
-        <td>${renderModeratorAssignmentSelect(chatId, "sales_manager", group.sales_manager_tg_id, members)}</td>
         <td>
           <div style="font-weight:600">${members.length}</div>
           <div class="attention-meta">${membersHint}</div>
