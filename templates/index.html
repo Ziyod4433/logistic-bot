@@ -1265,8 +1265,26 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               <div class="mini-stat"><div class="mini-stat-v" id="mr-average">0 min</div><div class="mini-stat-l">Среднее время ответа</div></div>
             </div>
             <div class="kpi-note" style="margin-top:12px" id="moderator-response-note">
-              Считается только когда клиент пишет в группу, а ответственный отвечает reply-ответом на сообщение. Роль определяется по Telegram ID, который указан в BL.
+              Считается только когда клиент пишет в группу, а ответственный отвечает reply-ответом на сообщение. Ответственный назначается для самой Telegram-группы.
             </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="card-h">
+            <span class="card-title">Ответственные по группам</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadModeratorResponsePage()">↻ Обновить</button>
+          </div>
+          <div class="card-body">
+            <div class="kpi-note" style="margin-bottom:14px">
+              В списке показываются участники, которых бот уже увидел в этой группе. Именно их можно назначать ответственными.
+            </div>
+            <table class="tbl">
+              <thead><tr>
+                <th>Группа</th><th>Модератор</th><th>Менеджер по продажам</th><th>Замечено участников</th>
+              </tr></thead>
+              <tbody id="moderator-response-assignments"></tbody>
+            </table>
           </div>
         </div>
 
@@ -1620,16 +1638,6 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <input class="inp mono" id="add-bl-chat" placeholder="-1001234567890">
       <div style="font-size:11px;color:var(--muted2);margin-top:5px">Поле заполнится само после выбора группы выше. При необходимости можно ввести ID вручную.</div>
     </div>
-    <div class="form-row2">
-      <div class="form-g">
-        <label>Telegram ID модератора</label>
-        <input class="inp mono" id="add-bl-moderator-id" placeholder="например: 123456789">
-      </div>
-      <div class="form-g">
-        <label>Telegram ID менеджера по продажам</label>
-        <input class="inp mono" id="add-bl-sales-manager-id" placeholder="например: 987654321">
-      </div>
-    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('add-bl-modal')">Отмена</button>
       <button class="btn btn-amber editor-only" onclick="addBL()">Добавить</button>
@@ -1662,16 +1670,6 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <label>Chat ID</label>
       <input class="inp mono" id="edit-bl-chat" placeholder="-1001234567890">
       <div style="font-size:11px;color:var(--muted2);margin-top:5px">Можно выбрать найденную группу выше или указать chat_id вручную.</div>
-    </div>
-    <div class="form-row2">
-      <div class="form-g">
-        <label>Telegram ID модератора</label>
-        <input class="inp mono" id="edit-bl-moderator-id" placeholder="например: 123456789">
-      </div>
-      <div class="form-g">
-        <label>Telegram ID менеджера по продажам</label>
-        <input class="inp mono" id="edit-bl-sales-manager-id" placeholder="например: 987654321">
-      </div>
     </div>
     <div class="form-row3">
       <div class="form-g">
@@ -1813,6 +1811,7 @@ let allClients = [];
 let currentClientName = "";
 let communicationRecipients = [];
 let selectedCommunicationChats = new Set();
+let moderatorResponseGroups = [];
 const IS_EDITOR = {{ 'true' if is_editor else 'false' }};
 const CURRENT_ROLE = {{ current_role|tojson }};
 const STATUSES = [
@@ -2604,8 +2603,6 @@ function openAddBLModal() {
   if (!ensureEditor()) return;
   document.getElementById("add-bl-code").value = "";
   document.getElementById("add-bl-client").value = "";
-  document.getElementById("add-bl-moderator-id").value = "";
-  document.getElementById("add-bl-sales-manager-id").value = "";
   document.getElementById("add-bl-cargo-type").value = "";
   document.getElementById("add-bl-weight").value = "";
   document.getElementById("add-bl-volume").value = "";
@@ -2664,8 +2661,6 @@ async function addBL() {
   const batch_id    = document.getElementById("add-bl-batch-id").value;
   const code        = document.getElementById("add-bl-code").value.trim();
   const client_name = document.getElementById("add-bl-client").value.trim();
-  const moderator_tg_id = document.getElementById("add-bl-moderator-id").value.trim();
-  const sales_manager_tg_id = document.getElementById("add-bl-sales-manager-id").value.trim();
   const cargo_type  = document.getElementById("add-bl-cargo-type").value.trim();
   const weight_kg   = document.getElementById("add-bl-weight").value.trim();
   const volume_cbm  = document.getElementById("add-bl-volume").value.trim();
@@ -2675,17 +2670,15 @@ async function addBL() {
   const chat_id     = document.getElementById("add-bl-chat").value.trim();
   if (!code) { toast("BL код обязателен","err"); return; }
   try {
-    await api("/api/bl","POST",{
-      batch_id:parseInt(batch_id),
-      code,
-      client_name,
-      moderator_tg_id,
-      sales_manager_tg_id,
-      cargo_type,
-      weight_kg,
-      volume_cbm,
-      quantity_places,
-      cargo_description,
+      await api("/api/bl","POST",{
+        batch_id:parseInt(batch_id),
+        code,
+        client_name,
+        cargo_type,
+        weight_kg,
+        volume_cbm,
+        quantity_places,
+        cargo_description,
       message_language,
       chat_id
     });
@@ -2705,8 +2698,6 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-id").value = blId;
   document.getElementById("edit-bl-code").value = bl.code || "";
   document.getElementById("edit-bl-client").value = bl.client_name||"";
-  document.getElementById("edit-bl-moderator-id").value = bl.moderator_tg_id || "";
-  document.getElementById("edit-bl-sales-manager-id").value = bl.sales_manager_tg_id || "";
   document.getElementById("edit-bl-cargo-type").value = bl.cargo_type || "";
   document.getElementById("edit-bl-weight").value = bl.weight_kg || "";
   document.getElementById("edit-bl-volume").value = bl.volume_cbm || "";
@@ -2755,8 +2746,6 @@ async function saveBL() {
     await api("/api/bl/"+id,"PUT",{
       code,
       client_name: document.getElementById("edit-bl-client").value.trim(),
-      moderator_tg_id: document.getElementById("edit-bl-moderator-id").value.trim(),
-      sales_manager_tg_id: document.getElementById("edit-bl-sales-manager-id").value.trim(),
       cargo_type: document.getElementById("edit-bl-cargo-type").value.trim(),
       weight_kg: document.getElementById("edit-bl-weight").value.trim(),
       volume_cbm: document.getElementById("edit-bl-volume").value.trim(),
@@ -3102,6 +3091,76 @@ function trimModeratorText(value, maxLength=110) {
   return `${esc(text.slice(0, maxLength - 1))}…`;
 }
 
+function renderModeratorAssignmentSelect(chatId, role, selectedValue, members) {
+  const value = String(selectedValue || "").trim();
+  const options = [`<option value="">Не назначен</option>`];
+  (members || []).forEach(member => {
+    const memberId = String(member?.user_id || "").trim();
+    if (!memberId) return;
+    const label = member?.label || memberId;
+    const suffix = member?.is_admin ? " (admin)" : "";
+    options.push(`<option value="${esc(memberId)}" ${memberId === value ? "selected" : ""}>${esc(label + suffix)}</option>`);
+  });
+  return `
+    <select class="inp" style="margin:0;min-width:220px" ${IS_EDITOR ? `onchange="saveModeratorAssignment('${esc(String(chatId || ''))}','${role}',this.value)"` : "disabled"}>
+      ${options.join("")}
+    </select>
+  `;
+}
+
+function renderModeratorAssignments(groups) {
+  const table = document.getElementById("moderator-response-assignments");
+  if (!table) return;
+  if (!groups.length) {
+    table.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="empty-icon">👥</div><p>Telegram-группы пока не найдены</p></div></td></tr>`;
+    return;
+  }
+  table.innerHTML = groups.map(group => {
+    const chatId = String(group?.chat_id || "").trim();
+    const members = Array.isArray(group?.members) ? group.members : [];
+    const linkedHint = Number(group?.linked_bl_count || 0)
+      ? `<div class="attention-meta">${Number(group.linked_bl_count)} BL привязано</div>`
+      : `<div class="attention-meta">Без привязанного BL</div>`;
+    const membersHint = members.length
+      ? members.slice(0, 3).map(member => esc(member.label || member.user_id || "")).join(", ")
+      : "Бот пока не видел участников";
+    return `
+      <tr>
+        <td>
+          <div style="font-weight:600">${esc(group.title || group.chat_id || "—")}</div>
+          <div class="mono" style="font-size:11px;color:var(--muted2)">${esc(chatId)}</div>
+          ${linkedHint}
+        </td>
+        <td>${renderModeratorAssignmentSelect(chatId, "moderator", group.moderator_tg_id, members)}</td>
+        <td>${renderModeratorAssignmentSelect(chatId, "sales_manager", group.sales_manager_tg_id, members)}</td>
+        <td>
+          <div style="font-weight:600">${members.length}</div>
+          <div class="attention-meta">${membersHint}</div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function saveModeratorAssignment(chatId, role, value) {
+  if (!ensureEditor()) return;
+  const chatValue = String(chatId || "").trim();
+  if (!chatValue) return;
+  const group = moderatorResponseGroups.find(item => String(item?.chat_id || "").trim() === chatValue) || {};
+  const payload = {
+    chat_id: chatValue,
+    moderator_tg_id: role === "moderator" ? String(value || "").trim() : String(group.moderator_tg_id || "").trim(),
+    sales_manager_tg_id: role === "sales_manager" ? String(value || "").trim() : String(group.sales_manager_tg_id || "").trim(),
+  };
+  try {
+    await api("/api/moderator-response/assignments", "POST", payload);
+    toast("Ответственный обновлён", "ok");
+    await loadModeratorResponsePage();
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
 async function loadModeratorResponsePage() {
   try {
     const role = document.getElementById("moderator-response-role")?.value || "moderator";
@@ -3115,9 +3174,13 @@ async function loadModeratorResponsePage() {
     if (dateTo) params.set("date_to", dateTo);
     params.set("limit", "300");
 
-    const data = await api("/api/moderator-response" + (params.toString() ? `?${params.toString()}` : ""));
+    const [data, assignmentData] = await Promise.all([
+      api("/api/moderator-response" + (params.toString() ? `?${params.toString()}` : "")),
+      api("/api/moderator-response/assignments"),
+    ]);
     const summary = data.summary || {};
     const rows = data.rows || [];
+    moderatorResponseGroups = assignmentData.groups || [];
 
     document.getElementById("mr-total").textContent = summary.total_requests || 0;
     document.getElementById("mr-answered").textContent = summary.answered_requests || 0;
@@ -3130,9 +3193,10 @@ async function loadModeratorResponsePage() {
     const note = document.getElementById("moderator-response-note");
     if (note) {
       note.textContent = role === "sales_manager"
-        ? "Считается только когда клиент пишет в группу, а назначенный менеджер по продажам отвечает reply-ответом на сообщение. Роль определяется по Telegram ID, который указан в BL."
-        : "Считается только когда клиент пишет в группу, а назначенный модератор отвечает reply-ответом на сообщение. Роль определяется по Telegram ID, который указан в BL.";
+        ? "Считается только когда клиент пишет в группу, а назначенный менеджер по продажам отвечает reply-ответом на сообщение. Роль задаётся для самой Telegram-группы."
+        : "Считается только когда клиент пишет в группу, а назначенный модератор отвечает reply-ответом на сообщение. Роль задаётся для самой Telegram-группы.";
     }
+    renderModeratorAssignments(moderatorResponseGroups);
 
     const table = document.getElementById("moderator-response-table");
     table.innerHTML = rows.length ? rows.map(row => `

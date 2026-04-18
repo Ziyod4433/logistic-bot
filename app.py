@@ -152,7 +152,15 @@ def get_chat_admin_ids(chat_id):
             user = member.get("user") or {}
             user_id = user.get("id")
             if user_id is not None:
-                admin_ids.add(str(user_id))
+                admin_id = str(user_id)
+                admin_ids.add(admin_id)
+                db.remember_chat_member(
+                    chat_id,
+                    admin_id,
+                    telegram_user_name(user),
+                    user.get("username") or "",
+                    is_admin=True,
+                )
     except Exception:
         if cached:
             return cached.get("admin_ids", set())
@@ -197,12 +205,12 @@ def telegram_unix_to_local(value) -> str:
         return db.current_ts()
 
 
-def get_responsible_response_role(bl: dict | None, sender_id: str, admin_ids: set[str] | None = None) -> str:
+def get_responsible_response_role(assignments: dict | None, sender_id: str, admin_ids: set[str] | None = None) -> str:
     sender_value = str(sender_id or "").strip()
     if not sender_value:
         return ""
-    moderator_id = str((bl or {}).get("moderator_tg_id") or "").strip()
-    sales_manager_id = str((bl or {}).get("sales_manager_tg_id") or "").strip()
+    moderator_id = str((assignments or {}).get("moderator_tg_id") or "").strip()
+    sales_manager_id = str((assignments or {}).get("sales_manager_tg_id") or "").strip()
     if moderator_id and sender_value == moderator_id:
         return "moderator"
     if sales_manager_id and sender_value == sales_manager_id:
@@ -231,18 +239,34 @@ def track_moderator_response_metrics(message: dict):
     admin_ids = get_chat_admin_ids(chat_id)
     sender_id_str = str(sender_id)
     is_admin_sender = sender_id_str in admin_ids if admin_ids else False
+    db.remember_chat_member(
+        chat_id,
+        sender_id_str,
+        telegram_user_name(sender),
+        sender.get("username") or "",
+        is_admin=is_admin_sender,
+    )
     reply_to = message.get("reply_to_message") or {}
     reply_sender = reply_to.get("from") or {}
     reply_sender_id = reply_sender.get("id")
     reply_sender_id_str = str(reply_sender_id) if reply_sender_id is not None else ""
+    if reply_sender_id_str and not reply_sender.get("is_bot"):
+        db.remember_chat_member(
+            chat_id,
+            reply_sender_id_str,
+            telegram_user_name(reply_sender),
+            reply_sender.get("username") or "",
+            is_admin=reply_sender_id_str in admin_ids if admin_ids else False,
+        )
 
     linked_bl = db.find_latest_active_bl_by_chat(chat_id) or db.find_latest_bl_by_chat(chat_id)
+    chat_assignments = db.get_chat_response_assignments(chat_id) or {}
     linked_context = {
         "bl_id": linked_bl.get("id") if linked_bl else None,
         "batch_id": linked_bl.get("batch_id") if linked_bl else None,
         "batch_name": linked_bl.get("batch_name") if linked_bl else "",
-        "assigned_moderator_id": linked_bl.get("moderator_tg_id") if linked_bl else "",
-        "assigned_sales_manager_id": linked_bl.get("sales_manager_tg_id") if linked_bl else "",
+        "assigned_moderator_id": (chat_assignments.get("moderator_tg_id") or (linked_bl.get("moderator_tg_id") if linked_bl else "") or ""),
+        "assigned_sales_manager_id": (chat_assignments.get("sales_manager_tg_id") or (linked_bl.get("sales_manager_tg_id") if linked_bl else "") or ""),
     }
 
     normalized_text = text.strip()
@@ -266,7 +290,14 @@ def track_moderator_response_metrics(message: dict):
             requested_at=telegram_unix_to_local(reply_to.get("date")),
         )
 
-        response_role = get_responsible_response_role(linked_bl, sender_id_str, admin_ids)
+        response_role = get_responsible_response_role(
+            {
+                "moderator_tg_id": linked_context["assigned_moderator_id"],
+                "sales_manager_tg_id": linked_context["assigned_sales_manager_id"],
+            },
+            sender_id_str,
+            admin_ids,
+        )
         if response_role:
             db.mark_moderator_response(
                 chat_id=chat_id,
@@ -280,7 +311,14 @@ def track_moderator_response_metrics(message: dict):
             )
         return
 
-    if is_admin_sender or get_responsible_response_role(linked_bl, sender_id_str, admin_ids):
+    if is_admin_sender or get_responsible_response_role(
+        {
+            "moderator_tg_id": linked_context["assigned_moderator_id"],
+            "sales_manager_tg_id": linked_context["assigned_sales_manager_id"],
+        },
+        sender_id_str,
+        admin_ids,
+    ):
         return
 
     db.record_moderator_request(
@@ -1489,6 +1527,31 @@ def api_moderator_response():
             limit=int(request.args.get("limit", 300)),
         )
     )
+
+
+@app.route("/api/moderator-response/assignments")
+@login_required
+def api_moderator_response_assignments():
+    return jsonify(
+        {
+            "groups": db.get_moderator_response_assignment_groups(),
+        }
+    )
+
+
+@app.route("/api/moderator-response/assignments", methods=["POST"])
+@editor_required
+def api_save_moderator_response_assignments():
+    data = request.json or {}
+    chat_id = str(data.get("chat_id") or "").strip()
+    if not chat_id:
+        return jsonify({"error": "chat_id обязателен"}), 400
+    db.set_chat_response_assignments(
+        chat_id,
+        moderator_tg_id=(data.get("moderator_tg_id") or "").strip(),
+        sales_manager_tg_id=(data.get("sales_manager_tg_id") or "").strip(),
+    )
+    return jsonify({"ok": True})
 
 
 @app.route("/api/communication-rate")

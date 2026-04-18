@@ -446,9 +446,22 @@ def init_db():
             title TEXT NOT NULL DEFAULT '',
             chat_type TEXT NOT NULL DEFAULT 'group',
             username TEXT DEFAULT '',
+            moderator_tg_id TEXT DEFAULT '',
+            sales_manager_tg_id TEXT DEFAULT '',
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT DEFAULT (datetime('now','localtime')),
             last_seen_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS telegram_chat_members (
+            chat_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            username TEXT NOT NULL DEFAULT '',
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            first_seen_at TEXT DEFAULT (datetime('now','localtime')),
+            last_seen_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(chat_id, user_id)
         );
 
         CREATE TABLE IF NOT EXISTS problems (
@@ -616,6 +629,45 @@ def init_db():
     for column_name, column_def in moderator_request_columns:
         if not _table_has_column(conn, "moderator_response_requests", column_name):
             conn.execute(f"ALTER TABLE moderator_response_requests ADD COLUMN {column_name} {column_def}")
+
+    telegram_chat_columns = [
+        ("moderator_tg_id", "TEXT DEFAULT ''"),
+        ("sales_manager_tg_id", "TEXT DEFAULT ''"),
+    ]
+    for column_name, column_def in telegram_chat_columns:
+        if not _table_has_column(conn, "telegram_chats", column_name):
+            conn.execute(f"ALTER TABLE telegram_chats ADD COLUMN {column_name} {column_def}")
+
+    conn.execute(
+        """
+        UPDATE telegram_chats
+        SET
+            moderator_tg_id = COALESCE(
+                NULLIF(moderator_tg_id, ''),
+                (
+                    SELECT NULLIF(TRIM(bl.moderator_tg_id), '')
+                    FROM bl_codes bl
+                    WHERE bl.chat_id = telegram_chats.chat_id
+                      AND NULLIF(TRIM(bl.moderator_tg_id), '') IS NOT NULL
+                    ORDER BY bl.created_at DESC
+                    LIMIT 1
+                ),
+                ''
+            ),
+            sales_manager_tg_id = COALESCE(
+                NULLIF(sales_manager_tg_id, ''),
+                (
+                    SELECT NULLIF(TRIM(bl.sales_manager_tg_id), '')
+                    FROM bl_codes bl
+                    WHERE bl.chat_id = telegram_chats.chat_id
+                      AND NULLIF(TRIM(bl.sales_manager_tg_id), '') IS NOT NULL
+                    ORDER BY bl.created_at DESC
+                    LIMIT 1
+                ),
+                ''
+            )
+        """
+    )
 
     conn.execute(
         """
@@ -1952,6 +2004,188 @@ def get_stats():
     }
     conn.close()
     return stats
+
+
+def remember_chat_member(chat_id, user_id, display_name="", username="", is_admin=False):
+    chat_value = str(chat_id or "").strip()
+    user_value = str(user_id or "").strip()
+    if not chat_value or not user_value:
+        return
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO telegram_chat_members(
+                chat_id, user_id, display_name, username, is_admin, first_seen_at, last_seen_at
+            )
+            VALUES (?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'))
+            ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                display_name = CASE
+                    WHEN excluded.display_name != '' THEN excluded.display_name
+                    ELSE telegram_chat_members.display_name
+                END,
+                username = CASE
+                    WHEN excluded.username != '' THEN excluded.username
+                    ELSE telegram_chat_members.username
+                END,
+                is_admin = CASE
+                    WHEN excluded.is_admin = 1 THEN 1
+                    ELSE telegram_chat_members.is_admin
+                END,
+                last_seen_at = datetime('now','localtime')
+            """,
+            (
+                chat_value,
+                user_value,
+                (display_name or "").strip(),
+                (username or "").strip().lstrip("@"),
+                1 if is_admin else 0,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_chat_response_assignments(chat_id):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                c.chat_id,
+                c.title,
+                c.moderator_tg_id,
+                c.sales_manager_tg_id,
+                mod.display_name AS moderator_name,
+                mod.username AS moderator_username,
+                sales.display_name AS sales_manager_name,
+                sales.username AS sales_manager_username
+            FROM telegram_chats c
+            LEFT JOIN telegram_chat_members mod
+                ON mod.chat_id = c.chat_id AND mod.user_id = c.moderator_tg_id
+            LEFT JOIN telegram_chat_members sales
+                ON sales.chat_id = c.chat_id AND sales.user_id = c.sales_manager_tg_id
+            WHERE c.chat_id = ?
+            LIMIT 1
+            """,
+            (str(chat_id or "").strip(),),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def set_chat_response_assignments(chat_id, moderator_tg_id="", sales_manager_tg_id=""):
+    chat_value = str(chat_id or "").strip()
+    if not chat_value:
+        return False
+    moderator_value = str(moderator_tg_id or "").strip()
+    sales_value = str(sales_manager_tg_id or "").strip()
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO telegram_chats(
+                chat_id, title, chat_type, username, moderator_tg_id, sales_manager_tg_id, is_active, created_at, last_seen_at
+            )
+            VALUES (?, '', 'group', '', ?, ?, 1, datetime('now','localtime'), datetime('now','localtime'))
+            ON CONFLICT(chat_id) DO UPDATE SET
+                moderator_tg_id = excluded.moderator_tg_id,
+                sales_manager_tg_id = excluded.sales_manager_tg_id,
+                last_seen_at = datetime('now','localtime')
+            """,
+            (chat_value, moderator_value, sales_value),
+        )
+        conn.execute(
+            """
+            UPDATE moderator_response_requests
+            SET
+                assigned_moderator_id = ?,
+                assigned_sales_manager_id = ?
+            WHERE chat_id = ?
+              AND status = 'open'
+            """,
+            (moderator_value, sales_value, chat_value),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def get_moderator_response_assignment_groups(include_inactive=False):
+    conn = get_conn()
+    try:
+        where = "" if include_inactive else "WHERE c.is_active = 1"
+        rows = conn.execute(
+            f"""
+            SELECT
+                c.chat_id,
+                c.title,
+                c.chat_type,
+                c.username,
+                c.is_active,
+                c.last_seen_at,
+                c.moderator_tg_id,
+                c.sales_manager_tg_id,
+                COUNT(DISTINCT bl.id) AS linked_bl_count
+            FROM telegram_chats c
+            LEFT JOIN bl_codes bl ON bl.chat_id = c.chat_id
+            {where}
+            GROUP BY c.chat_id
+            ORDER BY COALESCE(NULLIF(TRIM(c.title), ''), NULLIF(TRIM(c.username), ''), c.chat_id) COLLATE NOCASE ASC
+            """
+        ).fetchall()
+        chats = [dict(row) for row in rows]
+        chat_ids = [item["chat_id"] for item in chats if item.get("chat_id")]
+        members_by_chat = {chat_id: [] for chat_id in chat_ids}
+        if chat_ids:
+            placeholders = ",".join("?" for _ in chat_ids)
+            member_rows = conn.execute(
+                f"""
+                SELECT chat_id, user_id, display_name, username, is_admin, last_seen_at
+                FROM telegram_chat_members
+                WHERE chat_id IN ({placeholders})
+                ORDER BY
+                    CASE WHEN is_admin = 1 THEN 0 ELSE 1 END,
+                    COALESCE(NULLIF(TRIM(display_name), ''), NULLIF(TRIM(username), ''), user_id) COLLATE NOCASE ASC
+                """,
+                chat_ids,
+            ).fetchall()
+            for row in member_rows:
+                item = dict(row)
+                item["label"] = _telegram_actor_name(
+                    item.get("display_name"),
+                    item.get("username"),
+                    item.get("user_id"),
+                )
+                members_by_chat.setdefault(item["chat_id"], []).append(item)
+
+        for chat in chats:
+            members = members_by_chat.get(chat["chat_id"], [])
+            chat["members"] = members
+            moderator_id = str(chat.get("moderator_tg_id") or "").strip()
+            sales_id = str(chat.get("sales_manager_tg_id") or "").strip()
+            chat["moderator_display"] = next(
+                (
+                    member["label"]
+                    for member in members
+                    if str(member.get("user_id") or "").strip() == moderator_id
+                ),
+                moderator_id,
+            )
+            chat["sales_manager_display"] = next(
+                (
+                    member["label"]
+                    for member in members
+                    if str(member.get("user_id") or "").strip() == sales_id
+                ),
+                sales_id,
+            )
+        return chats
+    finally:
+        conn.close()
 
 
 def get_template():
