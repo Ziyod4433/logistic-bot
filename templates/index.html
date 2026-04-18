@@ -1238,24 +1238,21 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <div class="page-h">Скорость ответа <em>/ Moderator</em></div>
 
         <div class="card">
-      <div class="card-h">
-        <span class="card-title">Реакция на сообщения клиентов</span>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-              <select class="inp" id="moderator-response-role" style="margin:0;min-width:220px" onchange="loadModeratorResponsePage()">
-                <option value="moderator">Статистика модератора</option>
-                <option value="sales_manager">Статистика менеджера по продажам</option>
-              </select>
-              <select class="inp" id="moderator-response-status" style="margin:0;min-width:180px" onchange="loadModeratorResponsePage()">
-                <option value="">Все обращения</option>
-                <option value="open">Без ответа</option>
-                <option value="answered">С ответом</option>
-              </select>
-              <input class="inp" type="date" id="moderator-response-from" style="margin:0;min-width:150px" onchange="loadModeratorResponsePage()">
-              <input class="inp" type="date" id="moderator-response-to" style="margin:0;min-width:150px" onchange="loadModeratorResponsePage()">
-              <button class="btn btn-ghost btn-sm" onclick="loadModeratorResponsePage()">↻ Обновить</button>
-            </div>
+          <div class="card-h">
+            <span class="card-title">Период статистики</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadModeratorResponsePage()">↻ Обновить</button>
           </div>
           <div class="card-body">
+            <div class="form-row2" style="margin-bottom:16px">
+              <div class="form-g">
+                <label>С даты</label>
+                <input class="inp" type="date" id="moderator-response-from" onchange="loadModeratorResponsePage()">
+              </div>
+              <div class="form-g">
+                <label>По дату</label>
+                <input class="inp" type="date" id="moderator-response-to" onchange="loadModeratorResponsePage()">
+              </div>
+            </div>
             <div class="info-grid-3">
               <div class="mini-stat"><div class="mini-stat-v" id="mr-total">0</div><div class="mini-stat-l">Всего запросов</div></div>
               <div class="mini-stat"><div class="mini-stat-v" id="mr-answered">0</div><div class="mini-stat-l">С ответом</div></div>
@@ -3162,13 +3159,10 @@ async function saveModeratorAssignment(chatId, role, value) {
 
 async function loadModeratorResponsePage() {
   try {
-    const role = document.getElementById("moderator-response-role")?.value || "moderator";
-    const status = document.getElementById("moderator-response-status")?.value || "";
     const dateFrom = document.getElementById("moderator-response-from")?.value || "";
     const dateTo = document.getElementById("moderator-response-to")?.value || "";
     const params = new URLSearchParams();
-    if (role) params.set("role", role);
-    if (status) params.set("status", status);
+    params.set("role", "moderator");
     if (dateFrom) params.set("date_from", dateFrom);
     if (dateTo) params.set("date_to", dateTo);
     params.set("limit", "300");
@@ -3186,14 +3180,11 @@ async function loadModeratorResponsePage() {
     document.getElementById("mr-open").textContent = summary.open_requests || 0;
     document.getElementById("mr-average").textContent = summary.avg_response_label || "0 min";
     document.getElementById("moderator-response-count").textContent = `${rows.length} строк`;
-    const titleSuffix = role === "sales_manager" ? "Менеджер по продажам" : "Модератор";
     const pageTitle = document.querySelector("#page-moderator-response .page-h");
-    if (pageTitle) pageTitle.innerHTML = `Скорость ответа <em>/ ${titleSuffix}</em>`;
+    if (pageTitle) pageTitle.innerHTML = `Скорость ответа <em>/ Модератор</em>`;
     const note = document.getElementById("moderator-response-note");
     if (note) {
-      note.textContent = role === "sales_manager"
-        ? "Считается только когда клиент пишет в группу, а назначенный менеджер по продажам отвечает reply-ответом на сообщение. Роль задаётся для самой Telegram-группы."
-        : "Считается только когда клиент пишет в группу, а назначенный модератор отвечает reply-ответом на сообщение. Роль задаётся для самой Telegram-группы.";
+      note.textContent = "Считается только когда клиент пишет в группу, а назначенный модератор отвечает reply-ответом на сообщение. Период выше фильтрует статистику по дате запроса.";
     }
     renderModeratorAssignments(moderatorResponseGroups);
 
