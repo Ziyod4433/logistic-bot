@@ -3233,11 +3233,7 @@ async function clearModeratorResponseJournal() {
   if (!IS_EDITOR) return;
   if (!confirm("Очистить весь текущий журнал обращений? Это действие удалит все записи без возможности восстановления.")) return;
   try {
-    const result = await api("/api/moderator-response/clear", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    const result = await api("/api/moderator-response/clear", "POST", {});
     toast(`Журнал очищен: удалено ${result.deleted_count || 0} записей`);
     await loadModeratorResponsePage();
   } catch (e) {
