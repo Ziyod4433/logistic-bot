@@ -534,6 +534,8 @@ def clear_group_reply_keyboard(chat_id):
 
 
 def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
+    if is_group_chat_id(chat_id):
+        return
     try:
         response = telegram_send_message(
             chat_id,
@@ -679,7 +681,7 @@ def send_bl_status(chat_id, bl: dict):
         text,
         reply_markup=reply_markup or build_main_reply_markup(chat_id=chat_id, language=language),
     )
-    if reply_markup:
+    if reply_markup and not is_group_chat_id(chat_id):
         refresh_track_reply_keyboard(chat_id, language=language)
 
 
@@ -833,7 +835,7 @@ def send_bl_package(bl: dict, batch_name: str):
             db.render_message(bl, batch_name),
             reply_markup=reply_markup or build_main_reply_markup(chat_id=bl["chat_id"], language=language),
         )
-        if reply_markup:
+        if reply_markup and not is_group_chat_id(bl["chat_id"]):
             refresh_track_reply_keyboard(bl["chat_id"], language=language)
     except Exception as exc:
         return False, str(exc)
