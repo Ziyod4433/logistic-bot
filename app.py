@@ -108,12 +108,20 @@ def is_group_chat_id(chat_id) -> bool:
 
 
 def build_main_reply_markup(*, chat_id=None, language: str | None = None) -> dict:
-    persistent = not is_group_chat_id(chat_id)
     return {
         "keyboard": [[{"text": get_track_button_text(chat_id=chat_id, language=language)}]],
         "resize_keyboard": True,
         "one_time_keyboard": False,
-        "is_persistent": persistent,
+        "is_persistent": not is_group_chat_id(chat_id),
+    }
+
+
+def build_group_track_reply_markup(*, chat_id=None, language: str | None = None) -> dict:
+    return {
+        "keyboard": [[{"text": get_track_button_text(chat_id=chat_id, language=language)}]],
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+        "is_persistent": True,
     }
 
 
@@ -529,13 +537,16 @@ def clear_group_reply_keyboard(chat_id):
 
 
 def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
-    if is_group_chat_id(chat_id):
-        return
     try:
+        reply_markup = (
+            build_group_track_reply_markup(chat_id=chat_id, language=language)
+            if is_group_chat_id(chat_id)
+            else build_main_reply_markup(chat_id=chat_id, language=language)
+        )
         response = telegram_send_message(
             chat_id,
             "ㅤ",
-            reply_markup=build_main_reply_markup(chat_id=chat_id, language=language),
+            reply_markup=reply_markup,
         )
         message_id = (((response or {}).get("result") or {}).get("message_id"))
         if message_id:
@@ -552,8 +563,9 @@ def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None,
         telegram_send_message(
             chat_id,
             text,
-            reply_markup=reply_markup or build_main_reply_markup(chat_id=chat_id, language=language),
+            reply_markup=reply_markup,
         )
+        refresh_track_reply_keyboard(chat_id, language=language)
         return
     telegram_send_message(
         chat_id,
