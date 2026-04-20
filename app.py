@@ -75,6 +75,7 @@ CANCEL_REPLY_MARKUP = {
 
 REMOVE_REPLY_MARKUP = {
     "remove_keyboard": True,
+    "selective": False,
 }
 
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER") or os.path.join(str(db.APP_DATA_DIR), "uploads")
@@ -522,13 +523,7 @@ def bl_file_markup(bl_id: int):
 
 def clear_group_reply_keyboard(chat_id):
     try:
-        response = telegram_send_message(chat_id, "ㅤ", reply_markup=REMOVE_REPLY_MARKUP)
-        message_id = (((response or {}).get("result") or {}).get("message_id"))
-        if message_id:
-            try:
-                telegram_delete_message(chat_id, message_id)
-            except Exception:
-                pass
+        telegram_send_message(chat_id, "ㅤ", reply_markup=REMOVE_REPLY_MARKUP)
     except Exception:
         pass
 
