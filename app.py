@@ -56,6 +56,7 @@ TRACK_BUTTON_LABELS = {
     "ru": "Статус груза",
 }
 TRACK_BUTTON_TEXTS = set(TRACK_BUTTON_LABELS.values())
+GROUP_REMOVE_COMMANDS = {"removebot", "leavebot", "botni_ochir", "hidekeyboard"}
 NO_ACTIVE_CARGO_MESSAGES = {
     "uz_latn": "Hozirgi vaqtda yo'lda kelayotgan yukingiz mavjud emas",
     "uz_cyrl": "Ҳозирги вақтда йўлда келаётган юкингиз мавжуд эмас",
@@ -492,6 +493,15 @@ def telegram_delete_message(chat_id, message_id):
     )
 
 
+def telegram_leave_chat(chat_id):
+    return telegram_api(
+        "leaveChat",
+        json={
+            "chat_id": chat_id,
+        },
+    )
+
+
 def communication_rating_markup(dispatch_id: int):
     options = [
         ("YOMON", 1),
@@ -534,6 +544,43 @@ def clear_group_reply_keyboard(chat_id):
         telegram_send_message(chat_id, "ㅤ", reply_markup=REMOVE_REPLY_MARKUP)
     except Exception:
         pass
+
+
+def extract_bot_command(text: str) -> str:
+    match = re.match(r"^/([A-Za-z0-9_]+)(?:@\w+)?$", (text or "").strip())
+    return (match.group(1) or "").lower() if match else ""
+
+
+def handle_group_remove_request(message: dict, command: str):
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    chat_type = chat.get("type")
+    sender = message.get("from") or {}
+    sender_id = sender.get("id")
+    if chat_type not in {"group", "supergroup"} or not chat_id:
+        return False
+    if command not in GROUP_REMOVE_COMMANDS:
+        return False
+
+    admin_ids = get_chat_admin_ids(chat_id)
+    if str(sender_id or "") not in admin_ids:
+        telegram_send_message(
+            chat_id,
+            "❌ Bu buyruqdan faqat guruh admini foydalanishi mumkin.",
+        )
+        return True
+
+    telegram_send_message(
+        chat_id,
+        "✅ Klaviatura yopilmoqda. Bot guruhni tark etadi...",
+        reply_markup=REMOVE_REPLY_MARKUP,
+    )
+    time.sleep(1)
+    try:
+        telegram_leave_chat(chat_id)
+    except Exception:
+        pass
+    return True
 
 
 def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
@@ -739,6 +786,10 @@ def handle_telegram_message(message: dict):
     remember_group_chat(chat, is_active=True)
 
     if not chat_id or not text:
+        return
+
+    bot_command = extract_bot_command(text)
+    if handle_group_remove_request(message, bot_command):
         return
 
     if text == "/start":
