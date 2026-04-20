@@ -99,12 +99,20 @@ def get_track_button_text(*, chat_id=None, language: str | None = None) -> str:
     return TRACK_BUTTON_LABELS.get(normalized_language, TRACK_BUTTON)
 
 
+def is_group_chat_id(chat_id) -> bool:
+    try:
+        return int(chat_id) < 0
+    except Exception:
+        return False
+
+
 def build_main_reply_markup(*, chat_id=None, language: str | None = None) -> dict:
+    persistent = not is_group_chat_id(chat_id)
     return {
         "keyboard": [[{"text": get_track_button_text(chat_id=chat_id, language=language)}]],
         "resize_keyboard": True,
         "one_time_keyboard": False,
-        "is_persistent": True,
+        "is_persistent": persistent,
     }
 
 
