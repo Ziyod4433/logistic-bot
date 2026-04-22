@@ -602,12 +602,20 @@ def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
         pass
 
 
+def send_group_message_with_keyboard(chat_id, text: str, *, language: str | None = None):
+    telegram_send_message(
+        chat_id,
+        text,
+        reply_markup=build_main_reply_markup(chat_id=chat_id, language=language),
+    )
+
+
 def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None, reply_markup: dict | None = None):
     if is_group_chat_id(chat_id):
         telegram_send_message(
             chat_id,
             text,
-            reply_markup=reply_markup or build_main_reply_markup(chat_id=chat_id, language=language),
+            reply_markup=reply_markup,
         )
         return
     telegram_send_message(
@@ -800,7 +808,10 @@ def handle_telegram_message(message: dict):
             if chat_type in {"group", "supergroup"}
             else "Привет!\n\nНажми кнопку ниже, чтобы узнать текущий статус своего груза."
         )
-        send_with_track_keyboard(chat_id, start_text)
+        if chat_type in {"group", "supergroup"}:
+            send_group_message_with_keyboard(chat_id, start_text)
+        else:
+            send_with_track_keyboard(chat_id, start_text)
         return
 
     if text == "/chatid":
@@ -869,7 +880,7 @@ def handle_my_chat_member_update(chat_update: dict):
     if new_status in {"member", "administrator"} and old_status in {"", "left", "kicked"}:
         try:
             button_text = get_track_button_text(chat_id=chat_id)
-            send_with_track_keyboard(chat_id, get_group_welcome_text(button_text))
+            send_group_message_with_keyboard(chat_id, get_group_welcome_text(button_text))
         except Exception:
             pass
 
