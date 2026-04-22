@@ -4,7 +4,6 @@ import secrets
 import re
 import time
 import threading
-import queue
 from datetime import datetime
 from functools import wraps
 
@@ -45,10 +44,8 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 PORT = int(os.getenv("PORT", "5000"))
 CHAT_ADMIN_CACHE_TTL = 300
 CHAT_ADMIN_CACHE = {}
-WELCOME_MEDIA_QUEUE = queue.Queue()
 WELCOME_MEDIA_PENDING = set()
 WELCOME_MEDIA_LOCK = threading.Lock()
-WELCOME_MEDIA_WORKER = None
 
 ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
@@ -131,36 +128,21 @@ def get_track_button_cooldown_text(language: str | None, seconds: int) -> str:
     return template.format(seconds=max(1, int(seconds)))
 
 
-def _welcome_media_worker_loop():
-    while True:
-        chat_id = WELCOME_MEDIA_QUEUE.get()
-        try:
-            if os.path.exists(WELCOME_VIDEO_PATH):
-                try:
-                    telegram_send_video(chat_id, WELCOME_VIDEO_PATH, "Buraq Logistics guide.mp4")
-                except Exception:
-                    pass
-            if os.path.exists(WELCOME_VOICE_PATH):
-                try:
-                    telegram_send_voice(chat_id, WELCOME_VOICE_PATH, "Buraq Logistics instruktsiya.ogg")
-                except Exception:
-                    pass
-        finally:
-            with WELCOME_MEDIA_LOCK:
-                WELCOME_MEDIA_PENDING.discard(str(chat_id))
-            WELCOME_MEDIA_QUEUE.task_done()
-
-
-def ensure_welcome_media_worker():
-    global WELCOME_MEDIA_WORKER
-    if WELCOME_MEDIA_WORKER and WELCOME_MEDIA_WORKER.is_alive():
-        return
-    WELCOME_MEDIA_WORKER = threading.Thread(
-        target=_welcome_media_worker_loop,
-        name="welcome-media-worker",
-        daemon=True,
-    )
-    WELCOME_MEDIA_WORKER.start()
+def _send_welcome_media(chat_id):
+    try:
+        if os.path.exists(WELCOME_VIDEO_PATH):
+            try:
+                telegram_send_video(chat_id, WELCOME_VIDEO_PATH, "Buraq Logistics guide.mp4")
+            except Exception:
+                pass
+        if os.path.exists(WELCOME_VOICE_PATH):
+            try:
+                telegram_send_voice(chat_id, WELCOME_VOICE_PATH, "Buraq Logistics instruktsiya.ogg")
+            except Exception:
+                pass
+    finally:
+        with WELCOME_MEDIA_LOCK:
+            WELCOME_MEDIA_PENDING.discard(str(chat_id))
 
 
 def enqueue_welcome_media(chat_id):
@@ -169,8 +151,12 @@ def enqueue_welcome_media(chat_id):
         if chat_key in WELCOME_MEDIA_PENDING:
             return
         WELCOME_MEDIA_PENDING.add(chat_key)
-    ensure_welcome_media_worker()
-    WELCOME_MEDIA_QUEUE.put(chat_id)
+    threading.Thread(
+        target=_send_welcome_media,
+        args=(chat_id,),
+        name=f"welcome-media-{chat_key}",
+        daemon=True,
+    ).start()
 
 
 def is_group_chat_id(chat_id) -> bool:
