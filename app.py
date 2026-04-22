@@ -86,6 +86,7 @@ REMOVE_REPLY_MARKUP = {
 }
 
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER") or os.path.join(str(db.APP_DATA_DIR), "uploads")
+WELCOME_VIDEO_PATH = os.path.join(os.path.dirname(__file__), "media", "welcome_guide.mp4")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 db.init_db()
@@ -494,6 +495,31 @@ def telegram_send_document(chat_id, file_path: str, filename: str):
     return response.json()
 
 
+def telegram_send_video(chat_id, file_path: str, filename: str | None = None):
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Видео не найдено: {file_path}")
+
+    safe_filename = filename or os.path.basename(file_path)
+    with open(file_path, "rb") as file_handle:
+        response = req.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo",
+            data={
+                "chat_id": chat_id,
+                "supports_streaming": "true",
+            },
+            files={"video": (safe_filename, file_handle, "video/mp4")},
+            timeout=60,
+        )
+    if not response.ok:
+        try:
+            payload = response.json()
+            description = payload.get("description") or response.text
+        except ValueError:
+            description = response.text
+        raise RuntimeError(description)
+    return response.json()
+
+
 def telegram_answer_callback_query(callback_query_id, text: str):
     return telegram_api(
         "answerCallbackQuery",
@@ -630,6 +656,15 @@ def send_group_message_with_keyboard(chat_id, text: str, *, language: str | None
         text,
         reply_markup=build_main_reply_markup(chat_id=chat_id, language=language),
     )
+
+
+def send_group_welcome_bundle(chat_id, button_text: str | None = None):
+    send_group_message_with_keyboard(chat_id, get_group_welcome_text(button_text))
+    if os.path.exists(WELCOME_VIDEO_PATH):
+        try:
+            telegram_send_video(chat_id, WELCOME_VIDEO_PATH, "Buraq Logistics guide.mp4")
+        except Exception:
+            pass
 
 
 def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None, reply_markup: dict | None = None):
@@ -827,15 +862,10 @@ def handle_telegram_message(message: dict):
     if text == "/start":
         db.clear_chat_state(chat_id)
         button_text = get_track_button_text(chat_id=chat_id)
-        start_text = (
-            get_group_welcome_text(button_text)
-            if chat_type in {"group", "supergroup"}
-            else "Привет!\n\nНажми кнопку ниже, чтобы узнать текущий статус своего груза."
-        )
         if chat_type in {"group", "supergroup"}:
-            send_group_message_with_keyboard(chat_id, start_text)
+            send_group_welcome_bundle(chat_id, button_text)
         else:
-            send_with_track_keyboard(chat_id, start_text)
+            send_with_track_keyboard(chat_id, "Привет!\n\nНажми кнопку ниже, чтобы узнать текущий статус своего груза.")
         return
 
     if text == "/chatid":
@@ -918,7 +948,7 @@ def handle_my_chat_member_update(chat_update: dict):
     if new_status in {"member", "administrator"} and old_status in {"", "left", "kicked"}:
         try:
             button_text = get_track_button_text(chat_id=chat_id)
-            send_group_message_with_keyboard(chat_id, get_group_welcome_text(button_text))
+            send_group_welcome_bundle(chat_id, button_text)
         except Exception:
             pass
 
