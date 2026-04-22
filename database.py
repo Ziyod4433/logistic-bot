@@ -441,6 +441,13 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
+        CREATE TABLE IF NOT EXISTS telegram_track_cooldowns (
+            chat_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            last_pressed_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY(chat_id, user_id)
+        );
+
         CREATE TABLE IF NOT EXISTS telegram_chats (
             chat_id TEXT PRIMARY KEY,
             title TEXT NOT NULL DEFAULT '',
@@ -2434,6 +2441,47 @@ def clear_chat_state(chat_id):
     conn.execute("DELETE FROM telegram_sessions WHERE chat_id = ?", (str(chat_id),))
     conn.commit()
     conn.close()
+
+
+def reserve_track_button_request(chat_id, user_id, cooldown_seconds=60):
+    chat_value = str(chat_id or "").strip()
+    user_value = str(user_id or "").strip()
+    if not chat_value or not user_value:
+        return 0
+
+    now_dt = datetime.now(TASHKENT_TZ)
+    now_value = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT last_pressed_at
+            FROM telegram_track_cooldowns
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (chat_value, user_value),
+        ).fetchone()
+        if row and row["last_pressed_at"]:
+            last_dt = parse_local_ts(row["last_pressed_at"])
+            if last_dt:
+                elapsed = max(0, int((now_dt - last_dt).total_seconds()))
+                remaining = int(cooldown_seconds) - elapsed
+                if remaining > 0:
+                    return remaining
+
+        conn.execute(
+            """
+            INSERT INTO telegram_track_cooldowns(chat_id, user_id, last_pressed_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                last_pressed_at = excluded.last_pressed_at
+            """,
+            (chat_value, user_value, now_value),
+        )
+        conn.commit()
+        return 0
+    finally:
+        conn.close()
 
 
 def upsert_telegram_chat(chat_id, title, chat_type, username="", is_active=True):

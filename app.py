@@ -62,6 +62,12 @@ NO_ACTIVE_CARGO_MESSAGES = {
     "uz_cyrl": "Ҳозирги вақтда йўлда келаётган юкингиз мавжуд эмас",
     "ru": "В данный момент у вас нет груза в пути",
 }
+TRACK_BUTTON_COOLDOWN_SECONDS = 60
+TRACK_BUTTON_COOLDOWN_MESSAGES = {
+    "uz_latn": "⏳ Iltimos, keyingi so'rov uchun <b>{seconds}</b> soniya kuting.",
+    "uz_cyrl": "⏳ Илтимос, кейинги сўров учун <b>{seconds}</b> сония кутинг.",
+    "ru": "⏳ Пожалуйста, подождите <b>{seconds}</b> сек. перед следующим запросом.",
+}
 CANCEL_BUTTON = "❌ Отмена"
 STATE_WAITING_BL = "waiting_bl"
 COMM_RATE_PREFIX = "comm_rate"
@@ -99,6 +105,22 @@ def get_track_button_text(*, chat_id=None, language: str | None = None) -> str:
         if bl:
             normalized_language = normalize_message_language(bl.get("message_language"))
     return TRACK_BUTTON_LABELS.get(normalized_language, TRACK_BUTTON)
+
+
+def get_chat_message_language(chat_id) -> str:
+    bl = db.find_latest_active_bl_by_chat(chat_id) or db.find_latest_bl_by_chat(chat_id)
+    if bl:
+        return normalize_message_language(bl.get("message_language"))
+    return normalize_message_language(None)
+
+
+def get_track_button_cooldown_text(language: str | None, seconds: int) -> str:
+    normalized_language = normalize_message_language(language)
+    template = TRACK_BUTTON_COOLDOWN_MESSAGES.get(
+        normalized_language,
+        TRACK_BUTTON_COOLDOWN_MESSAGES["uz_latn"],
+    )
+    return template.format(seconds=max(1, int(seconds)))
 
 
 def is_group_chat_id(chat_id) -> bool:
@@ -789,6 +811,8 @@ def handle_telegram_message(message: dict):
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
     chat_type = chat.get("type")
+    sender = message.get("from") or {}
+    sender_id = sender.get("id") or chat_id
     text = (message.get("text") or "").strip()
 
     remember_group_chat(chat, is_active=True)
@@ -830,6 +854,20 @@ def handle_telegram_message(message: dict):
             return
 
     if text in TRACK_BUTTON_TEXTS:
+        language = get_chat_message_language(chat_id)
+        remaining = db.reserve_track_button_request(
+            chat_id,
+            sender_id,
+            cooldown_seconds=TRACK_BUTTON_COOLDOWN_SECONDS,
+        )
+        if remaining:
+            send_with_track_keyboard(
+                chat_id,
+                get_track_button_cooldown_text(language, remaining),
+                language=language,
+            )
+            return
+
         latest_active_bl = db.find_latest_active_bl_by_chat(chat_id)
         if latest_active_bl:
             db.clear_chat_state(chat_id)
