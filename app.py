@@ -87,6 +87,7 @@ REMOVE_REPLY_MARKUP = {
 
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER") or os.path.join(str(db.APP_DATA_DIR), "uploads")
 WELCOME_VIDEO_PATH = os.path.join(os.path.dirname(__file__), "media", "welcome_guide.mp4")
+WELCOME_VOICE_PATH = os.path.join(os.path.dirname(__file__), "media", "welcome_voice.ogg")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 db.init_db()
@@ -520,6 +521,30 @@ def telegram_send_video(chat_id, file_path: str, filename: str | None = None):
     return response.json()
 
 
+def telegram_send_voice(chat_id, file_path: str, filename: str | None = None):
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Озвучка не найдена: {file_path}")
+
+    safe_filename = filename or os.path.basename(file_path)
+    with open(file_path, "rb") as file_handle:
+        response = req.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendVoice",
+            data={
+                "chat_id": chat_id,
+            },
+            files={"voice": (safe_filename, file_handle, "audio/ogg")},
+            timeout=60,
+        )
+    if not response.ok:
+        try:
+            payload = response.json()
+            description = payload.get("description") or response.text
+        except ValueError:
+            description = response.text
+        raise RuntimeError(description)
+    return response.json()
+
+
 def telegram_answer_callback_query(callback_query_id, text: str):
     return telegram_api(
         "answerCallbackQuery",
@@ -663,6 +688,11 @@ def send_group_welcome_bundle(chat_id, button_text: str | None = None):
     if os.path.exists(WELCOME_VIDEO_PATH):
         try:
             telegram_send_video(chat_id, WELCOME_VIDEO_PATH, "Buraq Logistics guide.mp4")
+        except Exception:
+            pass
+    if os.path.exists(WELCOME_VOICE_PATH):
+        try:
+            telegram_send_voice(chat_id, WELCOME_VOICE_PATH, "Buraq Logistics instruktsiya.ogg")
         except Exception:
             pass
 
