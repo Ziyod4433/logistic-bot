@@ -3,6 +3,8 @@ import os
 import secrets
 import re
 import time
+import threading
+import queue
 from datetime import datetime
 from functools import wraps
 
@@ -43,6 +45,10 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 PORT = int(os.getenv("PORT", "5000"))
 CHAT_ADMIN_CACHE_TTL = 300
 CHAT_ADMIN_CACHE = {}
+WELCOME_MEDIA_QUEUE = queue.Queue()
+WELCOME_MEDIA_PENDING = set()
+WELCOME_MEDIA_LOCK = threading.Lock()
+WELCOME_MEDIA_WORKER = None
 
 ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
@@ -123,6 +129,48 @@ def get_track_button_cooldown_text(language: str | None, seconds: int) -> str:
         TRACK_BUTTON_COOLDOWN_MESSAGES["uz_latn"],
     )
     return template.format(seconds=max(1, int(seconds)))
+
+
+def _welcome_media_worker_loop():
+    while True:
+        chat_id = WELCOME_MEDIA_QUEUE.get()
+        try:
+            if os.path.exists(WELCOME_VIDEO_PATH):
+                try:
+                    telegram_send_video(chat_id, WELCOME_VIDEO_PATH, "Buraq Logistics guide.mp4")
+                except Exception:
+                    pass
+            if os.path.exists(WELCOME_VOICE_PATH):
+                try:
+                    telegram_send_voice(chat_id, WELCOME_VOICE_PATH, "Buraq Logistics instruktsiya.ogg")
+                except Exception:
+                    pass
+        finally:
+            with WELCOME_MEDIA_LOCK:
+                WELCOME_MEDIA_PENDING.discard(str(chat_id))
+            WELCOME_MEDIA_QUEUE.task_done()
+
+
+def ensure_welcome_media_worker():
+    global WELCOME_MEDIA_WORKER
+    if WELCOME_MEDIA_WORKER and WELCOME_MEDIA_WORKER.is_alive():
+        return
+    WELCOME_MEDIA_WORKER = threading.Thread(
+        target=_welcome_media_worker_loop,
+        name="welcome-media-worker",
+        daemon=True,
+    )
+    WELCOME_MEDIA_WORKER.start()
+
+
+def enqueue_welcome_media(chat_id):
+    chat_key = str(chat_id)
+    with WELCOME_MEDIA_LOCK:
+        if chat_key in WELCOME_MEDIA_PENDING:
+            return
+        WELCOME_MEDIA_PENDING.add(chat_key)
+    ensure_welcome_media_worker()
+    WELCOME_MEDIA_QUEUE.put(chat_id)
 
 
 def is_group_chat_id(chat_id) -> bool:
@@ -685,16 +733,7 @@ def send_group_message_with_keyboard(chat_id, text: str, *, language: str | None
 
 def send_group_welcome_bundle(chat_id, button_text: str | None = None):
     send_group_message_with_keyboard(chat_id, get_group_welcome_text(button_text))
-    if os.path.exists(WELCOME_VIDEO_PATH):
-        try:
-            telegram_send_video(chat_id, WELCOME_VIDEO_PATH, "Buraq Logistics guide.mp4")
-        except Exception:
-            pass
-    if os.path.exists(WELCOME_VOICE_PATH):
-        try:
-            telegram_send_voice(chat_id, WELCOME_VOICE_PATH, "Buraq Logistics instruktsiya.ogg")
-        except Exception:
-            pass
+    enqueue_welcome_media(chat_id)
 
 
 def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None, reply_markup: dict | None = None):
