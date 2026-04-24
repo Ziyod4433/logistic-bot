@@ -47,6 +47,8 @@ CHAT_ADMIN_CACHE = {}
 WELCOME_MEDIA_PENDING = set()
 WELCOME_MEDIA_LOCK = threading.Lock()
 WELCOME_MEDIA_SEMAPHORE = threading.Semaphore(2)
+WELCOME_MEDIA_FILE_IDS = {"video": "", "voice": ""}
+WELCOME_MEDIA_FILE_IDS_LOCK = threading.Lock()
 
 ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
@@ -143,31 +145,113 @@ def _send_with_retry(send_func, *args, retries=3, delay=1.5, **kwargs):
     return None
 
 
+def _extract_telegram_file_id(payload: dict | None, media_key: str) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    result = payload.get("result") or {}
+    media = result.get(media_key) or {}
+    if isinstance(media, dict):
+        return str(media.get("file_id") or "").strip()
+    return ""
+
+
+def _get_cached_welcome_media_file_id(kind: str) -> str:
+    with WELCOME_MEDIA_FILE_IDS_LOCK:
+        return WELCOME_MEDIA_FILE_IDS.get(kind, "")
+
+
+def _set_cached_welcome_media_file_id(kind: str, file_id: str) -> None:
+    normalized = str(file_id or "").strip()
+    if not normalized:
+        return
+    with WELCOME_MEDIA_FILE_IDS_LOCK:
+        WELCOME_MEDIA_FILE_IDS[kind] = normalized
+
+
+def telegram_send_video_by_file_id(chat_id, file_id: str):
+    payload = {
+        "chat_id": chat_id,
+        "video": file_id,
+        "supports_streaming": True,
+    }
+    return telegram_api("sendVideo", json=payload, timeout=60)
+
+
+def telegram_send_voice_by_file_id(chat_id, file_id: str):
+    payload = {
+        "chat_id": chat_id,
+        "voice": file_id,
+    }
+    return telegram_api("sendVoice", json=payload, timeout=60)
+
+
+def _send_welcome_video(chat_id):
+    cached_file_id = _get_cached_welcome_media_file_id("video")
+    if cached_file_id:
+        try:
+            return _send_with_retry(
+                telegram_send_video_by_file_id,
+                chat_id,
+                cached_file_id,
+                retries=2,
+                delay=1,
+            )
+        except Exception:
+            with WELCOME_MEDIA_FILE_IDS_LOCK:
+                if WELCOME_MEDIA_FILE_IDS.get("video") == cached_file_id:
+                    WELCOME_MEDIA_FILE_IDS["video"] = ""
+
+    payload = _send_with_retry(
+        telegram_send_video,
+        chat_id,
+        WELCOME_VIDEO_PATH,
+        "Buraq Logistics guide.mp4",
+        retries=3,
+        delay=2,
+    )
+    _set_cached_welcome_media_file_id("video", _extract_telegram_file_id(payload, "video"))
+    return payload
+
+
+def _send_welcome_voice(chat_id):
+    cached_file_id = _get_cached_welcome_media_file_id("voice")
+    if cached_file_id:
+        try:
+            return _send_with_retry(
+                telegram_send_voice_by_file_id,
+                chat_id,
+                cached_file_id,
+                retries=2,
+                delay=1,
+            )
+        except Exception:
+            with WELCOME_MEDIA_FILE_IDS_LOCK:
+                if WELCOME_MEDIA_FILE_IDS.get("voice") == cached_file_id:
+                    WELCOME_MEDIA_FILE_IDS["voice"] = ""
+
+    payload = _send_with_retry(
+        telegram_send_voice,
+        chat_id,
+        WELCOME_VOICE_PATH,
+        "Buraq Logistics instruktsiya.ogg",
+        retries=2,
+        delay=1,
+    )
+    _set_cached_welcome_media_file_id("voice", _extract_telegram_file_id(payload, "voice"))
+    return payload
+
+
 def _send_welcome_media(chat_id):
     try:
         with WELCOME_MEDIA_SEMAPHORE:
             if os.path.exists(WELCOME_VIDEO_PATH):
                 try:
-                    _send_with_retry(
-                        telegram_send_video,
-                        chat_id,
-                        WELCOME_VIDEO_PATH,
-                        "Buraq Logistics guide.mp4",
-                        retries=3,
-                        delay=2,
-                    )
+                    _send_welcome_video(chat_id)
                 except Exception:
                     pass
             if os.path.exists(WELCOME_VOICE_PATH):
                 try:
-                    _send_with_retry(
-                        telegram_send_voice,
-                        chat_id,
-                        WELCOME_VOICE_PATH,
-                        "Buraq Logistics instruktsiya.ogg",
-                        retries=2,
-                        delay=1,
-                    )
+                    _send_welcome_voice(chat_id)
                 except Exception:
                     pass
     finally:
