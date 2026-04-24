@@ -46,6 +46,7 @@ CHAT_ADMIN_CACHE_TTL = 300
 CHAT_ADMIN_CACHE = {}
 WELCOME_MEDIA_PENDING = set()
 WELCOME_MEDIA_LOCK = threading.Lock()
+WELCOME_MEDIA_SEMAPHORE = threading.Semaphore(2)
 
 ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
@@ -128,18 +129,47 @@ def get_track_button_cooldown_text(language: str | None, seconds: int) -> str:
     return template.format(seconds=max(1, int(seconds)))
 
 
+def _send_with_retry(send_func, *args, retries=3, delay=1.5, **kwargs):
+    last_error = None
+    for attempt in range(max(1, int(retries))):
+        try:
+            return send_func(*args, **kwargs)
+        except Exception as exc:
+            last_error = exc
+            if attempt < retries - 1:
+                time.sleep(delay)
+    if last_error:
+        raise last_error
+    return None
+
+
 def _send_welcome_media(chat_id):
     try:
-        if os.path.exists(WELCOME_VIDEO_PATH):
-            try:
-                telegram_send_video(chat_id, WELCOME_VIDEO_PATH, "Buraq Logistics guide.mp4")
-            except Exception:
-                pass
-        if os.path.exists(WELCOME_VOICE_PATH):
-            try:
-                telegram_send_voice(chat_id, WELCOME_VOICE_PATH, "Buraq Logistics instruktsiya.ogg")
-            except Exception:
-                pass
+        with WELCOME_MEDIA_SEMAPHORE:
+            if os.path.exists(WELCOME_VIDEO_PATH):
+                try:
+                    _send_with_retry(
+                        telegram_send_video,
+                        chat_id,
+                        WELCOME_VIDEO_PATH,
+                        "Buraq Logistics guide.mp4",
+                        retries=3,
+                        delay=2,
+                    )
+                except Exception:
+                    pass
+            if os.path.exists(WELCOME_VOICE_PATH):
+                try:
+                    _send_with_retry(
+                        telegram_send_voice,
+                        chat_id,
+                        WELCOME_VOICE_PATH,
+                        "Buraq Logistics instruktsiya.ogg",
+                        retries=2,
+                        delay=1,
+                    )
+                except Exception:
+                    pass
     finally:
         with WELCOME_MEDIA_LOCK:
             WELCOME_MEDIA_PENDING.discard(str(chat_id))
