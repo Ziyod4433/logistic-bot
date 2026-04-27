@@ -1092,6 +1092,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               <div style="display:flex;gap:8px">
                 <input class="search" placeholder="🔍 Поиск BL..." id="bl-search" oninput="filterBL()">
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openEditBatchModal()">⚙️ Параметры партии</button>
+                <button class="btn btn-ghost btn-sm editor-only" onclick="openSheetImportModal()">📥 Импорт Sheets</button>
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openAddBLModal()">+ Добавить BL</button>
                 <button class="btn btn-amber btn-sm editor-only" id="send-batch-btn" onclick="sendBatch()">📤 Отправить партию</button>
               </div>
@@ -1653,6 +1654,43 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   </div>
 </div>
 
+<div class="overlay" id="sheet-import-modal">
+  <div class="modal" style="width:980px;max-width:95vw">
+    <div class="modal-title">Импорт <em>Google Sheets</em></div>
+    <div class="form-g">
+      <label>Ссылка на Google Sheets</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input class="inp" id="sheet-import-url" placeholder="https://docs.google.com/spreadsheets/d/...">
+        <button class="btn btn-ghost btn-sm editor-only" onclick="saveSheetImportUrl()">💾 Сохранить ссылку</button>
+        <button class="btn btn-amber btn-sm" onclick="loadSheetImportPreview()">↻ Загрузить</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted2);margin-top:6px">
+        Таблица должна быть доступна по ссылке. Поддерживается импорт колонок <b>SHIPPING MARK</b>, <b>CTN/件数</b>, <b>T/CBM</b>, <b>KG</b>.
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-h">
+        <span class="card-title">Найденные строки</span>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span id="sheet-import-summary" style="font-size:12px;color:var(--muted2)"></span>
+          <button class="btn btn-ghost btn-xs editor-only" onclick="toggleAllSheetImportRows(true)">Выбрать все</button>
+          <button class="btn btn-ghost btn-xs editor-only" onclick="toggleAllSheetImportRows(false)">Снять выбор</button>
+        </div>
+      </div>
+      <table class="tbl">
+        <thead><tr>
+          <th></th><th>Дата в Sheets</th><th>SHIPPING MARK</th><th>CTN/件数</th><th>T/CBM</th><th>KG</th><th>Строка</th>
+        </tr></thead>
+        <tbody id="sheet-import-table"></tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('sheet-import-modal')">Отмена</button>
+      <button class="btn btn-amber editor-only" onclick="importSelectedSheetRows()">Импортировать в текущую партию</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edit BL -->
 <div class="overlay" id="edit-bl-modal">
   <div class="modal">
@@ -1817,6 +1855,8 @@ let editingBLId = null;
 let movingBLId = null;
 let allClients = [];
 let currentClientName = "";
+let sheetImportRows = [];
+let selectedSheetImportIds = new Set();
 let communicationRecipients = [];
 let selectedCommunicationChats = new Set();
 let moderatorResponseGroups = [];
@@ -2725,6 +2765,130 @@ async function ensureBatchesLoaded(force=false) {
   if (!force && allBatches.length) return allBatches;
   allBatches = await api("/api/batches");
   return allBatches;
+}
+
+async function openSheetImportModal() {
+  if (!ensureEditor()) return;
+  if (!currentBatchId || !currentBatch) {
+    toast("Сначала открой партию","err");
+    return;
+  }
+  sheetImportRows = [];
+  selectedSheetImportIds = new Set();
+  document.getElementById("sheet-import-table").innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📥</div><p>Загрузи таблицу Google Sheets, чтобы увидеть готовые BL.</p></div></td></tr>`;
+  document.getElementById("sheet-import-summary").textContent = `Партия ${currentBatch.name}`;
+  openModal("sheet-import-modal");
+  try {
+    const cfg = await api("/api/google-sheets/config");
+    document.getElementById("sheet-import-url").value = cfg.url || "";
+    if (cfg.url) {
+      await loadSheetImportPreview();
+    }
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function saveSheetImportUrl() {
+  if (!ensureEditor()) return;
+  const url = document.getElementById("sheet-import-url").value.trim();
+  try {
+    await api("/api/google-sheets/config", "POST", { url });
+    toast("Ссылка на Google Sheets сохранена", "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+function renderSheetImportRows() {
+  const table = document.getElementById("sheet-import-table");
+  const summary = document.getElementById("sheet-import-summary");
+  if (!table || !summary) return;
+
+  const targetDate = currentBatch?.name || "";
+  const matchingCount = sheetImportRows.filter(row => String(row.sheet_date || "") === String(targetDate)).length;
+  summary.textContent = `${sheetImportRows.length} строк найдено${targetDate ? ` · для даты партии ${targetDate} совпадений: ${matchingCount}` : ""}`;
+
+  if (!sheetImportRows.length) {
+    table.innerHTML = `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📄</div><p>Подходящие строки в таблице не найдены.</p></div></td></tr>`;
+    return;
+  }
+
+  table.innerHTML = sheetImportRows.map(row => {
+    const checked = selectedSheetImportIds.has(row.id) ? "checked" : "";
+    const isMatch = String(row.sheet_date || "") === String(targetDate);
+    const rowStyle = isMatch ? "" : ` style="opacity:.72"`;
+    return `
+      <tr${rowStyle}>
+        <td><input type="checkbox" ${checked} onchange="toggleSheetImportRow(${JSON.stringify(row.id)}, this.checked)"></td>
+        <td>${esc(row.sheet_date || "—")}</td>
+        <td><strong>${esc(row.code || "")}</strong></td>
+        <td>${esc(String(row.quantity_places ?? ""))}</td>
+        <td>${esc(String(row.volume_cbm ?? ""))}</td>
+        <td>${esc(String(row.weight_kg ?? ""))}</td>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">#${esc(String(row.source_row || ""))}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function toggleSheetImportRow(rowId, checked) {
+  if (checked) selectedSheetImportIds.add(String(rowId));
+  else selectedSheetImportIds.delete(String(rowId));
+}
+
+function toggleAllSheetImportRows(checked) {
+  if (checked) {
+    selectedSheetImportIds = new Set(sheetImportRows.map(row => String(row.id)));
+  } else {
+    selectedSheetImportIds = new Set();
+  }
+  renderSheetImportRows();
+}
+
+async function loadSheetImportPreview() {
+  const url = document.getElementById("sheet-import-url").value.trim();
+  if (!url) {
+    toast("Сначала укажи ссылку на Google Sheets", "err");
+    return;
+  }
+  try {
+    const result = await api("/api/google-sheets/preview", "POST", { url });
+    sheetImportRows = Array.isArray(result.rows) ? result.rows : [];
+    const targetDate = currentBatch?.name || "";
+    const matchedIds = sheetImportRows
+      .filter(row => String(row.sheet_date || "") === String(targetDate))
+      .map(row => String(row.id));
+    selectedSheetImportIds = new Set(matchedIds.length ? matchedIds : sheetImportRows.map(row => String(row.id)));
+    renderSheetImportRows();
+    toast(`Google Sheets загружен: ${result.count || 0} строк`, "ok");
+  } catch (e) {
+    sheetImportRows = [];
+    selectedSheetImportIds = new Set();
+    renderSheetImportRows();
+    toast(e.message, "err");
+  }
+}
+
+async function importSelectedSheetRows() {
+  if (!ensureEditor()) return;
+  if (!currentBatchId) {
+    toast("Сначала открой партию", "err");
+    return;
+  }
+  const rows = sheetImportRows.filter(row => selectedSheetImportIds.has(String(row.id)));
+  if (!rows.length) {
+    toast("Не выбраны строки для импорта", "err");
+    return;
+  }
+  try {
+    const result = await api(`/api/batches/${currentBatchId}/import-sheet`, "POST", { rows });
+    toast(`Импорт завершён: ${result.imported_count || 0} добавлено, ${result.skipped_count || 0} пропущено`, "ok");
+    closeModal("sheet-import-modal");
+    await loadBatchDetail(currentBatchId);
+  } catch (e) {
+    toast(e.message, "err");
+  }
 }
 
 function batchNameById(batchId) {

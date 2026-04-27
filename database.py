@@ -557,6 +557,12 @@ def init_db():
             logged_at TEXT NOT NULL DEFAULT ''
         );
 
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT '',
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
         CREATE TABLE IF NOT EXISTS moderator_response_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id TEXT NOT NULL,
@@ -2069,6 +2075,38 @@ def clear_dashboard_history():
         conn.execute("DELETE FROM sqlite_sequence WHERE name = 'send_logs'")
         conn.commit()
         return _to_int(deleted["cnt"]) if deleted else 0
+    finally:
+        conn.close()
+
+
+def get_setting(key: str, default: str = "") -> str:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT value FROM app_settings WHERE key = ?",
+            (str(key or "").strip(),),
+        ).fetchone()
+        if not row:
+            return default
+        return str(row["value"] or "")
+    finally:
+        conn.close()
+
+
+def set_setting(key: str, value: str) -> None:
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO app_settings(key, value, updated_at)
+            VALUES (?, ?, datetime('now','localtime'))
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = datetime('now','localtime')
+            """,
+            (str(key or "").strip(), str(value or "").strip()),
+        )
+        conn.commit()
     finally:
         conn.close()
 

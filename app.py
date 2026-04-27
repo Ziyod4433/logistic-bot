@@ -4,8 +4,11 @@ import secrets
 import re
 import time
 import threading
+import csv
+import io
 from datetime import datetime
 from functools import wraps
+from urllib.parse import parse_qs, urlparse
 
 import mimetypes
 
@@ -94,9 +97,154 @@ REMOVE_REPLY_MARKUP = {
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER") or os.path.join(str(db.APP_DATA_DIR), "uploads")
 WELCOME_VIDEO_PATH = os.path.join(os.path.dirname(__file__), "media", "welcome_guide.mp4")
 WELCOME_VOICE_PATH = os.path.join(os.path.dirname(__file__), "media", "welcome_voice.ogg")
+GOOGLE_SHEETS_URL_SETTING_KEY = "google_sheets_url"
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 db.init_db()
+
+
+def _normalize_sheet_cell(value: str | None) -> str:
+    text = str(value or "").strip().lower()
+    text = text.replace("\u00a0", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _extract_sheet_date(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    dot_match = re.search(r"\b\d{2}\.\d{2}\.\d{4}\b", raw)
+    if dot_match:
+        return dot_match.group(0)
+    iso_match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", raw)
+    if iso_match:
+        year, month, day = iso_match.group(0).split("-")
+        return f"{day}.{month}.{year}"
+    return ""
+
+
+def _sheet_float(value) -> float:
+    raw = str(value or "").strip().replace("\u00a0", "").replace(" ", "").replace(",", ".")
+    match = re.search(r"-?\d+(?:\.\d+)?", raw)
+    if not match:
+        return 0.0
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return 0.0
+
+
+def _sheet_int(value) -> int:
+    return int(round(_sheet_float(value)))
+
+
+def _google_sheets_export_url(sheet_url: str) -> str:
+    url = (sheet_url or "").strip()
+    if not url:
+        raise ValueError("Ссылка на Google Sheets не указана")
+    parsed = urlparse(url)
+    if "docs.google.com" not in parsed.netloc:
+        return url
+    if "/export" in parsed.path and ("format=csv" in parsed.query or "output=csv" in parsed.query):
+        return url
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", parsed.path)
+    if not match:
+        raise ValueError("Не удалось распознать ссылку Google Sheets")
+    spreadsheet_id = match.group(1)
+    query = parse_qs(parsed.query)
+    gid = ""
+    if query.get("gid"):
+        gid = query["gid"][0]
+    elif parsed.fragment:
+        fragment_match = re.search(r"gid=(\d+)", parsed.fragment)
+        if fragment_match:
+            gid = fragment_match.group(1)
+    export_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv"
+    if gid:
+        export_url += f"&gid={gid}"
+    return export_url
+
+
+def _fetch_google_sheet_matrix(sheet_url: str) -> list[list[str]]:
+    export_url = _google_sheets_export_url(sheet_url)
+    response = req.get(export_url, timeout=30)
+    response.raise_for_status()
+    text = response.content.decode("utf-8-sig", errors="replace")
+    return list(csv.reader(io.StringIO(text)))
+
+
+def _parse_google_sheet_rows(sheet_url: str) -> list[dict]:
+    rows = _fetch_google_sheet_matrix(sheet_url)
+    if not rows:
+        return []
+
+    parsed_rows: list[dict] = []
+    seen_ids: set[str] = set()
+
+    def cell(row_index: int, col_index: int) -> str:
+        if row_index < 0 or row_index >= len(rows):
+            return ""
+        row = rows[row_index]
+        if col_index < 0 or col_index >= len(row):
+            return ""
+        return str(row[col_index] or "").strip()
+
+    for header_row_index, row in enumerate(rows):
+        for start_col_index, value in enumerate(row):
+            if _normalize_sheet_cell(value) != "shipping mark":
+                continue
+
+            sheet_date = ""
+            for up_index in range(header_row_index - 1, -1, -1):
+                search_row = rows[up_index]
+                left = max(0, start_col_index - 1)
+                right = min(len(search_row), start_col_index + 6)
+                for candidate in search_row[left:right]:
+                    sheet_date = _extract_sheet_date(candidate)
+                    if sheet_date:
+                        break
+                if sheet_date:
+                    break
+
+            blank_streak = 0
+            data_row_index = header_row_index + 1
+            while data_row_index < len(rows):
+                code = cell(data_row_index, start_col_index)
+                relevant = [cell(data_row_index, start_col_index + offset) for offset in range(4)]
+                normalized_code = _normalize_sheet_cell(code)
+
+                if normalized_code == "shipping mark":
+                    break
+                if normalized_code in {"total", "итого"}:
+                    break
+
+                if not any(relevant):
+                    blank_streak += 1
+                    if blank_streak >= 3:
+                        break
+                    data_row_index += 1
+                    continue
+
+                blank_streak = 0
+                if code:
+                    row_id = f"{header_row_index}:{data_row_index}:{start_col_index}"
+                    if row_id not in seen_ids:
+                        parsed_rows.append(
+                            {
+                                "id": row_id,
+                                "sheet_date": sheet_date,
+                                "code": code.strip(),
+                                "quantity_places": _sheet_int(cell(data_row_index, start_col_index + 1)),
+                                "volume_cbm": _sheet_float(cell(data_row_index, start_col_index + 2)),
+                                "weight_kg": _sheet_float(cell(data_row_index, start_col_index + 3)),
+                                "source_row": data_row_index + 1,
+                            }
+                        )
+                        seen_ids.add(row_id)
+                data_row_index += 1
+
+    return parsed_rows
 
 
 def normalize_message_language(language: str | None) -> str:
@@ -1304,6 +1452,91 @@ def api_bl_list(batch_id):
 def api_chats():
     include_inactive = request.args.get("all") == "1"
     return jsonify(db.get_telegram_chats(include_inactive=include_inactive))
+
+
+@app.route("/api/google-sheets/config")
+@login_required
+def api_google_sheets_config():
+    return jsonify({"url": db.get_setting(GOOGLE_SHEETS_URL_SETTING_KEY, "")})
+
+
+@app.route("/api/google-sheets/config", methods=["POST"])
+@editor_required
+def api_save_google_sheets_config():
+    data = request.json or {}
+    url = (data.get("url") or "").strip()
+    db.set_setting(GOOGLE_SHEETS_URL_SETTING_KEY, url)
+    return jsonify({"ok": True, "url": url})
+
+
+@app.route("/api/google-sheets/preview", methods=["POST"])
+@login_required
+def api_google_sheets_preview():
+    data = request.json or {}
+    url = (data.get("url") or "").strip() or db.get_setting(GOOGLE_SHEETS_URL_SETTING_KEY, "")
+    if not url:
+        return jsonify({"error": "Сначала укажи ссылку на Google Sheets"}), 400
+    try:
+        rows = _parse_google_sheet_rows(url)
+    except req.RequestException as exc:
+        return jsonify({"error": f"Не удалось прочитать Google Sheets: {exc}"}), 400
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "ok": True,
+            "url": url,
+            "rows": rows,
+            "count": len(rows),
+            "sheet_dates": sorted({row.get("sheet_date", "") for row in rows if row.get("sheet_date")}),
+        }
+    )
+
+
+@app.route("/api/batches/<int:batch_id>/import-sheet", methods=["POST"])
+@editor_required
+def api_import_google_sheet_rows(batch_id):
+    batch = db.get_batch(batch_id)
+    if not batch:
+        abort(404)
+    data = request.json or {}
+    rows = data.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        return jsonify({"error": "Не выбраны строки для импорта"}), 400
+
+    imported = []
+    skipped = []
+    for row in rows:
+        code = str((row or {}).get("code") or "").strip()
+        if not code:
+            continue
+        success = db.add_bl(
+            batch_id=batch_id,
+            code=code,
+            client_name="",
+            chat_id="",
+            cargo_type="",
+            weight_kg=(row or {}).get("weight_kg", 0),
+            volume_cbm=(row or {}).get("volume_cbm", 0),
+            quantity_places=(row or {}).get("quantity_places", 0),
+            cargo_description="",
+            message_language=getattr(db, "DEFAULT_MESSAGE_LANGUAGE", "uz_latn"),
+        )
+        if success:
+            imported.append(code)
+        else:
+            skipped.append({"code": code, "reason": "duplicate"})
+
+    return jsonify(
+        {
+            "ok": True,
+            "imported_count": len(imported),
+            "skipped_count": len(skipped),
+            "imported": imported,
+            "skipped": skipped,
+        }
+    )
 
 
 @app.route("/api/bl", methods=["POST"])
