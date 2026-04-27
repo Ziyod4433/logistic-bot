@@ -1445,6 +1445,141 @@ def format_cargo_info(bl: dict, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str
     return "\n".join(parts)
 
 
+def _cargo_labels(language: str) -> dict:
+    lang = _normalize_message_language(language)
+    if lang == "uz_cyrl":
+        return {
+            "cargo_type": "Tovar turi",
+            "weight": "Оғирлиги",
+            "volume": "Ҳажми",
+            "places": "Жой сони",
+            "description": "Тавсиф",
+        }
+    if lang == "ru":
+        return {
+            "cargo_type": "Тип товара",
+            "weight": "Вес",
+            "volume": "Объём",
+            "places": "Количество мест",
+            "description": "Описание",
+        }
+    return {
+        "cargo_type": "Tovar turi",
+        "weight": "Og'irligi",
+        "volume": "Hajmi",
+        "places": "Joy soni",
+        "description": "Tavsif",
+    }
+
+
+def _cargo_total_suffix(language: str) -> str:
+    lang = _normalize_message_language(language)
+    if lang == "uz_cyrl":
+        return " (Умумий)"
+    if lang == "ru":
+        return " (Общий)"
+    return " (Umumiy)"
+
+
+def format_cargo_info(bl: dict, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
+    labels = _cargo_labels(language)
+    total_suffix = _cargo_total_suffix(language)
+    parts = []
+    cargo_type = (bl.get("cargo_type") or "").strip()
+    if cargo_type:
+        parts.append(f"• {labels['cargo_type']}: <b>{html.escape(cargo_type, quote=False)}</b>")
+
+    weight = _to_float(bl.get("weight_kg"))
+    if weight:
+        parts.append(f"• {labels['weight']}: <b>{weight:g} kg{total_suffix}</b>")
+
+    volume = _to_float(bl.get("volume_cbm"))
+    if volume:
+        parts.append(f"• {labels['volume']}: <b>{volume:g} m³{total_suffix}</b>")
+
+    quantity_breakdown = str(bl.get("quantity_places_breakdown") or "").strip()
+    if quantity_breakdown:
+        parts.append(f"• {labels['places']}: <b>{html.escape(quantity_breakdown, quote=False)}</b>")
+    else:
+        quantity = _to_int(bl.get("quantity_places"))
+        if quantity:
+            parts.append(f"• {labels['places']}: <b>{quantity}</b>")
+
+    description = (bl.get("cargo_description") or "").strip()
+    if description:
+        parts.append(f"• {labels['description']}: <b>{html.escape(description, quote=False)}</b>")
+
+    return "\n".join(parts)
+
+
+def _cargo_labels(language: str) -> dict:
+    lang = _normalize_message_language(language)
+    if lang == "uz_cyrl":
+        return {
+            "cargo_type": "Товар тури",
+            "weight": "Оғирлиги",
+            "volume": "Ҳажми",
+            "places": "Жой сони",
+            "description": "Тавсиф",
+        }
+    if lang == "ru":
+        return {
+            "cargo_type": "Тип товара",
+            "weight": "Вес",
+            "volume": "Объём",
+            "places": "Количество мест",
+            "description": "Описание",
+        }
+    return {
+        "cargo_type": "Tovar turi",
+        "weight": "Og'irligi",
+        "volume": "Hajmi",
+        "places": "Joy soni",
+        "description": "Tavsif",
+    }
+
+
+def _cargo_total_suffix(language: str) -> str:
+    lang = _normalize_message_language(language)
+    if lang == "uz_cyrl":
+        return " (Умумий)"
+    if lang == "ru":
+        return " (Общий)"
+    return " (Umumiy)"
+
+
+def format_cargo_info(bl: dict, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
+    labels = _cargo_labels(language)
+    total_suffix = _cargo_total_suffix(language)
+    parts = []
+
+    cargo_type = (bl.get("cargo_type") or "").strip()
+    if cargo_type:
+        parts.append(f"• {labels['cargo_type']}: <b>{html.escape(cargo_type, quote=False)}</b>")
+
+    weight = _to_float(bl.get("weight_kg"))
+    if weight:
+        parts.append(f"• {labels['weight']}: <b>{weight:g} kg{total_suffix}</b>")
+
+    volume = _to_float(bl.get("volume_cbm"))
+    if volume:
+        parts.append(f"• {labels['volume']}: <b>{volume:g} m³{total_suffix}</b>")
+
+    quantity_breakdown = str(bl.get("quantity_places_breakdown") or "").strip()
+    if quantity_breakdown:
+        parts.append(f"• {labels['places']}: <b>{html.escape(quantity_breakdown, quote=False)}</b>")
+    else:
+        quantity = _to_int(bl.get("quantity_places"))
+        if quantity:
+            parts.append(f"• {labels['places']}: <b>{quantity}</b>")
+
+    description = (bl.get("cargo_description") or "").strip()
+    if description:
+        parts.append(f"• {labels['description']}: <b>{html.escape(description, quote=False)}</b>")
+
+    return "\n".join(parts)
+
+
 class _TemplateContext(dict):
     def __missing__(self, key):
         return "{" + key + "}"
