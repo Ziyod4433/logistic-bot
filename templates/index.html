@@ -2818,15 +2818,21 @@ function renderSheetImportRows() {
     const checked = selectedSheetImportIds.has(row.id) ? "checked" : "";
     const isMatch = String(row.sheet_date || "") === String(targetDate);
     const rowStyle = isMatch ? "" : ` style="opacity:.72"`;
+    const mergeInfo = Number(row.merged_count || 1) > 1
+      ? `<div style="font-size:11px;color:var(--muted2);margin-top:4px">объединено строк: ${row.merged_count}</div>`
+      : "";
+    const sourceRows = Array.isArray(row.source_rows) && row.source_rows.length
+      ? row.source_rows.join(", ")
+      : String(row.source_row || "");
     return `
       <tr${rowStyle}>
         <td><input type="checkbox" ${checked} onchange="toggleSheetImportRow(${JSON.stringify(row.id)}, this.checked)"></td>
         <td>${esc(row.sheet_date || "—")}</td>
-        <td><strong>${esc(row.code || "")}</strong></td>
+        <td><strong>${esc(row.code || "")}</strong>${mergeInfo}</td>
         <td>${esc(String(row.quantity_places ?? ""))}</td>
         <td>${esc(String(row.volume_cbm ?? ""))}</td>
         <td>${esc(String(row.weight_kg ?? ""))}</td>
-        <td class="mono" style="font-size:11px;color:var(--muted2)">#${esc(String(row.source_row || ""))}</td>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">#${esc(String(sourceRows))}</td>
       </tr>
     `;
   }).join("");

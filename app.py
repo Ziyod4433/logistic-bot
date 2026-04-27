@@ -180,6 +180,7 @@ def _parse_google_sheet_rows(sheet_url: str) -> list[dict]:
         return []
 
     parsed_rows: list[dict] = []
+    aggregated_rows: dict[tuple[str, str], dict] = {}
     seen_ids: set[str] = set()
 
     def cell(row_index: int, col_index: int) -> str:
@@ -230,20 +231,56 @@ def _parse_google_sheet_rows(sheet_url: str) -> list[dict]:
                 if code:
                     row_id = f"{header_row_index}:{data_row_index}:{start_col_index}"
                     if row_id not in seen_ids:
-                        parsed_rows.append(
-                            {
-                                "id": row_id,
-                                "sheet_date": sheet_date,
-                                "code": code.strip(),
-                                "quantity_places": _sheet_int(cell(data_row_index, start_col_index + 1)),
-                                "volume_cbm": _sheet_float(cell(data_row_index, start_col_index + 2)),
-                                "weight_kg": _sheet_float(cell(data_row_index, start_col_index + 3)),
-                                "source_row": data_row_index + 1,
-                            }
-                        )
+                        normalized_code = code.strip().upper()
+                        quantity_places = _sheet_int(cell(data_row_index, start_col_index + 1))
+                        volume_cbm = _sheet_float(cell(data_row_index, start_col_index + 2))
+                        weight_kg = _sheet_float(cell(data_row_index, start_col_index + 3))
+                        if sheet_date:
+                            aggregate_key = (sheet_date, normalized_code)
+                            existing = aggregated_rows.get(aggregate_key)
+                            if existing:
+                                existing["quantity_places"] += quantity_places
+                                existing["volume_cbm"] += volume_cbm
+                                existing["weight_kg"] += weight_kg
+                                existing["source_rows"].append(data_row_index + 1)
+                                existing["merged_count"] += 1
+                            else:
+                                aggregated_rows[aggregate_key] = {
+                                    "id": f"{sheet_date}:{normalized_code}",
+                                    "sheet_date": sheet_date,
+                                    "code": normalized_code,
+                                    "quantity_places": quantity_places,
+                                    "volume_cbm": volume_cbm,
+                                    "weight_kg": weight_kg,
+                                    "source_row": data_row_index + 1,
+                                    "source_rows": [data_row_index + 1],
+                                    "merged_count": 1,
+                                }
+                        else:
+                            parsed_rows.append(
+                                {
+                                    "id": row_id,
+                                    "sheet_date": sheet_date,
+                                    "code": normalized_code,
+                                    "quantity_places": quantity_places,
+                                    "volume_cbm": volume_cbm,
+                                    "weight_kg": weight_kg,
+                                    "source_row": data_row_index + 1,
+                                    "source_rows": [data_row_index + 1],
+                                    "merged_count": 1,
+                                }
+                            )
                         seen_ids.add(row_id)
                 data_row_index += 1
 
+    parsed_rows.extend(aggregated_rows.values())
+    parsed_rows.sort(
+        key=lambda item: (
+            item.get("sheet_date") or "",
+            item.get("code") or "",
+            min(item.get("source_rows") or [item.get("source_row") or 0]),
+        )
+    )
     return parsed_rows
 
 
