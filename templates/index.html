@@ -981,7 +981,10 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <!-- PAGE: DASHBOARD -->
       <!-- ═══════════════════════════════════════════════════ -->
       <div class="page active" id="page-dashboard">
-        <div class="page-h">Dashboard <em>/ Обзор</em></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+          <div class="page-h" style="margin:0">Dashboard <em>/ Обзор</em></div>
+          <button class="btn btn-ghost btn-sm editor-only" onclick="clearDashboardHistory()">Очистить историю Dashboard</button>
+        </div>
 
         <div class="stats-row" id="stats-row">
           <div class="stat"><div class="stat-v" id="s-batches">—</div><div class="stat-l">Партий</div></div>
@@ -3236,6 +3239,20 @@ async function clearModeratorResponseJournal() {
     const result = await api("/api/moderator-response/clear", "POST", {});
     toast(`Журнал очищен: удалено ${result.deleted_count || 0} записей`);
     await loadModeratorResponsePage();
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function clearDashboardHistory() {
+  if (!IS_EDITOR) return;
+  if (!confirm("Очистить историю Dashboard?\n\nБудут сброшены:\n• счётчики отправок\n• ошибки отправки\n• история трекинга по отправкам\n\nПартии, BL-коды, проблемы и группы не удаляются.")) return;
+  try {
+    const result = await api("/api/dashboard/history/clear", "POST", {});
+    toast(`История Dashboard очищена: удалено ${result.deleted_count || 0} записей`, "ok");
+    await loadDashboard();
+    if (document.getElementById("page-logs").classList.contains("active")) await loadLogs();
+    if (currentBatchId) await loadBatchDetail(currentBatchId);
   } catch (e) {
     toast(e.message, "err");
   }

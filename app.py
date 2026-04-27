@@ -1225,6 +1225,13 @@ def api_stats():
     return jsonify(db.get_stats())
 
 
+@app.route("/api/dashboard/history/clear", methods=["POST"])
+@editor_required
+def api_clear_dashboard_history():
+    deleted_count = db.clear_dashboard_history()
+    return jsonify({"ok": True, "deleted_count": deleted_count})
+
+
 @app.route("/api/attention")
 @login_required
 def api_attention():

@@ -3,6 +3,7 @@ import os
 import re
 import secrets
 import sqlite3
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -254,11 +255,16 @@ STUCK_DAYS = 5
 
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def _is_locked_error(exc: Exception) -> bool:
+    return "locked" in str(exc or "").lower()
 
 
 def _table_has_column(conn, table_name: str, column_name: str) -> bool:
@@ -1875,34 +1881,48 @@ def move_bl_to_batch(bl_id, target_batch_id):
 
 
 def delete_bl(bl_id):
-    conn = get_conn()
-    try:
-        file_rows = conn.execute(
-            "SELECT id, file_path FROM files WHERE bl_id = ?",
-            (bl_id,),
-        ).fetchall()
+    file_paths = []
+    last_exc = None
+    for attempt in range(8):
+        conn = get_conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            file_rows = conn.execute(
+                "SELECT id, file_path FROM files WHERE bl_id = ?",
+                (bl_id,),
+            ).fetchall()
 
-        conn.execute("UPDATE send_logs SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
-        conn.execute("UPDATE communication_survey_sends SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
-        conn.execute("UPDATE communication_survey_dispatches SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
-        conn.execute("UPDATE communication_ratings SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
-        conn.execute("UPDATE communication_rating_events SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
+            conn.execute("UPDATE send_logs SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
+            conn.execute("UPDATE communication_survey_sends SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
+            conn.execute("UPDATE communication_survey_dispatches SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
+            conn.execute("UPDATE communication_ratings SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
+            conn.execute("UPDATE communication_rating_events SET bl_id = NULL WHERE bl_id = ?", (bl_id,))
 
-        conn.execute("DELETE FROM problems WHERE bl_id = ?", (bl_id,))
-        conn.execute("DELETE FROM files WHERE bl_id = ?", (bl_id,))
-        conn.execute("DELETE FROM bl_codes WHERE id = ?", (bl_id,))
-        conn.commit()
+            conn.execute("DELETE FROM problems WHERE bl_id = ?", (bl_id,))
+            conn.execute("DELETE FROM files WHERE bl_id = ?", (bl_id,))
+            conn.execute("DELETE FROM bl_codes WHERE id = ?", (bl_id,))
+            conn.commit()
 
-        for row in file_rows:
-            file_path = row["file_path"]
-            if not file_path:
-                continue
-            try:
-                os.remove(file_path)
-            except OSError:
-                pass
-    finally:
-        conn.close()
+            file_paths = [row["file_path"] for row in file_rows if row["file_path"]]
+            last_exc = None
+            break
+        except sqlite3.OperationalError as exc:
+            conn.rollback()
+            last_exc = exc
+            if not _is_locked_error(exc) or attempt == 7:
+                raise
+            time.sleep(0.35 * (attempt + 1))
+        finally:
+            conn.close()
+
+    if last_exc:
+        raise last_exc
+
+    for file_path in file_paths:
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
 
 
 def add_file(bl_id, filename, file_path):
@@ -2037,6 +2057,20 @@ def get_stats():
     }
     conn.close()
     return stats
+
+
+def clear_dashboard_history():
+    conn = get_conn()
+    try:
+        deleted = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM send_logs"
+        ).fetchone()
+        conn.execute("DELETE FROM send_logs")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'send_logs'")
+        conn.commit()
+        return _to_int(deleted["cnt"]) if deleted else 0
+    finally:
+        conn.close()
 
 
 def remember_chat_member(chat_id, user_id, display_name="", username="", is_admin=False):
