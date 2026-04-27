@@ -1377,7 +1377,7 @@ def _cargo_labels(language: str) -> dict:
             "cargo_type": "Tovar turi",
             "weight": "Оғирлиги",
             "volume": "Ҳажми",
-            "places": "Жойлар сони",
+            "places": "CTN/件数",
             "description": "Тавсиф",
         }
     if lang == "ru":
@@ -1385,14 +1385,14 @@ def _cargo_labels(language: str) -> dict:
             "cargo_type": "Тип товара",
             "weight": "Вес",
             "volume": "Объём",
-            "places": "Количество мест",
+            "places": "CTN/件数",
             "description": "Описание",
         }
     return {
         "cargo_type": "Tovar turi",
         "weight": "Og'irligi",
         "volume": "Hajmi",
-        "places": "Joylar soni",
+        "places": "CTN/件数",
         "description": "Tavsif",
     }
 
@@ -2423,6 +2423,7 @@ def render_message(bl: dict, batch_name: str) -> str:
     eta_destination = ((batch or {}).get("eta_destination") or "").strip()
     is_customer_delivery = is_customer_delivery_eta(eta_destination)
     packing_list = "" if is_customer_delivery else format_packing_list(bl.get("id"), language)
+    packing_list_text = ""
     arrival_eta = ((batch or {}).get("eta_to_toshkent") or "").strip()
     arrival_eta_value = arrival_eta or expected_date
     arrival_eta_label = _eta_destination_label(eta_destination, language)
@@ -2448,8 +2449,8 @@ def render_message(bl: dict, batch_name: str) -> str:
         arrival_eta=_normalize_template_value(arrival_eta_value),
         arrival_eta_label=_normalize_template_value(arrival_eta_label),
         actual_date=_normalize_template_value(actual_date),
-        packing_list=_normalize_template_value(packing_list),
-        bl_files=_normalize_template_value(packing_list),
+        packing_list=_normalize_template_value(packing_list_text),
+        bl_files=_normalize_template_value(packing_list_text),
         status_detail="",
     )
     rendered = template.format_map(context)
@@ -2478,7 +2479,7 @@ def render_message(bl: dict, batch_name: str) -> str:
             rendered,
             flags=re.I | re.M,
         )
-        rendered = rendered.rstrip() + f"\n{packing_label}\n{packing_list}"
+        rendered = rendered.rstrip() + f"\n{packing_label}"
     return rendered.strip()
 
 

@@ -1100,7 +1100,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <div id="batch-meta-bar" style="padding:0 18px 14px;color:var(--muted2);font-size:12px"></div>
             <table class="tbl" id="bl-table-wrap">
               <thead><tr>
-                <th>BL код</th><th>Клиент</th><th>Груз</th><th>Chat ID</th><th>Файлы</th><th>Действия</th>
+                <th>BL код</th><th>Клиент</th><th>Груз</th><th>CTN/件数</th><th>Chat ID</th><th>Файлы</th><th>Действия</th>
               </tr></thead>
               <tbody id="bl-table"></tbody>
             </table>
@@ -2357,6 +2357,7 @@ function renderBL(list, batchName) {
       <td class="mono" style="color:var(--amber);font-weight:600">${esc(b.code)}</td>
       <td>${b.client_name ? `<span style="font-weight:500">${esc(b.client_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td>${renderCargoChips(b)}</td>
+      <td>${renderPlacesCell(b)}</td>
       <td>${renderChatCell(b.chat_id)}</td>
       <td>
         ${b.file_count > 0
@@ -2376,7 +2377,7 @@ function renderBL(list, batchName) {
         </div>
       </td>
     </tr>`).join("") :
-    `<tr><td colspan="6"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
+    `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
   renderBatchTotals(list);
 }
 
@@ -2418,10 +2419,16 @@ function renderCargoChips(bl) {
   if (bl.cargo_type) items.push(`<span class="badge badge-muted">📦 ${esc(bl.cargo_type)}</span>`);
   if (num(bl.weight_kg)) items.push(`<span class="badge badge-blue">⚖ ${formatMeasure(bl.weight_kg)} кг</span>`);
   if (num(bl.volume_cbm)) items.push(`<span class="badge badge-purple">◻ ${formatMeasure(bl.volume_cbm)} м³</span>`);
-  if (num(bl.quantity_places)) items.push(`<span class="badge badge-green"># ${formatMeasure(bl.quantity_places)} мест</span>`);
   if (!items.length) return `<span style="color:var(--muted);font-size:11px">не указано</span>`;
   const desc = bl.cargo_description ? `<div style="font-size:11px;color:var(--muted2);margin-top:6px">${esc(bl.cargo_description)}</div>` : "";
   return `<div style="display:flex;gap:6px;flex-wrap:wrap">${items.join("")}</div>${desc}`;
+}
+
+function renderPlacesCell(bl) {
+  if (!num(bl.quantity_places)) {
+    return `<span style="color:var(--muted);font-size:11px">—</span>`;
+  }
+  return `<span class="badge badge-green"># ${formatMeasure(bl.quantity_places)}</span>`;
 }
 
 function renderBatchTotals(list) {
