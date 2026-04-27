@@ -235,6 +235,7 @@ def _parse_google_sheet_rows(sheet_url: str) -> list[dict]:
                         quantity_places = _sheet_int(cell(data_row_index, start_col_index + 1))
                         volume_cbm = _sheet_float(cell(data_row_index, start_col_index + 2))
                         weight_kg = _sheet_float(cell(data_row_index, start_col_index + 3))
+                        quantity_piece = str(quantity_places) if quantity_places else ""
                         if sheet_date:
                             aggregate_key = (sheet_date, normalized_code)
                             existing = aggregated_rows.get(aggregate_key)
@@ -242,6 +243,8 @@ def _parse_google_sheet_rows(sheet_url: str) -> list[dict]:
                                 existing["quantity_places"] += quantity_places
                                 existing["volume_cbm"] += volume_cbm
                                 existing["weight_kg"] += weight_kg
+                                if quantity_piece:
+                                    existing["quantity_places_items"].append(quantity_piece)
                                 existing["source_rows"].append(data_row_index + 1)
                                 existing["merged_count"] += 1
                             else:
@@ -250,6 +253,7 @@ def _parse_google_sheet_rows(sheet_url: str) -> list[dict]:
                                     "sheet_date": sheet_date,
                                     "code": normalized_code,
                                     "quantity_places": quantity_places,
+                                    "quantity_places_items": [quantity_piece] if quantity_piece else [],
                                     "volume_cbm": volume_cbm,
                                     "weight_kg": weight_kg,
                                     "source_row": data_row_index + 1,
@@ -263,6 +267,7 @@ def _parse_google_sheet_rows(sheet_url: str) -> list[dict]:
                                     "sheet_date": sheet_date,
                                     "code": normalized_code,
                                     "quantity_places": quantity_places,
+                                    "quantity_places_items": [quantity_piece] if quantity_piece else [],
                                     "volume_cbm": volume_cbm,
                                     "weight_kg": weight_kg,
                                     "source_row": data_row_index + 1,
@@ -274,6 +279,10 @@ def _parse_google_sheet_rows(sheet_url: str) -> list[dict]:
                 data_row_index += 1
 
     parsed_rows.extend(aggregated_rows.values())
+    for item in parsed_rows:
+        item["quantity_places_display"] = " + ".join(
+            [part for part in (item.get("quantity_places_items") or []) if str(part).strip()]
+        )
     parsed_rows.sort(
         key=lambda item: (
             item.get("sheet_date") or "",
@@ -1557,6 +1566,7 @@ def api_import_google_sheet_rows(batch_id):
             weight_kg=(row or {}).get("weight_kg", 0),
             volume_cbm=(row or {}).get("volume_cbm", 0),
             quantity_places=(row or {}).get("quantity_places", 0),
+            quantity_places_breakdown=(row or {}).get("quantity_places_display", ""),
             cargo_description="",
             message_language=getattr(db, "DEFAULT_MESSAGE_LANGUAGE", "uz_latn"),
         )
@@ -1591,6 +1601,7 @@ def api_add_bl():
     weight_kg = data.get("weight_kg", 0)
     volume_cbm = data.get("volume_cbm", 0)
     quantity_places = data.get("quantity_places", 0)
+    quantity_places_breakdown = (data.get("quantity_places_breakdown") or data.get("quantity_places") or "").strip()
     cargo_description = (data.get("cargo_description") or "").strip()
 
     if not batch_id or not code:
@@ -1607,6 +1618,7 @@ def api_add_bl():
         weight_kg,
         volume_cbm,
         quantity_places,
+        quantity_places_breakdown,
         cargo_description,
         message_language,
     ):
@@ -1632,6 +1644,7 @@ def api_update_bl(bl_id):
             data.get("weight_kg", 0),
             data.get("volume_cbm", 0),
             data.get("quantity_places", 0),
+            data.get("quantity_places_breakdown", data.get("quantity_places", "")),
             data.get("cargo_description", ""),
             data.get("message_language", ""),
         )

@@ -399,6 +399,7 @@ def init_db():
             weight_kg REAL NOT NULL DEFAULT 0,
             volume_cbm REAL NOT NULL DEFAULT 0,
             quantity_places INTEGER NOT NULL DEFAULT 0,
+            quantity_places_breakdown TEXT DEFAULT '',
             cargo_description TEXT DEFAULT '',
             expected_date TEXT DEFAULT '',
             actual_date TEXT DEFAULT '',
@@ -611,6 +612,7 @@ def init_db():
         ("weight_kg", "REAL NOT NULL DEFAULT 0"),
         ("volume_cbm", "REAL NOT NULL DEFAULT 0"),
         ("quantity_places", "INTEGER NOT NULL DEFAULT 0"),
+        ("quantity_places_breakdown", "TEXT DEFAULT ''"),
         ("cargo_description", "TEXT DEFAULT ''"),
         ("message_language", "TEXT DEFAULT 'uz_latn'"),
         ("moderator_tg_id", "TEXT DEFAULT ''"),
@@ -1026,6 +1028,22 @@ def _to_int(value):
         return 0
 
 
+def _sum_quantity_breakdown(value, fallback=0):
+    text = str(value or "").strip()
+    if not text:
+        return _to_int(fallback)
+    parts = re.findall(r"\d+(?:[.,]\d+)?", text)
+    if not parts:
+        return _to_int(fallback)
+    total = 0
+    for part in parts:
+        try:
+            total += int(float(part.replace(",", ".")))
+        except (TypeError, ValueError):
+            continue
+    return total or _to_int(fallback)
+
+
 def current_ts():
     return datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1377,7 +1395,7 @@ def _cargo_labels(language: str) -> dict:
             "cargo_type": "Tovar turi",
             "weight": "Оғирлиги",
             "volume": "Ҳажми",
-            "places": "CTN/件数",
+            "places": "Жой сони",
             "description": "Тавсиф",
         }
     if lang == "ru":
@@ -1392,7 +1410,7 @@ def _cargo_labels(language: str) -> dict:
         "cargo_type": "Tovar turi",
         "weight": "Og'irligi",
         "volume": "Hajmi",
-        "places": "CTN/件数",
+        "places": "Joy soni",
         "description": "Tavsif",
     }
 
@@ -1412,9 +1430,13 @@ def format_cargo_info(bl: dict, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str
     if volume:
         parts.append(f"• {labels['volume']}: <b>{volume:g} m³</b>")
 
-    quantity = _to_int(bl.get("quantity_places"))
-    if quantity:
-        parts.append(f"• {labels['places']}: <b>{quantity}</b>")
+    quantity_breakdown = str(bl.get("quantity_places_breakdown") or "").strip()
+    if quantity_breakdown:
+        parts.append(f"• {labels['places']}: <b>{html.escape(quantity_breakdown, quote=False)}</b>")
+    else:
+        quantity = _to_int(bl.get("quantity_places"))
+        if quantity:
+            parts.append(f"• {labels['places']}: <b>{quantity}</b>")
 
     description = (bl.get("cargo_description") or "").strip()
     if description:
@@ -1588,11 +1610,13 @@ def add_bl(
     weight_kg=0,
     volume_cbm=0,
     quantity_places=0,
+    quantity_places_breakdown="",
     cargo_description="",
     message_language=DEFAULT_MESSAGE_LANGUAGE,
 ):
     conn = get_conn()
     try:
+        normalized_breakdown = str(quantity_places_breakdown or "").strip()
         batch_row = conn.execute(
             "SELECT status, expected_date, actual_date, status_updated_at FROM batches WHERE id = ?",
             (batch_id,),
@@ -1609,9 +1633,9 @@ def add_bl(
             """
             INSERT INTO bl_codes(
                 batch_id, code, client_name, chat_id, status, message_language, moderator_tg_id, sales_manager_tg_id,
-                cargo_type, weight_kg, volume_cbm, quantity_places, cargo_description, expected_date, actual_date, status_updated_at
+                cargo_type, weight_kg, volume_cbm, quantity_places, quantity_places_breakdown, cargo_description, expected_date, actual_date, status_updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 batch_id,
@@ -1625,7 +1649,8 @@ def add_bl(
                 (cargo_type or "").strip(),
                 _to_float(weight_kg),
                 _to_float(volume_cbm),
-                _to_int(quantity_places),
+                _sum_quantity_breakdown(normalized_breakdown, quantity_places),
+                normalized_breakdown,
                 (cargo_description or "").strip(),
                 (expected_date or "").strip(),
                 (actual_date or "").strip(),
@@ -1732,10 +1757,12 @@ def update_bl(
     weight_kg=0,
     volume_cbm=0,
     quantity_places=0,
+    quantity_places_breakdown="",
     cargo_description="",
     message_language=DEFAULT_MESSAGE_LANGUAGE,
 ):
     conn = get_conn()
+    normalized_breakdown = str(quantity_places_breakdown or "").strip()
     current = conn.execute(
         "SELECT batch_id, status FROM bl_codes WHERE id = ?",
         (bl_id,),
@@ -1778,6 +1805,7 @@ def update_bl(
             weight_kg = ?,
             volume_cbm = ?,
             quantity_places = ?,
+            quantity_places_breakdown = ?,
             cargo_description = ?,
             status_updated_at = CASE
                 WHEN status != ? THEN datetime('now','localtime')
@@ -1796,7 +1824,8 @@ def update_bl(
             (cargo_type or "").strip(),
             _to_float(weight_kg),
             _to_float(volume_cbm),
-            _to_int(quantity_places),
+            _sum_quantity_breakdown(normalized_breakdown, quantity_places),
+            normalized_breakdown,
             (cargo_description or "").strip(),
             effective_status,
             bl_id,
@@ -2416,6 +2445,7 @@ def render_message(bl: dict, batch_name: str) -> str:
     weight_value = _to_float(bl.get("weight_kg"))
     volume_value = _to_float(bl.get("volume_cbm"))
     places_value = _to_int(bl.get("quantity_places"))
+    places_breakdown = str(bl.get("quantity_places_breakdown") or "").strip()
     description = (bl.get("cargo_description") or "").strip()
     expected_date = (bl.get("expected_date") or "").strip()
     actual_date = (bl.get("actual_date") or "").strip()
@@ -2441,8 +2471,8 @@ def render_message(bl: dict, batch_name: str) -> str:
         weight_kg=_normalize_template_value(f"{weight_value:g}" if weight_value else ""),
         volume_cbm=_normalize_template_value(f"{volume_value:g}" if volume_value else ""),
         volume_m3=_normalize_template_value(f"{volume_value:g}" if volume_value else ""),
-        quantity_places=_normalize_template_value(places_value if places_value else ""),
-        places=_normalize_template_value(places_value if places_value else ""),
+        quantity_places=_normalize_template_value(places_breakdown or (places_value if places_value else "")),
+        places=_normalize_template_value(places_breakdown or (places_value if places_value else "")),
         cargo_description=_normalize_template_value(description),
         description=_normalize_template_value(description),
         expected_date=_normalize_template_value(arrival_eta_value),

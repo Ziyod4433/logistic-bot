@@ -2425,6 +2425,13 @@ function renderCargoChips(bl) {
 }
 
 function renderPlacesCell(bl) {
+  const breakdown = String(bl.quantity_places_breakdown || "").trim();
+  if (breakdown) {
+    const parts = breakdown.split(/\s*\+\s*/).filter(Boolean);
+    if (parts.length) {
+      return `<div style="display:flex;gap:6px;flex-wrap:wrap">${parts.map(part => `<span class="badge badge-green"># ${esc(part)}</span>`).join("")}</div>`;
+    }
+  }
   if (!num(bl.quantity_places)) {
     return `<span style="color:var(--muted);font-size:11px">—</span>`;
   }
@@ -2756,7 +2763,7 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-cargo-type").value = bl.cargo_type || "";
   document.getElementById("edit-bl-weight").value = bl.weight_kg || "";
   document.getElementById("edit-bl-volume").value = bl.volume_cbm || "";
-  document.getElementById("edit-bl-quantity").value = bl.quantity_places || "";
+  document.getElementById("edit-bl-quantity").value = bl.quantity_places_breakdown || bl.quantity_places || "";
   document.getElementById("edit-bl-description").value = bl.cargo_description || "";
   setBLLanguage("edit-bl", bl.message_language || "uz_latn");
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
@@ -2836,7 +2843,7 @@ function renderSheetImportRows() {
         <td><input type="checkbox" ${checked} onchange="toggleSheetImportRow(${JSON.stringify(row.id)}, this.checked)"></td>
         <td>${esc(row.sheet_date || "—")}</td>
         <td><strong>${esc(row.code || "")}</strong>${mergeInfo}</td>
-        <td>${esc(String(row.quantity_places ?? ""))}</td>
+        <td>${esc(String(row.quantity_places_display || row.quantity_places || ""))}</td>
         <td>${esc(String(row.volume_cbm ?? ""))}</td>
         <td>${esc(String(row.weight_kg ?? ""))}</td>
         <td class="mono" style="font-size:11px;color:var(--muted2)">#${esc(String(sourceRows))}</td>
@@ -2935,6 +2942,7 @@ async function saveBL() {
       weight_kg: document.getElementById("edit-bl-weight").value.trim(),
       volume_cbm: document.getElementById("edit-bl-volume").value.trim(),
       quantity_places: document.getElementById("edit-bl-quantity").value.trim(),
+      quantity_places_breakdown: document.getElementById("edit-bl-quantity").value.trim(),
       cargo_description: document.getElementById("edit-bl-description").value.trim(),
       message_language: document.getElementById("edit-bl-language").value.trim() || "uz_latn",
       chat_id:     document.getElementById("edit-bl-chat").value.trim(),
