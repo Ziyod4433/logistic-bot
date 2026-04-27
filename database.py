@@ -1424,11 +1424,11 @@ def format_cargo_info(bl: dict, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str
 
     weight = _to_float(bl.get("weight_kg"))
     if weight:
-        parts.append(f"• {labels['weight']}: <b>{weight:g} kg</b>")
+        parts.append(f"• {labels['weight']}: <b>{weight:g} kg (Umumiy)</b>")
 
     volume = _to_float(bl.get("volume_cbm"))
     if volume:
-        parts.append(f"• {labels['volume']}: <b>{volume:g} m³</b>")
+        parts.append(f"• {labels['volume']}: <b>{volume:g} m³ (Umumiy)</b>")
 
     quantity_breakdown = str(bl.get("quantity_places_breakdown") or "").strip()
     if quantity_breakdown:
