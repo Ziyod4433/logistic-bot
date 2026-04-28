@@ -1275,21 +1275,22 @@ def handle_telegram_message(message: dict):
                 language=latest_bl.get("message_language"),
             )
             return
-        db.set_chat_state(chat_id, STATE_WAITING_BL)
-        telegram_send_message(
+        db.clear_chat_state(chat_id)
+        send_with_track_keyboard(
             chat_id,
-            "Yukingizning <b>BL-kod</b>ini yuboring.\n\nMasalan: <code>BL171</code>",
-            reply_markup=CANCEL_REPLY_MARKUP,
+            get_no_active_cargo_text(language),
+            language=language,
         )
         return
 
-    if text == CANCEL_BUTTON:
+    if text == CANCEL_BUTTON or db.get_chat_state(chat_id) == STATE_WAITING_BL:
         db.clear_chat_state(chat_id)
-        send_with_track_keyboard(chat_id, "Запрос отменён.")
+        send_with_track_keyboard(
+            chat_id,
+            get_no_active_cargo_text(get_chat_message_language(chat_id)),
+            language=get_chat_message_language(chat_id),
+        )
         return
-
-    if db.get_chat_state(chat_id) == STATE_WAITING_BL:
-        handle_bl_lookup(chat_id, text)
 
 
 def handle_my_chat_member_update(chat_update: dict):
