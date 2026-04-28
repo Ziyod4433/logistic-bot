@@ -119,17 +119,20 @@ DEFAULT_TEMPLATE = """👋Assalomu alaykum hurmatli mijoz!
 🖇Tovar bo'yicha packing list⤵️
 {packing_list}"""
 
-DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Опрос за {month_key}
+DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Assalomu alaykum , Sardor aka.
 
-Пожалуйста, оцени работу менеджера по коммуникации для клиента <b>{client_name}</b>.
+Iltimos, bizning guruh moderatorimiz ishiga 0 dan 10 gacha baho bering.
 
-Шкала:
-<b>YOMON</b> — плохо
-<b>O'RTA</b> — средне
-<b>YAXSHI</b> — хорошо
-<b>ALO</b> — отлично
+Iltimos faqat guruh moderatori ishigagina baho berishingizni soraymiz , bu hodim vazifasi , oy davomida sizga tezlik bilan masul hodimni  guruhga jalb qilib berish edi, va u qanchalik bu vazifani yaxshi uddaladi , shuni baholab berishingizni so'raymiz ? 
+Sizning fikringiz biz uchun juda muhim va xizmatimiz sifatini yanada oshirishga yordam beradi.
 
-Эта оценка не будет показана в группе. Её увидит только админ панели."""
+Oldindan tashakkur!
+Buraq Logistics jamoasi.
+
+Moderator xizmatiga qanday baho berasiz? Iltimos, quyidagi variantlardan birini tanlab baholang.
+1–6 ball: xizmatdan qoniqmadim
+7–8 ball: xizmat yomon emas, lekin yaxshilash kerak
+9–10 ball: xizmatdan juda mamnunman, boshqalarga ham tavsiya qilaman"""
 
 DEFAULT_STATUS_DETAILS = {
     "Xitoy": "🇨🇳 Yuk Xitoydagi jo'nash nuqtasida tayyorlanmoqda va marshrutga chiqarilmoqda.",
@@ -3168,7 +3171,18 @@ def get_communication_rate_template():
     conn = get_conn()
     row = conn.execute("SELECT content FROM communication_rate_template WHERE id = 1").fetchone()
     conn.close()
-    return row["content"] if row else DEFAULT_COMMUNICATION_RATE_TEMPLATE
+    content = row["content"] if row else DEFAULT_COMMUNICATION_RATE_TEMPLATE
+    legacy_markers = [
+        "Опрос за {month_key}",
+        "Пожалуйста, оцени работу менеджера по коммуникации",
+        "<b>YOMON</b> — плохо",
+        "<b>O'RTA</b> — средне",
+        "<b>YAXSHI</b> — хорошо",
+        "<b>ALO</b> — отлично",
+    ]
+    if any(marker in (content or "") for marker in legacy_markers):
+        return DEFAULT_COMMUNICATION_RATE_TEMPLATE
+    return content or DEFAULT_COMMUNICATION_RATE_TEMPLATE
 
 
 def save_communication_rate_template(content):
@@ -3384,7 +3398,7 @@ def delete_communication_survey_dispatch(dispatch_id):
 
 def save_communication_rating(dispatch_id, month_key, chat_id, score, voter=None):
     score_value = _to_int(score)
-    if score_value < 1 or score_value > 10:
+    if score_value < 0 or score_value > 10:
         return False
 
     conn = get_conn()

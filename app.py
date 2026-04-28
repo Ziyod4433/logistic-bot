@@ -928,20 +928,24 @@ def telegram_leave_chat(chat_id):
 
 
 def communication_rating_markup(dispatch_id: int):
-    options = [
-        ("YOMON", 1),
-        ("O'RTA", 4),
-        ("YAXSHI", 7),
-        ("ALO", 10),
-    ]
+    options = list(range(0, 11))
     return {
-        "inline_keyboard": [[
-            {
-                "text": label,
-                "callback_data": f"{COMM_RATE_PREFIX}:{dispatch_id}:{score}",
-            }
-            for label, score in options
-        ]]
+        "inline_keyboard": [
+            [
+                {
+                    "text": str(score),
+                    "callback_data": f"{COMM_RATE_PREFIX}:{dispatch_id}:{score}",
+                }
+                for score in options[:6]
+            ],
+            [
+                {
+                    "text": str(score),
+                    "callback_data": f"{COMM_RATE_PREFIX}:{dispatch_id}:{score}",
+                }
+                for score in options[6:]
+            ],
+        ]
     }
 
 
@@ -1056,12 +1060,7 @@ def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None,
 
 
 def communication_rating_label(score: int) -> str:
-    return {
-        1: "YOMON",
-        4: "O'RTA",
-        7: "YAXSHI",
-        10: "ALO",
-    }.get(int(score), f"{score}/10")
+    return f"{int(score)}/10"
 
 
 def send_communication_survey(recipient: dict, month_key: str):
