@@ -66,6 +66,7 @@ TRACK_BUTTON_LABELS = {
 }
 TRACK_BUTTON_TEXTS = set(TRACK_BUTTON_LABELS.values())
 GROUP_REMOVE_COMMANDS = {"removebot", "leavebot", "botni_ochir", "hidekeyboard"}
+MENU_RESTORE_COMMANDS = {"menu", "keyboard", "showmenu", "tugma", "knopka"}
 NO_ACTIVE_CARGO_MESSAGES = {
     "uz_latn": "Hozirgi vaqtda yo'lda kelayotgan yukingiz mavjud emas",
     "uz_cyrl": "Ҳозирги вақтда йўлда келаётган юкингиз мавжуд эмас",
@@ -520,6 +521,15 @@ def get_group_welcome_text(button_text: str | None = None) -> str:
 def get_no_active_cargo_text(language: str | None = None) -> str:
     normalized_language = normalize_message_language(language)
     return NO_ACTIVE_CARGO_MESSAGES.get(normalized_language, NO_ACTIVE_CARGO_MESSAGES["uz_latn"])
+
+
+def get_menu_restore_text(language: str | None = None) -> str:
+    normalized_language = normalize_message_language(language)
+    if normalized_language == "uz_cyrl":
+        return "✅ Юқоридаги меню қайта ёқилди. Пастдаги <b>Юк ҳолати</b> тугмасидан фойдаланинг."
+    if normalized_language == "ru":
+        return "✅ Меню снова включено. Используйте нижнюю кнопку <b>Статус груза</b>."
+    return "✅ Menu qayta yoqildi. Pastdagi <b>Yuk holati</b> tugmasidan foydalaning."
 
 
 def get_chat_admin_ids(chat_id):
@@ -1035,7 +1045,7 @@ def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None,
         telegram_send_message(
             chat_id,
             text,
-            reply_markup=reply_markup,
+            reply_markup=reply_markup or build_group_track_reply_markup(chat_id=chat_id, language=language),
         )
         return
     telegram_send_message(
@@ -1220,6 +1230,15 @@ def handle_telegram_message(message: dict):
 
     bot_command = extract_bot_command(text)
     if handle_group_remove_request(message, bot_command):
+        return
+
+    if bot_command in MENU_RESTORE_COMMANDS:
+        db.clear_chat_state(chat_id)
+        language = get_chat_message_language(chat_id)
+        if chat_type in {"group", "supergroup"}:
+            send_group_message_with_keyboard(chat_id, get_menu_restore_text(language), language=language)
+        else:
+            send_with_track_keyboard(chat_id, get_menu_restore_text(language), language=language)
         return
 
     if text == "/start":
