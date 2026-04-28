@@ -119,20 +119,19 @@ DEFAULT_TEMPLATE = """👋Assalomu alaykum hurmatli mijoz!
 🖇Tovar bo'yicha packing list⤵️
 {packing_list}"""
 
-DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Assalomu alaykum , Sardor aka.
+DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Assalomu alaykum hurmatli mijoz! 
 
 Iltimos, bizning guruh moderatorimiz ishiga 0 dan 10 gacha baho bering.
 
 Iltimos faqat guruh moderatori ishigagina baho berishingizni soraymiz , bu hodim vazifasi , oy davomida sizga tezlik bilan masul hodimni  guruhga jalb qilib berish edi, va u qanchalik bu vazifani yaxshi uddaladi , shuni baholab berishingizni so'raymiz ? 
 Sizning fikringiz biz uchun juda muhim va xizmatimiz sifatini yanada oshirishga yordam beradi.
 
-Oldindan tashakkur!
-Buraq Logistics jamoasi.
-
 Moderator xizmatiga qanday baho berasiz? Iltimos, quyidagi variantlardan birini tanlab baholang.
 1–6 ball: xizmatdan qoniqmadim
 7–8 ball: xizmat yomon emas, lekin yaxshilash kerak
-9–10 ball: xizmatdan juda mamnunman, boshqalarga ham tavsiya qilaman"""
+9–10 ball: xizmatdan juda mamnunman, boshqalarga ham tavsiya qilaman
+Oldindan tashakkur!
+Buraq Logistics jamoasi."""
 
 DEFAULT_STATUS_DETAILS = {
     "Xitoy": "🇨🇳 Yuk Xitoydagi jo'nash nuqtasida tayyorlanmoqda va marshrutga chiqarilmoqda.",
@@ -3179,6 +3178,7 @@ def get_communication_rate_template():
         "<b>O'RTA</b> — средне",
         "<b>YAXSHI</b> — хорошо",
         "<b>ALO</b> — отлично",
+        "Assalomu alaykum , Sardor aka.",
     ]
     if any(marker in (content or "") for marker in legacy_markers):
         return DEFAULT_COMMUNICATION_RATE_TEMPLATE
