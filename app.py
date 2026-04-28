@@ -975,6 +975,14 @@ def clear_group_reply_keyboard(chat_id):
         pass
 
 
+def _delete_message_later(chat_id, message_id, delay: float = 1.5):
+    try:
+        time.sleep(max(0.2, float(delay)))
+        telegram_delete_message(chat_id, message_id)
+    except Exception:
+        pass
+
+
 def extract_bot_command(text: str) -> str:
     match = re.match(r"^/([A-Za-z0-9_]+)(?:@\w+)?$", (text or "").strip())
     return (match.group(1) or "").lower() if match else ""
@@ -1013,30 +1021,31 @@ def handle_group_remove_request(message: dict, command: str):
 
 
 def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
-    if is_group_chat_id(chat_id):
-        return
     try:
         response = telegram_send_message(
             chat_id,
             "ㅤ",
-            reply_markup=build_main_reply_markup(chat_id=chat_id, language=language),
+            reply_markup=(
+                build_group_track_reply_markup(chat_id=chat_id, language=language)
+                if is_group_chat_id(chat_id)
+                else build_main_reply_markup(chat_id=chat_id, language=language)
+            ),
         )
         message_id = (((response or {}).get("result") or {}).get("message_id"))
         if message_id:
-            try:
-                telegram_delete_message(chat_id, message_id)
-            except Exception:
-                pass
+            threading.Thread(
+                target=_delete_message_later,
+                args=(chat_id, message_id, 1.5),
+                name=f"delete-keyboard-refresh-{chat_id}",
+                daemon=True,
+            ).start()
     except Exception:
         pass
 
 
 def send_group_message_with_keyboard(chat_id, text: str, *, language: str | None = None):
-    telegram_send_message(
-        chat_id,
-        text,
-        reply_markup=build_main_reply_markup(chat_id=chat_id, language=language),
-    )
+    telegram_send_message(chat_id, text)
+    refresh_track_reply_keyboard(chat_id, language=language)
 
 
 def send_group_welcome_bundle(chat_id, button_text: str | None = None):
@@ -1046,11 +1055,8 @@ def send_group_welcome_bundle(chat_id, button_text: str | None = None):
 
 def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None, reply_markup: dict | None = None):
     if is_group_chat_id(chat_id):
-        telegram_send_message(
-            chat_id,
-            text,
-            reply_markup=reply_markup,
-        )
+        telegram_send_message(chat_id, text, reply_markup=reply_markup)
+        refresh_track_reply_keyboard(chat_id, language=language)
         return
     telegram_send_message(
         chat_id,
