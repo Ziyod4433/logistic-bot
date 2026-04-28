@@ -1310,11 +1310,7 @@ def handle_my_chat_member_update(chat_update: dict):
         clear_group_reply_keyboard(chat_id)
         return
     if new_status in {"member", "administrator"} and old_status in {"", "left", "kicked"}:
-        try:
-            button_text = get_track_button_text(chat_id=chat_id)
-            send_group_welcome_bundle(chat_id, button_text)
-        except Exception:
-            pass
+        return
 
 
 def send_bl_package(bl: dict, batch_name: str):
