@@ -1880,6 +1880,23 @@ def find_latest_active_bl_by_chat(chat_id):
     return dict(row) if row else None
 
 
+def find_active_bls_by_chat(chat_id):
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT bl.*, b.name AS batch_name
+        FROM bl_codes bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE bl.chat_id = ?
+          AND COALESCE(b.client_delivery_date, '') = ''
+        ORDER BY b.created_at DESC, bl.created_at DESC, bl.id DESC
+        """,
+        (str(chat_id),),
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def update_bl(
     bl_id,
     code,
@@ -2558,7 +2575,45 @@ def _apply_customer_delivery_note(rendered: str, show_note: bool, language: str 
     )
 
 
-def render_message(bl: dict, batch_name: str) -> str:
+def _split_tracking_rendered_message(rendered: str) -> tuple[str, str, str]:
+    text = (rendered or "").strip()
+    if not text:
+        return "", "", ""
+
+    cargo_match = re.search(r"(?m)^🚛\s", text)
+    if not cargo_match:
+        return "", text, ""
+
+    cargo_start = cargo_match.start()
+    footer_start = None
+    footer_markers = (
+        "Aloqa uchun:",
+        "Для связи:",
+        "Алоқа учун:",
+        "Tovar bo'yicha packing list",
+        "Packing list по товару",
+        "Товар бўйича packing list",
+    )
+    for marker in footer_markers:
+        marker_index = text.find(marker, cargo_start)
+        if marker_index == -1:
+            continue
+        line_start = text.rfind("\n", 0, marker_index)
+        line_start = 0 if line_start == -1 else line_start + 1
+        if footer_start is None or line_start < footer_start:
+            footer_start = line_start
+
+    if footer_start is None:
+        return text[:cargo_start].rstrip(), text[cargo_start:].strip(), ""
+
+    return (
+        text[:cargo_start].rstrip(),
+        text[cargo_start:footer_start].strip(),
+        text[footer_start:].strip(),
+    )
+
+
+def _render_single_message(bl: dict, batch_name: str) -> str:
     language = _normalize_message_language(bl.get("message_language"))
     template = _inject_packing_list_placeholder(
         _inject_arrival_eta_placeholder(
@@ -2646,6 +2701,46 @@ def render_message(bl: dict, batch_name: str) -> str:
         )
         rendered = rendered.rstrip() + f"\n{packing_label}"
     return rendered.strip()
+
+
+def render_message(bl: dict, batch_name: str) -> str:
+    primary_bl = dict(bl or {})
+    chat_id = str(primary_bl.get("chat_id") or "").strip()
+    primary_language = _normalize_message_language(primary_bl.get("message_language"))
+    primary_rendered = _render_single_message(primary_bl, batch_name)
+
+    if not chat_id or not primary_bl.get("id"):
+        return primary_rendered
+
+    related_bls = []
+    for related in find_active_bls_by_chat(chat_id):
+        if related.get("id") == primary_bl.get("id"):
+            continue
+        related_copy = dict(related)
+        related_copy["message_language"] = primary_language
+        related_bls.append(related_copy)
+
+    if not related_bls:
+        return primary_rendered
+
+    header, primary_cargo_block, footer = _split_tracking_rendered_message(primary_rendered)
+    if not primary_cargo_block:
+        return primary_rendered
+
+    cargo_blocks = [primary_cargo_block]
+    for related in related_bls:
+        related_rendered = _render_single_message(related, related.get("batch_name") or batch_name)
+        _, related_cargo_block, _ = _split_tracking_rendered_message(related_rendered)
+        if related_cargo_block:
+            cargo_blocks.append(related_cargo_block)
+
+    parts = []
+    if header:
+        parts.append(header.strip())
+    parts.append("\n\n".join(block.strip() for block in cargo_blocks if block.strip()))
+    if footer:
+        parts.append(footer.strip())
+    return "\n\n".join(part for part in parts if part).strip()
 
 
 def set_chat_state(chat_id, state):
