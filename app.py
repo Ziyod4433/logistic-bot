@@ -1045,7 +1045,7 @@ def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None,
         telegram_send_message(
             chat_id,
             text,
-            reply_markup=reply_markup or build_group_track_reply_markup(chat_id=chat_id, language=language),
+            reply_markup=reply_markup,
         )
         return
     telegram_send_message(
