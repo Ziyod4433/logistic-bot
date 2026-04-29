@@ -106,11 +106,23 @@ def _parse_date(value: Any) -> str:
         day, month, year = match.groups()
         if len(year) == 2:
             year = f"20{year}"
+        elif len(year) == 3:
+            return ""
         try:
             return datetime(int(year), int(month), int(day)).strftime("%d.%m.%Y")
         except ValueError:
             return ""
     return ""
+
+
+def _parse_date_obj(value: Any) -> date | None:
+    normalized = _parse_date(value)
+    if not normalized:
+        return None
+    try:
+        return datetime.strptime(normalized, "%d.%m.%Y").date()
+    except ValueError:
+        return None
 
 
 def _clean_number_text(value: Any) -> str:
@@ -532,16 +544,14 @@ def _get_rate_for_date(rates: list[dict[str, Any]], currency: str, on_date: str)
         return None
     if currency == "USD":
         return 1.0
-    target = _parse_date(on_date)
-    target_dt = datetime.strptime(target, "%d.%m.%Y").date() if target else None
+    target_dt = _parse_date_obj(on_date)
     candidates: list[tuple[date, float]] = []
     for row in rates:
         if _normalize_currency(row.get("currency")) != currency:
             continue
-        rate_date = _parse_date(row.get("rate_date"))
-        if not rate_date:
+        rate_dt = _parse_date_obj(row.get("rate_date"))
+        if not rate_dt:
             continue
-        rate_dt = datetime.strptime(rate_date, "%d.%m.%Y").date()
         rate_value = _parse_float(row.get("rate_to_usd"))
         if rate_value <= 0:
             continue
