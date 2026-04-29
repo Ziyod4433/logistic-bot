@@ -274,6 +274,14 @@ def _table_has_column(conn, table_name: str, column_name: str) -> bool:
     return any(row["name"] == column_name for row in rows)
 
 
+def _table_exists(conn, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
 def _late_sql(alias: str = "bl") -> str:
     return f"""
     CASE
@@ -591,6 +599,98 @@ def init_db():
             status TEXT NOT NULL DEFAULT 'open',
             UNIQUE(chat_id, request_message_id)
         );
+
+        CREATE TABLE IF NOT EXISTS sales_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT DEFAULT '',
+            bl_code TEXT DEFAULT '',
+            client_name TEXT DEFAULT '',
+            manager_name TEXT DEFAULT '',
+            service_type TEXT DEFAULT '',
+            amount REAL NOT NULL DEFAULT 0,
+            cost REAL NOT NULL DEFAULT 0,
+            profit REAL NOT NULL DEFAULT 0,
+            currency TEXT DEFAULT '',
+            paid_amount REAL NOT NULL DEFAULT 0,
+            debt_amount REAL NOT NULL DEFAULT 0,
+            payment_status TEXT DEFAULT '',
+            source TEXT DEFAULT '',
+            source_sheet TEXT DEFAULT '',
+            raw_data_json TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS cashflow_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT DEFAULT '',
+            type TEXT DEFAULT '',
+            category TEXT DEFAULT '',
+            amount REAL NOT NULL DEFAULT 0,
+            currency TEXT DEFAULT '',
+            bank_or_cash TEXT DEFAULT '',
+            contractor TEXT DEFAULT '',
+            bl_code TEXT DEFAULT '',
+            reys_number TEXT DEFAULT '',
+            comment TEXT DEFAULT '',
+            source_sheet TEXT DEFAULT '',
+            raw_data_json TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS shipments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bl_code TEXT DEFAULT '',
+            client_name TEXT DEFAULT '',
+            reys_number TEXT DEFAULT '',
+            fura_number TEXT DEFAULT '',
+            container_type TEXT DEFAULT '',
+            station TEXT DEFAULT '',
+            agent TEXT DEFAULT '',
+            logist_name TEXT DEFAULT '',
+            sales_manager_name TEXT DEFAULT '',
+            warehouse TEXT DEFAULT '',
+            status TEXT DEFAULT '',
+            loaded_date TEXT DEFAULT '',
+            arrived_date TEXT DEFAULT '',
+            expected_date TEXT DEFAULT '',
+            cargo_type TEXT DEFAULT '',
+            weight_kg REAL NOT NULL DEFAULT 0,
+            volume_m3 REAL NOT NULL DEFAULT 0,
+            places INTEGER NOT NULL DEFAULT 0,
+            places_breakdown TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            source_sheet TEXT DEFAULT '',
+            raw_data_json TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS analytics_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT DEFAULT '',
+            total_sales REAL NOT NULL DEFAULT 0,
+            total_income REAL NOT NULL DEFAULT 0,
+            total_expense REAL NOT NULL DEFAULT 0,
+            profit REAL NOT NULL DEFAULT 0,
+            debt REAL NOT NULL DEFAULT 0,
+            active_bl_count INTEGER NOT NULL DEFAULT 0,
+            arrived_shipments_count INTEGER NOT NULL DEFAULT 0,
+            delayed_shipments_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS sheet_sync_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT DEFAULT '',
+            finished_at TEXT DEFAULT '',
+            status TEXT DEFAULT '',
+            rows_imported INTEGER NOT NULL DEFAULT 0,
+            rows_skipped INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT DEFAULT '',
+            details_json TEXT DEFAULT ''
+        );
         """
     )
 
@@ -660,6 +760,18 @@ def init_db():
     for column_name, column_def in telegram_chat_columns:
         if not _table_has_column(conn, "telegram_chats", column_name):
             conn.execute(f"ALTER TABLE telegram_chats ADD COLUMN {column_name} {column_def}")
+
+    shipment_columns = [
+        ("places_breakdown", "TEXT DEFAULT ''"),
+        ("source_sheet", "TEXT DEFAULT ''"),
+        ("raw_data_json", "TEXT DEFAULT ''"),
+        ("created_at", "TEXT DEFAULT ''"),
+        ("updated_at", "TEXT DEFAULT ''"),
+    ]
+    if _table_exists(conn, "shipments"):
+        for column_name, column_def in shipment_columns:
+            if not _table_has_column(conn, "shipments", column_name):
+                conn.execute(f"ALTER TABLE shipments ADD COLUMN {column_name} {column_def}")
 
     conn.execute(
         """

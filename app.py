@@ -30,6 +30,7 @@ from flask import (
 from werkzeug.utils import secure_filename
 
 import database as db
+from services import analytics_service, report_exporter, sheets_importer
 
 load_dotenv()
 
@@ -1397,7 +1398,63 @@ def logout():
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        initial_view=(request.args.get("view") or "dashboard").strip() or "dashboard",
+        initial_analytics_tab=(request.args.get("tab") or "overview").strip() or "overview",
+    )
+
+
+def _render_analytics_page(tab: str):
+    return render_template("index.html", initial_view="analytics", initial_analytics_tab=tab)
+
+
+@app.route("/analytics")
+@login_required
+def analytics_index():
+    return _render_analytics_page("overview")
+
+
+@app.route("/analytics/sales-growth")
+@login_required
+def analytics_sales_growth_page():
+    return _render_analytics_page("sales-growth")
+
+
+@app.route("/analytics/cashflow")
+@login_required
+def analytics_cashflow_page():
+    return _render_analytics_page("cashflow")
+
+
+@app.route("/analytics/managers")
+@login_required
+def analytics_managers_page():
+    return _render_analytics_page("managers")
+
+
+@app.route("/analytics/shipments")
+@login_required
+def analytics_shipments_page():
+    return _render_analytics_page("shipments")
+
+
+@app.route("/analytics/debts")
+@login_required
+def analytics_debts_page():
+    return _render_analytics_page("debts")
+
+
+@app.route("/analytics/export")
+@login_required
+def analytics_export_page():
+    return _render_analytics_page("export")
+
+
+@app.route("/analytics/sync")
+@login_required
+def analytics_sync_page():
+    return _render_analytics_page("sync")
 
 
 @app.route("/health")
@@ -2254,6 +2311,124 @@ def api_send_communication_rate():
             "total_recipients": len(recipients),
             "errors": errors,
         }
+    )
+
+
+@app.route("/analytics/api/overview")
+@login_required
+def analytics_api_overview():
+    return jsonify(analytics_service.get_overview(request.args))
+
+
+@app.route("/analytics/api/sales-growth")
+@login_required
+def analytics_api_sales_growth():
+    return jsonify(analytics_service.get_sales_growth(request.args))
+
+
+@app.route("/analytics/api/cashflow")
+@login_required
+def analytics_api_cashflow():
+    return jsonify(analytics_service.get_cashflow(request.args))
+
+
+@app.route("/analytics/api/managers")
+@login_required
+def analytics_api_managers():
+    return jsonify(analytics_service.get_managers(request.args))
+
+
+@app.route("/analytics/api/shipments")
+@login_required
+def analytics_api_shipments():
+    return jsonify(analytics_service.get_shipments(request.args))
+
+
+@app.route("/analytics/api/debts")
+@login_required
+def analytics_api_debts():
+    return jsonify(analytics_service.get_debts(request.args))
+
+
+@app.route("/analytics/api/sync/status")
+@login_required
+def analytics_api_sync_status():
+    return jsonify(analytics_service.get_sync_settings_payload())
+
+
+@app.route("/analytics/api/sync/config", methods=["GET"])
+@login_required
+def analytics_api_sync_config():
+    return jsonify(analytics_service.get_sync_settings_payload())
+
+
+@app.route("/analytics/api/sync/config", methods=["POST"])
+@editor_required
+def analytics_api_sync_config_save():
+    data = request.json or {}
+    sheet_id = (data.get("sheet_id") or "").strip()
+    sheets_importer.set_google_sheet_id(sheet_id)
+    return jsonify({"ok": True, "sheet_id": sheet_id, "status": analytics_service.get_sync_settings_payload()})
+
+
+@app.route("/analytics/api/sync/google", methods=["POST"])
+@editor_required
+def analytics_api_sync_google():
+    data = request.json or {}
+    sheet_id = (data.get("sheet_id") or "").strip() or None
+    try:
+        result = sheets_importer.sync_from_google(sheet_id)
+        return jsonify({"ok": True, **result, "status": analytics_service.get_sync_settings_payload()})
+    except sheets_importer.SheetsImporterError as exc:
+        return jsonify({"error": str(exc), "status": analytics_service.get_sync_settings_payload()}), 400
+    except Exception as exc:
+        app.logger.exception("Google Sheets sync failed")
+        return jsonify({"error": f"Google Sheets sync failed: {exc}"}), 500
+
+
+@app.route("/analytics/api/sync/upload", methods=["POST"])
+@editor_required
+def analytics_api_sync_upload():
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "CSV/XLSX fayl tanlanmagan"}), 400
+    try:
+        result = sheets_importer.sync_from_upload(upload)
+        return jsonify({"ok": True, **result, "status": analytics_service.get_sync_settings_payload()})
+    except sheets_importer.SheetsImporterError as exc:
+        return jsonify({"error": str(exc), "status": analytics_service.get_sync_settings_payload()}), 400
+    except Exception as exc:
+        app.logger.exception("Analytics file import failed")
+        return jsonify({"error": f"Import failed: {exc}"}), 500
+
+
+@app.route("/analytics/api/export")
+@login_required
+def analytics_api_export():
+    report_type = (request.args.get("report") or "sales").strip()
+    export_format = (request.args.get("format") or "csv").strip().lower()
+    try:
+        filename_prefix, rows = analytics_service.get_export_dataset(report_type, request.args)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    if export_format == "xlsx":
+        try:
+            filename, content = report_exporter.export_xlsx(filename_prefix, rows)
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return send_file(
+            io.BytesIO(content),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename,
+        )
+
+    filename, content = report_exporter.export_csv(filename_prefix, rows)
+    return Response(
+        content,
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

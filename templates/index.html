@@ -6,6 +6,7 @@
 <title>LogiAdmin — Панель управления</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 :root {
   --bg:      #08090d;
@@ -565,6 +566,188 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   display: none; align-items: center; justify-content: center;
 }
 .overlay.open { display: flex; }
+
+/* ── ANALYTICS ─────────────────────────────────────────── */
+.analytics-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:18px;
+  flex-wrap:wrap;
+  margin-bottom:18px;
+}
+.analytics-head p { color:var(--muted2); max-width:760px; font-size:13px; }
+.analytics-filter-grid {
+  display:grid;
+  grid-template-columns:repeat(5, minmax(0, 1fr));
+  gap:12px;
+}
+.analytics-filter-actions {
+  display:flex;
+  gap:10px;
+  align-items:flex-end;
+  justify-content:flex-end;
+  flex-wrap:wrap;
+  margin-top:14px;
+}
+.analytics-tabs {
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom:18px;
+}
+.analytics-tab-btn {
+  border:1px solid var(--border2);
+  background:rgba(255,255,255,.02);
+  color:var(--muted2);
+  border-radius:999px;
+  padding:10px 14px;
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:.04em;
+  cursor:pointer;
+  transition:.2s ease;
+}
+.analytics-tab-btn.active,
+.analytics-tab-btn:hover {
+  color:var(--amber3);
+  border-color:rgba(245,166,35,.45);
+  background:rgba(245,166,35,.12);
+}
+.analytics-section { display:none; }
+.analytics-section.active { display:block; }
+.analytics-kpi-grid {
+  display:grid;
+  grid-template-columns:repeat(5, minmax(0, 1fr));
+  gap:14px;
+}
+.analytics-kpi-card {
+  background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+  border:1px solid var(--border2);
+  border-radius:22px;
+  padding:18px 20px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+}
+.analytics-kpi-value {
+  font-family:'Syne', sans-serif;
+  font-size:24px;
+  font-weight:800;
+  line-height:1;
+  color:var(--text);
+  margin-bottom:8px;
+}
+.analytics-kpi-label {
+  color:var(--muted2);
+  font-size:11px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+.analytics-split {
+  display:grid;
+  grid-template-columns:1.1fr .9fr;
+  gap:18px;
+}
+.analytics-subgrid-2 {
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:16px;
+}
+.analytics-subgrid-3 {
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:16px;
+}
+.analytics-chart-card { min-height:330px; }
+.analytics-chart-card canvas { width:100% !important; height:260px !important; }
+.analytics-card-muted { color:var(--muted2); font-size:12px; }
+.analytics-empty {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:10px;
+  padding:42px 20px;
+  text-align:center;
+  color:var(--muted2);
+}
+.analytics-empty-icon {
+  font-size:30px;
+  filter:drop-shadow(0 8px 24px rgba(245,166,35,.18));
+}
+.analytics-insights { display:grid; gap:10px; }
+.analytics-insight {
+  border:1px solid var(--border2);
+  border-radius:16px;
+  padding:12px 14px;
+  background:rgba(255,255,255,.02);
+  color:var(--text);
+}
+.analytics-insight strong {
+  display:block;
+  color:var(--amber3);
+  margin-bottom:4px;
+}
+.analytics-pill {
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  border-radius:999px;
+  padding:6px 10px;
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.04em;
+  background:rgba(255,255,255,.05);
+  color:var(--text);
+}
+.analytics-table-note { color:var(--muted2); font-size:11px; }
+.analytics-sync-grid {
+  display:grid;
+  grid-template-columns:1.1fr .9fr;
+  gap:18px;
+}
+.analytics-status-box {
+  border:1px solid var(--border2);
+  border-radius:18px;
+  padding:16px;
+  background:rgba(255,255,255,.02);
+}
+.analytics-status-box.success {
+  border-color:rgba(16,185,129,.28);
+  background:rgba(16,185,129,.08);
+}
+.analytics-status-box.warning {
+  border-color:rgba(245,166,35,.32);
+  background:rgba(245,166,35,.08);
+}
+.analytics-export-grid {
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:14px;
+}
+.analytics-export-card {
+  border:1px solid var(--border2);
+  border-radius:20px;
+  padding:16px;
+  background:rgba(255,255,255,.02);
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.analytics-export-card h4 { font-size:15px; }
+.analytics-export-actions { display:flex; gap:8px; flex-wrap:wrap; }
+@media (max-width: 1200px) {
+  .analytics-filter-grid,
+  .analytics-kpi-grid { grid-template-columns:repeat(3, minmax(0, 1fr)); }
+  .analytics-split,
+  .analytics-sync-grid { grid-template-columns:1fr; }
+}
+@media (max-width: 880px) {
+  .analytics-filter-grid,
+  .analytics-kpi-grid,
+  .analytics-subgrid-2,
+  .analytics-subgrid-3,
+  .analytics-export-grid { grid-template-columns:1fr; }
+}
 .modal {
   background: var(--bg2); border: 1px solid var(--border2);
   border-radius: 16px; padding: 30px 28px;
@@ -927,6 +1110,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <nav>
       <div class="nav-section">Главное</div>
       <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Dashboard</div>
+      <div class="nav-link" onclick="goto('analytics')"><span class="ico">📈</span> Data Analytics</div>
       <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
       <div class="nav-link" onclick="goto('clients')"><span class="ico">👥</span> Клиенты</div>
       <div class="nav-link" onclick="goto('chats')"><span class="ico">💬</span> Telegram группы <span class="badge-count" id="nav-chat-count">0</span></div>
@@ -1020,6 +1204,279 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </table>
         </div>
 
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════ -->
+      <!-- PAGE: DATA ANALYTICS -->
+      <!-- ═══════════════════════════════════════════════════ -->
+      <div class="page" id="page-analytics">
+        <div class="analytics-head">
+          <div>
+            <div class="page-h" style="margin:0">Data Analytics <em>/ Business Intelligence</em></div>
+            <p>Google Sheets va lokal bazadan ma’lumotlarni yig‘ib, tozalab, saqlab va tahlil qilish uchun yagona panel.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Filtrlar</span>
+            <span class="analytics-table-note">Sukut bo‘yicha joriy oy ko‘rsatiladi.</span>
+          </div>
+          <div class="card-body">
+            <div class="analytics-filter-grid">
+              <div class="form-g">
+                <label>Sana oralig‘i</label>
+                <select class="inp" id="analytics-period">
+                  <option value="today">Today</option>
+                  <option value="week">Week</option>
+                  <option value="month" selected>Month</option>
+                  <option value="year">Year</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div class="form-g">
+                <label>С даты</label>
+                <input class="inp" type="date" id="analytics-date-from">
+              </div>
+              <div class="form-g">
+                <label>По дату</label>
+                <input class="inp" type="date" id="analytics-date-to">
+              </div>
+              <div class="form-g">
+                <label>Menejer</label>
+                <select class="inp" id="analytics-manager"><option value="">Barchasi</option></select>
+              </div>
+              <div class="form-g">
+                <label>Mijoz</label>
+                <select class="inp" id="analytics-client"><option value="">Barchasi</option></select>
+              </div>
+              <div class="form-g">
+                <label>BL kodi</label>
+                <select class="inp" id="analytics-bl-code"><option value="">Barchasi</option></select>
+              </div>
+              <div class="form-g">
+                <label>Reys nomeri</label>
+                <select class="inp" id="analytics-reys-number"><option value="">Barchasi</option></select>
+              </div>
+              <div class="form-g">
+                <label>Fura</label>
+                <select class="inp" id="analytics-fura"><option value="">Barchasi</option></select>
+              </div>
+              <div class="form-g">
+                <label>Status</label>
+                <select class="inp" id="analytics-status"><option value="">Barchasi</option></select>
+              </div>
+              <div class="form-g">
+                <label>Valyuta</label>
+                <select class="inp" id="analytics-currency"><option value="">Barchasi</option></select>
+              </div>
+              <div class="form-g">
+                <label>Kassa / Bank</label>
+                <select class="inp" id="analytics-bank-or-cash"><option value="">Barchasi</option></select>
+              </div>
+              <div class="form-g">
+                <label>Kategoriya</label>
+                <select class="inp" id="analytics-category"><option value="">Barchasi</option></select>
+              </div>
+              <div class="form-g">
+                <label>Sklad</label>
+                <select class="inp" id="analytics-warehouse"><option value="">Barchasi</option></select>
+              </div>
+            </div>
+            <div class="analytics-filter-actions">
+              <button class="btn btn-ghost btn-sm" onclick="resetAnalyticsFilters()">Сбросить</button>
+              <button class="btn btn-amber btn-sm" onclick="refreshAnalyticsActiveTab()">Yangilash</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="analytics-tabs">
+          <button class="analytics-tab-btn active" data-analytics-tab="overview" onclick="showAnalyticsTab('overview')">1. Umumiy ko‘rsatkichlar</button>
+          <button class="analytics-tab-btn" data-analytics-tab="sales-growth" onclick="showAnalyticsTab('sales-growth')">2. Savdo o‘sishi</button>
+          <button class="analytics-tab-btn" data-analytics-tab="cashflow" onclick="showAnalyticsTab('cashflow')">3. Cashflow</button>
+          <button class="analytics-tab-btn" data-analytics-tab="managers" onclick="showAnalyticsTab('managers')">4. Menejerlar KPI</button>
+          <button class="analytics-tab-btn" data-analytics-tab="shipments" onclick="showAnalyticsTab('shipments')">5. Fura / BL analytics</button>
+          <button class="analytics-tab-btn" data-analytics-tab="debts" onclick="showAnalyticsTab('debts')">6. Qarzlar</button>
+          <button class="analytics-tab-btn" data-analytics-tab="export" onclick="showAnalyticsTab('export')">7. Hisobot eksport</button>
+          <button class="analytics-tab-btn" data-analytics-tab="sync" onclick="showAnalyticsTab('sync')">8. Sync / Sozlamalar</button>
+        </div>
+
+        <div class="analytics-section active" id="analytics-section-overview">
+          <div class="analytics-kpi-grid" id="analytics-overview-kpis"></div>
+          <div class="analytics-split" style="margin-top:18px">
+            <div class="card">
+              <div class="card-h"><span class="card-title">Avtomatik xulosalar / Smart insights</span></div>
+              <div class="card-body">
+                <div class="analytics-insights" id="analytics-insights"></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-h"><span class="card-title">Tizim holati</span></div>
+              <div class="card-body" id="analytics-overview-meta"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="analytics-section" id="analytics-section-sales-growth">
+          <div class="analytics-subgrid-3">
+            <div class="analytics-kpi-card"><div class="analytics-kpi-value" id="analytics-sales-current">—</div><div class="analytics-kpi-label">Joriy oy</div></div>
+            <div class="analytics-kpi-card"><div class="analytics-kpi-value" id="analytics-sales-previous">—</div><div class="analytics-kpi-label">O‘tgan oy</div></div>
+            <div class="analytics-kpi-card"><div class="analytics-kpi-value" id="analytics-sales-delta">—</div><div class="analytics-kpi-label">Farq / O‘sish</div></div>
+          </div>
+          <div class="analytics-subgrid-2" style="margin-top:18px">
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Savdo по месяцам</span></div><div class="card-body"><canvas id="analytics-sales-chart"></canvas></div></div>
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Kirim по месяцам</span></div><div class="card-body"><canvas id="analytics-income-chart"></canvas></div></div>
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Sof foyda по месяцам</span></div><div class="card-body"><canvas id="analytics-profit-chart"></canvas></div></div>
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">O‘sish % по месяцам</span></div><div class="card-body"><canvas id="analytics-growth-chart"></canvas></div></div>
+          </div>
+        </div>
+
+        <div class="analytics-section" id="analytics-section-cashflow">
+          <div class="analytics-subgrid-3" id="analytics-cashflow-kpis"></div>
+          <div class="analytics-subgrid-2" style="margin-top:18px">
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Kirim vs Chiqim</span></div><div class="card-body"><canvas id="analytics-cashflow-trend-chart"></canvas></div></div>
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Valyuta balansi</span></div><div class="card-body"><canvas id="analytics-currency-balance-chart"></canvas></div></div>
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Расходы по категориям</span></div><div class="card-body"><canvas id="analytics-expense-category-chart"></canvas></div></div>
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Доходы по категориям</span></div><div class="card-body"><canvas id="analytics-income-category-chart"></canvas></div></div>
+          </div>
+          <div class="card" style="margin-top:18px">
+            <div class="card-h"><span class="card-title">Cashflow jadvali</span></div>
+            <table class="tbl">
+              <thead><tr><th>Дата</th><th>Категория</th><th>Тип</th><th>Сумма</th><th>Валюта</th><th>Bank/Kassa</th><th>Комментарий</th><th>BL/Reys</th></tr></thead>
+              <tbody id="analytics-cashflow-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="analytics-section" id="analytics-section-managers">
+          <div class="analytics-subgrid-2">
+            <div class="card">
+              <div class="card-h"><span class="card-title">Рейтинг</span></div>
+              <div class="card-body"><div class="analytics-insights" id="analytics-manager-ranking"></div></div>
+            </div>
+            <div class="card">
+              <div class="card-h"><span class="card-title">Izoh</span></div>
+              <div class="card-body"><div class="analytics-card-muted">Sales cordinator, sales menejerlar, collector va logist bo‘yicha umumiy ko‘rsatkichlar shu yerda shakllanadi.</div></div>
+            </div>
+          </div>
+          <div class="card" style="margin-top:18px">
+            <div class="card-h"><span class="card-title">Menejerlar KPI</span></div>
+            <table class="tbl">
+              <thead><tr><th>Menejer</th><th>Savdo summasi</th><th>BL soni</th><th>To‘langan</th><th>Qarz</th><th>O‘rtacha chek</th><th>Foyda</th><th>Status</th><th>Kechikishlar</th></tr></thead>
+              <tbody id="analytics-managers-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="analytics-section" id="analytics-section-shipments">
+          <div class="analytics-kpi-grid" id="analytics-shipments-kpis"></div>
+          <div class="analytics-subgrid-3" style="margin-top:18px">
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Furalar jo‘natildi</span></div><div class="card-body"><canvas id="analytics-shipment-sent-chart"></canvas></div></div>
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Furalar yetib keldi</span></div><div class="card-body"><canvas id="analytics-shipment-arrived-chart"></canvas></div></div>
+            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Statuslar bo‘yicha taqsimot</span></div><div class="card-body"><canvas id="analytics-shipment-status-chart"></canvas></div></div>
+          </div>
+          <div class="card" style="margin-top:18px">
+            <div class="card-h"><span class="card-title">BL / Fura jadvali</span></div>
+            <table class="tbl">
+              <thead><tr><th>BL kodi</th><th>Mijoz</th><th>Reys</th><th>Fura</th><th>Status</th><th>Yuklangan sana</th><th>Yetib kelgan sana</th><th>Kunlar</th><th>Menejer</th><th>Logist</th></tr></thead>
+              <tbody id="analytics-shipments-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="analytics-section" id="analytics-section-debts">
+          <div class="analytics-subgrid-3" id="analytics-debts-summary"></div>
+          <div class="card" style="margin-top:18px">
+            <div class="card-h"><span class="card-title">Qarzlar jadvali</span></div>
+            <table class="tbl">
+              <thead><tr><th>Mijoz</th><th>BL kodi</th><th>Umumiy summa</th><th>To‘langan</th><th>Qoldiq qarz</th><th>Valyuta</th><th>Kunlar</th><th>Menejer</th><th>Izoh</th></tr></thead>
+              <tbody id="analytics-debts-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="analytics-section" id="analytics-section-export">
+          <div class="card">
+            <div class="card-h"><span class="card-title">Hisobot eksport</span></div>
+            <div class="card-body">
+              <div class="analytics-export-grid">
+                <div class="analytics-export-card">
+                  <h4>Sales report</h4>
+                  <div class="analytics-card-muted">Savdo summalari, foyda va to‘lov holati.</div>
+                  <div class="analytics-export-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="downloadAnalyticsReport('sales','csv')">CSV</button>
+                    <button class="btn btn-amber btn-sm" onclick="downloadAnalyticsReport('sales','xlsx')">Excel</button>
+                  </div>
+                </div>
+                <div class="analytics-export-card">
+                  <h4>Cashflow report</h4>
+                  <div class="analytics-card-muted">Kirim, chiqim va valyuta balansi.</div>
+                  <div class="analytics-export-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="downloadAnalyticsReport('cashflow','csv')">CSV</button>
+                    <button class="btn btn-amber btn-sm" onclick="downloadAnalyticsReport('cashflow','xlsx')">Excel</button>
+                  </div>
+                </div>
+                <div class="analytics-export-card">
+                  <h4>Manager KPI report</h4>
+                  <div class="analytics-card-muted">Menejerlar samaradorligi va qarzlar.</div>
+                  <div class="analytics-export-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="downloadAnalyticsReport('managers','csv')">CSV</button>
+                    <button class="btn btn-amber btn-sm" onclick="downloadAnalyticsReport('managers','xlsx')">Excel</button>
+                  </div>
+                </div>
+                <div class="analytics-export-card">
+                  <h4>Debts report</h4>
+                  <div class="analytics-card-muted">Mijozlar va menejerlar bo‘yicha qarzdorlik.</div>
+                  <div class="analytics-export-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="downloadAnalyticsReport('debts','csv')">CSV</button>
+                    <button class="btn btn-amber btn-sm" onclick="downloadAnalyticsReport('debts','xlsx')">Excel</button>
+                  </div>
+                </div>
+                <div class="analytics-export-card">
+                  <h4>BL / Fura report</h4>
+                  <div class="analytics-card-muted">Reyslar, furalar va BL dinamikasi.</div>
+                  <div class="analytics-export-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="downloadAnalyticsReport('shipments','csv')">CSV</button>
+                    <button class="btn btn-amber btn-sm" onclick="downloadAnalyticsReport('shipments','xlsx')">Excel</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="analytics-section" id="analytics-section-sync">
+          <div class="analytics-sync-grid">
+            <div class="card">
+              <div class="card-h"><span class="card-title">Sync / Sozlamalar</span></div>
+              <div class="card-body">
+                <div class="form-g">
+                  <label>Google Sheet ID</label>
+                  <input class="inp" id="analytics-sheet-id" placeholder="1idVBaJ0xInTRne5cyzbUIXqaG1r4jdhRbunGTinO8jQ">
+                </div>
+                <div class="analytics-status-box" id="analytics-connection-status" style="margin-top:14px"></div>
+                <div class="analytics-filter-actions" style="justify-content:flex-start">
+                  <button class="btn btn-ghost btn-sm editor-only" onclick="saveAnalyticsSheetConfig()">Сохранить</button>
+                  <button class="btn btn-amber btn-sm editor-only" onclick="syncAnalyticsGoogle()">Google Sheets’dan yangilash</button>
+                  <button class="btn btn-ghost btn-sm editor-only" onclick="document.getElementById('analytics-upload-input').click()">CSV/XLSX import</button>
+                  <input type="file" id="analytics-upload-input" style="display:none" accept=".csv,.xlsx,.xlsm" onchange="uploadAnalyticsFile()">
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-h"><span class="card-title">Oxirgi sync</span></div>
+              <div class="card-body" id="analytics-sync-summary"></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:18px">
+            <div class="card-h"><span class="card-title">Import loglari</span></div>
+            <table class="tbl analytics-log-table">
+              <thead><tr><th>Boshlangan</th><th>Tugagan</th><th>Status</th><th>Import</th><th>Skip</th><th>Xato</th><th>Detal</th></tr></thead>
+              <tbody id="analytics-sync-logs"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- ═══════════════════════════════════════════════════ -->
@@ -1860,8 +2317,16 @@ let selectedSheetImportIds = new Set();
 let communicationRecipients = [];
 let selectedCommunicationChats = new Set();
 let moderatorResponseGroups = [];
+const INITIAL_VIEW = {{ (initial_view if initial_view is defined else 'dashboard')|tojson }};
+const INITIAL_ANALYTICS_TAB = {{ (initial_analytics_tab if initial_analytics_tab is defined else 'overview')|tojson }};
 const IS_EDITOR = {{ 'true' if is_editor else 'false' }};
 const CURRENT_ROLE = {{ current_role|tojson }};
+const ANALYTICS_STATE = {
+  tab: INITIAL_ANALYTICS_TAB || "overview",
+  charts: {},
+  filterOptionsLoaded: false,
+  syncStatus: null,
+};
 const STATUSES = [
   "Xitoy",
   "Yiwu",
@@ -1945,6 +2410,13 @@ async function api(path, method="GET", body=null) {
   return data;
 }
 
+async function apiForm(path, formData) {
+  const r = await fetch(path, { method: "POST", body: formData });
+  const data = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(data.error || "Ошибка запроса");
+  return data;
+}
+
 // ── Toast ─────────────────────────────────────────────────
 function toast(msg, type="inf") {
   const el = document.getElementById("toast");
@@ -1969,6 +2441,7 @@ function goto(page) {
 
   const labels = {
     dashboard:"Dashboard",
+    analytics:"Data Analytics",
     batches:"Партии",
     clients:"Клиенты",
     chats:"Telegram группы",
@@ -1983,6 +2456,7 @@ function goto(page) {
   document.getElementById("breadcrumb").innerHTML = labels[page] || page;
 
   if (page==="dashboard")  loadDashboard();
+  if (page==="analytics")  loadAnalyticsPage();
   if (page==="batches")    { showBatchList(); loadBatches(); }
   if (page==="clients")    loadClientsPage();
   if (page==="chats")      loadChatsPage();
@@ -2000,6 +2474,7 @@ function refreshPage() {
   if (!active) return;
   const id = active.id.replace("page-","");
   if (id==="dashboard")  loadDashboard();
+  else if (id==="analytics") loadAnalyticsPage();
   else if (id==="batches" && currentBatchId) loadBatchDetail(currentBatchId);
   else if (id==="batches") loadBatches();
   else if (id==="clients") loadClientsPage();
@@ -3774,6 +4249,601 @@ async function loadLogs() {
 }
 
 // ══════════════════════════════════════════════════════════
+// ANALYTICS
+// ══════════════════════════════════════════════════════════
+const ANALYTICS_KPI_LABELS = {
+  total_sales: "Umumiy savdo / Total sales",
+  monthly_growth: "Oylik o'sish / Monthly growth",
+  income: "Kirim",
+  expense: "Chiqim",
+  profit: "Sof foyda",
+  margin: "Margin %",
+  debt: "Qarz / Debitorka",
+  active_bl_count: "Aktiv BL soni",
+  arrived_shipments_count: "Yetib kelgan yuklar",
+  delayed_shipments_count: "Kechikayotgan yuklar",
+  average_deal: "O'rtacha chek / Average deal",
+};
+
+const ANALYTICS_KPI_ORDER = [
+  "total_sales",
+  "monthly_growth",
+  "income",
+  "expense",
+  "profit",
+  "debt",
+  "active_bl_count",
+  "arrived_shipments_count",
+  "delayed_shipments_count",
+  "average_deal",
+];
+
+function analyticsEl(id) {
+  return document.getElementById(id);
+}
+
+function analyticsToInputDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{2}\.\d{2}\.\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split(".");
+    return `${year}-${month}-${day}`;
+  }
+  return "";
+}
+
+function analyticsQueryString(extra = {}) {
+  const params = new URLSearchParams();
+  const values = {
+    period: analyticsEl("analytics-period")?.value || "month",
+    date_from: analyticsEl("analytics-date-from")?.value || "",
+    date_to: analyticsEl("analytics-date-to")?.value || "",
+    manager: analyticsEl("analytics-manager")?.value || "",
+    client: analyticsEl("analytics-client")?.value || "",
+    bl_code: analyticsEl("analytics-bl-code")?.value || "",
+    reys_number: analyticsEl("analytics-reys-number")?.value || "",
+    fura: analyticsEl("analytics-fura")?.value || "",
+    status: analyticsEl("analytics-status")?.value || "",
+    currency: analyticsEl("analytics-currency")?.value || "",
+    bank_or_cash: analyticsEl("analytics-bank-or-cash")?.value || "",
+    category: analyticsEl("analytics-category")?.value || "",
+    warehouse: analyticsEl("analytics-warehouse")?.value || "",
+    ...extra,
+  };
+  Object.entries(values).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      params.set(key, String(value));
+    }
+  });
+  return params.toString();
+}
+
+function analyticsEmptyState(message) {
+  return `
+    <div class="analytics-empty">
+      <div class="analytics-empty-icon">📊</div>
+      <div>${esc(message || "Ma'lumot topilmadi")}</div>
+    </div>
+  `;
+}
+
+function analyticsRenderChart(canvasId, config) {
+  const canvas = analyticsEl(canvasId);
+  if (!canvas || typeof Chart === "undefined") return;
+  if (ANALYTICS_STATE.charts[canvasId]) {
+    ANALYTICS_STATE.charts[canvasId].destroy();
+  }
+  const ctx = canvas.getContext("2d");
+  ANALYTICS_STATE.charts[canvasId] = new Chart(ctx, config);
+}
+
+function analyticsDestroyChart(canvasId) {
+  if (ANALYTICS_STATE.charts[canvasId]) {
+    ANALYTICS_STATE.charts[canvasId].destroy();
+    delete ANALYTICS_STATE.charts[canvasId];
+  }
+}
+
+function populateAnalyticsSelect(id, values, placeholderLabel = "Barchasi") {
+  const select = analyticsEl(id);
+  if (!select) return;
+  const current = select.value || "";
+  const options = Array.isArray(values) ? values : [];
+  select.innerHTML = `<option value="">${esc(placeholderLabel)}</option>` +
+    options.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join("");
+  if (options.includes(current)) {
+    select.value = current;
+  }
+}
+
+function hydrateAnalyticsFilters(options = {}, selected = {}) {
+  populateAnalyticsSelect("analytics-manager", options.managers, "Barchasi");
+  populateAnalyticsSelect("analytics-client", options.clients, "Barchasi");
+  populateAnalyticsSelect("analytics-bl-code", options.bl_codes, "Barchasi");
+  populateAnalyticsSelect("analytics-reys-number", options.reys_numbers, "Barchasi");
+  populateAnalyticsSelect("analytics-fura", options.furas, "Barchasi");
+  populateAnalyticsSelect("analytics-status", options.statuses, "Barchasi");
+  populateAnalyticsSelect("analytics-currency", options.currencies, "Barchasi");
+  populateAnalyticsSelect("analytics-bank-or-cash", options.bank_or_cash, "Barchasi");
+  populateAnalyticsSelect("analytics-category", options.categories, "Barchasi");
+  populateAnalyticsSelect("analytics-warehouse", options.warehouses, "Barchasi");
+  if (selected.period) analyticsEl("analytics-period").value = selected.period;
+  if (selected.date_from) analyticsEl("analytics-date-from").value = analyticsToInputDate(selected.date_from);
+  if (selected.date_to) analyticsEl("analytics-date-to").value = analyticsToInputDate(selected.date_to);
+}
+
+async function ensureAnalyticsFilterOptions() {
+  if (ANALYTICS_STATE.filterOptionsLoaded) return null;
+  const data = await api(`/analytics/api/overview?${analyticsQueryString()}`);
+  hydrateAnalyticsFilters(data.filters || {}, data.selected_filters || {});
+  ANALYTICS_STATE.filterOptionsLoaded = true;
+  return data;
+}
+
+function resetAnalyticsFilters() {
+  analyticsEl("analytics-period").value = "month";
+  analyticsEl("analytics-date-from").value = "";
+  analyticsEl("analytics-date-to").value = "";
+  [
+    "analytics-manager",
+    "analytics-client",
+    "analytics-bl-code",
+    "analytics-reys-number",
+    "analytics-fura",
+    "analytics-status",
+    "analytics-currency",
+    "analytics-bank-or-cash",
+    "analytics-category",
+    "analytics-warehouse",
+  ].forEach(id => {
+    const el = analyticsEl(id);
+    if (el) el.value = "";
+  });
+  refreshAnalyticsActiveTab();
+}
+
+function analyticsKpiCard(label, value, note = "") {
+  return `
+    <div class="analytics-kpi-card">
+      <div class="analytics-kpi-value">${esc(value || "—")}</div>
+      <div class="analytics-kpi-label">${esc(label || "")}</div>
+      ${note ? `<div class="analytics-table-note">${esc(note)}</div>` : ""}
+    </div>
+  `;
+}
+
+function analyticsStatusBadge(label, tone = "info") {
+  const map = {
+    success: "badge badge-green",
+    warning: "badge badge-amber",
+    danger: "badge badge-red",
+    info: "badge badge-blue",
+    muted: "badge badge-muted",
+  };
+  return `<span class="${map[tone] || map.info}">${esc(label)}</span>`;
+}
+
+function analyticsTableEmpty(colspan, message) {
+  return `<tr><td colspan="${colspan}">${analyticsEmptyState(message)}</td></tr>`;
+}
+
+function analyticsRenderOverview(data) {
+  const kpisWrap = analyticsEl("analytics-overview-kpis");
+  kpisWrap.innerHTML = ANALYTICS_KPI_ORDER
+    .filter(key => data.kpis && data.kpis[key])
+    .map(key => analyticsKpiCard(
+      ANALYTICS_KPI_LABELS[key] || key,
+      data.kpis[key].display || data.kpis[key].value || "—"
+    )).join("");
+
+  const insights = analyticsEl("analytics-insights");
+  const insightRows = data.smart_insights || [];
+  insights.innerHTML = insightRows.length
+    ? insightRows.map(item => `<div class="analytics-insight">${esc(item)}</div>`).join("")
+    : analyticsEmptyState("Hozircha avtomatik xulosalar yo‘q");
+
+  const meta = analyticsEl("analytics-overview-meta");
+  const missing = (data.meta?.missing_currencies || []).length
+    ? `<div class="analytics-status-box warning">Kurs topilmagan valyutalar: ${esc((data.meta.missing_currencies || []).join(", "))}</div>`
+    : `<div class="analytics-status-box success">Valyutalar kursi tayyor. Baza valyuta: ${esc(data.meta?.base_currency || "UZS")}</div>`;
+  const dataState = data.meta?.has_data
+    ? `<div class="analytics-status-box info">Analytics ma'lumotlari yuklangan va tahlilga tayyor.</div>`
+    : `<div class="analytics-status-box warning">Hozircha ma'lumot yo‘q. Sync / Sozlamalar bo‘limidan import qiling.</div>`;
+  meta.innerHTML = `<div class="analytics-insights">${dataState}${missing}</div>`;
+}
+
+function analyticsSeriesToLabels(series) {
+  return (series || []).map(item => item.month || item.label || "");
+}
+
+function analyticsSeriesToValues(series) {
+  return (series || []).map(item => item.value ?? 0);
+}
+
+async function loadAnalyticsOverview(prefetched = null) {
+  try {
+    const data = prefetched || await api(`/analytics/api/overview?${analyticsQueryString()}`);
+    if (!ANALYTICS_STATE.filterOptionsLoaded) {
+      hydrateAnalyticsFilters(data.filters || {}, data.selected_filters || {});
+      ANALYTICS_STATE.filterOptionsLoaded = true;
+    }
+    analyticsRenderOverview(data);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function loadAnalyticsSalesGrowth() {
+  try {
+    const data = await api(`/analytics/api/sales-growth?${analyticsQueryString()}`);
+    analyticsEl("analytics-sales-current").textContent = data.summary?.current_month ? `${data.summary.current_month} ${data.summary.base_currency || "UZS"}` : "—";
+    analyticsEl("analytics-sales-previous").textContent = data.summary?.previous_month ? `${data.summary.previous_month} ${data.summary.base_currency || "UZS"}` : "—";
+    analyticsEl("analytics-sales-delta").textContent = data.summary?.growth_percent == null
+      ? "—"
+      : `${data.summary.difference} ${data.summary.base_currency || "UZS"} / ${data.summary.growth_percent.toFixed(1)}%`;
+
+    const salesLabels = analyticsSeriesToLabels(data.series?.sales);
+    analyticsRenderChart("analytics-sales-chart", {
+      type: "line",
+      data: { labels: salesLabels, datasets: [{ label: "Savdo", data: analyticsSeriesToValues(data.series?.sales), borderColor: "#ffb739", backgroundColor: "rgba(255,183,57,.18)", tension: .3, fill: true }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+    analyticsRenderChart("analytics-income-chart", {
+      type: "bar",
+      data: { labels: analyticsSeriesToLabels(data.series?.income), datasets: [{ label: "Kirim", data: analyticsSeriesToValues(data.series?.income), backgroundColor: "#2ad09b" }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+    analyticsRenderChart("analytics-profit-chart", {
+      type: "bar",
+      data: { labels: analyticsSeriesToLabels(data.series?.profit), datasets: [{ label: "Sof foyda", data: analyticsSeriesToValues(data.series?.profit), backgroundColor: "#4aa8ff" }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+    analyticsRenderChart("analytics-growth-chart", {
+      type: "line",
+      data: { labels: analyticsSeriesToLabels(data.series?.growth), datasets: [{ label: "O'sish %", data: analyticsSeriesToValues(data.series?.growth), borderColor: "#ff5b7f", backgroundColor: "rgba(255,91,127,.15)", tension: .3, fill: true }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function loadAnalyticsCashflow() {
+  try {
+    const data = await api(`/analytics/api/cashflow?${analyticsQueryString()}`);
+    const kpis = analyticsEl("analytics-cashflow-kpis");
+    kpis.innerHTML = [
+      analyticsKpiCard("Kirim", data.kpis?.income || "—"),
+      analyticsKpiCard("Chiqim", data.kpis?.expense || "—"),
+      analyticsKpiCard("Sof foyda", data.kpis?.net_profit || "—"),
+    ].join("");
+
+    const trendIncome = data.charts?.income_vs_expense?.income || [];
+    const trendExpense = data.charts?.income_vs_expense?.expense || [];
+    const labels = Array.from(new Set([...analyticsSeriesToLabels(trendIncome), ...analyticsSeriesToLabels(trendExpense)])).sort();
+
+    const incomeMap = Object.fromEntries(trendIncome.map(item => [item.month, item.value]));
+    const expenseMap = Object.fromEntries(trendExpense.map(item => [item.month, item.value]));
+    analyticsRenderChart("analytics-cashflow-trend-chart", {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [
+          { label: "Kirim", data: labels.map(label => incomeMap[label] || 0), backgroundColor: "#2ad09b" },
+          { label: "Chiqim", data: labels.map(label => expenseMap[label] || 0), backgroundColor: "#ff6b81" },
+        ],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+
+    analyticsRenderChart("analytics-currency-balance-chart", {
+      type: "doughnut",
+      data: {
+        labels: Object.keys(data.kpis?.balance_by_currency || {}),
+        datasets: [{ data: Object.values(data.kpis?.balance_by_currency || {}).map(value => parseFloat(String(value).replace(/[^\d.-]/g, "")) || 0), backgroundColor: ["#4aa8ff", "#2ad09b", "#ffb739", "#ff5b7f"] }],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+
+    analyticsRenderChart("analytics-expense-category-chart", {
+      type: "pie",
+      data: {
+        labels: (data.charts?.expense_by_category || []).map(item => item.label),
+        datasets: [{ data: (data.charts?.expense_by_category || []).map(item => item.value), backgroundColor: ["#ff6b81", "#ff9f43", "#c56cf0", "#786fa6", "#f7d794"] }],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+
+    analyticsRenderChart("analytics-income-category-chart", {
+      type: "pie",
+      data: {
+        labels: (data.charts?.income_by_category || []).map(item => item.label),
+        datasets: [{ data: (data.charts?.income_by_category || []).map(item => item.value), backgroundColor: ["#2ad09b", "#4aa8ff", "#52d273", "#ffb739", "#5f8cff"] }],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+
+    const table = analyticsEl("analytics-cashflow-table");
+    const rows = data.table || [];
+    table.innerHTML = rows.length ? rows.map(row => `
+      <tr>
+        <td>${esc(row.date || "—")}</td>
+        <td>${esc(row.category || "—")}</td>
+        <td>${analyticsStatusBadge(row.type === "income" ? "income" : "expense", row.type === "income" ? "success" : "danger")}</td>
+        <td>${esc(String(row.amount || "0"))}</td>
+        <td>${esc(row.currency || "—")}</td>
+        <td>${esc(row.bank_or_cash || "—")}</td>
+        <td>${esc(row.comment || "—")}</td>
+        <td>${esc(row.bl_or_reys || "—")}</td>
+      </tr>`).join("") : analyticsTableEmpty(8, "Cashflow ma'lumotlari topilmadi");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function loadAnalyticsManagers() {
+  try {
+    const data = await api(`/analytics/api/managers?${analyticsQueryString()}`);
+    const ranking = analyticsEl("analytics-manager-ranking");
+    if (data.empty) {
+      ranking.innerHTML = analyticsEmptyState("Menejerlar statistikasi hali yo‘q");
+    } else {
+      ranking.innerHTML = [
+        `🏆 Oy bo‘yicha eng yaxshi menejer: ${esc(data.ranking?.best_sales_manager || "—")}`,
+        `💰 Eng ko‘p savdo: ${esc(data.ranking?.most_sales || "—")}`,
+        `📦 Eng ko‘p BL: ${esc(data.ranking?.most_bl_manager || "—")}`,
+        `⚠️ Eng ko‘p qarz: ${esc(data.ranking?.most_unpaid_manager || "—")}`,
+        `🚛 Eng ko‘p kechikish: ${esc(data.ranking?.most_delays_manager || "—")}`,
+      ].map(item => `<div class="analytics-insight">${item}</div>`).join("");
+    }
+    const tbody = analyticsEl("analytics-managers-table");
+    const rows = data.table || [];
+    tbody.innerHTML = rows.length ? rows.map(row => `
+      <tr>
+        <td>${esc(row.manager_name)}</td>
+        <td>${esc(row.sales_total || "0")}</td>
+        <td>${esc(String(row.bl_count || 0))}</td>
+        <td>${esc(row.paid_amount || "0")}</td>
+        <td>${esc(row.debt_amount || "0")}</td>
+        <td>${esc(row.average_check || "0")}</td>
+        <td>${esc(row.profit || "0")}</td>
+        <td>${analyticsStatusBadge(row.status || "—", row.status && row.status.toLowerCase().includes("partial") ? "warning" : "info")}</td>
+        <td>${esc(String(row.late_count || 0))}</td>
+      </tr>`).join("") : analyticsTableEmpty(9, "Menejerlar KPI ma'lumotlari topilmadi");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function loadAnalyticsShipments() {
+  try {
+    const data = await api(`/analytics/api/shipments?${analyticsQueryString()}`);
+    const kpis = data.kpis || {};
+    analyticsEl("analytics-shipments-kpis").innerHTML = [
+      analyticsKpiCard("Jo'natilgan furalar", kpis.sent_furas),
+      analyticsKpiCard("Yetib kelgan furalar", kpis.arrived_furas),
+      analyticsKpiCard("Aktiv BL", kpis.active_bl),
+      analyticsKpiCard("Yo'ldagi BL", kpis.in_transit_bl),
+      analyticsKpiCard("Xitoydagi yuklar", kpis.china_count),
+      analyticsKpiCard("Horgos", kpis.horgos_count),
+      analyticsKpiCard("Yallama", kpis.yallama_count),
+      analyticsKpiCard("Toshkent", kpis.toshkent_count),
+      analyticsKpiCard("Chuqursoy / bojxona", kpis.chuqursoy_count),
+      analyticsKpiCard("O'rtacha muddat", `${kpis.average_delivery_days || 0} kun`),
+      analyticsKpiCard("Kechikayotganlar", kpis.delayed_shipments),
+    ].join("");
+
+    analyticsRenderChart("analytics-shipment-sent-chart", {
+      type: "bar",
+      data: {
+        labels: analyticsSeriesToLabels(data.series?.sent_by_month),
+        datasets: [{ label: "Jo'natildi", data: analyticsSeriesToValues(data.series?.sent_by_month), backgroundColor: "#4aa8ff" }],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+    analyticsRenderChart("analytics-shipment-arrived-chart", {
+      type: "bar",
+      data: {
+        labels: analyticsSeriesToLabels(data.series?.arrived_by_month),
+        datasets: [{ label: "Yetib keldi", data: analyticsSeriesToValues(data.series?.arrived_by_month), backgroundColor: "#2ad09b" }],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+    analyticsRenderChart("analytics-shipment-status-chart", {
+      type: "doughnut",
+      data: {
+        labels: (data.series?.status_counts || []).map(item => item.label),
+        datasets: [{ data: (data.series?.status_counts || []).map(item => item.value), backgroundColor: ["#2ad09b", "#4aa8ff", "#ffb739", "#ff5b7f", "#a66bff", "#7ed6df", "#f8a5c2", "#f6e58d"] }],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
+    });
+
+    const tbody = analyticsEl("analytics-shipments-table");
+    const rows = data.table || [];
+    tbody.innerHTML = rows.length ? rows.map(row => `
+      <tr>
+        <td>${esc(row.bl_code || "—")}</td>
+        <td>${esc(row.client_name || "—")}</td>
+        <td>${esc(row.reys_number || "—")}</td>
+        <td>${esc(row.fura_number || "—")}</td>
+        <td>${analyticsStatusBadge(row.status || "—", "info")}</td>
+        <td>${esc(row.loaded_date || "—")}</td>
+        <td>${esc(row.arrived_date || "—")}</td>
+        <td>${row.days == null ? "—" : `${esc(String(row.days))} kun`}</td>
+        <td>${esc(row.manager_name || "—")}</td>
+        <td>${esc(row.logist_name || "—")}</td>
+      </tr>`).join("") : analyticsTableEmpty(10, "BL/Fura ma'lumotlari topilmadi");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function loadAnalyticsDebts() {
+  try {
+    const data = await api(`/analytics/api/debts?${analyticsQueryString()}`);
+    const summary = analyticsEl("analytics-debts-summary");
+    summary.innerHTML = [
+      analyticsKpiCard("Umumiy qarz", data.summary?.total_debt || "0"),
+      analyticsKpiCard("Просроченные", data.summary?.overdue_count || 0),
+      analyticsKpiCard("Частично оплаченные", data.summary?.partial_paid_count || 0),
+      analyticsKpiCard("Manager leader", data.summary?.manager_debt_leader || "—"),
+    ].join("");
+
+    const tbody = analyticsEl("analytics-debts-table");
+    const rows = data.table || [];
+    tbody.innerHTML = rows.length ? rows.map(row => `
+      <tr>
+        <td>${esc(row.client_name || "—")}</td>
+        <td>${esc(row.bl_code || "—")}</td>
+        <td>${esc(row.amount || "0")}</td>
+        <td>${esc(row.paid_amount || "0")}</td>
+        <td>${esc(row.debt_amount || "0")}</td>
+        <td>${esc(row.currency || "—")}</td>
+        <td>${esc(String(row.days || 0))}</td>
+        <td>${esc(row.manager_name || "—")}</td>
+        <td>${analyticsStatusBadge(row.comment || "—", row.state === "green" ? "success" : row.state === "yellow" ? "warning" : "danger")}</td>
+      </tr>`).join("") : analyticsTableEmpty(9, "Qarzlar topilmadi");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+function renderAnalyticsSyncStatus(data) {
+  const status = data?.connection || {};
+  const tone = status.connected ? "success" : "warning";
+  analyticsEl("analytics-sheet-id").value = data?.sheet_id || "";
+  analyticsEl("analytics-connection-status").innerHTML = `
+    <div class="analytics-status-box ${tone}">
+      <strong>${status.connected ? "Google Sheets ulangan" : "Google Sheets ulanmagan"}</strong><br>
+      ${esc(status.message || "")}
+    </div>`;
+  const rates = data?.exchange_rates || {};
+  analyticsEl("analytics-sync-summary").innerHTML = `
+    <div class="analytics-insights">
+      <div class="analytics-insight">Oxirgi sync: ${esc(data?.last_sync_at || "—")}</div>
+      <div class="analytics-insight">Kurslar: ${Object.entries(rates).map(([k, v]) => `${esc(k)} = ${esc(String(v))}`).join(" • ") || "—"}</div>
+    </div>`;
+  const tbody = analyticsEl("analytics-sync-logs");
+  const logs = data?.logs || [];
+  tbody.innerHTML = logs.length ? logs.map(row => `
+    <tr>
+      <td>${esc(row.started_at || "—")}</td>
+      <td>${esc(row.finished_at || "—")}</td>
+      <td>${analyticsStatusBadge(row.status || "—", row.status === "success" ? "success" : row.status === "failed" ? "danger" : "warning")}</td>
+      <td>${esc(String(row.rows_imported || 0))}</td>
+      <td>${esc(String(row.rows_skipped || 0))}</td>
+      <td>${esc(row.error_message || "—")}</td>
+      <td>${esc(row.details_json || "—")}</td>
+    </tr>`).join("") : analyticsTableEmpty(7, "Import loglari hali yo'q");
+}
+
+async function loadAnalyticsSync() {
+  try {
+    const data = await api("/analytics/api/sync/status");
+    ANALYTICS_STATE.syncStatus = data;
+    renderAnalyticsSyncStatus(data);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function saveAnalyticsSheetConfig() {
+  if (!ensureEditor()) return;
+  try {
+    const res = await api("/analytics/api/sync/config", "POST", {
+      sheet_id: analyticsEl("analytics-sheet-id").value.trim(),
+    });
+    renderAnalyticsSyncStatus(res.status || res);
+    toast("Google Sheet ID saqlandi", "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function syncAnalyticsGoogle() {
+  if (!ensureEditor()) return;
+  try {
+    const res = await api("/analytics/api/sync/google", "POST", {
+      sheet_id: analyticsEl("analytics-sheet-id").value.trim(),
+    });
+    renderAnalyticsSyncStatus(res.status || res);
+    ANALYTICS_STATE.filterOptionsLoaded = false;
+    toast(`Sync tugadi: ${res.rows_imported || 0} qator import qilindi`, "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function uploadAnalyticsFile() {
+  if (!ensureEditor()) return;
+  const input = analyticsEl("analytics-upload-input");
+  const file = input?.files?.[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const res = await apiForm("/analytics/api/sync/upload", form);
+    renderAnalyticsSyncStatus(res.status || res);
+    ANALYTICS_STATE.filterOptionsLoaded = false;
+    toast(`Import tugadi: ${res.rows_imported || 0} qator`, "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  } finally {
+    input.value = "";
+  }
+}
+
+function downloadAnalyticsReport(report, format) {
+  const query = analyticsQueryString({ report, format });
+  window.open(`/analytics/api/export?${query}`, "_blank");
+}
+
+function showAnalyticsTab(tab, shouldLoad = true) {
+  ANALYTICS_STATE.tab = tab;
+  document.querySelectorAll(".analytics-tab-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.analyticsTab === tab);
+  });
+  document.querySelectorAll("#page-analytics .analytics-section").forEach(section => {
+    section.classList.toggle("active", section.id === `analytics-section-${tab}`);
+  });
+  if (shouldLoad) {
+    refreshAnalyticsActiveTab();
+  }
+}
+
+async function refreshAnalyticsActiveTab(prefetchedOverview = null) {
+  const tab = ANALYTICS_STATE.tab || "overview";
+  if (tab === "overview") return loadAnalyticsOverview(prefetchedOverview);
+  if (tab === "sales-growth") return loadAnalyticsSalesGrowth();
+  if (tab === "cashflow") return loadAnalyticsCashflow();
+  if (tab === "managers") return loadAnalyticsManagers();
+  if (tab === "shipments") return loadAnalyticsShipments();
+  if (tab === "debts") return loadAnalyticsDebts();
+  if (tab === "sync") return loadAnalyticsSync();
+  return Promise.resolve();
+}
+
+async function loadAnalyticsPage(initialTab = null) {
+  try {
+    if (initialTab) {
+      ANALYTICS_STATE.tab = initialTab;
+    }
+    showAnalyticsTab(ANALYTICS_STATE.tab || "overview", false);
+    const prefetchedOverview = await ensureAnalyticsFilterOptions();
+    await refreshAnalyticsActiveTab(prefetchedOverview && ANALYTICS_STATE.tab === "overview" ? prefetchedOverview : null);
+    if (ANALYTICS_STATE.tab === "export") {
+      // export is static
+    }
+    if (ANALYTICS_STATE.tab === "sync") {
+      await loadAnalyticsSync();
+    }
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+// ══════════════════════════════════════════════════════════
 // HELPERS
 // ══════════════════════════════════════════════════════════
 function statusBadge(s) {
@@ -3792,7 +4862,18 @@ function esc(str) {
 
 // ── INIT ──────────────────────────────────────────────────
 {% if not login_page %}
-loadDashboard();
+if ((INITIAL_VIEW || "dashboard") === "analytics") {
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.querySelectorAll(".nav-link").forEach(n=>n.classList.remove("active"));
+  document.getElementById("page-analytics")?.classList.add("active");
+  document.querySelector(`[onclick="goto('analytics')"]`)?.classList.add("active");
+  document.getElementById("crumb-page").textContent = "Data Analytics";
+  document.getElementById("crumb-sub").textContent = "Business Intelligence";
+  showAnalyticsTab(INITIAL_ANALYTICS_TAB || "overview", false);
+  loadAnalyticsPage(INITIAL_ANALYTICS_TAB || "overview");
+} else {
+  goto(INITIAL_VIEW || "dashboard");
+}
 // Enter key for login
 document.getElementById("new-batch-name")?.addEventListener("keydown",e=>{if(e.key==="Enter")createBatch();});
 {% endif %}
