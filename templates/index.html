@@ -1450,19 +1450,22 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <div class="card">
               <div class="card-h"><span class="card-title">Sync / Sozlamalar</span></div>
               <div class="card-body">
-                <div class="form-g">
-                  <label>Google Sheet ID</label>
-                  <input class="inp" id="analytics-sheet-id" placeholder="1idVBaJ0xInTRne5cyzbUIXqaG1r4jdhRbunGTinO8jQ">
-                </div>
+                  <div class="form-g">
+                    <label>Google Sheet ID yoki to'liq havola</label>
+                    <input class="inp" id="analytics-sheet-id" placeholder="1idVBaJ0xInTRne5cyzbUIXqaG1r4jdhRbunGTinO8jQ yoki https://docs.google.com/spreadsheets/d/...">
+                  </div>
                 <div class="analytics-status-box" id="analytics-connection-status" style="margin-top:14px"></div>
                 <div class="analytics-filter-actions" style="justify-content:flex-start">
                   <button class="btn btn-ghost btn-sm editor-only" onclick="saveAnalyticsSheetConfig()">Сохранить</button>
-                  <button class="btn btn-amber btn-sm editor-only" onclick="syncAnalyticsGoogle()">Google Sheets’dan yangilash</button>
-                  <button class="btn btn-ghost btn-sm editor-only" onclick="document.getElementById('analytics-upload-input').click()">CSV/XLSX import</button>
-                  <input type="file" id="analytics-upload-input" style="display:none" accept=".csv,.xlsx,.xlsm" onchange="uploadAnalyticsFile()">
+                    <button class="btn btn-amber btn-sm editor-only" onclick="syncAnalyticsGoogle()">Google Sheets’dan yangilash</button>
+                    <button class="btn btn-ghost btn-sm editor-only" onclick="document.getElementById('analytics-upload-input').click()">CSV/XLSX import</button>
+                    <input type="file" id="analytics-upload-input" style="display:none" accept=".csv,.xlsx,.xlsm" onchange="uploadAnalyticsFile()">
+                  </div>
+                  <div class="analytics-table-note" style="margin-top:10px">
+                    Credentials bo'lmasa ham public havola orqali sync ishlaydi. Buning uchun Google Sheets link bo'yicha ochiq bo'lishi kerak.
+                  </div>
                 </div>
               </div>
-            </div>
             <div class="card">
               <div class="card-h"><span class="card-title">Oxirgi sync</span></div>
               <div class="card-body" id="analytics-sync-summary"></div>
@@ -4712,12 +4715,17 @@ async function loadAnalyticsDebts() {
 function renderAnalyticsSyncStatus(data) {
   const status = data?.connection || {};
   const tone = status.connected ? "success" : "warning";
+  const modeLabel = status.mode === "api"
+    ? "Google Sheets API ulangan"
+    : status.mode === "public"
+      ? "Google Sheets public link rejimi tayyor"
+      : "Google Sheets ulanmagan";
   analyticsEl("analytics-sheet-id").value = data?.sheet_id || "";
   analyticsEl("analytics-connection-status").innerHTML = `
-    <div class="analytics-status-box ${tone}">
-      <strong>${status.connected ? "Google Sheets ulangan" : "Google Sheets ulanmagan"}</strong><br>
-      ${esc(status.message || "")}
-    </div>`;
+      <div class="analytics-status-box ${tone}">
+        <strong>${modeLabel}</strong><br>
+        ${esc(status.message || "")}
+      </div>`;
   const rates = data?.exchange_rates || {};
   analyticsEl("analytics-sync-summary").innerHTML = `
     <div class="analytics-insights">

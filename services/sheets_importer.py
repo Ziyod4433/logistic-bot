@@ -10,6 +10,8 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import database as db
 
@@ -21,6 +23,7 @@ GOOGLE_SHEETS_MISSING_MESSAGE = (
 ANALYTICS_SHEET_ID_KEY = "analytics_google_sheet_id"
 ANALYTICS_LAST_SYNC_KEY = "analytics_last_sync_at"
 ANALYTICS_EXCHANGE_RATES_KEY = "analytics_exchange_rates"
+GOOGLE_SHEETS_EXPORT_URL = "https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
 
 
 class SheetsImporterError(Exception):
@@ -30,6 +33,18 @@ class SheetsImporterError(Exception):
 def _clean_text(value: Any) -> str:
     text = str(value or "").replace("\u00a0", " ").strip()
     return re.sub(r"\s+", " ", text)
+
+
+def _extract_sheet_id(sheet_id_or_url: str) -> str:
+    raw = _clean_text(sheet_id_or_url)
+    if not raw:
+        return ""
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", raw)
+    if match:
+        return match.group(1)
+    if re.fullmatch(r"[a-zA-Z0-9-_]{20,}", raw):
+        return raw
+    return raw
 
 
 def _normalize_key(value: Any) -> str:
@@ -503,22 +518,44 @@ def google_credentials_status() -> dict[str, Any]:
     try:
         payload, path = _get_credentials_payload()
     except SheetsImporterError as exc:
-        return {"connected": False, "sheet_id": sheet_id, "message": str(exc)}
-    if not sheet_id or (payload is None and path is None):
-        return {"connected": False, "sheet_id": sheet_id, "message": GOOGLE_SHEETS_MISSING_MESSAGE}
-    return {"connected": True, "sheet_id": sheet_id, "message": "Google Sheets ulanishi tayyor."}
+        return {"connected": False, "sheet_id": sheet_id, "mode": "invalid", "message": str(exc)}
+    if not sheet_id:
+        return {
+            "connected": False,
+            "sheet_id": sheet_id,
+            "mode": "missing",
+            "message": "Google Sheets uchun Sheet ID yoki to‘liq havola kiriting.",
+        }
+    if payload is None and path is None:
+        return {
+            "connected": True,
+            "sheet_id": sheet_id,
+            "mode": "public",
+            "message": (
+                "Google API credentials topilmadi. Public link rejimi ishlaydi, "
+                "agar jadval havola bo‘yicha ochiq bo‘lsa."
+            ),
+        }
+    return {
+        "connected": True,
+        "sheet_id": sheet_id,
+        "mode": "api",
+        "message": "Google Sheets API ulanishi tayyor.",
+    }
 
 
 def get_google_sheet_id() -> str:
-    return (os.getenv("GOOGLE_SHEET_ID", "").strip() or db.get_setting(ANALYTICS_SHEET_ID_KEY, "").strip())
+    return _extract_sheet_id(
+        os.getenv("GOOGLE_SHEET_ID", "").strip() or db.get_setting(ANALYTICS_SHEET_ID_KEY, "").strip()
+    )
 
 
 def set_google_sheet_id(sheet_id: str) -> None:
-    db.set_setting(ANALYTICS_SHEET_ID_KEY, (sheet_id or "").strip())
+    db.set_setting(ANALYTICS_SHEET_ID_KEY, _extract_sheet_id(sheet_id))
 
 
 def _load_google_workbook(sheet_id: str | None = None) -> dict[str, list[list[Any]]]:
-    sheet_id = (sheet_id or get_google_sheet_id()).strip()
+    sheet_id = _extract_sheet_id(sheet_id or get_google_sheet_id())
     status = google_credentials_status()
     if not sheet_id or not status["connected"]:
         raise SheetsImporterError(status["message"])
@@ -553,6 +590,53 @@ def _load_google_workbook(sheet_id: str | None = None) -> dict[str, list[list[An
     return workbook
 
 
+def _load_workbook_from_bytes(raw: bytes, source_name: str) -> dict[str, list[list[Any]]]:
+    try:
+        from openpyxl import load_workbook
+    except Exception as exc:  # pragma: no cover
+        raise SheetsImporterError(f"{source_name} import uchun openpyxl kerak: {exc}")
+
+    workbook = load_workbook(io.BytesIO(raw), data_only=True)
+    result: dict[str, list[list[Any]]] = {}
+    for sheet in workbook.worksheets:
+        values: list[list[Any]] = []
+        for row in sheet.iter_rows(values_only=True):
+            values.append([cell if cell is not None else "" for cell in row])
+        result[sheet.title] = values
+    return result
+
+
+def _load_public_google_workbook(sheet_id: str | None = None) -> dict[str, list[list[Any]]]:
+    sheet_id = _extract_sheet_id(sheet_id or get_google_sheet_id())
+    if not sheet_id:
+        raise SheetsImporterError("Google Sheets uchun Sheet ID yoki to‘liq havola kiriting.")
+    export_url = GOOGLE_SHEETS_EXPORT_URL.format(sheet_id=sheet_id)
+    request = Request(
+        export_url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*",
+        },
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            content_type = str(response.headers.get("Content-Type", "")).lower()
+            raw = response.read()
+    except HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise SheetsImporterError(
+                "Google Sheets public export yopiq. Jadvalni havola bo‘yicha ko‘rish uchun oching yoki API credentials qo‘shing."
+            ) from exc
+        raise SheetsImporterError(f"Google Sheets public export xatosi: HTTP {exc.code}") from exc
+    except URLError as exc:
+        raise SheetsImporterError(f"Google Sheets bilan ulanishda xato: {exc.reason}") from exc
+    if "text/html" in content_type and b"<html" in raw[:200].lower():
+        raise SheetsImporterError(
+            "Google Sheets public export XLSX qaytarmadi. Jadval havola bo‘yicha ochiq ekanini tekshiring."
+        )
+    return _load_workbook_from_bytes(raw, "Google Sheets public export")
+
+
 def _load_uploaded_workbook(file_storage) -> dict[str, list[list[Any]]]:
     if not file_storage:
         raise SheetsImporterError("CSV/XLSX fayl tanlanmagan.")
@@ -566,19 +650,7 @@ def _load_uploaded_workbook(file_storage) -> dict[str, list[list[Any]]]:
         return {"Imported CSV": list(csv.reader(io.StringIO(text)))}
     if ext not in {"xlsx", "xlsm"}:
         raise SheetsImporterError("Faqat CSV yoki XLSX/XLSM fayl yuklash mumkin.")
-    try:
-        from openpyxl import load_workbook
-    except Exception as exc:  # pragma: no cover
-        raise SheetsImporterError(f"XLSX import uchun openpyxl kerak: {exc}")
-
-    workbook = load_workbook(io.BytesIO(raw), data_only=True)
-    result: dict[str, list[list[Any]]] = {}
-    for sheet in workbook.worksheets:
-        values: list[list[Any]] = []
-        for row in sheet.iter_rows(values_only=True):
-            values.append([cell if cell is not None else "" for cell in row])
-        result[sheet.title] = values
-    return result
+    return _load_workbook_from_bytes(raw, "XLSX")
 
 
 def _create_sync_log(source_name: str) -> int:
@@ -800,9 +872,13 @@ def sync_workbook(sheets: dict[str, list[list[Any]]], source_name: str = "google
 
 
 def sync_from_google(sheet_id: str | None = None) -> dict[str, Any]:
-    target_sheet_id = (sheet_id or get_google_sheet_id()).strip()
-    workbook = _load_google_workbook(target_sheet_id)
-    return sync_workbook(workbook, source_name="google", sheet_id=target_sheet_id)
+    target_sheet_id = _extract_sheet_id(sheet_id or get_google_sheet_id())
+    status = google_credentials_status()
+    if status.get("mode") == "api":
+        workbook = _load_google_workbook(target_sheet_id)
+        return sync_workbook(workbook, source_name="google_api", sheet_id=target_sheet_id)
+    workbook = _load_public_google_workbook(target_sheet_id)
+    return sync_workbook(workbook, source_name="google_public", sheet_id=target_sheet_id)
 
 
 def sync_from_upload(file_storage) -> dict[str, Any]:
