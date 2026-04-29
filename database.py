@@ -574,6 +574,157 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
+        CREATE TABLE IF NOT EXISTS analytics_sales_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_file_id TEXT NOT NULL DEFAULT '',
+            source_sheet TEXT NOT NULL DEFAULT '',
+            source_row INTEGER NOT NULL DEFAULT 0,
+            reys_number TEXT NOT NULL DEFAULT '',
+            invoice_date TEXT NOT NULL DEFAULT '',
+            sale_date TEXT NOT NULL DEFAULT '',
+            shipping_mark TEXT NOT NULL DEFAULT '',
+            brand_name TEXT NOT NULL DEFAULT '',
+            client_name TEXT NOT NULL DEFAULT '',
+            phone TEXT NOT NULL DEFAULT '',
+            client_status TEXT NOT NULL DEFAULT '',
+            cargo_name TEXT NOT NULL DEFAULT '',
+            quantity REAL NOT NULL DEFAULT 0,
+            ctn REAL NOT NULL DEFAULT 0,
+            cbm REAL NOT NULL DEFAULT 0,
+            net_weight REAL NOT NULL DEFAULT 0,
+            gross_weight REAL NOT NULL DEFAULT 0,
+            customs_payment REAL NOT NULL DEFAULT 0,
+            company_expense REAL NOT NULL DEFAULT 0,
+            certificate_expense REAL NOT NULL DEFAULT 0,
+            client_price REAL NOT NULL DEFAULT 0,
+            sale_amount REAL NOT NULL DEFAULT 0,
+            correction_amount REAL NOT NULL DEFAULT 0,
+            discount_amount REAL NOT NULL DEFAULT 0,
+            final_sale_amount REAL NOT NULL DEFAULT 0,
+            salesperson TEXT NOT NULL DEFAULT '',
+            sales_kpi_amount REAL NOT NULL DEFAULT 0,
+            customs_kpi_amount REAL NOT NULL DEFAULT 0,
+            raw_data_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS analytics_cashflow_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_file_id TEXT NOT NULL DEFAULT '',
+            source_sheet TEXT NOT NULL DEFAULT '',
+            source_row INTEGER NOT NULL DEFAULT 0,
+            created_date TEXT NOT NULL DEFAULT '',
+            operation_date TEXT NOT NULL DEFAULT '',
+            wallet TEXT NOT NULL DEFAULT '',
+            flow_type TEXT NOT NULL DEFAULT '',
+            currency TEXT NOT NULL DEFAULT '',
+            comment TEXT NOT NULL DEFAULT '',
+            category TEXT NOT NULL DEFAULT '',
+            amount REAL NOT NULL DEFAULT 0,
+            rate REAL NOT NULL DEFAULT 0,
+            department TEXT NOT NULL DEFAULT '',
+            reys_number TEXT NOT NULL DEFAULT '',
+            counterparty TEXT NOT NULL DEFAULT '',
+            auto_confirm TEXT NOT NULL DEFAULT '',
+            amount_usd REAL NOT NULL DEFAULT 0,
+            raw_data_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS analytics_currency_rates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_file_id TEXT NOT NULL DEFAULT '',
+            rate_date TEXT NOT NULL DEFAULT '',
+            currency TEXT NOT NULL DEFAULT '',
+            rate_to_usd REAL NOT NULL DEFAULT 0,
+            raw_data_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS analytics_logist_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_file_id TEXT NOT NULL DEFAULT '',
+            reys_number TEXT NOT NULL DEFAULT '',
+            logist_name TEXT NOT NULL DEFAULT '',
+            position INTEGER NOT NULL DEFAULT 0,
+            warehouse_no_extra_days INTEGER NOT NULL DEFAULT 0,
+            no_damage_or_missing INTEGER NOT NULL DEFAULT 0,
+            raw_data_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS analytics_shipment_summary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_file_id TEXT NOT NULL DEFAULT '',
+            agent TEXT NOT NULL DEFAULT '',
+            reys_number TEXT NOT NULL DEFAULT '',
+            logist_summa REAL NOT NULL DEFAULT 0,
+            rate REAL NOT NULL DEFAULT 0,
+            usd REAL NOT NULL DEFAULT 0,
+            loaded_date TEXT NOT NULL DEFAULT '',
+            china_truck_number TEXT NOT NULL DEFAULT '',
+            container_or_truck TEXT NOT NULL DEFAULT '',
+            container_type TEXT NOT NULL DEFAULT '',
+            agent_given_date TEXT NOT NULL DEFAULT '',
+            agent_fact_days REAL NOT NULL DEFAULT 0,
+            horgos_date TEXT NOT NULL DEFAULT '',
+            zhongshan_horgos_days REAL NOT NULL DEFAULT 0,
+            kazakh_truck_date TEXT NOT NULL DEFAULT '',
+            driver_name TEXT NOT NULL DEFAULT '',
+            driver_phone TEXT NOT NULL DEFAULT '',
+            loaded_to_truck_days REAL NOT NULL DEFAULT 0,
+            kazakh_truck_number TEXT NOT NULL DEFAULT '',
+            tashkent_date TEXT NOT NULL DEFAULT '',
+            zhongshan_tashkent_days REAL NOT NULL DEFAULT 0,
+            customs_date TEXT NOT NULL DEFAULT '',
+            distributed_date TEXT NOT NULL DEFAULT '',
+            distribution_days REAL NOT NULL DEFAULT 0,
+            raw_data_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS analytics_shipment_statuses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_file_id TEXT NOT NULL DEFAULT '',
+            reys_number TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            status_date TEXT NOT NULL DEFAULT '',
+            truck_number TEXT NOT NULL DEFAULT '',
+            driver_name TEXT NOT NULL DEFAULT '',
+            driver_phone TEXT NOT NULL DEFAULT '',
+            raw_data_json TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS analytics_sync_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_type TEXT NOT NULL DEFAULT '',
+            source_name TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL DEFAULT '',
+            finished_at TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            rows_imported INTEGER NOT NULL DEFAULT 0,
+            rows_skipped INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT NOT NULL DEFAULT '',
+            details_json TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS analytics_sales_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL DEFAULT '',
+            period_start TEXT NOT NULL DEFAULT '',
+            period_end TEXT NOT NULL DEFAULT '',
+            target_amount_usd REAL NOT NULL DEFAULT 0,
+            target_metric TEXT NOT NULL DEFAULT 'amount_usd',
+            target_value REAL NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
         CREATE TABLE IF NOT EXISTS moderator_response_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id TEXT NOT NULL,

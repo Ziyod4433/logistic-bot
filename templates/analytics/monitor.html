@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BURAQ Logistics — Sales Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/sales_monitor.css') }}">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="monitor-orange" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#f5a623"></stop>
+        <stop offset="100%" stop-color="#ff7c1e"></stop>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <header class="header">
+    <div class="logo">BUR<span>AQ</span> <span class="logo-sub">LOGISTICS</span></div>
+    <div class="header-center">SALES MONITOR</div>
+    <div class="hr">
+      <div class="rinfo">Yangilanish <span id="rotation-timer">5:00</span></div>
+      <div class="live">LIVE</div>
+      <div class="clock" id="clock">--:--:--</div>
+    </div>
+  </header>
+
+  <section class="controls">
+    <div class="control-group">
+      <label class="cl" for="plan-select">SALES PLAN</label>
+      <select id="plan-select" class="ci"></select>
+    </div>
+    <div class="control-group">
+      <label class="cl" for="metric-select">METRIC</label>
+      <select id="metric-select" class="ci ci-sm">
+        <option value="amount_usd">USD</option>
+        <option value="cbm">m³</option>
+        <option value="bl_count">BL</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label class="cl">MANBA</label>
+      <div class="source-box" id="source-name">—</div>
+    </div>
+    <div class="control-actions">
+      <button class="cb" id="refresh-btn" type="button">Yangilash</button>
+      <button class="cb cb-ghost" id="fullscreen-btn" type="button">Full screen</button>
+    </div>
+  </section>
+
+  <main class="main">
+    <section class="lp">
+      <article class="card card-accent ca-o">
+        <div class="ch">
+          <div class="ct o">UMUMIY PLAN</div>
+          <div class="cs">
+            <div class="csi">Plan: <b class="o" id="plan-name">—</b></div>
+            <div class="csi">Davr: <b class="o" id="plan-period">—</b></div>
+            <div class="csi">So‘nggi sync: <b class="o" id="last-updated">—</b></div>
+          </div>
+        </div>
+        <div class="circwrap">
+          <div class="circc">
+            <svg class="circsvg" width="190" height="190" viewBox="0 0 190 190" aria-hidden="true">
+              <circle class="circbg" cx="95" cy="95" r="78"></circle>
+              <circle class="circfill" id="progress-arc" cx="95" cy="95" r="78"></circle>
+            </svg>
+            <div class="circcenter">
+              <div class="circpct" id="progress-percent">0%</div>
+              <div class="circsub">BAJARILDI</div>
+            </div>
+          </div>
+        </div>
+        <div class="plan-badge-row">
+          <span class="plan-badge" id="plan-badge">Plan kuzatilmoqda</span>
+        </div>
+        <div class="pgrid">
+          <div class="pbox"><div class="pv o" id="plan-target">0 USD</div><div class="pl">PLAN</div></div>
+          <div class="pbox"><div class="pv g" id="plan-closed">0 USD</div><div class="pl">FACT</div></div>
+          <div class="pbox"><div class="pv" id="plan-remaining">0 USD</div><div class="pl">QOLDIQ</div></div>
+          <div class="pbox"><div class="pv" id="plan-bl">0 BL</div><div class="pl">TOTAL BL</div></div>
+        </div>
+      </article>
+
+      <article class="card card-accent ca-o">
+        <div class="ch">
+          <div class="ct o">OYLIK DINAMIKA</div>
+          <div class="cs">
+            <div class="csi">Metric: <b class="o" id="monthly-metric-label">USD</b></div>
+          </div>
+        </div>
+        <div class="bars" id="monthly-bars"></div>
+      </article>
+    </section>
+
+    <article class="card card-accent ca-b">
+      <div class="ch">
+        <div class="ct b">LOGISTLAR</div>
+        <div class="cs">
+          <div class="csi">Yopilgan: <b class="b" id="logists-total">0 USD</b></div>
+          <div class="csi">Plan ulushi: <b class="b" id="logists-share">0%</b></div>
+          <div class="csi">BL: <b class="b" id="logists-bl">0</b></div>
+        </div>
+      </div>
+      <div class="lb" id="logists-board"></div>
+    </article>
+
+    <article class="card card-accent ca-p">
+      <div class="ch">
+        <div class="ct p">SAVDO BO‘LIMI</div>
+        <div class="cs">
+          <div class="csi">Yopilgan: <b class="p" id="sales-total">0 USD</b></div>
+          <div class="csi">Plan ulushi: <b class="p" id="sales-share">0%</b></div>
+          <div class="csi">BL: <b class="p" id="sales-bl">0</b></div>
+        </div>
+      </div>
+      <div class="lb" id="sales-board"></div>
+    </article>
+  </main>
+
+  <section class="bottom">
+    <div class="sc sc-title">
+      <div class="share-title" id="share-title">DOLLAR BO‘YICHA REJA ULUSHI</div>
+      <div class="share-subtitle">Logistlar va Savdo bo‘limi umumiy plan fonida alohida ko‘rsatiladi.</div>
+    </div>
+    <div class="sc">
+      <div class="sl">LOGISTLAR</div>
+      <div class="st"><div class="sf sf-blue" id="logists-share-bar"></div></div>
+      <div class="sp sp-blue" id="logists-share-value">0%</div>
+    </div>
+    <div class="sc">
+      <div class="sl">SAVDO</div>
+      <div class="st"><div class="sf sf-purple" id="sales-share-bar"></div></div>
+      <div class="sp sp-purple" id="sales-share-value">0%</div>
+    </div>
+  </section>
+
+  <div class="monitor-empty" id="monitor-empty" hidden></div>
+  <div class="tbar"><div class="tf" id="rotation-line"></div></div>
+
+  <script>
+    window.SALES_MONITOR_BOOTSTRAP = {
+      activePlanId: {{ active_plan_id|tojson }},
+      salesPlans: {{ sales_plans|tojson }},
+    };
+  </script>
+  <script src="{{ url_for('static', filename='js/sales_monitor.js') }}"></script>
+</body>
+</html>

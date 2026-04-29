@@ -30,7 +30,7 @@ from flask import (
 from werkzeug.utils import secure_filename
 
 import database as db
-from services import analytics_service, report_exporter, sheets_importer
+from services import analytics_importer, analytics_service, monitor_service, report_exporter
 
 load_dotenv()
 
@@ -1433,6 +1433,12 @@ def analytics_managers_page():
     return _render_analytics_page("managers")
 
 
+@app.route("/analytics/logists")
+@login_required
+def analytics_logists_page():
+    return _render_analytics_page("logists")
+
+
 @app.route("/analytics/shipments")
 @login_required
 def analytics_shipments_page():
@@ -1455,6 +1461,18 @@ def analytics_export_page():
 @login_required
 def analytics_sync_page():
     return _render_analytics_page("sync")
+
+
+@app.route("/analytics/monitor")
+@login_required
+def analytics_monitor_page():
+    plans = analytics_service.list_sales_plans()
+    active_plan = next((plan for plan in plans if int(plan.get("is_active") or 0) == 1), None)
+    return render_template(
+        "analytics/monitor.html",
+        sales_plans=plans,
+        active_plan_id=(active_plan or {}).get("id"),
+    )
 
 
 @app.route("/health")
@@ -2338,6 +2356,12 @@ def analytics_api_managers():
     return jsonify(analytics_service.get_managers(request.args))
 
 
+@app.route("/analytics/api/logists")
+@login_required
+def analytics_api_logists():
+    return jsonify(analytics_service.get_logists(request.args))
+
+
 @app.route("/analytics/api/shipments")
 @login_required
 def analytics_api_shipments():
@@ -2356,6 +2380,34 @@ def analytics_api_sync_status():
     return jsonify(analytics_service.get_sync_settings_payload())
 
 
+@app.route("/analytics/api/plans", methods=["GET"])
+@login_required
+def analytics_api_plans():
+    return jsonify({"plans": analytics_service.list_sales_plans()})
+
+
+@app.route("/analytics/api/plans", methods=["POST"])
+@editor_required
+def analytics_api_plans_save():
+    payload = request.json or {}
+    try:
+        return jsonify(analytics_service.save_sales_plan(payload))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/analytics/api/plans/<int:plan_id>/activate", methods=["POST"])
+@editor_required
+def analytics_api_plans_activate(plan_id: int):
+    return jsonify(analytics_service.activate_sales_plan(plan_id))
+
+
+@app.route("/analytics/api/plans/<int:plan_id>", methods=["DELETE"])
+@editor_required
+def analytics_api_plans_delete(plan_id: int):
+    return jsonify(analytics_service.delete_sales_plan(plan_id))
+
+
 @app.route("/analytics/api/sync/config", methods=["GET"])
 @login_required
 def analytics_api_sync_config():
@@ -2367,7 +2419,7 @@ def analytics_api_sync_config():
 def analytics_api_sync_config_save():
     data = request.json or {}
     sheet_id = (data.get("sheet_id") or "").strip()
-    sheets_importer.set_google_sheet_id(sheet_id)
+    analytics_importer.set_google_sheet_id(sheet_id)
     return jsonify({"ok": True, "sheet_id": sheet_id, "status": analytics_service.get_sync_settings_payload()})
 
 
@@ -2377,9 +2429,9 @@ def analytics_api_sync_google():
     data = request.json or {}
     sheet_id = (data.get("sheet_id") or "").strip() or None
     try:
-        result = sheets_importer.sync_from_google(sheet_id)
+        result = analytics_importer.sync_from_google(sheet_id)
         return jsonify({"ok": True, **result, "status": analytics_service.get_sync_settings_payload()})
-    except sheets_importer.SheetsImporterError as exc:
+    except analytics_importer.AnalyticsImporterError as exc:
         return jsonify({"error": str(exc), "status": analytics_service.get_sync_settings_payload()}), 400
     except Exception as exc:
         app.logger.exception("Google Sheets sync failed")
@@ -2393,9 +2445,9 @@ def analytics_api_sync_upload():
     if not upload or not upload.filename:
         return jsonify({"error": "CSV/XLSX fayl tanlanmagan"}), 400
     try:
-        result = sheets_importer.sync_from_upload(upload)
+        result = analytics_importer.sync_from_upload(upload)
         return jsonify({"ok": True, **result, "status": analytics_service.get_sync_settings_payload()})
-    except sheets_importer.SheetsImporterError as exc:
+    except analytics_importer.AnalyticsImporterError as exc:
         return jsonify({"error": str(exc), "status": analytics_service.get_sync_settings_payload()}), 400
     except Exception as exc:
         app.logger.exception("Analytics file import failed")
@@ -2430,6 +2482,12 @@ def analytics_api_export():
         mimetype="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.route("/analytics/api/monitor")
+@login_required
+def analytics_api_monitor():
+    return jsonify(monitor_service.get_monitor_payload(request.args))
 
 
 @app.route("/api/template")

@@ -1243,8 +1243,16 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
                 <input class="inp" type="date" id="analytics-date-to">
               </div>
               <div class="form-g">
+                <label>Sales plan</label>
+                <select class="inp" id="analytics-sales-plan"><option value="">Aktiv plan</option></select>
+              </div>
+              <div class="form-g">
                 <label>Menejer</label>
                 <select class="inp" id="analytics-manager"><option value="">Barchasi</option></select>
+              </div>
+              <div class="form-g">
+                <label>Logist</label>
+                <select class="inp" id="analytics-logist"><option value="">Barchasi</option></select>
               </div>
               <div class="form-g">
                 <label>Mijoz</label>
@@ -1295,10 +1303,12 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           <button class="analytics-tab-btn" data-analytics-tab="sales-growth" onclick="showAnalyticsTab('sales-growth')">2. Savdo o‘sishi</button>
           <button class="analytics-tab-btn" data-analytics-tab="cashflow" onclick="showAnalyticsTab('cashflow')">3. Cashflow</button>
           <button class="analytics-tab-btn" data-analytics-tab="managers" onclick="showAnalyticsTab('managers')">4. Menejerlar KPI</button>
-          <button class="analytics-tab-btn" data-analytics-tab="shipments" onclick="showAnalyticsTab('shipments')">5. Fura / BL analytics</button>
+          <button class="analytics-tab-btn" data-analytics-tab="logists" onclick="showAnalyticsTab('logists')">5. Logist KPI</button>
           <button class="analytics-tab-btn" data-analytics-tab="debts" onclick="showAnalyticsTab('debts')">6. Qarzlar</button>
-          <button class="analytics-tab-btn" data-analytics-tab="export" onclick="showAnalyticsTab('export')">7. Hisobot eksport</button>
-          <button class="analytics-tab-btn" data-analytics-tab="sync" onclick="showAnalyticsTab('sync')">8. Sync / Sozlamalar</button>
+          <button class="analytics-tab-btn" data-analytics-tab="shipments" onclick="showAnalyticsTab('shipments')">7. Fura / BL analytics</button>
+          <button class="analytics-tab-btn" data-analytics-tab="export" onclick="showAnalyticsTab('export')">8. Hisobot eksport</button>
+          <button class="analytics-tab-btn" data-analytics-tab="monitor" onclick="showAnalyticsTab('monitor')">9. Sales Monitor</button>
+          <button class="analytics-tab-btn" data-analytics-tab="sync" onclick="showAnalyticsTab('sync')">10. Import / Sync</button>
         </div>
 
         <div class="analytics-section active" id="analytics-section-overview">
@@ -1364,6 +1374,26 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <table class="tbl">
               <thead><tr><th>Menejer</th><th>Savdo summasi</th><th>BL soni</th><th>To‘langan</th><th>Qarz</th><th>O‘rtacha chek</th><th>Foyda</th><th>Status</th><th>Kechikishlar</th></tr></thead>
               <tbody id="analytics-managers-table"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="analytics-section" id="analytics-section-logists">
+          <div class="analytics-subgrid-2">
+            <div class="card">
+              <div class="card-h"><span class="card-title">Top logistlar</span></div>
+              <div class="card-body"><div class="analytics-insights" id="analytics-logists-leaders"></div></div>
+            </div>
+            <div class="card">
+              <div class="card-h"><span class="card-title">Umumiy ko‘rsatkichlar</span></div>
+              <div class="card-body"><div class="analytics-insights" id="analytics-logists-summary"></div></div>
+            </div>
+          </div>
+          <div class="card" style="margin-top:18px">
+            <div class="card-h"><span class="card-title">Logist KPI</span></div>
+            <table class="tbl">
+              <thead><tr><th>Logist</th><th>Assigned reys</th><th>Closed amount</th><th>Share %</th><th>Average / reys</th><th>BL</th><th>Warehouse KPI</th><th>Damage KPI</th></tr></thead>
+              <tbody id="analytics-logists-table"></tbody>
             </table>
           </div>
         </div>
@@ -1445,6 +1475,28 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
         </div>
 
+        <div class="analytics-section" id="analytics-section-monitor">
+          <div class="analytics-subgrid-2">
+            <div class="card">
+              <div class="card-h"><span class="card-title">Sales Monitor</span></div>
+              <div class="card-body">
+                <div class="analytics-insights" id="analytics-monitor-summary"></div>
+                <div class="analytics-filter-actions" style="justify-content:flex-start;margin-top:14px">
+                  <button class="btn btn-amber btn-sm" onclick="openSalesMonitor()">Full-screen ochish</button>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-h"><span class="card-title">Monitor eslatma</span></div>
+              <div class="card-body">
+                <div class="analytics-card-muted">
+                  Bu sahifa katta ofis monitori uchun mo‘ljallangan. Umumiy plan chap tomonda, Logistlar va Savdo bo‘limi esa o‘ng tomonda alohida ko‘rinadi. Fakt ko‘rsatkichlar 5 daqiqada bir yangilanadi, plan esa tanlangan holda qoladi.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="analytics-section" id="analytics-section-sync">
           <div class="analytics-sync-grid">
             <div class="card">
@@ -1469,6 +1521,45 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <div class="card">
               <div class="card-h"><span class="card-title">Oxirgi sync</span></div>
               <div class="card-body" id="analytics-sync-summary"></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:18px">
+            <div class="card-h"><span class="card-title">Sales planlar</span></div>
+            <div class="card-body">
+              <div class="analytics-filter-grid">
+                <div class="form-g">
+                  <label>Plan nomi</label>
+                  <input class="inp" id="analytics-plan-name" placeholder="Aprel 2026 savdo plani">
+                </div>
+                <div class="form-g">
+                  <label>Boshlanish sana</label>
+                  <input class="inp" type="date" id="analytics-plan-start">
+                </div>
+                <div class="form-g">
+                  <label>Tugash sana</label>
+                  <input class="inp" type="date" id="analytics-plan-end">
+                </div>
+                <div class="form-g">
+                  <label>Metric</label>
+                  <select class="inp" id="analytics-plan-metric">
+                    <option value="amount_usd">USD</option>
+                    <option value="cbm">CBM</option>
+                    <option value="bl_count">BL count</option>
+                  </select>
+                </div>
+                <div class="form-g">
+                  <label>Target</label>
+                  <input class="inp" id="analytics-plan-target" type="number" step="0.01" placeholder="300000">
+                </div>
+              </div>
+              <div class="analytics-filter-actions" style="justify-content:flex-start">
+                <button class="btn btn-amber btn-sm editor-only" onclick="saveAnalyticsPlan()">Plan saqlash</button>
+              </div>
+              <table class="tbl" style="margin-top:16px">
+                <thead><tr><th>Plan</th><th>Davr</th><th>Metric</th><th>Target</th><th>Holat</th><th>Amallar</th></tr></thead>
+                <tbody id="analytics-plans-table"></tbody>
+              </table>
             </div>
           </div>
 
@@ -4868,6 +4959,14 @@ function esc(str) {
   return String(str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
+window.__ANALYTICS_STATE__ = ANALYTICS_STATE;
+window.__BURAQ_ANALYTICS_BOOTSTRAP__ = {
+  initialView: INITIAL_VIEW || "dashboard",
+  initialAnalyticsTab: INITIAL_ANALYTICS_TAB || "overview",
+  isEditor: !!IS_EDITOR,
+  currentRole: CURRENT_ROLE || "",
+};
+
 // ── INIT ──────────────────────────────────────────────────
 {% if not login_page %}
 if ((INITIAL_VIEW || "dashboard") === "analytics") {
@@ -4886,5 +4985,6 @@ if ((INITIAL_VIEW || "dashboard") === "analytics") {
 document.getElementById("new-batch-name")?.addEventListener("keydown",e=>{if(e.key==="Enter")createBatch();});
 {% endif %}
 </script>
+<script src="{{ url_for('static', filename='js/analytics.js') }}"></script>
 </body>
 </html>
