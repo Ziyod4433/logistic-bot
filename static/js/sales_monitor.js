@@ -415,6 +415,11 @@
         document.exitFullscreen?.();
       }
     });
+    document.addEventListener("fullscreenchange", () => {
+      const active = !!document.fullscreenElement;
+      document.body.classList.toggle("monitor-fullscreen", active);
+      els.fullscreenBtn.textContent = active ? "Exit full screen" : "Full screen";
+    });
   }
 
   function init() {

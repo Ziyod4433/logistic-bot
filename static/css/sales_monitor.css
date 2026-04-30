@@ -318,6 +318,11 @@ body::before {
 }
 
 .circsvg {
+  width: 190px;
+  height: 190px;
+}
+
+.circsvg {
   transform: rotate(-90deg);
 }
 
@@ -681,6 +686,52 @@ body::before {
 .bottom.is-empty {
   opacity: 0.15;
   pointer-events: none;
+}
+
+body.monitor-fullscreen .controls,
+body.monitor-fullscreen .monthly-card,
+body.monitor-fullscreen .bottom {
+  display: none;
+}
+
+body.monitor-fullscreen .main {
+  grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
+  min-height: calc(100vh - 78px);
+}
+
+body.monitor-fullscreen .overall-card {
+  min-height: calc(100vh - 118px);
+}
+
+body.monitor-fullscreen .circwrap {
+  padding: 34px 0 18px;
+}
+
+body.monitor-fullscreen .circc,
+body.monitor-fullscreen .circsvg {
+  width: 320px;
+  height: 320px;
+}
+
+body.monitor-fullscreen .circpct {
+  font-size: 76px;
+}
+
+body.monitor-fullscreen .circsub {
+  font-size: 13px;
+  letter-spacing: 3px;
+}
+
+body.monitor-fullscreen .pgrid {
+  gap: 18px;
+}
+
+body.monitor-fullscreen .pv {
+  font-size: 28px;
+}
+
+body.monitor-fullscreen .dept-monitor {
+  min-height: calc(100vh - 118px);
 }
 
 .tbar {
