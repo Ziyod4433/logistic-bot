@@ -1351,6 +1351,7 @@ def send_bl_package(bl: dict, batch_name: str):
             language=language,
             reply_markup=reply_markup,
         )
+        db.record_tracking_delivery(bl)
     except Exception as exc:
         return False, str(exc)
 
@@ -1779,6 +1780,18 @@ def api_files(bl_id):
     return jsonify(db.get_files(bl_id))
 
 
+@app.route("/api/bl/<int:bl_id>/send-exclusion", methods=["POST"])
+@editor_required
+def api_set_bl_send_exclusion(bl_id):
+    data = request.json or {}
+    excluded = bool(data.get("excluded"))
+    try:
+        result = db.set_batch_send_exclusion(bl_id, excluded)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify({"ok": True, "result": result})
+
+
 @app.route("/api/bl/<int:bl_id>/files", methods=["POST"])
 @editor_required
 def api_upload(bl_id):
@@ -1835,8 +1848,56 @@ def api_send_batch(batch_id):
     if not batch:
         abort(404)
 
+    data = request.json or {}
+    selected_raw = data.get("selected_bl_ids") or []
+    selected_ids = set()
+    if isinstance(selected_raw, list):
+        for item in selected_raw:
+            try:
+                selected_ids.add(int(item))
+            except (TypeError, ValueError):
+                continue
+
+    bl_rows = db.get_bl_by_batch(batch_id)
+    if selected_ids:
+        bl_rows = [bl for bl in bl_rows if int(bl.get("id") or 0) in selected_ids]
+    else:
+        bl_rows = [
+            bl
+            for bl in bl_rows
+            if bl.get("chat_id") and not bl.get("send_excluded") and not bl.get("tracking_sent_current")
+        ]
+
+    if not bl_rows:
+        return jsonify({"error": "Нет выбранных BL для отправки"}), 400
+
     results = []
-    for bl in db.get_bl_by_batch(batch_id):
+    sent_chats = set()
+    for bl in bl_rows:
+        chat_id = str(bl.get("chat_id") or "").strip()
+        if not chat_id:
+            results.append(
+                {
+                    "code": bl["code"],
+                    "client": bl["client_name"],
+                    "success": False,
+                    "skipped": True,
+                    "error": "Нет chat_id",
+                }
+            )
+            continue
+        if chat_id in sent_chats:
+            results.append(
+                {
+                    "code": bl["code"],
+                    "client": bl["client_name"],
+                    "success": False,
+                    "skipped": True,
+                    "error": "Уже покрыто сообщением этого клиента в текущей отправке",
+                }
+            )
+            continue
+        sent_chats.add(chat_id)
         success, error_msg = send_bl_package(bl, batch["name"])
         db.add_log(
             bl["id"],
@@ -1852,12 +1913,14 @@ def api_send_batch(batch_id):
                 "code": bl["code"],
                 "client": bl["client_name"],
                 "success": success,
+                "skipped": False,
                 "error": error_msg,
             }
         )
 
     sent = sum(1 for item in results if item["success"])
-    return jsonify({"ok": True, "sent": sent, "total": len(results), "results": results})
+    skipped = sum(1 for item in results if item.get("skipped"))
+    return jsonify({"ok": True, "sent": sent, "skipped": skipped, "total": len(results), "results": results})
 
 
 @app.route("/api/bl/<int:bl_id>/send", methods=["POST"])

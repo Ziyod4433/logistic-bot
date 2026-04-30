@@ -1,3 +1,4 @@
+import hashlib
 import html
 import os
 import re
@@ -438,6 +439,26 @@ def init_db():
             success INTEGER NOT NULL DEFAULT 1,
             error_msg TEXT DEFAULT '',
             sent_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS tracking_delivery_coverage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
+            batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+            chat_id TEXT NOT NULL DEFAULT '',
+            last_source_batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+            last_source_bl_id INTEGER REFERENCES bl_codes(id) ON DELETE SET NULL,
+            tracking_signature TEXT NOT NULL DEFAULT '',
+            sent_at TEXT NOT NULL DEFAULT '',
+            UNIQUE(bl_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS batch_send_exclusions (
+            batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+            bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
+            is_excluded INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(batch_id, bl_id)
         );
 
         CREATE TABLE IF NOT EXISTS message_template (
@@ -1253,11 +1274,17 @@ def get_batch(batch_id):
             {_delay_days_sql('b')} AS delay_days,
             CASE WHEN COALESCE(b.client_delivery_date, '') != '' THEN 1 ELSE 0 END AS is_inactive,
             (
-                SELECT MAX(sl.sent_at)
-                FROM send_logs sl
-                JOIN bl_codes bl ON bl.id = sl.bl_id
-                WHERE bl.batch_id = b.id
-                  AND sl.success = 1
+                SELECT MAX(sent_at) FROM (
+                    SELECT MAX(sl.sent_at) AS sent_at
+                    FROM send_logs sl
+                    JOIN bl_codes bl ON bl.id = sl.bl_id
+                    WHERE bl.batch_id = b.id
+                      AND sl.success = 1
+                    UNION ALL
+                    SELECT MAX(c.sent_at) AS sent_at
+                    FROM tracking_delivery_coverage c
+                    WHERE c.batch_id = b.id
+                )
             ) AS last_tracking_at
         FROM batches b
         WHERE b.id = ?
@@ -1321,6 +1348,36 @@ def parse_local_ts(value: str):
         return datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TASHKENT_TZ)
     except ValueError:
         return None
+
+
+def _tracking_signature_value(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.6f}".rstrip("0").rstrip(".")
+    return str(value).strip()
+
+
+def get_tracking_payload_signature(bl: dict, batch: dict | None = None) -> str:
+    batch_row = batch or (get_batch(bl.get("batch_id")) if bl.get("batch_id") else {})
+    places_breakdown = str(bl.get("quantity_places_breakdown") or "").strip()
+    places_value = places_breakdown or _to_int(bl.get("quantity_places"))
+    parts = [
+        _tracking_signature_value((batch_row or {}).get("name", "")),
+        _tracking_signature_value((batch_row or {}).get("eta_to_toshkent", "")),
+        _tracking_signature_value((batch_row or {}).get("eta_destination", "")),
+        _tracking_signature_value((batch_row or {}).get("client_delivery_date", "")),
+        _tracking_signature_value(bl.get("code", "")),
+        _tracking_signature_value(bl.get("chat_id", "")),
+        _tracking_signature_value(bl.get("status", "")),
+        _tracking_signature_value(bl.get("message_language", "")),
+        _tracking_signature_value(bl.get("cargo_type", "")),
+        _tracking_signature_value(bl.get("weight_kg", 0)),
+        _tracking_signature_value(bl.get("volume_cbm", 0)),
+        _tracking_signature_value(places_value),
+        _tracking_signature_value(bl.get("cargo_description", "")),
+    ]
+    return hashlib.sha1("\x1f".join(parts).encode("utf-8", errors="ignore")).hexdigest()
 
 
 def format_response_duration(seconds) -> str:
@@ -2067,23 +2124,48 @@ def add_bl(
 
 def get_bl_by_batch(batch_id):
     conn = get_conn()
-    rows = conn.execute(
-        f"""
-        SELECT
-            bl.*,
-            (SELECT COUNT(*) FROM files f WHERE f.bl_id = bl.id) AS file_count,
-            (SELECT COUNT(*) FROM problems p WHERE p.bl_id = bl.id AND p.status = 'open') AS problem_count,
-            (SELECT p.problem_type FROM problems p WHERE p.bl_id = bl.id AND p.status = 'open' ORDER BY p.created_at DESC LIMIT 1) AS latest_problem_type,
-            {_late_sql('bl')} AS is_late,
-            {_stuck_sql('bl')} AS is_stuck
-        FROM bl_codes bl
-        WHERE bl.batch_id = ?
-        ORDER BY bl.created_at
-        """,
-        (batch_id,),
-    ).fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT
+                bl.*,
+                (SELECT COUNT(*) FROM files f WHERE f.bl_id = bl.id) AS file_count,
+                (SELECT COUNT(*) FROM problems p WHERE p.bl_id = bl.id AND p.status = 'open') AS problem_count,
+                (SELECT p.problem_type FROM problems p WHERE p.bl_id = bl.id AND p.status = 'open' ORDER BY p.created_at DESC LIMIT 1) AS latest_problem_type,
+                {_late_sql('bl')} AS is_late,
+                {_stuck_sql('bl')} AS is_stuck
+            FROM bl_codes bl
+            WHERE bl.batch_id = ?
+            ORDER BY bl.created_at
+            """,
+            (batch_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    batch_row = get_batch(batch_id) or {}
+    coverage_map = get_tracking_delivery_coverage_map(batch_id)
+    exclusion_map = get_batch_send_exclusion_map(batch_id)
+    items = [dict(row) for row in rows]
+    for item in items:
+        item_id = _to_int(item.get("id"))
+        coverage = coverage_map.get(item_id) or {}
+        current_signature = get_tracking_payload_signature(item, batch_row)
+        tracking_sent_current = bool(
+            coverage and str(coverage.get("tracking_signature") or "") == current_signature
+        )
+        source_batch_id = _to_int(coverage.get("last_source_batch_id"))
+        item["tracking_sent_current"] = tracking_sent_current
+        item["tracking_sent_at"] = (coverage.get("sent_at") or "") if tracking_sent_current else ""
+        item["tracking_sent_via_batch_id"] = source_batch_id or 0
+        item["tracking_sent_via_batch_name"] = (
+            (coverage.get("last_source_batch_name") or "") if tracking_sent_current else ""
+        )
+        item["tracking_sent_via_other_batch"] = bool(
+            tracking_sent_current and source_batch_id and source_batch_id != _to_int(batch_id)
+        )
+        item["send_excluded"] = bool(exclusion_map.get(item_id, False))
+    return items
 
 
 def get_bl_by_id(bl_id):
@@ -2160,6 +2242,168 @@ def find_active_bls_by_chat(chat_id):
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def get_tracking_bundle_bls(primary_bl: dict) -> list[dict]:
+    if not primary_bl:
+        return []
+    primary_id = primary_bl.get("id")
+    chat_id = str(primary_bl.get("chat_id") or "").strip()
+    if not primary_id or not chat_id:
+        return [dict(primary_bl)]
+
+    ordered = [dict(primary_bl)]
+    seen_ids = {primary_id}
+    exclusion_cache: dict[int, dict[int, bool]] = {}
+    for related in find_active_bls_by_chat(chat_id):
+        related_id = related.get("id")
+        if not related_id or related_id in seen_ids:
+            continue
+        related_batch_id = _to_int(related.get("batch_id"))
+        if related_batch_id:
+            if related_batch_id not in exclusion_cache:
+                exclusion_cache[related_batch_id] = get_batch_send_exclusion_map(related_batch_id)
+            if exclusion_cache[related_batch_id].get(_to_int(related_id), False):
+                continue
+        ordered.append(dict(related))
+        seen_ids.add(related_id)
+    return ordered
+
+
+def get_tracking_delivery_coverage_map(batch_id: int) -> dict[int, dict]:
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                c.bl_id,
+                c.batch_id,
+                c.chat_id,
+                c.last_source_batch_id,
+                c.last_source_bl_id,
+                c.tracking_signature,
+                c.sent_at,
+                sb.name AS last_source_batch_name
+            FROM tracking_delivery_coverage c
+            LEFT JOIN batches sb ON sb.id = c.last_source_batch_id
+            WHERE c.batch_id = ?
+            """,
+            (batch_id,),
+        ).fetchall()
+        return {int(row["bl_id"]): dict(row) for row in rows}
+    finally:
+        conn.close()
+
+
+def get_batch_send_exclusion_map(batch_id: int) -> dict[int, bool]:
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl_id, is_excluded
+            FROM batch_send_exclusions
+            WHERE batch_id = ?
+            """,
+            (batch_id,),
+        ).fetchall()
+        return {int(row["bl_id"]): bool(row["is_excluded"]) for row in rows}
+    finally:
+        conn.close()
+
+
+def set_batch_send_exclusion(bl_id: int, excluded: bool) -> dict:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, batch_id, code FROM bl_codes WHERE id = ? LIMIT 1",
+            (bl_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("BL не найден")
+        batch_id = int(row["batch_id"])
+        if excluded:
+            conn.execute(
+                """
+                INSERT INTO batch_send_exclusions(batch_id, bl_id, is_excluded, updated_at)
+                VALUES (?, ?, 1, ?)
+                ON CONFLICT(batch_id, bl_id) DO UPDATE SET
+                    is_excluded = 1,
+                    updated_at = excluded.updated_at
+                """,
+                (batch_id, bl_id, current_ts()),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM batch_send_exclusions WHERE batch_id = ? AND bl_id = ?",
+                (batch_id, bl_id),
+            )
+        conn.commit()
+        return {
+            "bl_id": bl_id,
+            "batch_id": batch_id,
+            "code": row["code"],
+            "excluded": bool(excluded),
+        }
+    finally:
+        conn.close()
+
+
+def record_tracking_delivery(primary_bl: dict) -> list[dict]:
+    bundle = get_tracking_bundle_bls(primary_bl)
+    if not bundle:
+        return []
+
+    chat_id = str(primary_bl.get("chat_id") or "").strip()
+    source_batch_id = _to_int(primary_bl.get("batch_id"))
+    source_bl_id = _to_int(primary_bl.get("id"))
+    sent_at = current_ts()
+    batch_cache: dict[int, dict] = {}
+
+    conn = get_conn()
+    try:
+        for item in bundle:
+            batch_id = _to_int(item.get("batch_id"))
+            if not batch_id:
+                continue
+            batch_row = batch_cache.get(batch_id)
+            if batch_row is None:
+                batch_row = get_batch(batch_id) or {}
+                batch_cache[batch_id] = batch_row
+            signature = get_tracking_payload_signature(item, batch_row)
+            conn.execute(
+                """
+                INSERT INTO tracking_delivery_coverage(
+                    bl_id,
+                    batch_id,
+                    chat_id,
+                    last_source_batch_id,
+                    last_source_bl_id,
+                    tracking_signature,
+                    sent_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(bl_id) DO UPDATE SET
+                    batch_id = excluded.batch_id,
+                    chat_id = excluded.chat_id,
+                    last_source_batch_id = excluded.last_source_batch_id,
+                    last_source_bl_id = excluded.last_source_bl_id,
+                    tracking_signature = excluded.tracking_signature,
+                    sent_at = excluded.sent_at
+                """,
+                (
+                    item.get("id"),
+                    batch_id,
+                    chat_id,
+                    source_batch_id or None,
+                    source_bl_id or None,
+                    signature,
+                    sent_at,
+                ),
+            )
+        conn.commit()
+        return bundle
+    finally:
+        conn.close()
 
 
 def update_bl(
@@ -2978,7 +3222,7 @@ def render_message(bl: dict, batch_name: str) -> str:
         return primary_rendered
 
     related_bls = []
-    for related in find_active_bls_by_chat(chat_id):
+    for related in get_tracking_bundle_bls(primary_bl):
         if related.get("id") == primary_bl.get("id"):
             continue
         related_copy = dict(related)

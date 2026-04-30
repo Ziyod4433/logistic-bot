@@ -784,6 +784,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 }
 .send-result.ok  { background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.2); }
 .send-result.err { background: rgba(244,63,94,.08);  border-color: rgba(244,63,94,.15); }
+.send-result.warn { background: rgba(245,166,35,.08); border-color: rgba(245,166,35,.18); }
 
 /* ── FILE CHIP ───────────────────────────────────────── */
 .file-chip {
@@ -1645,7 +1646,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openEditBatchModal()">⚙️ Параметры партии</button>
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openSheetImportModal()">📥 Импорт Sheets</button>
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openAddBLModal()">+ Добавить BL</button>
-                <button class="btn btn-amber btn-sm editor-only" id="send-batch-btn" onclick="sendBatch()">📤 Отправить партию</button>
+                <button class="btn btn-amber btn-sm editor-only" id="send-batch-btn" onclick="openSendBatchModal()">📤 Отправить партию</button>
               </div>
             </div>
             <div id="batch-meta-bar" style="padding:0 18px 14px;color:var(--muted2);font-size:12px"></div>
@@ -2375,6 +2376,37 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   </div>
 </div>
 
+<!-- Send selection -->
+<div class="overlay" id="send-select-modal">
+  <div class="modal" style="width:820px">
+    <div class="modal-title">Выбор <em>BL для отправки</em></div>
+    <div style="font-size:13px;color:var(--muted2);margin-bottom:12px" id="send-select-summary"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn btn-ghost btn-xs editor-only" onclick="toggleAllBatchSendSelection(true)">Выбрать всё</button>
+      <button class="btn btn-ghost btn-xs editor-only" onclick="selectPendingBatchSendOnly()">Только новые</button>
+      <button class="btn btn-ghost btn-xs editor-only" onclick="toggleAllBatchSendSelection(false)">Снять выбор</button>
+    </div>
+    <div style="max-height:360px;overflow:auto;border:1px solid var(--stroke);border-radius:14px">
+      <table class="tbl" style="margin:0">
+        <thead>
+          <tr>
+            <th style="width:48px">✓</th>
+            <th>BL</th>
+            <th>Клиент</th>
+            <th>Chat ID</th>
+            <th>Статус</th>
+          </tr>
+        </thead>
+        <tbody id="send-select-table"></tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('send-select-modal')">Отмена</button>
+      <button class="btn btn-amber editor-only" id="send-select-confirm-btn" onclick="sendBatch()">Отправить выбранные</button>
+    </div>
+  </div>
+</div>
+
 <!-- Send results -->
 <div class="overlay" id="send-modal">
   <div class="modal" style="width:560px">
@@ -2410,6 +2442,7 @@ let sheetImportRows = [];
 let selectedSheetImportIds = new Set();
 let communicationRecipients = [];
 let selectedCommunicationChats = new Set();
+let selectedBatchSendIds = new Set();
 let moderatorResponseGroups = [];
 const INITIAL_VIEW = {{ (initial_view if initial_view is defined else 'dashboard')|tojson }};
 const INITIAL_ANALYTICS_TAB = {{ (initial_analytics_tab if initial_analytics_tab is defined else 'overview')|tojson }};
@@ -2923,7 +2956,7 @@ function renderBL(list, batchName) {
   const t = document.getElementById("bl-table");
   t.innerHTML = list.length ? list.map(b=>`
     <tr class="${b.is_late ? 'row-late' : ''} ${b.problem_count ? 'row-problem' : ''}">
-      <td class="mono" style="color:var(--amber);font-weight:600">${esc(b.code)}</td>
+      <td>${renderBatchBLCodeCell(b)}</td>
       <td>${b.client_name ? `<span style="font-weight:500">${esc(b.client_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td>${renderCargoChips(b)}</td>
       <td>${renderPlacesCell(b)}</td>
@@ -2940,6 +2973,7 @@ function renderBL(list, batchName) {
         <div style="display:flex;gap:5px">
           <button class="btn btn-ghost btn-xs editor-only" onclick="openEditBL(${b.id})">✏️ Ред.</button>
           <button class="btn btn-ghost btn-xs editor-only" onclick='openMoveBLModal(${b.id}, ${JSON.stringify(String(b.code || ""))}, ${Number(b.batch_id || 0)})'>⇄ Перенести</button>
+          <button class="btn btn-ghost btn-xs editor-only" onclick="toggleBatchSendExclusion(${b.id}, ${b.send_excluded ? 'false' : 'true'})">${b.send_excluded ? '↩ Вкл.' : '🚫 Искл.'}</button>
           <button class="btn btn-ghost btn-xs editor-only" onclick="openProblemModal(${b.id},'${esc(b.code)}')">＋ Инцидент</button>
           <button class="btn btn-green btn-xs editor-only" onclick="sendOne(${b.id},'${esc(b.code)}')" ${!b.chat_id?'disabled title="Нет chat_id"':''}>📤</button>
           <button class="btn btn-red btn-xs editor-only" onclick="deleteBL(${b.id})">✕</button>
@@ -2948,6 +2982,30 @@ function renderBL(list, batchName) {
     </tr>`).join("") :
     `<tr><td colspan="7"><div class="empty"><div class="empty-icon">📋</div><p>Нет BL кодов. Добавь первый!</p></div></td></tr>`;
   renderBatchTotals(list);
+}
+
+function renderBatchBLCodeCell(bl) {
+  const sentNow = !!bl.tracking_sent_current;
+  const excluded = !!bl.send_excluded;
+  const codeColor = sentNow ? "var(--green)" : "var(--amber)";
+  const badges = [];
+  if (sentNow) {
+    badges.push(`<span class="badge badge-green">✅ отправлено</span>`);
+  }
+  if (bl.tracking_sent_via_other_batch && bl.tracking_sent_via_batch_name) {
+    badges.push(`<span class="badge badge-blue">через ${esc(bl.tracking_sent_via_batch_name)}</span>`);
+  }
+  if (excluded) {
+    badges.push(`<span class="badge badge-red">⛔ исключён</span>`);
+  }
+  const sentAt = bl.tracking_sent_at
+    ? `<div style="font-size:11px;color:var(--muted2);margin-top:4px">${esc(bl.tracking_sent_at)}</div>`
+    : "";
+  return `
+    <div class="mono" style="color:${codeColor};font-weight:600">${esc(bl.code)}</div>
+    ${badges.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${badges.join("")}</div>` : ``}
+    ${sentAt}
+  `;
 }
 
 function filterBL() {
@@ -3648,33 +3706,136 @@ async function saveProblem() {
 }
 
 // ── Send ──────────────────────────────────────────────────
+function getDefaultBatchSendSelection() {
+  return new Set(
+    allBL
+      .filter(b => b.chat_id && !b.send_excluded && !b.tracking_sent_current)
+      .map(b => Number(b.id))
+      .filter(Boolean)
+  );
+}
+
+function openSendBatchModal() {
+  if (!ensureEditor()) return;
+  if (!currentBatchId) return;
+  const linked = allBL.filter(b => b.chat_id).length;
+  if (!linked) {
+    toast("Ни один BL не имеет chat_id", "err");
+    return;
+  }
+  selectedBatchSendIds = getDefaultBatchSendSelection();
+  renderSendBatchSelection();
+  openModal("send-select-modal");
+}
+
+function renderSendBatchSelection() {
+  const table = document.getElementById("send-select-table");
+  const summary = document.getElementById("send-select-summary");
+  const confirmBtn = document.getElementById("send-select-confirm-btn");
+  if (!table || !summary || !confirmBtn) return;
+
+  const selectedCount = allBL.filter(b => selectedBatchSendIds.has(Number(b.id))).length;
+  const totalWithChat = allBL.filter(b => b.chat_id).length;
+  const alreadyCovered = allBL.filter(b => b.tracking_sent_current).length;
+  const excluded = allBL.filter(b => b.send_excluded).length;
+
+  summary.innerHTML = `Выбрано <b>${selectedCount}</b> из <b>${totalWithChat}</b> привязанных BL. Уже покрыто: <b style="color:var(--green)">${alreadyCovered}</b>. Исключено вручную: <b style="color:var(--red)">${excluded}</b>.`;
+
+  table.innerHTML = allBL.length ? allBL.map(b => {
+    const id = Number(b.id);
+    const hasChat = !!b.chat_id;
+    const checked = selectedBatchSendIds.has(id);
+    const statusParts = [];
+    if (!hasChat) statusParts.push(`<span class="badge badge-red">нет chat_id</span>`);
+    if (b.tracking_sent_current) statusParts.push(`<span class="badge badge-green">уже отправлено</span>`);
+    if (b.tracking_sent_via_other_batch && b.tracking_sent_via_batch_name) {
+      statusParts.push(`<span class="badge badge-blue">через ${esc(b.tracking_sent_via_batch_name)}</span>`);
+    }
+    if (b.send_excluded) statusParts.push(`<span class="badge badge-red">исключён</span>`);
+    if (!statusParts.length) statusParts.push(`<span class="badge badge-amber">новый</span>`);
+    return `
+      <tr>
+        <td>
+          <input type="checkbox" ${checked ? "checked" : ""} ${hasChat ? "" : "disabled"} onchange="toggleBatchSendSelection(${id}, this.checked)">
+        </td>
+        <td>
+          <div class="mono" style="font-weight:600;color:${b.tracking_sent_current ? 'var(--green)' : 'var(--amber)'}">${esc(b.code)}</div>
+        </td>
+        <td>${b.client_name ? esc(b.client_name) : '<span style="color:var(--muted)">—</span>'}</td>
+        <td>${b.chat_id ? `<span class="mono" style="font-size:11px">${esc(b.chat_id)}</span>` : '<span style="color:var(--red);font-size:11px">не указан</span>'}</td>
+        <td><div style="display:flex;gap:6px;flex-wrap:wrap">${statusParts.join("")}</div></td>
+      </tr>
+    `;
+  }).join("") : `<tr><td colspan="5"><div class="empty"><p>Нет BL для отправки</p></div></td></tr>`;
+
+  confirmBtn.disabled = selectedCount === 0;
+}
+
+function toggleBatchSendSelection(blId, checked) {
+  if (checked) selectedBatchSendIds.add(Number(blId));
+  else selectedBatchSendIds.delete(Number(blId));
+  renderSendBatchSelection();
+}
+
+function toggleAllBatchSendSelection(checked) {
+  if (checked) {
+    selectedBatchSendIds = new Set(
+      allBL.filter(b => b.chat_id).map(b => Number(b.id)).filter(Boolean)
+    );
+  } else {
+    selectedBatchSendIds = new Set();
+  }
+  renderSendBatchSelection();
+}
+
+function selectPendingBatchSendOnly() {
+  selectedBatchSendIds = getDefaultBatchSendSelection();
+  renderSendBatchSelection();
+}
+
+async function toggleBatchSendExclusion(blId, excluded) {
+  if (!ensureEditor()) return;
+  try {
+    await api(`/api/bl/${blId}/send-exclusion`, "POST", { excluded });
+    toast(excluded ? "BL исключён из массовой отправки" : "BL снова включён в массовую отправку", "ok");
+    if (currentBatchId) await loadBatchDetail(currentBatchId);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
 async function sendBatch() {
   if (!ensureEditor()) return;
   if (!currentBatchId) return;
-  const linked = allBL.filter(b=>b.chat_id).length;
-  if (!linked) { toast("Ни один BL не имеет chat_id","err"); return; }
-  if (!confirm(`Отправить сообщения ${linked} клиентам?`)) return;
+  const selectedIds = Array.from(selectedBatchSendIds).map(Number).filter(Boolean);
+  if (!selectedIds.length) {
+    toast("Сначала выбери BL для отправки", "err");
+    return;
+  }
+  if (!confirm(`Отправить сообщения для ${selectedIds.length} BL?`)) return;
 
-  const btn = document.getElementById("send-batch-btn");
+  const btn = document.getElementById("send-select-confirm-btn");
   btn.disabled = true; btn.textContent = "⏳ Отправляю...";
 
   try {
-    const res = await api("/api/batches/"+currentBatchId+"/send","POST");
+    const res = await api("/api/batches/"+currentBatchId+"/send","POST",{ selected_bl_ids: selectedIds });
     document.getElementById("send-summary").innerHTML =
-      `Отправлено: <b style="color:var(--green)">${res.sent}</b> из <b>${res.total}</b>`;
+      `Отправлено: <b style="color:var(--green)">${res.sent}</b> из <b>${res.total}</b>${res.skipped ? ` · пропущено: <b style="color:#f5a623">${res.skipped}</b>` : ``}`;
     document.getElementById("send-results").innerHTML = res.results.map(r=>`
-      <div class="send-result ${r.success?'ok':'err'}">
-        <span style="font-size:16px">${r.success?'✅':'❌'}</span>
+      <div class="send-result ${r.skipped ? 'warn' : (r.success ? 'ok' : 'err')}">
+        <span style="font-size:16px">${r.skipped ? '⏭️' : (r.success ? '✅' : '❌')}</span>
         <div>
           <div class="mono" style="font-size:12px;font-weight:600">${esc(r.code)}</div>
           ${r.client ? `<div style="font-size:11px;color:var(--muted2)">${esc(r.client)}</div>` : ''}
-          ${r.error  ? `<div style="font-size:11px;color:var(--red)">${esc(r.error)}</div>` : ''}
+          ${r.error  ? `<div style="font-size:11px;color:${r.skipped ? '#f5a623' : 'var(--red)'}">${esc(r.error)}</div>` : ''}
         </div>
       </div>`).join("");
+    closeModal("send-select-modal");
     openModal("send-modal");
+    await loadBatchDetail(currentBatchId);
     loadDashboard();
   } catch(e) { toast("Ошибка: "+e.message,"err"); }
-  finally { btn.disabled=false; btn.textContent="📤 Отправить партию"; }
+  finally { btn.disabled=false; btn.textContent="Отправить выбранные"; }
 }
 
 async function sendOne(blId, code) {
@@ -3683,6 +3844,7 @@ async function sendOne(blId, code) {
   try {
     await api("/api/bl/"+blId+"/send","POST");
     toast(`✅ ${code} — отправлено`,"ok");
+    if (currentBatchId) await loadBatchDetail(currentBatchId);
     loadDashboard();
   } catch(e) { toast("Ошибка: "+e.message,"err"); }
 }
