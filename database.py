@@ -2147,6 +2147,10 @@ def get_bl_by_batch(batch_id):
     coverage_map = get_tracking_delivery_coverage_map(batch_id)
     exclusion_map = get_batch_send_exclusion_map(batch_id)
     items = [dict(row) for row in rows]
+    duplicate_map = get_cross_batch_duplicate_chat_map(
+        batch_id,
+        [str(item.get("chat_id") or "").strip() for item in items if str(item.get("chat_id") or "").strip()],
+    )
     for item in items:
         item_id = _to_int(item.get("id"))
         coverage = coverage_map.get(item_id) or {}
@@ -2165,6 +2169,11 @@ def get_bl_by_batch(batch_id):
             tracking_sent_current and source_batch_id and source_batch_id != _to_int(batch_id)
         )
         item["send_excluded"] = bool(exclusion_map.get(item_id, False))
+        duplicate_info = duplicate_map.get(str(item.get("chat_id") or "").strip()) or {}
+        item["has_cross_batch_duplicate"] = bool(duplicate_info)
+        item["duplicate_batch_names"] = duplicate_info.get("batch_names") or []
+        item["duplicate_codes"] = duplicate_info.get("codes") or []
+        item["duplicate_count"] = int(duplicate_info.get("count") or 0)
     return items
 
 
@@ -2293,6 +2302,48 @@ def get_tracking_delivery_coverage_map(batch_id: int) -> dict[int, dict]:
         return {int(row["bl_id"]): dict(row) for row in rows}
     finally:
         conn.close()
+
+
+def get_cross_batch_duplicate_chat_map(batch_id: int, chat_ids: list[str]) -> dict[str, dict]:
+    cleaned = [str(chat_id).strip() for chat_id in (chat_ids or []) if str(chat_id).strip()]
+    if not cleaned:
+        return {}
+    placeholders = ",".join("?" for _ in cleaned)
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT
+                bl.chat_id,
+                bl.code,
+                bl.batch_id,
+                b.name AS batch_name
+            FROM bl_codes bl
+            JOIN batches b ON b.id = bl.batch_id
+            WHERE bl.chat_id IN ({placeholders})
+              AND bl.batch_id != ?
+              AND COALESCE(b.client_delivery_date, '') = ''
+            ORDER BY b.created_at DESC, bl.created_at DESC, bl.id DESC
+            """,
+            (*cleaned, batch_id),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    result: dict[str, dict] = {}
+    for row in rows:
+        chat_id = str(row["chat_id"] or "").strip()
+        if not chat_id:
+            continue
+        entry = result.setdefault(chat_id, {"count": 0, "batch_names": [], "codes": []})
+        entry["count"] += 1
+        batch_name = str(row["batch_name"] or "").strip()
+        code = str(row["code"] or "").strip()
+        if batch_name and batch_name not in entry["batch_names"]:
+            entry["batch_names"].append(batch_name)
+        if code and code not in entry["codes"]:
+            entry["codes"].append(code)
+    return result
 
 
 def get_batch_send_exclusion_map(batch_id: int) -> dict[int, bool]:
