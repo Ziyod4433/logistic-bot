@@ -5,11 +5,12 @@ import io
 import json
 import os
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 import database as db
 
@@ -23,6 +24,11 @@ ANALYTICS_LAST_SYNC_KEY = "analytics_last_sync_at"
 ANALYTICS_SOURCE_NAME_KEY = "analytics_source_name"
 GOOGLE_SHEETS_EXPORT_URL = "https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
 INVALID_CELL_MARKERS = {"#NAME?", "#REF!", "#N/A", "#DIV/0!", "#VALUE!"}
+
+try:
+    TASHKENT_TZ = getattr(db, "TASHKENT_TZ", None) or ZoneInfo("Asia/Tashkent")
+except Exception:
+    TASHKENT_TZ = timezone(timedelta(hours=5))
 
 
 class AnalyticsImporterError(Exception):
@@ -55,8 +61,17 @@ def _extract_sheet_id(sheet_id_or_url: str) -> str:
     return raw
 
 
+def _now_tashkent() -> datetime:
+    return datetime.now(TASHKENT_TZ)
+
+
 def _format_dt(value: datetime | None = None) -> str:
-    return (value or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+    current = value or _now_tashkent()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=TASHKENT_TZ)
+    else:
+        current = current.astimezone(TASHKENT_TZ)
+    return current.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _safe_json(data: Any) -> str:
@@ -845,7 +860,7 @@ def _sync_plan_defaults() -> None:
         ).fetchone()
         if active_exists:
             return
-        today = datetime.now().date()
+        today = _now_tashkent().date()
         start = today.replace(day=1)
         if today.month == 12:
             next_month = date(today.year + 1, 1, 1)
@@ -962,7 +977,7 @@ def sync_from_google(sheet_id: str | None = None) -> dict[str, Any]:
 def sync_from_upload(file_storage) -> dict[str, Any]:
     workbook = _load_uploaded_workbook(file_storage)
     filename = _clean_text(getattr(file_storage, "filename", "")) or "upload.xlsx"
-    source_file_id = f"upload:{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    source_file_id = f"upload:{_now_tashkent().strftime('%Y%m%d%H%M%S')}"
     return sync_workbook(workbook, "upload", filename, source_file_id)
 
 
