@@ -9,6 +9,8 @@
     countdownHandle: null,
     clockHandle: null,
     refreshHandle: null,
+    currentDepartment: "logists",
+    latestPayload: null,
   };
 
   const byId = (id) => document.getElementById(id);
@@ -34,14 +36,14 @@
     planBadge: byId("plan-badge"),
     monthlyMetricLabel: byId("monthly-metric-label"),
     monthlyBars: byId("monthly-bars"),
-    logistsTotal: byId("logists-total"),
-    logistsShare: byId("logists-share"),
-    logistsBl: byId("logists-bl"),
-    logistsBoard: byId("logists-board"),
-    salesTotal: byId("sales-total"),
-    salesShare: byId("sales-share"),
-    salesBl: byId("sales-bl"),
-    salesBoard: byId("sales-board"),
+    deptMonitor: byId("dept-monitor"),
+    deptTitle: byId("dept-title"),
+    deptRotateNote: byId("dept-rotate-note"),
+    deptTotal: byId("dept-total"),
+    deptShare: byId("dept-share"),
+    deptBl: byId("dept-bl"),
+    deptBoard: byId("dept-board"),
+    deptBody: byId("dept-body"),
     shareTitle: byId("share-title"),
     logistsShareBar: byId("logists-share-bar"),
     logistsShareValue: byId("logists-share-value"),
@@ -56,6 +58,23 @@
     amount_usd: "USD",
     cbm: "m³",
     bl_count: "BL",
+  };
+
+  const DEPARTMENT_META = {
+    logists: {
+      key: "logists",
+      title: "LOGISTLAR",
+      tone: "blue",
+      accentClass: "ca-b",
+      note: "Keyingi bo'lim 5 daqiqada: Savdo bo‘limi",
+    },
+    sales: {
+      key: "sales",
+      title: "SAVDO BO‘LIMI",
+      tone: "purple",
+      accentClass: "ca-p",
+      note: "Keyingi bo'lim 5 daqiqada: Logistlar",
+    },
   };
 
   function escapeHtml(value) {
@@ -229,12 +248,63 @@
     return "DOLLAR BO‘YICHA REJA ULUSHI";
   }
 
+  function setDepartmentAccent(meta) {
+    els.deptMonitor.classList.remove("ca-b", "ca-p");
+    els.deptMonitor.classList.add(meta.accentClass);
+    els.deptTitle.className = `ct ${meta.tone === "blue" ? "b" : "p"}`;
+    els.deptTotal.className = meta.tone === "blue" ? "b" : "p";
+    els.deptShare.className = meta.tone === "blue" ? "b" : "p";
+    els.deptBl.className = meta.tone === "blue" ? "b" : "p";
+  }
+
+  function renderDepartment(key, payload) {
+    const meta = DEPARTMENT_META[key] || DEPARTMENT_META.logists;
+    const department = payload.departments?.[key] || {};
+    const plan = payload.plan || {};
+    const metric = plan.metric || state.metric;
+    const metricLabel = plan.metric_label || METRIC_LABELS[metric] || "USD";
+
+    setDepartmentAccent(meta);
+    els.deptTitle.textContent = meta.title;
+    els.deptRotateNote.textContent = meta.note;
+    els.deptTotal.textContent = formatMetricValue(department.closed_value || 0, metric, metricLabel);
+    els.deptShare.textContent = `${Number(department.plan_share_percent || 0).toFixed(1)}%`;
+    els.deptBl.textContent = formatNumber(department.bl_count || 0);
+    renderLeaders(els.deptBoard, department.leaders || [], meta.tone);
+  }
+
+  function animateDepartmentChange(nextKey) {
+    els.deptBody.classList.add("is-animating");
+    window.setTimeout(() => {
+      state.currentDepartment = nextKey;
+      if (state.latestPayload) {
+        renderDepartment(nextKey, state.latestPayload);
+      }
+    }, 220);
+    window.setTimeout(() => {
+      els.deptBody.classList.remove("is-animating");
+    }, 520);
+  }
+
+  function toggleDepartment(animated = true) {
+    const nextKey = state.currentDepartment === "logists" ? "sales" : "logists";
+    if (animated) {
+      animateDepartmentChange(nextKey);
+    } else {
+      state.currentDepartment = nextKey;
+      if (state.latestPayload) {
+        renderDepartment(nextKey, state.latestPayload);
+      }
+    }
+  }
+
   function renderPayload(payload) {
     if (!payload || payload.empty) {
       renderEmpty(payload?.message || "Google Sheets ma’lumotlari hali import qilinmagan.");
       return;
     }
     clearEmpty();
+    state.latestPayload = payload;
 
     const plan = payload.plan || {};
     const overall = payload.overall || {};
@@ -274,22 +344,14 @@
 
     const logists = payload.departments?.logists || {};
     const sales = payload.departments?.sales || {};
-    els.logistsTotal.textContent = formatMetricValue(logists.closed_value || 0, metric, metricLabel);
-    els.logistsShare.textContent = `${Number(logists.plan_share_percent || 0).toFixed(1)}%`;
-    els.logistsBl.textContent = formatNumber(logists.bl_count || 0);
-    els.salesTotal.textContent = formatMetricValue(sales.closed_value || 0, metric, metricLabel);
-    els.salesShare.textContent = `${Number(sales.plan_share_percent || 0).toFixed(1)}%`;
-    els.salesBl.textContent = formatNumber(sales.bl_count || 0);
-
-    renderLeaders(els.logistsBoard, logists.leaders || [], "blue");
-    renderLeaders(els.salesBoard, sales.leaders || [], "purple");
-
     const logistShare = Math.max(0, Math.min(100, Number(logists.plan_share_percent || 0)));
     const salesShare = Math.max(0, Math.min(100, Number(sales.plan_share_percent || 0)));
     els.logistsShareBar.style.width = `${logistShare}%`;
     els.logistsShareValue.textContent = `${logistShare.toFixed(1)}%`;
     els.salesShareBar.style.width = `${salesShare}%`;
     els.salesShareValue.textContent = `${salesShare.toFixed(1)}%`;
+
+    renderDepartment(state.currentDepartment, payload);
   }
 
   async function fetchMonitor(resetCountdown) {
@@ -312,66 +374,57 @@
   function scheduleRefresh() {
     clearInterval(state.refreshHandle);
     state.refreshHandle = window.setInterval(() => {
+      toggleDepartment(true);
       fetchMonitor(true).catch((error) => renderEmpty(error.message));
     }, 300000);
   }
 
   function onPlanChange() {
     state.planId = els.planSelect.value;
-    const plan = currentPlan();
-    if (plan && plan.target_metric) {
-      state.metric = plan.target_metric;
+    const selected = currentPlan();
+    if (selected?.target_metric) {
+      state.metric = selected.target_metric;
       els.metricSelect.value = state.metric;
     }
-    const params = new URLSearchParams(window.location.search);
-    params.set("sales_plan_id", state.planId);
-    params.set("metric", state.metric);
-    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+    const nextUrl = new URL(window.location.href);
+    if (state.planId) nextUrl.searchParams.set("sales_plan_id", state.planId);
+    nextUrl.searchParams.set("metric", state.metric);
+    window.history.replaceState({}, "", nextUrl);
     fetchMonitor(true).catch((error) => renderEmpty(error.message));
   }
 
   function onMetricChange() {
-    state.metric = els.metricSelect.value || "amount_usd";
-    const params = new URLSearchParams(window.location.search);
-    if (state.planId) params.set("sales_plan_id", state.planId);
-    params.set("metric", state.metric);
-    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+    state.metric = els.metricSelect.value;
+    const nextUrl = new URL(window.location.href);
+    if (state.planId) nextUrl.searchParams.set("sales_plan_id", state.planId);
+    nextUrl.searchParams.set("metric", state.metric);
+    window.history.replaceState({}, "", nextUrl);
     fetchMonitor(true).catch((error) => renderEmpty(error.message));
   }
 
   function bindEvents() {
-    els.planSelect?.addEventListener("change", onPlanChange);
-    els.metricSelect?.addEventListener("change", onMetricChange);
-    els.refreshBtn?.addEventListener("click", () => {
+    els.planSelect.addEventListener("change", onPlanChange);
+    els.metricSelect.addEventListener("change", onMetricChange);
+    els.refreshBtn.addEventListener("click", () => {
       fetchMonitor(true).catch((error) => renderEmpty(error.message));
     });
-    els.fullscreenBtn?.addEventListener("click", async () => {
+    els.fullscreenBtn.addEventListener("click", () => {
       if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen?.();
+        document.documentElement.requestFullscreen?.();
       } else {
-        await document.exitFullscreen?.();
+        document.exitFullscreen?.();
       }
     });
   }
 
-  async function init() {
+  function init() {
     populatePlans();
     bindEvents();
     startClock();
     renderCountdown();
+    fetchMonitor(true).catch((error) => renderEmpty(error.message));
     scheduleRefresh();
-
-    if (!state.planId) {
-      renderEmpty("Avval sales plan tanlang yoki yarating.");
-      return;
-    }
-
-    try {
-      await fetchMonitor(true);
-    } catch (error) {
-      renderEmpty(error.message);
-    }
   }
 
-  init();
+  document.addEventListener("DOMContentLoaded", init);
 })();

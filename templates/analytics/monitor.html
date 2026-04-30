@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BURAQ Logistics — Sales Monitor</title>
+  <title>BURAQ Logistics - Sales Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -53,7 +53,7 @@
   </section>
 
   <main class="main">
-    <section class="lp">
+    <section class="lp lp-wide">
       <article class="card card-accent ca-o">
         <div class="ch">
           <div class="ct o">UMUMIY PLAN</div>
@@ -97,28 +97,21 @@
       </article>
     </section>
 
-    <article class="card card-accent ca-b">
+    <article class="card card-accent ca-b dept-monitor" id="dept-monitor">
       <div class="ch">
-        <div class="ct b">LOGISTLAR</div>
+        <div class="dept-header-row">
+          <div class="ct b" id="dept-title">LOGISTLAR</div>
+          <div class="dept-rotate-note" id="dept-rotate-note">5 daqiqada almashadi</div>
+        </div>
         <div class="cs">
-          <div class="csi">Yopilgan: <b class="b" id="logists-total">0 USD</b></div>
-          <div class="csi">Plan ulushi: <b class="b" id="logists-share">0%</b></div>
-          <div class="csi">BL: <b class="b" id="logists-bl">0</b></div>
+          <div class="csi">Yopilgan: <b class="b" id="dept-total">0 USD</b></div>
+          <div class="csi">Plan ulushi: <b class="b" id="dept-share">0%</b></div>
+          <div class="csi">BL: <b class="b" id="dept-bl">0</b></div>
         </div>
       </div>
-      <div class="lb" id="logists-board"></div>
-    </article>
-
-    <article class="card card-accent ca-p">
-      <div class="ch">
-        <div class="ct p">SAVDO BO‘LIMI</div>
-        <div class="cs">
-          <div class="csi">Yopilgan: <b class="p" id="sales-total">0 USD</b></div>
-          <div class="csi">Plan ulushi: <b class="p" id="sales-share">0%</b></div>
-          <div class="csi">BL: <b class="p" id="sales-bl">0</b></div>
-        </div>
+      <div class="dept-body" id="dept-body">
+        <div class="lb" id="dept-board"></div>
       </div>
-      <div class="lb" id="sales-board"></div>
     </article>
   </main>
 
