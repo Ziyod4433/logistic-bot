@@ -2264,7 +2264,12 @@ def get_tracking_bundle_bls(primary_bl: dict) -> list[dict]:
     ordered = [dict(primary_bl)]
     seen_ids = {primary_id}
     exclusion_cache: dict[int, dict[int, bool]] = {}
-    for related in find_active_bls_by_chat(chat_id):
+    related_rows = find_active_bls_by_chat(chat_id)
+    coverage_map = get_tracking_delivery_coverage_for_bl_ids(
+        [_to_int(item.get("id")) for item in related_rows if _to_int(item.get("id"))]
+    )
+    batch_cache: dict[int, dict] = {}
+    for related in related_rows:
         related_id = related.get("id")
         if not related_id or related_id in seen_ids:
             continue
@@ -2273,6 +2278,14 @@ def get_tracking_bundle_bls(primary_bl: dict) -> list[dict]:
             if related_batch_id not in exclusion_cache:
                 exclusion_cache[related_batch_id] = get_batch_send_exclusion_map(related_batch_id)
             if exclusion_cache[related_batch_id].get(_to_int(related_id), False):
+                continue
+            batch_row = batch_cache.get(related_batch_id)
+            if batch_row is None:
+                batch_row = get_batch(related_batch_id) or {}
+                batch_cache[related_batch_id] = batch_row
+            related_signature = get_tracking_payload_signature(related, batch_row)
+            current_coverage = coverage_map.get(_to_int(related_id)) or {}
+            if str(current_coverage.get("tracking_signature") or "") == related_signature:
                 continue
         ordered.append(dict(related))
         seen_ids.add(related_id)
@@ -2298,6 +2311,35 @@ def get_tracking_delivery_coverage_map(batch_id: int) -> dict[int, dict]:
             WHERE c.batch_id = ?
             """,
             (batch_id,),
+        ).fetchall()
+        return {int(row["bl_id"]): dict(row) for row in rows}
+    finally:
+        conn.close()
+
+
+def get_tracking_delivery_coverage_for_bl_ids(bl_ids: list[int]) -> dict[int, dict]:
+    cleaned = [int(bl_id) for bl_id in (bl_ids or []) if _to_int(bl_id)]
+    if not cleaned:
+        return {}
+    placeholders = ",".join("?" for _ in cleaned)
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT
+                c.bl_id,
+                c.batch_id,
+                c.chat_id,
+                c.last_source_batch_id,
+                c.last_source_bl_id,
+                c.tracking_signature,
+                c.sent_at,
+                sb.name AS last_source_batch_name
+            FROM tracking_delivery_coverage c
+            LEFT JOIN batches sb ON sb.id = c.last_source_batch_id
+            WHERE c.bl_id IN ({placeholders})
+            """,
+            tuple(cleaned),
         ).fetchall()
         return {int(row["bl_id"]): dict(row) for row in rows}
     finally:
