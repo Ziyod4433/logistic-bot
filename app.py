@@ -812,12 +812,13 @@ def telegram_api(method: str, *, timeout: int = 15, **kwargs):
     return response.json()
 
 
-def telegram_send_message(chat_id, text: str, reply_markup: dict | None = None):
+def telegram_send_message(chat_id, text: str, reply_markup: dict | None = None, parse_mode: str | None = "HTML"):
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "HTML",
     }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     if reply_markup:
         payload["reply_markup"] = reply_markup
     return telegram_api("sendMessage", json=payload)
@@ -1118,7 +1119,7 @@ def send_announcement_broadcast(chat_id, text: str, attachment: dict | None = No
             telegram_send_photo(chat_id, file_path, filename or None)
         else:
             telegram_send_document(chat_id, file_path, filename or os.path.basename(file_path))
-    telegram_send_message(chat_id, text)
+    telegram_send_message(chat_id, text, parse_mode=None)
 
 
 def handle_callback_query(callback_query: dict):

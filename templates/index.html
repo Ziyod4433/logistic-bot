@@ -4669,7 +4669,12 @@ async function sendAnnouncementBroadcast() {
   if (!confirm(`Отправить объявление в выбранные группы: ${chatIds.length}?`)) return;
   try {
     const res = await api("/api/announcements/send", "POST", { content, chat_ids: chatIds });
-    toast(`Отправлено: ${res.sent}, пропущено: ${res.skipped}, ошибок: ${(res.errors || []).length}`, (res.errors || []).length ? "inf" : "ok");
+    if ((res.sent || 0) === 0 && (res.errors || []).length) {
+      const firstError = res.errors[0];
+      toast(firstError.error || "Telegram не принял рассылку", "err");
+    } else {
+      toast(`Отправлено: ${res.sent}, пропущено: ${res.skipped}, ошибок: ${(res.errors || []).length}`, (res.errors || []).length ? "inf" : "ok");
+    }
     loadAnnouncementsPage();
   } catch(e) {
     toast(e.message, "err");
