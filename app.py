@@ -45,6 +45,7 @@ GUEST_PASSWORD = os.getenv("GUEST_PASSWORD", "Guest6611")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").strip()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
+TELEGRAM_MAX_PHOTO_BYTES = 10 * 1024 * 1024
 PORT = int(os.getenv("PORT", "5000"))
 CHAT_ADMIN_CACHE_TTL = 300
 CHAT_ADMIN_CACHE = {}
@@ -824,19 +825,31 @@ def telegram_send_message(chat_id, text: str, reply_markup: dict | None = None, 
     return telegram_api("sendMessage", json=payload)
 
 
-def telegram_send_document(chat_id, file_path: str, filename: str):
+def telegram_send_document(
+    chat_id,
+    file_path: str,
+    filename: str,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Файл не найден: {file_path}")
 
     safe_filename = filename or os.path.basename(file_path)
     mime_type = mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
+    data = {
+        "chat_id": chat_id,
+        "disable_content_type_detection": "true",
+    }
+    if caption:
+        data["caption"] = caption
+    if parse_mode:
+        data["parse_mode"] = parse_mode
     with open(file_path, "rb") as file_handle:
         response = req.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
-            data={
-                "chat_id": chat_id,
-                "disable_content_type_detection": "true",
-            },
+            data=data,
             files={"document": (safe_filename, file_handle, mime_type)},
             timeout=30,
         )
@@ -850,18 +863,30 @@ def telegram_send_document(chat_id, file_path: str, filename: str):
     return response.json()
 
 
-def telegram_send_photo(chat_id, file_path: str, filename: str | None = None):
+def telegram_send_photo(
+    chat_id,
+    file_path: str,
+    filename: str | None = None,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Изображение не найдено: {file_path}")
 
     safe_filename = filename or os.path.basename(file_path)
     mime_type = mimetypes.guess_type(safe_filename)[0] or "image/jpeg"
+    data = {
+        "chat_id": chat_id,
+    }
+    if caption:
+        data["caption"] = caption
+    if parse_mode:
+        data["parse_mode"] = parse_mode
     with open(file_path, "rb") as file_handle:
         response = req.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-            data={
-                "chat_id": chat_id,
-            },
+            data=data,
             files={"photo": (safe_filename, file_handle, mime_type)},
             timeout=30,
         )
@@ -1114,11 +1139,44 @@ def send_announcement_broadcast(chat_id, text: str, attachment: dict | None = No
     attachment_info = attachment or {}
     file_path = (attachment_info.get("file_path") or "").strip()
     filename = (attachment_info.get("filename") or "").strip()
+    caption_text = (text or "").strip()
+    can_use_single_caption = bool(caption_text) and len(caption_text) <= 1024
     if file_path:
-        if attachment_info.get("kind") == "photo":
-            telegram_send_photo(chat_id, file_path, filename or None)
+        send_as_photo = attachment_info.get("kind") == "photo"
+        if send_as_photo:
+            try:
+                if os.path.getsize(file_path) > TELEGRAM_MAX_PHOTO_BYTES:
+                    send_as_photo = False
+            except OSError:
+                pass
+
+        if send_as_photo:
+            try:
+                telegram_send_photo(
+                    chat_id,
+                    file_path,
+                    filename or None,
+                    caption=caption_text if can_use_single_caption else None,
+                )
+            except Exception as exc:
+                if "too big for a photo" in str(exc).lower():
+                    telegram_send_document(
+                        chat_id,
+                        file_path,
+                        filename or os.path.basename(file_path),
+                        caption=caption_text if can_use_single_caption else None,
+                    )
+                else:
+                    raise
         else:
-            telegram_send_document(chat_id, file_path, filename or os.path.basename(file_path))
+            telegram_send_document(
+                chat_id,
+                file_path,
+                filename or os.path.basename(file_path),
+                caption=caption_text if can_use_single_caption else None,
+            )
+        if can_use_single_caption:
+            return
     telegram_send_message(chat_id, text, parse_mode=None)
 
 
