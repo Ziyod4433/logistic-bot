@@ -2189,6 +2189,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     </div>
     <div class="form-g">
       <label>Найденная группа Telegram</label>
+      <input class="inp" id="add-bl-chat-search" placeholder="Поиск по названию или chat_id" oninput="filterChatSelect('add')">
       <select class="inp" id="add-bl-chat-select" onchange="applySelectedChat('add')">
         <option value="">Выбери группу из списка</option>
       </select>
@@ -2259,6 +2260,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       </div>
       <div class="form-g">
         <label>Найденная группа Telegram</label>
+        <input class="inp" id="edit-bl-chat-search" placeholder="Поиск по названию или chat_id" oninput="filterChatSelect('edit')">
         <select class="inp" id="edit-bl-chat-select" onchange="applySelectedChat('edit')">
           <option value="">Выбери группу из списка</option>
         </select>
@@ -3155,17 +3157,39 @@ function renderChatsPage() {
 function populateChatSelect(id, selected="") {
   const select = document.getElementById(id);
   if (!select) return;
+  let searchTerm = "";
+  if (id === "add-bl-chat-select") {
+    searchTerm = String(document.getElementById("add-bl-chat-search")?.value || "").trim().toLowerCase();
+  } else if (id === "edit-bl-chat-select") {
+    searchTerm = String(document.getElementById("edit-bl-chat-search")?.value || "").trim().toLowerCase();
+  }
 
-  select.innerHTML = `<option value="">Выбери группу из списка</option>` + knownChats.map(chat=>`
+  const filteredChats = searchTerm
+    ? knownChats.filter(chat => {
+        const title = String(chat.title || "").toLowerCase();
+        const chatId = String(chat.chat_id || "").toLowerCase();
+        return title.includes(searchTerm) || chatId.includes(searchTerm);
+      })
+    : knownChats;
+
+  select.innerHTML = `<option value="">Выбери группу из списка</option>` + filteredChats.map(chat=>`
     <option value="${esc(chat.chat_id)}">${esc(chat.title || "Без названия")} (${esc(chat.chat_id)})</option>
   `).join("");
 
   if (selected) {
-    const exists = knownChats.some(chat=>String(chat.chat_id)===String(selected));
+    const exists = filteredChats.some(chat=>String(chat.chat_id)===String(selected));
     select.value = exists ? String(selected) : "";
   } else {
     select.value = "";
   }
+}
+
+function filterChatSelect(prefix) {
+  const selectId = `${prefix}-bl-chat-select`;
+  const selected = document.getElementById(`${prefix}-bl-chat`)?.value.trim()
+    || document.getElementById(selectId)?.value
+    || "";
+  populateChatSelect(selectId, selected);
 }
 
 function applySelectedChat(prefix) {
@@ -3302,6 +3326,7 @@ function openAddBLModal() {
   document.getElementById("add-bl-volume").value = "";
   document.getElementById("add-bl-quantity").value = "";
   document.getElementById("add-bl-description").value = "";
+  document.getElementById("add-bl-chat-search").value = "";
   setBLLanguage("add-bl", "uz_latn");
   const pendingChatId = pendingChatTransfer?.chat_id || "";
   document.getElementById("add-bl-chat").value = pendingChatId;
@@ -3397,6 +3422,7 @@ async function openEditBL(blId) {
   document.getElementById("edit-bl-volume").value = bl.volume_cbm || "";
   document.getElementById("edit-bl-quantity").value = bl.quantity_places_breakdown || bl.quantity_places || "";
   document.getElementById("edit-bl-description").value = bl.cargo_description || "";
+  document.getElementById("edit-bl-chat-search").value = "";
   setBLLanguage("edit-bl", bl.message_language || "uz_latn");
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
   populateChatSelect("edit-bl-chat-select", bl.chat_id||"");
