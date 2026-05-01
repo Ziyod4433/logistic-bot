@@ -3461,7 +3461,8 @@ function renderSheetImportRows() {
   }
 
   table.innerHTML = sheetImportRows.map(row => {
-    const checked = selectedSheetImportIds.has(row.id) ? "checked" : "";
+    const rowKey = String(row.id);
+    const checked = selectedSheetImportIds.has(rowKey) ? "checked" : "";
     const isMatch = String(row.sheet_date || "") === String(targetDate);
     const rowStyle = isMatch ? "" : ` style="opacity:.72"`;
     const mergeInfo = Number(row.merged_count || 1) > 1
@@ -3472,7 +3473,7 @@ function renderSheetImportRows() {
       : String(row.source_row || "");
     return `
       <tr${rowStyle}>
-        <td><input type="checkbox" ${checked} onchange="toggleSheetImportRow(${JSON.stringify(row.id)}, this.checked)"></td>
+        <td><input type="checkbox" data-sheet-row-id="${esc(rowKey)}" ${checked} onchange="toggleSheetImportRow(${JSON.stringify(row.id)}, this.checked)"></td>
         <td>${esc(row.sheet_date || "—")}</td>
         <td><strong>${esc(row.code || "")}</strong>${mergeInfo}</td>
         <td>${esc(String(row.quantity_places_display || row.quantity_places || ""))}</td>
@@ -3487,6 +3488,16 @@ function renderSheetImportRows() {
 function toggleSheetImportRow(rowId, checked) {
   if (checked) selectedSheetImportIds.add(String(rowId));
   else selectedSheetImportIds.delete(String(rowId));
+}
+
+function getSelectedSheetImportIds() {
+  const domIds = Array.from(document.querySelectorAll('#sheet-import-table input[type="checkbox"][data-sheet-row-id]:checked'))
+    .map(input => String(input.getAttribute("data-sheet-row-id") || "").trim())
+    .filter(Boolean);
+  if (domIds.length) {
+    selectedSheetImportIds = new Set(domIds);
+  }
+  return selectedSheetImportIds;
 }
 
 function toggleAllSheetImportRows(checked) {
@@ -3528,7 +3539,8 @@ async function importSelectedSheetRows() {
     toast("Сначала открой партию", "err");
     return;
   }
-  const rows = sheetImportRows.filter(row => selectedSheetImportIds.has(String(row.id)));
+  const selectedIds = getSelectedSheetImportIds();
+  const rows = sheetImportRows.filter(row => selectedIds.has(String(row.id)));
   if (!rows.length) {
     toast("Не выбраны строки для импорта", "err");
     return;
