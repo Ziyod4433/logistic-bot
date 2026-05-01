@@ -1120,6 +1120,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="nav-link" onclick="goto('notifications')"><span class="ico">🔔</span> Уведомления</div>
       <div class="nav-link" onclick="goto('moderator-response')"><span class="ico">⏱️</span> Mean Response Time</div>
       <div class="nav-link" onclick="goto('communication-rate')"><span class="ico">💬</span> Moderator Score</div>
+      <div class="nav-link" onclick="goto('announcements')"><span class="ico">📢</span> Объявления</div>
       <div class="nav-section">Настройки</div>
       <div class="nav-link" onclick="goto('template')"><span class="ico">✏️</span> Шаблон</div>
       <div class="nav-link" onclick="goto('logs')"><span class="ico">📋</span> Логи отправки</div>
@@ -1927,6 +1928,74 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         </div>
       </div>
 
+      <!-- PAGE: ANNOUNCEMENTS -->
+      <div class="page" id="page-announcements">
+        <div class="page-h">Announcements <em>/ Объявления</em></div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Рассылка по группам</span>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <button class="btn btn-amber btn-sm editor-only" onclick="sendAnnouncementBroadcast()">Отправить выбранным</button>
+              <button class="btn btn-ghost btn-sm" onclick="loadAnnouncementsPage()">↻ Обновить</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="info-grid-3">
+              <div class="mini-stat"><div class="mini-stat-v" id="announce-groups">0</div><div class="mini-stat-l">Групп доступно</div></div>
+              <div class="mini-stat"><div class="mini-stat-v" id="announce-attachment-state">Нет</div><div class="mini-stat-l">Вложение</div></div>
+              <div class="mini-stat"><div class="mini-stat-v" id="announce-last-sent">—</div><div class="mini-stat-l">Последняя рассылка</div></div>
+            </div>
+            <div class="kpi-note" style="margin-top:12px">Если прикрепить файл или фото, Telegram сначала отправит вложение, а затем сам текст объявления.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Текст объявления</span>
+            <button class="btn btn-ghost btn-sm editor-only" onclick="saveAnnouncementTemplate()">💾 Сохранить текст</button>
+          </div>
+          <div class="card-body">
+            <textarea class="inp" id="announcement-template" rows="8" style="min-height:190px" placeholder="Вставь текст объявления для Telegram-групп..."></textarea>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Файл или фото</span>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <label class="btn btn-ghost btn-sm editor-only" style="cursor:pointer">
+                📎 Прикрепить
+                <input type="file" id="announcement-attachment-input" style="display:none" onchange="uploadAnnouncementAttachment()">
+              </label>
+              <button class="btn btn-ghost btn-sm editor-only" onclick="clearAnnouncementAttachment()">🗑 Удалить</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div id="announcement-attachment-meta" class="kpi-note">Файл или фото пока не прикреплены.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Куда отправить</span>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-sm editor-only" onclick="selectAllAnnouncementRecipients()">Выбрать всех</button>
+              <button class="btn btn-ghost btn-sm editor-only" onclick="clearAnnouncementRecipients()">Снять выбор</button>
+            </div>
+          </div>
+          <table class="tbl">
+            <thead><tr>
+              <th></th><th>Telegram группа</th><th>Chat ID</th><th>BL связей</th><th>Последняя активность</th>
+            </tr></thead>
+            <tbody id="announcement-recipients-table"></tbody>
+          </table>
+          <div class="card-body" style="padding-top:0">
+            <div id="announcement-count" style="font-size:12px;color:var(--muted2)"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- ═══════════════════════════════════════════════════ -->
       <!-- PAGE: TEMPLATE -->
       <!-- ═══════════════════════════════════════════════════ -->
@@ -2444,6 +2513,8 @@ let sheetImportRows = [];
 let selectedSheetImportIds = new Set();
 let communicationRecipients = [];
 let selectedCommunicationChats = new Set();
+let announcementRecipients = [];
+let selectedAnnouncementChats = new Set();
 let selectedBatchSendIds = new Set();
 let moderatorResponseGroups = [];
 const INITIAL_VIEW = {{ (initial_view if initial_view is defined else 'dashboard')|tojson }};
@@ -2578,6 +2649,7 @@ function goto(page) {
     notifications:"Уведомления",
     "moderator-response":"Mean Response Time",
     "communication-rate":"Moderator Score",
+    announcements:"Объявления",
     template:"Шаблон сообщений",
     logs:"Логи отправки",
     "login-history":"Login history"
@@ -2593,6 +2665,7 @@ function goto(page) {
   if (page==="notifications") loadNotificationsPage();
   if (page==="moderator-response") loadModeratorResponsePage();
   if (page==="communication-rate") loadCommunicationRatePage();
+  if (page==="announcements") loadAnnouncementsPage();
   if (page==="template")   loadTemplate();
   if (page==="logs")       loadLogs();
   if (page==="login-history") loadLoginHistory();
@@ -2612,6 +2685,7 @@ function refreshPage() {
   else if (id==="notifications") loadNotificationsPage();
   else if (id==="moderator-response") loadModeratorResponsePage();
   else if (id==="communication-rate") loadCommunicationRatePage();
+  else if (id==="announcements") loadAnnouncementsPage();
   else if (id==="logs")  loadLogs();
   else if (id==="login-history") loadLoginHistory();
 }
@@ -4434,6 +4508,171 @@ async function sendCommunicationSurvey() {
     loadCommunicationRatePage();
   } catch(e) {
     toast(e.message,"err");
+  }
+}
+
+function updateAnnouncementCount(totalRows=0) {
+  const el = document.getElementById("announcement-count");
+  if (!el) return;
+  el.textContent = `${totalRows} групп доступно · выбрано ${selectedAnnouncementChats.size}`;
+}
+
+function renderAnnouncementAttachmentMeta(attachment={}) {
+  const el = document.getElementById("announcement-attachment-meta");
+  if (!el) return;
+  const filename = String(attachment?.filename || "").trim();
+  const kind = String(attachment?.kind || "").trim();
+  if (!filename) {
+    el.textContent = "Файл или фото пока не прикреплены.";
+    return;
+  }
+  const label = kind === "photo" ? "Фото" : "Файл";
+  el.innerHTML = `<b>${esc(label)}:</b> ${esc(filename)}`;
+}
+
+function renderAnnouncementRecipientsTable() {
+  const table = document.getElementById("announcement-recipients-table");
+  if (!table) return;
+  if (!announcementRecipients.length) {
+    table.innerHTML = `<tr><td colspan="5"><div class="empty"><div class="empty-icon">&#128172;</div><p>Нет активных Telegram-групп для рассылки</p></div></td></tr>`;
+    updateAnnouncementCount(0);
+    return;
+  }
+
+  table.innerHTML = announcementRecipients.map(item => {
+    const chatId = String(item?.chat_id || "").trim();
+    const checked = selectedAnnouncementChats.has(chatId);
+    return `
+      <tr>
+        <td style="width:40px">
+          <input class="editor-only" type="checkbox"
+                 ${checked ? "checked" : ""}
+                 onchange="toggleAnnouncementRecipient('${esc(chatId)}', this.checked)">
+        </td>
+        <td style="font-weight:600">${esc(item.title || "Без названия")}</td>
+        <td class="mono" style="font-size:11px;color:var(--muted2)">${esc(chatId)}</td>
+        <td>${esc(item.linked_bl_count ?? 0)}</td>
+        <td>${item.last_seen_at ? `<span class="mono" style="font-size:11px;color:var(--muted2)">${esc(item.last_seen_at)}</span>` : `<span style="color:var(--muted)">&mdash;</span>`}</td>
+      </tr>`;
+  }).join("");
+
+  updateAnnouncementCount(announcementRecipients.length);
+}
+
+function toggleAnnouncementRecipient(chatId, checked) {
+  const value = String(chatId || "").trim();
+  if (!value) return;
+  if (checked) selectedAnnouncementChats.add(value);
+  else selectedAnnouncementChats.delete(value);
+  updateAnnouncementCount(announcementRecipients.length);
+}
+
+function selectAllAnnouncementRecipients() {
+  if (!ensureEditor()) return;
+  announcementRecipients.forEach(item => {
+    const chatId = String(item?.chat_id || "").trim();
+    if (chatId) selectedAnnouncementChats.add(chatId);
+  });
+  renderAnnouncementRecipientsTable();
+}
+
+function clearAnnouncementRecipients() {
+  if (!ensureEditor()) return;
+  selectedAnnouncementChats.clear();
+  renderAnnouncementRecipientsTable();
+}
+
+async function saveAnnouncementTemplate() {
+  if (!ensureEditor()) return;
+  const content = document.getElementById("announcement-template")?.value || "";
+  try {
+    await api("/api/announcements/template", "POST", { content });
+    toast("Текст объявления сохранён", "ok");
+  } catch(e) {
+    toast(e.message, "err");
+  }
+}
+
+async function uploadAnnouncementAttachment() {
+  if (!ensureEditor()) return;
+  const input = document.getElementById("announcement-attachment-input");
+  const file = input?.files?.[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const res = await apiForm("/api/announcements/attachment", formData);
+    renderAnnouncementAttachmentMeta(res.attachment || {});
+    toast("Вложение загружено", "ok");
+  } catch(e) {
+    toast(e.message, "err");
+  } finally {
+    if (input) input.value = "";
+  }
+}
+
+async function clearAnnouncementAttachment() {
+  if (!ensureEditor()) return;
+  try {
+    await api("/api/announcements/attachment", "DELETE");
+    renderAnnouncementAttachmentMeta({});
+    const input = document.getElementById("announcement-attachment-input");
+    if (input) input.value = "";
+    document.getElementById("announce-attachment-state").textContent = "Нет";
+    toast("Вложение удалено", "ok");
+  } catch(e) {
+    toast(e.message, "err");
+  }
+}
+
+async function loadAnnouncementsPage() {
+  try {
+    const data = await api("/api/announcements");
+    const previousSelection = new Set(selectedAnnouncementChats);
+    announcementRecipients = data.recipients || [];
+    selectedAnnouncementChats = new Set();
+    announcementRecipients.forEach(item => {
+      const chatId = String(item?.chat_id || "").trim();
+      if (!chatId) return;
+      if (!previousSelection.size || previousSelection.has(chatId)) {
+        selectedAnnouncementChats.add(chatId);
+      }
+    });
+
+    const textarea = document.getElementById("announcement-template");
+    if (textarea && document.activeElement !== textarea) {
+      textarea.value = data.content || "";
+    }
+
+    document.getElementById("announce-groups").textContent = data.summary?.groups ?? announcementRecipients.length;
+    document.getElementById("announce-attachment-state").textContent = data.summary?.has_attachment ? "Есть" : "Нет";
+    document.getElementById("announce-last-sent").textContent = data.summary?.last_sent_at || "—";
+    renderAnnouncementAttachmentMeta(data.attachment || {});
+    renderAnnouncementRecipientsTable();
+  } catch(e) {
+    toast(e.message, "err");
+  }
+}
+
+async function sendAnnouncementBroadcast() {
+  if (!ensureEditor()) return;
+  const content = (document.getElementById("announcement-template")?.value || "").trim();
+  const chatIds = Array.from(selectedAnnouncementChats);
+  if (!content) {
+    toast("Вставь текст объявления перед отправкой", "err");
+    return;
+  }
+  if (!chatIds.length) {
+    toast("Выбери хотя бы одну группу для рассылки", "err");
+    return;
+  }
+  if (!confirm(`Отправить объявление в выбранные группы: ${chatIds.length}?`)) return;
+  try {
+    const res = await api("/api/announcements/send", "POST", { content, chat_ids: chatIds });
+    toast(`Отправлено: ${res.sent}, пропущено: ${res.skipped}, ошибок: ${(res.errors || []).length}`, (res.errors || []).length ? "inf" : "ok");
+    loadAnnouncementsPage();
+  } catch(e) {
+    toast(e.message, "err");
   }
 }
 

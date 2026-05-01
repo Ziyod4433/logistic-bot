@@ -849,6 +849,31 @@ def telegram_send_document(chat_id, file_path: str, filename: str):
     return response.json()
 
 
+def telegram_send_photo(chat_id, file_path: str, filename: str | None = None):
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Изображение не найдено: {file_path}")
+
+    safe_filename = filename or os.path.basename(file_path)
+    mime_type = mimetypes.guess_type(safe_filename)[0] or "image/jpeg"
+    with open(file_path, "rb") as file_handle:
+        response = req.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+            data={
+                "chat_id": chat_id,
+            },
+            files={"photo": (safe_filename, file_handle, mime_type)},
+            timeout=30,
+        )
+    if not response.ok:
+        try:
+            payload = response.json()
+            description = payload.get("description") or response.text
+        except ValueError:
+            description = response.text
+        raise RuntimeError(description)
+    return response.json()
+
+
 def telegram_send_video(chat_id, file_path: str, filename: str | None = None):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Видео не найдено: {file_path}")
@@ -1082,6 +1107,18 @@ def send_communication_survey(recipient: dict, month_key: str):
     except Exception:
         db.delete_communication_survey_dispatch(dispatch_id)
         raise
+
+
+def send_announcement_broadcast(chat_id, text: str, attachment: dict | None = None):
+    attachment_info = attachment or {}
+    file_path = (attachment_info.get("file_path") or "").strip()
+    filename = (attachment_info.get("filename") or "").strip()
+    if file_path:
+        if attachment_info.get("kind") == "photo":
+            telegram_send_photo(chat_id, file_path, filename or None)
+        else:
+            telegram_send_document(chat_id, file_path, filename or os.path.basename(file_path))
+    telegram_send_message(chat_id, text)
 
 
 def handle_callback_query(callback_query: dict):
@@ -2390,6 +2427,126 @@ def api_send_communication_rate():
             "sent": sent,
             "skipped": skipped,
             "total_recipients": len(recipients),
+            "errors": errors,
+        }
+    )
+
+
+@app.route("/api/announcements")
+@login_required
+def api_announcements():
+    attachment = db.get_announcement_attachment()
+    recipients = db.get_announcement_recipients()
+    return jsonify(
+        {
+            "content": db.get_announcement_template(),
+            "attachment": {
+                "filename": attachment.get("filename", ""),
+                "kind": attachment.get("kind", ""),
+            } if attachment else {},
+            "recipients": recipients,
+            "summary": {
+                "groups": len(recipients),
+                "has_attachment": bool(attachment),
+                "last_sent_at": db.get_announcement_last_sent_at(),
+            },
+        }
+    )
+
+
+@app.route("/api/announcements/template", methods=["POST"])
+@editor_required
+def api_save_announcement_template():
+    data = request.json or {}
+    content = (data.get("content") or "").strip()
+    db.save_announcement_template(content)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/announcements/attachment", methods=["POST"])
+@editor_required
+def api_upload_announcement_attachment():
+    if "file" not in request.files:
+        return jsonify({"error": "Файл не выбран"}), 400
+
+    uploaded_file = request.files["file"]
+    if not uploaded_file or not uploaded_file.filename:
+        return jsonify({"error": "Выбери файл или фото для загрузки"}), 400
+
+    ext = uploaded_file.filename.rsplit(".", 1)[-1].lower() if "." in uploaded_file.filename else ""
+    if ext not in ALLOWED_EXT:
+        return jsonify({"error": f"Тип файла .{ext} не разрешён"}), 400
+
+    original_filename = (uploaded_file.filename or "").strip()
+    storage_name = secure_filename(original_filename) or f"announcement_{secrets.token_hex(4)}.{ext or 'bin'}"
+    filename = original_filename or storage_name
+    unique = f"announcement_{secrets.token_hex(4)}_{storage_name}"
+    file_path = os.path.join(UPLOAD_FOLDER, unique)
+    uploaded_file.save(file_path)
+    kind = "photo" if ext in {"png", "jpg", "jpeg"} else "document"
+    db.save_announcement_attachment(filename, file_path, kind)
+    return jsonify({"ok": True, "attachment": {"filename": filename, "kind": kind}})
+
+
+@app.route("/api/announcements/attachment", methods=["DELETE"])
+@editor_required
+def api_delete_announcement_attachment():
+    db.clear_announcement_attachment()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/announcements/send", methods=["POST"])
+@editor_required
+def api_send_announcements():
+    if not BOT_TOKEN:
+        return jsonify({"error": "BOT_TOKEN не настроен в .env"}), 500
+
+    data = request.json or {}
+    content = (data.get("content") or "").strip() or db.get_announcement_template()
+    if not content:
+        return jsonify({"error": "Текст объявления не может быть пустым"}), 400
+
+    selected_chat_ids = [str(chat_id).strip() for chat_id in (data.get("chat_ids") or []) if str(chat_id).strip()]
+    if not selected_chat_ids:
+        return jsonify({"error": "Выбери хотя бы одну группу"}), 400
+
+    recipients_map = {
+        str(item.get("chat_id") or "").strip(): item
+        for item in db.get_announcement_recipients()
+        if str(item.get("chat_id") or "").strip()
+    }
+    attachment = db.get_announcement_attachment()
+    sent = 0
+    skipped = 0
+    errors = []
+
+    for chat_id in selected_chat_ids:
+        recipient = recipients_map.get(chat_id)
+        if not recipient:
+            skipped += 1
+            errors.append({"chat_id": chat_id, "error": "Группа не найдена или неактивна"})
+            continue
+        try:
+            send_announcement_broadcast(chat_id, content, attachment)
+            sent += 1
+        except Exception as exc:
+            errors.append(
+                {
+                    "chat_id": chat_id,
+                    "title": recipient.get("title", ""),
+                    "error": str(exc),
+                }
+            )
+
+    if sent:
+        db.mark_announcement_last_sent()
+
+    return jsonify(
+        {
+            "ok": True,
+            "sent": sent,
+            "skipped": skipped,
+            "total_recipients": len(selected_chat_ids),
             "errors": errors,
         }
     )

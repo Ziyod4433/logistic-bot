@@ -120,7 +120,7 @@ DEFAULT_TEMPLATE = """👋Assalomu alaykum hurmatli mijoz!
 🖇Tovar bo'yicha packing list⤵️
 {packing_list}"""
 
-DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Assalomu alaykum hurmatli mijoz! 
+DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
 
 Iltimos, bizning guruh moderatorimiz ishiga 0 dan 10 gacha baho bering.
 
@@ -133,6 +133,13 @@ Moderator xizmatiga qanday baho berasiz? Iltimos, quyidagi variantlardan birini 
 9–10 ball: xizmatdan juda mamnunman, boshqalarga ham tavsiya qilaman
 Oldindan tashakkur!
 Buraq Logistics jamoasi."""
+
+DEFAULT_ANNOUNCEMENT_TEMPLATE = ""
+
+ANNOUNCEMENT_ATTACHMENT_NAME_KEY = "announcement_attachment_name"
+ANNOUNCEMENT_ATTACHMENT_PATH_KEY = "announcement_attachment_path"
+ANNOUNCEMENT_ATTACHMENT_KIND_KEY = "announcement_attachment_kind"
+ANNOUNCEMENT_LAST_SENT_AT_KEY = "announcement_last_sent_at"
 
 DEFAULT_STATUS_DETAILS = {
     "Xitoy": "🇨🇳 Yuk Xitoydagi jo'nash nuqtasida tayyorlanmoqda va marshrutga chiqarilmoqda.",
@@ -2890,6 +2897,94 @@ def set_setting(key: str, value: str) -> None:
             (str(key or "").strip(), str(value or "").strip()),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def get_announcement_template() -> str:
+    return get_setting("announcement_template", DEFAULT_ANNOUNCEMENT_TEMPLATE) or DEFAULT_ANNOUNCEMENT_TEMPLATE
+
+
+def save_announcement_template(content: str) -> None:
+    set_setting("announcement_template", (content or "").strip())
+
+
+def _normalize_announcement_attachment_kind(kind: str) -> str:
+    value = (kind or "").strip().lower()
+    return "photo" if value == "photo" else "document"
+
+
+def get_announcement_attachment() -> dict:
+    filename = get_setting(ANNOUNCEMENT_ATTACHMENT_NAME_KEY, "").strip()
+    file_path = get_setting(ANNOUNCEMENT_ATTACHMENT_PATH_KEY, "").strip()
+    kind = _normalize_announcement_attachment_kind(get_setting(ANNOUNCEMENT_ATTACHMENT_KIND_KEY, "document"))
+    if not filename or not file_path or not os.path.exists(file_path):
+        return {}
+    return {
+        "filename": filename,
+        "file_path": file_path,
+        "kind": kind,
+    }
+
+
+def save_announcement_attachment(filename: str, file_path: str, kind: str = "document") -> None:
+    previous = get_announcement_attachment()
+    previous_path = (previous.get("file_path") or "").strip()
+    next_path = (file_path or "").strip()
+    set_setting(ANNOUNCEMENT_ATTACHMENT_NAME_KEY, (filename or "").strip())
+    set_setting(ANNOUNCEMENT_ATTACHMENT_PATH_KEY, next_path)
+    set_setting(ANNOUNCEMENT_ATTACHMENT_KIND_KEY, _normalize_announcement_attachment_kind(kind))
+    if previous_path and previous_path != next_path and os.path.exists(previous_path):
+        try:
+            os.remove(previous_path)
+        except OSError:
+            pass
+
+
+def clear_announcement_attachment() -> None:
+    previous = get_announcement_attachment()
+    previous_path = (previous.get("file_path") or "").strip()
+    set_setting(ANNOUNCEMENT_ATTACHMENT_NAME_KEY, "")
+    set_setting(ANNOUNCEMENT_ATTACHMENT_PATH_KEY, "")
+    set_setting(ANNOUNCEMENT_ATTACHMENT_KIND_KEY, "")
+    if previous_path and os.path.exists(previous_path):
+        try:
+            os.remove(previous_path)
+        except OSError:
+            pass
+
+
+def mark_announcement_last_sent(sent_at: str | None = None) -> str:
+    value = (sent_at or current_ts()).strip()
+    set_setting(ANNOUNCEMENT_LAST_SENT_AT_KEY, value)
+    return value
+
+
+def get_announcement_last_sent_at() -> str:
+    return get_setting(ANNOUNCEMENT_LAST_SENT_AT_KEY, "").strip()
+
+
+def get_announcement_recipients():
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                c.chat_id,
+                COALESCE(NULLIF(TRIM(c.title), ''), NULLIF(TRIM(c.username), ''), c.chat_id) AS title,
+                c.chat_type,
+                c.username,
+                c.last_seen_at,
+                COUNT(bl.id) AS linked_bl_count
+            FROM telegram_chats c
+            LEFT JOIN bl_codes bl ON bl.chat_id = c.chat_id
+            WHERE c.chat_id != ''
+              AND c.is_active = 1
+            GROUP BY c.chat_id
+            ORDER BY COALESCE(NULLIF(TRIM(c.title), ''), NULLIF(TRIM(c.username), ''), c.chat_id) COLLATE NOCASE ASC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
     finally:
         conn.close()
 
