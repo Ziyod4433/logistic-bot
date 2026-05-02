@@ -3868,18 +3868,6 @@ def get_communication_rate_template():
     row = conn.execute("SELECT content FROM communication_rate_template WHERE id = 1").fetchone()
     conn.close()
     content = row["content"] if row else DEFAULT_COMMUNICATION_RATE_TEMPLATE
-    legacy_markers = [
-        "Опрос за {month_key}",
-        "Пожалуйста, оцени работу менеджера по коммуникации",
-        "<b>YOMON</b> — плохо",
-        "<b>O'RTA</b> — средне",
-        "<b>YAXSHI</b> — хорошо",
-        "<b>ALO</b> — отлично",
-        "Assalomu alaykum , Sardor aka.",
-        "0 dan 10 gacha baho bering",
-    ]
-    if any(marker in (content or "") for marker in legacy_markers):
-        return DEFAULT_COMMUNICATION_RATE_TEMPLATE
     return content or DEFAULT_COMMUNICATION_RATE_TEMPLATE
 
 
