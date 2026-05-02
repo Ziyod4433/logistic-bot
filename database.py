@@ -4038,6 +4038,7 @@ def delete_communication_survey_dispatch(dispatch_id):
     chat_id = row["chat_id"]
 
     conn.execute("DELETE FROM communication_survey_dispatches WHERE id = ?", (dispatch_id,))
+    _refresh_communication_rating_snapshot(conn, month_key, chat_id)
 
     latest = conn.execute(
         """
@@ -4078,6 +4079,132 @@ def delete_communication_survey_dispatch(dispatch_id):
             "DELETE FROM communication_survey_sends WHERE month_key = ? AND chat_id = ?",
             (month_key, chat_id),
         )
+    conn.commit()
+    conn.close()
+
+
+def _refresh_communication_rating_snapshot(conn, month_key, chat_id):
+    latest = conn.execute(
+        """
+        SELECT
+            month_key,
+            chat_id,
+            client_name,
+            bl_id,
+            batch_id,
+            voter_user_id,
+            voter_name,
+            voter_username,
+            score,
+            submitted_at
+        FROM communication_rating_events
+        WHERE month_key = ? AND chat_id = ?
+        ORDER BY submitted_at DESC, id DESC
+        LIMIT 1
+        """,
+        (month_key, str(chat_id)),
+    ).fetchone()
+    if latest:
+        conn.execute(
+            """
+            INSERT INTO communication_ratings(
+                month_key, chat_id, client_name, bl_id, batch_id,
+                voter_user_id, voter_name, voter_username, score, submitted_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(month_key, chat_id) DO UPDATE SET
+                client_name = excluded.client_name,
+                bl_id = excluded.bl_id,
+                batch_id = excluded.batch_id,
+                voter_user_id = excluded.voter_user_id,
+                voter_name = excluded.voter_name,
+                voter_username = excluded.voter_username,
+                score = excluded.score,
+                submitted_at = excluded.submitted_at
+            """,
+            (
+                latest["month_key"],
+                latest["chat_id"],
+                latest["client_name"],
+                latest["bl_id"],
+                latest["batch_id"],
+                latest["voter_user_id"],
+                latest["voter_name"],
+                latest["voter_username"],
+                latest["score"],
+                latest["submitted_at"],
+            ),
+        )
+    else:
+        conn.execute(
+            "DELETE FROM communication_ratings WHERE month_key = ? AND chat_id = ?",
+            (month_key, str(chat_id)),
+        )
+
+
+def delete_communication_rating_event(event_id):
+    if not event_id:
+        return
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT month_key, chat_id, dispatch_id FROM communication_rating_events WHERE id = ?",
+        (event_id,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return
+    month_key = row["month_key"]
+    chat_id = row["chat_id"]
+    dispatch_id = row["dispatch_id"]
+    conn.execute("DELETE FROM communication_rating_events WHERE id = ?", (event_id,))
+
+    if dispatch_id:
+        remaining_dispatch_events = conn.execute(
+            "SELECT COUNT(*) FROM communication_rating_events WHERE dispatch_id = ?",
+            (dispatch_id,),
+        ).fetchone()[0]
+        if remaining_dispatch_events == 0:
+            conn.execute("DELETE FROM communication_survey_dispatches WHERE id = ?", (dispatch_id,))
+            latest_send = conn.execute(
+                """
+                SELECT month_key, chat_id, client_name, bl_id, batch_id, batch_name, sent_at
+                FROM communication_survey_dispatches
+                WHERE month_key = ? AND chat_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (month_key, chat_id),
+            ).fetchone()
+            if latest_send:
+                conn.execute(
+                    """
+                    INSERT INTO communication_survey_sends(
+                        month_key, chat_id, client_name, bl_id, batch_id, batch_name, sent_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(month_key, chat_id) DO UPDATE SET
+                        client_name = excluded.client_name,
+                        bl_id = excluded.bl_id,
+                        batch_id = excluded.batch_id,
+                        batch_name = excluded.batch_name,
+                        sent_at = excluded.sent_at
+                    """,
+                    (
+                        latest_send["month_key"],
+                        latest_send["chat_id"],
+                        latest_send["client_name"],
+                        latest_send["bl_id"],
+                        latest_send["batch_id"],
+                        latest_send["batch_name"],
+                        latest_send["sent_at"],
+                    ),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM communication_survey_sends WHERE month_key = ? AND chat_id = ?",
+                    (month_key, chat_id),
+                )
+    _refresh_communication_rating_snapshot(conn, month_key, chat_id)
     conn.commit()
     conn.close()
 
@@ -4193,6 +4320,7 @@ def get_communication_rate(month_key):
         """
         SELECT
             d.id AS dispatch_id,
+            e.id AS event_id,
             d.month_key,
             d.chat_id,
             COALESCE(NULLIF(TRIM(tc.title), ''), NULLIF(TRIM(d.client_name), ''), d.chat_id) AS client_name,

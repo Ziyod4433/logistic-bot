@@ -4359,7 +4359,10 @@ function formatCommunicationVoter(row) {
 }
 
 function formatCommunicationScore(score) {
-  const value = Number(score || 0);
+  if (score === null || score === undefined || String(score).trim?.() === "") {
+    return `<span class="badge badge-muted">ожидается</span>`;
+  }
+  const value = Number(score);
   if (Number.isNaN(value)) return `<span class="badge badge-muted">ожидается</span>`;
   const badgeClass = value <= 2
     ? 'badge badge-red'
@@ -4375,6 +4378,26 @@ function formatCommunicationTime(value) {
   return value
     ? `<span class="mono" style="font-size:11px;color:var(--muted2)">${esc(value)}</span>`
     : `<span style="color:var(--muted)">&mdash;</span>`;
+}
+
+async function deleteCommunicationRateRow(eventId, dispatchId, clientName) {
+  if (!ensureEditor()) return;
+  const hasAnswer = !!eventId;
+  const label = clientName || "эту строку";
+  const question = hasAnswer
+    ? `Удалить ответ по Moderator Score для ${label}?`
+    : `Удалить отправку опроса для ${label}?`;
+  if (!confirm(question)) return;
+  try {
+    await api("/api/communication-rate/delete", "POST", {
+      event_id: eventId || null,
+      dispatch_id: eventId ? null : (dispatchId || null),
+    });
+    toast(hasAnswer ? "Ответ удалён" : "Отправка удалена", "ok");
+    loadCommunicationRatePage();
+  } catch (e) {
+    toast(e.message, "err");
+  }
 }
 
 function renderCommunicationRecipientsTable(totalRows=0) {
@@ -4508,7 +4531,7 @@ async function loadCommunicationRatePage() {
     const table = document.getElementById("communication-table");
     const headRow = table.closest("table")?.querySelector("thead tr");
     if (headRow) {
-      headRow.innerHTML = "<th>Клиент</th><th>Кто оценил</th><th>Отправлено</th><th>Оценка</th><th>Ответ</th>";
+      headRow.innerHTML = "<th>Клиент</th><th>Кто оценил</th><th>Отправлено</th><th>Оценка</th><th>Ответ</th><th>Действия</th>";
     }
     table.innerHTML = (data.rows || []).length ? data.rows.map(row => `
       <tr>
@@ -4517,8 +4540,11 @@ async function loadCommunicationRatePage() {
         <td>${formatCommunicationTime(row.sent_at)}</td>
         <td>${formatCommunicationScore(row.score)}</td>
         <td>${formatCommunicationTime(row.submitted_at)}</td>
+        <td>
+          <button class="btn btn-sm editor-only" onclick='deleteCommunicationRateRow(${row.event_id || 'null'}, ${row.dispatch_id || 'null'}, ${JSON.stringify(row.client_name || "")})'>🗑 Удалить</button>
+        </td>
       </tr>`).join("") :
-      `<tr><td colspan="5"><div class="empty"><div class="empty-icon">&#128172;</div><p>Опросы за этот месяц ещё не отправлялись</p></div></td></tr>`;
+      `<tr><td colspan="6"><div class="empty"><div class="empty-icon">&#128172;</div><p>Опросы за этот месяц ещё не отправлялись</p></div></td></tr>`;
     updateCommunicationCount((data.rows || []).length);
   } catch(e) { toast(e.message,"err"); }
 }

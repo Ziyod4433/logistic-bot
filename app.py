@@ -2532,6 +2532,22 @@ def api_send_communication_rate():
     )
 
 
+@app.route("/api/communication-rate/delete", methods=["POST"])
+@editor_required
+def api_delete_communication_rate_entry():
+    data = request.json or {}
+    event_id = data.get("event_id")
+    dispatch_id = data.get("dispatch_id")
+
+    if event_id:
+        db.delete_communication_rating_event(event_id)
+        return jsonify({"ok": True, "deleted": "event"})
+    if dispatch_id:
+        db.delete_communication_survey_dispatch(dispatch_id)
+        return jsonify({"ok": True, "deleted": "dispatch"})
+    return jsonify({"error": "Не указано, что удалять"}), 400
+
+
 @app.route("/api/announcements")
 @login_required
 def api_announcements():
