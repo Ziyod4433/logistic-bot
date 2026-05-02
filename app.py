@@ -2496,14 +2496,21 @@ def api_send_communication_rate():
     sent = 0
     skipped = 0
     errors = []
+    already_sent_chat_ids = set(db.get_communication_sent_chat_ids(month_key))
+    processed_chat_ids = set()
 
     for recipient in recipients:
         chat_id = str(recipient.get("chat_id", ""))
         if not chat_id:
             continue
+        if chat_id in processed_chat_ids or chat_id in already_sent_chat_ids:
+            skipped += 1
+            continue
         try:
             send_communication_survey(recipient, month_key)
             sent += 1
+            already_sent_chat_ids.add(chat_id)
+            processed_chat_ids.add(chat_id)
         except Exception as exc:
             errors.append(
                 {

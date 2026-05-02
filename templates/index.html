@@ -4483,7 +4483,13 @@ async function loadCommunicationRatePage() {
     selectedCommunicationChats = new Set();
     communicationRecipients.forEach(item => {
       if (!item.chat_id) return;
-      if (!previousSelection.size || previousSelection.has(item.chat_id)) {
+      if (!previousSelection.size) {
+        if (!item.already_sent) {
+          selectedCommunicationChats.add(item.chat_id);
+        }
+        return;
+      }
+      if (previousSelection.has(item.chat_id)) {
         selectedCommunicationChats.add(item.chat_id);
       }
     });
