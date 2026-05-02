@@ -1883,7 +1883,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               <div class="mini-stat"><div class="mini-stat-v" id="comm-answered">0</div><div class="mini-stat-l">Ответов</div></div>
               <div class="mini-stat"><div class="mini-stat-v" id="comm-average">0</div><div class="mini-stat-l">Средняя оценка</div></div>
             </div>
-            <div class="kpi-note" style="margin-top:12px">Оценка ставится кнопками 0–10 внутри Telegram. В группе не видно, кто нажал; результат видит только админ.</div>
+            <div class="kpi-note" style="margin-top:12px">Оценка ставится кнопками 1–10 внутри Telegram. В группе не видно, кто нажал; результат видит только админ.</div>
           </div>
         </div>
 
@@ -4471,7 +4471,7 @@ async function loadCommunicationRatePage() {
     document.getElementById("comm-sent").textContent = data.summary.sent || 0;
     document.getElementById("comm-answered").textContent = data.summary.answered || 0;
     document.getElementById("comm-average").textContent = data.summary.average_score || 0;
-    document.querySelector("#page-communication-rate .kpi-note").textContent = "Оценка ставится кнопками 0–10 внутри Telegram. В группе не видно, кто нажал; результат видит только админ.";
+    document.querySelector("#page-communication-rate .kpi-note").textContent = "Оценка ставится кнопками 1–10 внутри Telegram. В группе не видно, кто нажал; результат видит только админ.";
     renderCommunicationRecipientsTable((data.rows || []).length);
 
     const table = document.getElementById("communication-table");
@@ -5442,3 +5442,4 @@ document.getElementById("new-batch-name")?.addEventListener("keydown",e=>{if(e.k
 <script src="{{ url_for('static', filename='js/analytics.js') }}"></script>
 </body>
 </html>
+

@@ -1,4 +1,4 @@
-import hashlib
+﻿import hashlib
 import html
 import os
 import re
@@ -122,7 +122,7 @@ DEFAULT_TEMPLATE = """👋Assalomu alaykum hurmatli mijoz!
 
 DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
 
-Iltimos, bizning guruh moderatorimiz ishiga 0 dan 10 gacha baho bering.
+Iltimos, bizning guruh moderatorimiz ishiga 1 dan 10 gacha baho bering.
 
 Iltimos faqat guruh moderatori ishigagina baho berishingizni soraymiz , bu hodim vazifasi , oy davomida sizga tezlik bilan masul hodimni  guruhga jalb qilib berish edi, va u qanchalik bu vazifani yaxshi uddaladi , shuni baholab berishingizni so'raymiz ? 
 Sizning fikringiz biz uchun juda muhim va xizmatimiz sifatini yanada oshirishga yordam beradi.
@@ -3874,6 +3874,7 @@ def get_communication_rate_template():
         "<b>YAXSHI</b> — хорошо",
         "<b>ALO</b> — отлично",
         "Assalomu alaykum , Sardor aka.",
+        "0 dan 10 gacha baho bering",
     ]
     if any(marker in (content or "") for marker in legacy_markers):
         return DEFAULT_COMMUNICATION_RATE_TEMPLATE
@@ -4250,3 +4251,4 @@ def get_communication_rate_summary(month_key):
         "pending": max(sent - answered, 0),
         "average_score": avg_row[0] if avg_row and avg_row[0] is not None else 0,
     }
+

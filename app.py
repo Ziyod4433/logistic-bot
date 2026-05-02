@@ -54,6 +54,8 @@ WELCOME_MEDIA_LOCK = threading.Lock()
 WELCOME_MEDIA_SEMAPHORE = threading.Semaphore(2)
 WELCOME_MEDIA_FILE_IDS = {"video": "", "voice": ""}
 WELCOME_MEDIA_FILE_IDS_LOCK = threading.Lock()
+TRACK_KEYBOARD_ANCHORS = {}
+TRACK_KEYBOARD_ANCHORS_LOCK = threading.Lock()
 
 ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
@@ -813,11 +815,19 @@ def telegram_api(method: str, *, timeout: int = 15, **kwargs):
     return response.json()
 
 
-def telegram_send_message(chat_id, text: str, reply_markup: dict | None = None, parse_mode: str | None = "HTML"):
+def telegram_send_message(
+    chat_id,
+    text: str,
+    reply_markup: dict | None = None,
+    parse_mode: str | None = "HTML",
+    disable_notification: bool = False,
+):
     payload = {
         "chat_id": chat_id,
         "text": text,
     }
+    if disable_notification:
+        payload["disable_notification"] = True
     if parse_mode:
         payload["parse_mode"] = parse_mode
     if reply_markup:
@@ -980,7 +990,7 @@ def telegram_leave_chat(chat_id):
 
 
 def communication_rating_markup(dispatch_id: int):
-    options = list(range(0, 11))
+    options = list(range(1, 11))
     return {
         "inline_keyboard": [
             [
@@ -988,14 +998,14 @@ def communication_rating_markup(dispatch_id: int):
                     "text": str(score),
                     "callback_data": f"{COMM_RATE_PREFIX}:{dispatch_id}:{score}",
                 }
-                for score in options[:6]
+                for score in options[:5]
             ],
             [
                 {
                     "text": str(score),
                     "callback_data": f"{COMM_RATE_PREFIX}:{dispatch_id}:{score}",
                 }
-                for score in options[6:]
+                for score in options[5:]
             ],
         ]
     }
@@ -1074,23 +1084,34 @@ def handle_group_remove_request(message: dict, command: str):
 
 def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
     try:
+        chat_key = str(chat_id)
+        with TRACK_KEYBOARD_ANCHORS_LOCK:
+            previous_message_id = (TRACK_KEYBOARD_ANCHORS.get(chat_key) or {}).get("message_id")
+        if previous_message_id:
+            try:
+                telegram_delete_message(chat_id, previous_message_id)
+            except Exception:
+                pass
+
+        button_text = get_track_button_text(chat_id=chat_id, language=language)
         response = telegram_send_message(
             chat_id,
-            "ㅤ",
+            f"⬇️ {button_text}",
             reply_markup=(
                 build_group_track_reply_markup(chat_id=chat_id, language=language)
                 if is_group_chat_id(chat_id)
                 else build_main_reply_markup(chat_id=chat_id, language=language)
             ),
+            parse_mode=None,
+            disable_notification=True,
         )
         message_id = (((response or {}).get("result") or {}).get("message_id"))
         if message_id:
-            threading.Thread(
-                target=_delete_message_later,
-                args=(chat_id, message_id, 1.5),
-                name=f"delete-keyboard-refresh-{chat_id}",
-                daemon=True,
-            ).start()
+            with TRACK_KEYBOARD_ANCHORS_LOCK:
+                TRACK_KEYBOARD_ANCHORS[chat_key] = {
+                    "message_id": message_id,
+                    "language": normalize_message_language(language),
+                }
     except Exception:
         pass
 
