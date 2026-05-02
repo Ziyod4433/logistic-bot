@@ -1455,7 +1455,7 @@ def handle_my_chat_member_update(chat_update: dict):
         return
 
 
-def send_bl_package(bl: dict, batch_name: str):
+def send_bl_package(bl: dict, batch_name: str, include_related_batches: bool = True):
     if not bl["chat_id"]:
         return False, "Нет chat_id"
 
@@ -1464,11 +1464,11 @@ def send_bl_package(bl: dict, batch_name: str):
         reply_markup = bl_file_markup(bl["id"])
         send_with_track_keyboard(
             bl["chat_id"],
-            db.render_message(bl, batch_name),
+            db.render_message(bl, batch_name, include_related_batches=include_related_batches),
             language=language,
             reply_markup=reply_markup,
         )
-        db.record_tracking_delivery(bl)
+        db.record_tracking_delivery(bl, include_related_batches=include_related_batches)
     except Exception as exc:
         return False, str(exc)
 
@@ -1974,6 +1974,8 @@ def api_send_batch(batch_id):
                 selected_ids.add(int(item))
             except (TypeError, ValueError):
                 continue
+    include_related_batches = data.get("include_related_batches")
+    include_related_batches = True if include_related_batches is None else bool(include_related_batches)
 
     bl_rows = db.get_bl_by_batch(batch_id)
     if selected_ids:
@@ -2015,7 +2017,11 @@ def api_send_batch(batch_id):
             )
             continue
         sent_chats.add(chat_id)
-        success, error_msg = send_bl_package(bl, batch["name"])
+        success, error_msg = send_bl_package(
+            bl,
+            batch["name"],
+            include_related_batches=include_related_batches,
+        )
         db.add_log(
             bl["id"],
             bl["code"],
@@ -2055,7 +2061,14 @@ def api_send_one(bl_id):
 
     batch = db.get_batch(bl["batch_id"])
     batch_name = batch["name"] if batch else "—"
-    success, error_msg = send_bl_package(bl, batch_name)
+    data = request.json or {}
+    include_related_batches = data.get("include_related_batches")
+    include_related_batches = True if include_related_batches is None else bool(include_related_batches)
+    success, error_msg = send_bl_package(
+        bl,
+        batch_name,
+        include_related_batches=include_related_batches,
+    )
     db.add_log(bl["id"], bl["code"], batch_name, bl["chat_id"], bl["status"], success, error_msg)
 
     if not success:

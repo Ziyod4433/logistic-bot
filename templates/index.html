@@ -2452,6 +2452,16 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   <div class="modal" style="width:820px">
     <div class="modal-title">Выбор <em>BL для отправки</em></div>
     <div style="font-size:13px;color:var(--muted2);margin-bottom:12px" id="send-select-summary"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:14px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+      <div>
+        <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.14em;margin-bottom:4px">Связанные грузы</div>
+        <div style="font-size:13px;color:var(--muted2)">Если у клиента есть грузы в других активных партиях с тем же chat_id, можно включить или отключить их добавление в один текст.</div>
+      </div>
+      <label style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--txt);cursor:pointer;user-select:none">
+        <input type="checkbox" id="send-select-include-related" checked onchange="toggleSendIncludeRelated(this.checked)">
+        <span>Включать грузы из других партий</span>
+      </label>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
       <button class="btn btn-ghost btn-xs editor-only" onclick="toggleAllBatchSendSelection(true)">Выбрать всё</button>
       <button class="btn btn-ghost btn-xs editor-only" onclick="selectPendingBatchSendOnly()">Только новые</button>
@@ -2516,6 +2526,7 @@ let selectedCommunicationChats = new Set();
 let announcementRecipients = [];
 let selectedAnnouncementChats = new Set();
 let selectedBatchSendIds = new Set();
+let includeRelatedBatchCargo = true;
 let moderatorResponseGroups = [];
 const INITIAL_VIEW = {{ (initial_view if initial_view is defined else 'dashboard')|tojson }};
 const INITIAL_ANALYTICS_TAB = {{ (initial_analytics_tab if initial_analytics_tab is defined else 'overview')|tojson }};
@@ -3841,8 +3852,16 @@ function openSendBatchModal() {
     return;
   }
   selectedBatchSendIds = getDefaultBatchSendSelection();
+  includeRelatedBatchCargo = true;
+  const relatedToggle = document.getElementById("send-select-include-related");
+  if (relatedToggle) relatedToggle.checked = includeRelatedBatchCargo;
   renderSendBatchSelection();
   openModal("send-select-modal");
+}
+
+function toggleSendIncludeRelated(checked) {
+  includeRelatedBatchCargo = !!checked;
+  renderSendBatchSelection();
 }
 
 function renderSendBatchSelection() {
@@ -3855,8 +3874,11 @@ function renderSendBatchSelection() {
   const totalWithChat = allBL.filter(b => b.chat_id).length;
   const alreadyCovered = allBL.filter(b => b.tracking_sent_current).length;
   const excluded = allBL.filter(b => b.send_excluded).length;
+  const relatedMode = includeRelatedBatchCargo
+    ? `<span class="badge badge-blue">с грузами из других партий</span>`
+    : `<span class="badge badge-amber">только текущая партия</span>`;
 
-  summary.innerHTML = `Выбрано <b>${selectedCount}</b> из <b>${totalWithChat}</b> привязанных BL. Уже покрыто: <b style="color:var(--green)">${alreadyCovered}</b>. Исключено вручную: <b style="color:var(--red)">${excluded}</b>.`;
+  summary.innerHTML = `Выбрано <b>${selectedCount}</b> из <b>${totalWithChat}</b> привязанных BL. Уже покрыто: <b style="color:var(--green)">${alreadyCovered}</b>. Исключено вручную: <b style="color:var(--red)">${excluded}</b>. <span style="display:inline-flex;vertical-align:middle;margin-left:6px">${relatedMode}</span>`;
 
   table.innerHTML = allBL.length ? allBL.map(b => {
     const id = Number(b.id);
@@ -3940,7 +3962,10 @@ async function sendBatch() {
   btn.disabled = true; btn.textContent = "⏳ Отправляю...";
 
   try {
-    const res = await api("/api/batches/"+currentBatchId+"/send","POST",{ selected_bl_ids: selectedIds });
+    const res = await api("/api/batches/"+currentBatchId+"/send","POST",{
+      selected_bl_ids: selectedIds,
+      include_related_batches: includeRelatedBatchCargo
+    });
     document.getElementById("send-summary").innerHTML =
       `Отправлено: <b style="color:var(--green)">${res.sent}</b> из <b>${res.total}</b>${res.skipped ? ` · пропущено: <b style="color:#f5a623">${res.skipped}</b>` : ``}`;
     document.getElementById("send-results").innerHTML = res.results.map(r=>`

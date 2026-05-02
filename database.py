@@ -2260,12 +2260,14 @@ def find_active_bls_by_chat(chat_id):
     return [dict(row) for row in rows]
 
 
-def get_tracking_bundle_bls(primary_bl: dict) -> list[dict]:
+def get_tracking_bundle_bls(primary_bl: dict, include_related_batches: bool = True) -> list[dict]:
     if not primary_bl:
         return []
     primary_id = primary_bl.get("id")
     chat_id = str(primary_bl.get("chat_id") or "").strip()
     if not primary_id or not chat_id:
+        return [dict(primary_bl)]
+    if not include_related_batches:
         return [dict(primary_bl)]
 
     ordered = [dict(primary_bl)]
@@ -2448,8 +2450,8 @@ def set_batch_send_exclusion(bl_id: int, excluded: bool) -> dict:
         conn.close()
 
 
-def record_tracking_delivery(primary_bl: dict) -> list[dict]:
-    bundle = get_tracking_bundle_bls(primary_bl)
+def record_tracking_delivery(primary_bl: dict, include_related_batches: bool = True) -> list[dict]:
+    bundle = get_tracking_bundle_bls(primary_bl, include_related_batches=include_related_batches)
     if not bundle:
         return []
 
@@ -3400,17 +3402,17 @@ def _render_single_message(bl: dict, batch_name: str) -> str:
     return rendered.strip()
 
 
-def render_message(bl: dict, batch_name: str) -> str:
+def render_message(bl: dict, batch_name: str, include_related_batches: bool = True) -> str:
     primary_bl = dict(bl or {})
     chat_id = str(primary_bl.get("chat_id") or "").strip()
     primary_language = _normalize_message_language(primary_bl.get("message_language"))
     primary_rendered = _render_single_message(primary_bl, batch_name)
 
-    if not chat_id or not primary_bl.get("id"):
+    if not include_related_batches or not chat_id or not primary_bl.get("id"):
         return primary_rendered
 
     related_bls = []
-    for related in get_tracking_bundle_bls(primary_bl):
+    for related in get_tracking_bundle_bls(primary_bl, include_related_batches=include_related_batches):
         if related.get("id") == primary_bl.get("id"):
             continue
         related_copy = dict(related)
