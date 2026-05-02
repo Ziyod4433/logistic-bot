@@ -2481,7 +2481,7 @@ def api_save_communication_rate_template():
 
 
 @app.route("/api/communication-rate/send", methods=["POST"])
-@editor_required
+@login_required
 def api_send_communication_rate():
     if not BOT_TOKEN:
         return jsonify({"error": "BOT_TOKEN не настроен в .env"}), 500
