@@ -72,6 +72,7 @@ TRACK_BUTTON_TEXTS = set(TRACK_BUTTON_LABELS.values())
 GROUP_REMOVE_COMMANDS = {"removebot", "leavebot", "botni_ochir", "hidekeyboard"}
 MENU_RESTORE_COMMANDS = {"menu", "keyboard", "showmenu", "tugma", "knopka"}
 AI_STATUS_COMMANDS = {"aistatus", "aidiag", "ai_status", "ai_diag"}
+AI_TEST_COMMANDS = {"aitest", "ai_test"}
 NO_ACTIVE_CARGO_MESSAGES = {
     "uz_latn": "Hozirgi vaqtda yo'lda kelayotgan yukingiz mavjud emas",
     "uz_cyrl": "Ҳозирги вақтда йўлда келаётган юкингиз мавжуд эмас",
@@ -1544,6 +1545,43 @@ def send_ai_diagnostic(chat_id, chat: dict):
     telegram_send_message(chat_id, "<pre>" + html.escape("\n".join(lines)) + "</pre>")
 
 
+def run_ai_test(chat_id, chat: dict, raw_text: str):
+    test_text = (raw_text or "").strip()
+    if not test_text:
+        telegram_send_message(
+            chat_id,
+            "Usage:\n<code>/aitest Salom</code>\n<code>/aitest BL123 qayerda?</code>",
+        )
+        return
+
+    ai_service = None
+    for module_name in ("services.ai_service", "ai_service"):
+        try:
+            ai_service = __import__(module_name, fromlist=["*"])
+            break
+        except Exception:
+            continue
+
+    if not ai_service:
+        telegram_send_message(chat_id, "AI test error: ai_service module is missing")
+        return
+
+    analyzer = getattr(ai_service, "analyze_message", None) or getattr(ai_service, "handle_group_message", None)
+    if not callable(analyzer):
+        telegram_send_message(chat_id, "AI test error: analyzer is missing")
+        return
+
+    try:
+        if analyzer.__name__ == "handle_group_message":
+            result = analyzer({"text": test_text})
+        else:
+            result = analyzer(test_text)
+        payload = json.dumps(result or {}, ensure_ascii=False, indent=2)
+        telegram_send_message(chat_id, "<pre>" + html.escape(payload) + "</pre>")
+    except Exception as exc:
+        telegram_send_message(chat_id, "<pre>" + html.escape(f"AI test error: {exc}") + "</pre>")
+
+
 def send_bl_status(chat_id, bl: dict):
     text = db.render_message(bl, bl["batch_name"])
     batch = db.get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
@@ -1614,6 +1652,11 @@ def handle_telegram_message(message: dict):
 
     if bot_command in AI_STATUS_COMMANDS:
         send_ai_diagnostic(chat_id, chat)
+        return
+
+    if bot_command in AI_TEST_COMMANDS:
+        raw_test_text = re.sub(r"^/[A-Za-z0-9_]+(?:@\w+)?\s*", "", text, count=1).strip()
+        run_ai_test(chat_id, chat, raw_test_text)
         return
 
     if bot_command in MENU_RESTORE_COMMANDS:
