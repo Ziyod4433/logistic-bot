@@ -13,17 +13,25 @@ VALID_INTENTS = {
     "unknown",
 }
 VALID_LANGUAGES = {"uz_latin", "uz_cyrillic", "ru", "mixed"}
+
 GREETING_MARKERS = (
     "salom",
     "assalomu",
     "assalom",
+    "nima gap",
+    "nma gap",
+    "qalay",
+    "qalaysan",
+    "yaxshimisiz",
     "privet",
     "hello",
     "hi",
-    "здравствуйте",
+    "zdravstvuyte",
     "привет",
+    "здравствуйте",
     "салом",
 )
+
 STATUS_MARKERS = (
     "yukim",
     "yuk",
@@ -39,12 +47,14 @@ STATUS_MARKERS = (
     "когда",
     "доставка",
 )
+
 COMPLAINT_MARKERS = (
     "muammo",
     "shikast",
     "yo'qol",
     "yaroqsiz",
-    "jalob",
+    "shikoyat",
+    "complaint",
     "жалоб",
     "проблем",
     "повреж",
@@ -74,8 +84,9 @@ def _detect_language(text: str) -> str:
         return "mixed"
 
     lowered = raw.lower()
-    has_cyrillic = bool(re.search(r"[А-Яа-яЁёҚқҒғҲҳЎўЪъЬь]", raw))
+    has_cyrillic = bool(re.search(r"[А-Яа-яЁёЎўҚқҒғҲҳІі]", raw))
     has_latin = bool(re.search(r"[A-Za-z]", raw))
+
     russian_markers = (
         "груз",
         "статус",
@@ -110,27 +121,33 @@ def _extract_bl_code(text: str) -> str | None:
 
 def _fallback_reply(intent: str, language: str, bl_code: str | None = None) -> str:
     if language == "ru":
-        if intent in {"check_cargo_status", "ask_for_bl", "unknown"}:
+        if intent in {"check_cargo_status", "ask_for_bl"}:
             return "Пожалуйста, отправьте BL-код, чтобы я мог проверить статус груза."
         if intent == "complaint":
-            return "Спасибо, мы зафиксировали ваше обращение. Пожалуйста, по возможности отправьте BL-код."
-        return "Спасибо за сообщение. Пожалуйста, уточните вопрос или отправьте BL-код."
+            return "Спасибо, мы зафиксировали ваше обращение. По возможности отправьте также BL-код."
+        if intent == "general_question":
+            return "Здравствуйте! Если вопрос касается груза, пожалуйста, отправьте BL-код."
+        return "Кечирасиз, xabaringizni to‘liq tushunmadim. Если вопрос о грузе, пожалуйста, отправьте BL-код."
     if language == "uz_cyrillic":
-        if intent in {"check_cargo_status", "ask_for_bl", "unknown"}:
+        if intent in {"check_cargo_status", "ask_for_bl"}:
             return "Илтимос, юк ҳолатини текшириш учун BL кодингизни юборинг."
         if intent == "complaint":
             return "Мурожаатингизни қабул қилдик. Имкон бўлса, BL кодингизни ҳам юборинг."
-        return "Раҳмат. Илтимос, саволингизни аниқроқ ёзинг ёки BL кодингизни юборинг."
-    if intent in {"check_cargo_status", "ask_for_bl", "unknown"}:
+        if intent == "general_question":
+            return "Ассалому алайкум! Агар савол юк ҳақида бўлса, BL кодингизни юборинг."
+        return "Кечирасиз, хабарингизни тўлиқ тушунмадим. Агар юк ҳолати ҳақида сўрамоқчи бўлсангиз, BL кодингизни юборинг."
+    if intent in {"check_cargo_status", "ask_for_bl"}:
         return "Iltimos, yuk holatini tekshirish uchun BL kodingizni yuboring."
     if intent == "complaint":
         return "Murojaatingiz qabul qilindi. Imkon bo'lsa, BL kodingizni ham yuboring."
-    return "Rahmat. Iltimos, savolingizni aniqroq yozing yoki BL kodingizni yuboring."
+    if intent == "general_question":
+        return "Assalomu alaykum! Agar savol yuk haqida bo'lsa, BL kodingizni yuboring."
+    return "Kechirasiz, xabaringizni to'liq tushunmadim. Agar yuk holati haqida so'ramoqchi bo'lsangiz, BL kodingizni yuboring."
 
 
 def _general_greeting_reply(language: str) -> str:
     if language == "ru":
-        return "Здравствуйте! Чтобы я помог со статусом груза, отправьте, пожалуйста, ваш BL-код."
+        return "Здравствуйте! Чтобы я помог со статусом груза, пожалуйста, отправьте ваш BL-код."
     if language == "uz_cyrillic":
         return "Ассалому алайкум! Юк ҳолатини текширишим учун, илтимос, BL кодингизни юборинг."
     return "Assalomu alaykum! Yuk holatini tekshirishim uchun, iltimos, BL kodingizni yuboring."
@@ -156,7 +173,7 @@ def _heuristic_result(text: str) -> dict:
             "intent": "complaint",
             "bl_code": None,
             "language": language,
-            "confidence": 0.8,
+            "confidence": 0.82,
             "reply": _fallback_reply("complaint", language, None),
         }
 
@@ -165,7 +182,7 @@ def _heuristic_result(text: str) -> dict:
             "intent": "ask_for_bl",
             "bl_code": None,
             "language": language,
-            "confidence": 0.82,
+            "confidence": 0.86,
             "reply": _fallback_reply("ask_for_bl", language, None),
         }
 
@@ -174,7 +191,7 @@ def _heuristic_result(text: str) -> dict:
             "intent": "general_question",
             "bl_code": None,
             "language": language,
-            "confidence": 0.78,
+            "confidence": 0.8,
             "reply": _general_greeting_reply(language),
         }
 
@@ -228,7 +245,9 @@ def analyze_message(text: str) -> dict:
     fallback_bl = _extract_bl_code(message_text)
     heuristic = _heuristic_result(message_text)
 
-    if heuristic.get("intent") in {"check_cargo_status", "ask_for_bl", "complaint", "general_question"}:
+    if heuristic.get("intent") == "check_cargo_status" and heuristic.get("bl_code"):
+        return heuristic
+    if heuristic.get("intent") == "ask_for_bl":
         return heuristic
 
     api_key = _get_openai_api_key()
@@ -236,9 +255,8 @@ def analyze_message(text: str) -> dict:
         return heuristic
 
     system_prompt = (
-        "You are a Telegram logistics intent classifier for Buraq Logistics. "
-        "Return only valid JSON with exactly these keys: "
-        "intent, bl_code, language, confidence, reply. "
+        "You are a Telegram logistics assistant for Buraq Logistics. "
+        "Return only valid JSON with exactly these keys: intent, bl_code, language, confidence, reply. "
         "intent must be one of: check_cargo_status, ask_for_bl, complaint, general_question, unknown. "
         "bl_code must be a string BL code if clearly present, otherwise null. "
         "language must be one of: uz_latin, uz_cyrillic, ru, mixed. "
@@ -250,13 +268,14 @@ def analyze_message(text: str) -> dict:
 
     payload = {
         "model": _get_openai_model(),
-        "temperature": 0.1,
+        "temperature": 0.2,
         "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": message_text},
         ],
     }
+
     try:
         response = req.post(
             "https://api.openai.com/v1/chat/completions",
@@ -269,10 +288,9 @@ def analyze_message(text: str) -> dict:
         )
         response.raise_for_status()
         data = response.json()
-    except req.HTTPError:
-        return heuristic
     except req.RequestException:
         return heuristic
+
     content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "{}")
     try:
         parsed = json.loads(content)
@@ -285,6 +303,10 @@ def analyze_message(text: str) -> dict:
         result["bl_code"] = fallback_bl
         result["reply"] = _fallback_reply("check_cargo_status", fallback_language, fallback_bl)
         result["confidence"] = max(result["confidence"], 0.45)
+    elif heuristic.get("intent") != "unknown" and (
+        result["intent"] == "unknown" or result.get("confidence", 0) < heuristic.get("confidence", 0)
+    ):
+        result = heuristic
     return result
 
 

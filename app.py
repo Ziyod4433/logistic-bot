@@ -1076,6 +1076,15 @@ def _delete_message_later(chat_id, message_id, delay: float = 1.5):
         telegram_delete_message(chat_id, message_id)
     except Exception:
         pass
+    finally:
+        chat_key = str(chat_id)
+        try:
+            with TRACK_KEYBOARD_ANCHORS_LOCK:
+                current = TRACK_KEYBOARD_ANCHORS.get(chat_key) or {}
+                if current.get("message_id") == message_id:
+                    TRACK_KEYBOARD_ANCHORS.pop(chat_key, None)
+        except Exception:
+            pass
 
 
 def extract_bot_command(text: str) -> str:
@@ -1127,12 +1136,13 @@ def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
                 pass
 
         button_text = get_track_button_text(chat_id=chat_id, language=language)
+        is_group = is_group_chat_id(chat_id)
         response = telegram_send_message(
             chat_id,
-            f"⬇️ {button_text}",
+            "ㅤ" if is_group else f"⬇️ {button_text}",
             reply_markup=(
                 build_group_track_reply_markup(chat_id=chat_id, language=language)
-                if is_group_chat_id(chat_id)
+                if is_group
                 else build_main_reply_markup(chat_id=chat_id, language=language)
             ),
             parse_mode=None,
@@ -1145,6 +1155,12 @@ def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
                     "message_id": message_id,
                     "language": normalize_message_language(language),
                 }
+            if is_group:
+                threading.Thread(
+                    target=_delete_message_later,
+                    args=(chat_id, message_id, 0.8),
+                    daemon=True,
+                ).start()
     except Exception:
         pass
 
