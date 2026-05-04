@@ -1079,7 +1079,7 @@ def _delete_message_later(chat_id, message_id, delay: float = 1.5):
 
 
 def extract_bot_command(text: str) -> str:
-    match = re.match(r"^/([A-Za-z0-9_]+)(?:@\w+)?$", (text or "").strip())
+    match = re.match(r"^/([A-Za-z0-9_]+)(?:@\w+)?(?:\s+.*)?$", (text or "").strip(), re.S)
     return (match.group(1) or "").lower() if match else ""
 
 
