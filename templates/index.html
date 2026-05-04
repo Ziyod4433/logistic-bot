@@ -4156,7 +4156,7 @@ async function sendOne(blId, code) {
   if (!ensureEditor()) return;
   if (!confirm(`Отправить сообщение клиенту ${code}?`)) return;
   try {
-    await api("/api/bl/"+blId+"/send","POST");
+    await api("/api/bl/"+blId+"/send","POST",{});
     toast(`✅ ${code} — отправлено`,"ok");
     if (currentBatchId) await loadBatchDetail(currentBatchId);
     loadDashboard();

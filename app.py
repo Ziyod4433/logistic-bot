@@ -1126,6 +1126,8 @@ def handle_group_remove_request(message: dict, command: str):
 
 def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
     try:
+        if is_group_chat_id(chat_id):
+            return
         chat_key = str(chat_id)
         with TRACK_KEYBOARD_ANCHORS_LOCK:
             previous_message_id = (TRACK_KEYBOARD_ANCHORS.get(chat_key) or {}).get("message_id")
@@ -1166,6 +1168,13 @@ def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
 
 
 def send_group_message_with_keyboard(chat_id, text: str, *, language: str | None = None):
+    if is_group_chat_id(chat_id):
+        telegram_send_message(
+            chat_id,
+            text,
+            reply_markup=build_group_track_reply_markup(chat_id=chat_id, language=language),
+        )
+        return
     telegram_send_message(chat_id, text)
     refresh_track_reply_keyboard(chat_id, language=language)
 
@@ -1178,7 +1187,6 @@ def send_group_welcome_bundle(chat_id, button_text: str | None = None):
 def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None, reply_markup: dict | None = None):
     if is_group_chat_id(chat_id):
         telegram_send_message(chat_id, text, reply_markup=reply_markup)
-        refresh_track_reply_keyboard(chat_id, language=language)
         return
     telegram_send_message(
         chat_id,
@@ -2418,7 +2426,7 @@ def api_send_one(bl_id):
 
     batch = db.get_batch(bl["batch_id"])
     batch_name = batch["name"] if batch else "—"
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     include_related_batches = data.get("include_related_batches")
     include_related_batches = True if include_related_batches is None else bool(include_related_batches)
     success, error_msg = send_bl_package(
