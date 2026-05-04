@@ -76,6 +76,16 @@ NO_ACTIVE_CARGO_MESSAGES = {
     "uz_cyrl": "Ҳозирги вақтда йўлда келаётган юкингиз мавжуд эмас",
     "ru": "В данный момент у вас нет груза в пути",
 }
+AI_ASK_BL_MESSAGES = {
+    "uz_latn": "Kechirasiz, yuk holatini tekshirish uchun BL kodingizni yuboring.",
+    "uz_cyrl": "Кечирасиз, юк ҳолатини текшириш учун BL кодингизни юборинг.",
+    "ru": "Пожалуйста, отправьте BL-код, чтобы я мог проверить статус груза.",
+}
+AI_UNKNOWN_MESSAGES = {
+    "uz_latn": "Kechirasiz, xabaringizni to'liq tushunmadim. Iltimos, BL kodingizni yuboring.",
+    "uz_cyrl": "Кечирасиз, хабарингизни тўлиқ тушунмадим. Илтимос, BL кодингизни юборинг.",
+    "ru": "Извините, я не до конца понял ваше сообщение. Пожалуйста, отправьте BL-код.",
+}
 TRACK_BUTTON_COOLDOWN_SECONDS = 60
 TRACK_BUTTON_COOLDOWN_MESSAGES = {
     "uz_latn": "⏳ Iltimos, keyingi so'rov uchun <b>{seconds}</b> soniya kuting.",
@@ -319,6 +329,27 @@ def get_chat_message_language(chat_id) -> str:
     if bl:
         return normalize_message_language(bl.get("message_language"))
     return normalize_message_language(None)
+
+
+def normalize_ai_language(language: str | None, chat_id=None) -> str:
+    value = (language or "").strip().lower()
+    if value == "uz_latin":
+        return "uz_latn"
+    if value == "uz_cyrillic":
+        return "uz_cyrl"
+    if value == "ru":
+        return "ru"
+    return get_chat_message_language(chat_id) if chat_id is not None else normalize_message_language(None)
+
+
+def get_ai_ask_bl_text(language: str | None, chat_id=None) -> str:
+    normalized = normalize_ai_language(language, chat_id=chat_id)
+    return AI_ASK_BL_MESSAGES.get(normalized, AI_ASK_BL_MESSAGES["uz_latn"])
+
+
+def get_ai_unknown_text(language: str | None, chat_id=None) -> str:
+    normalized = normalize_ai_language(language, chat_id=chat_id)
+    return AI_UNKNOWN_MESSAGES.get(normalized, AI_UNKNOWN_MESSAGES["uz_latn"])
 
 
 def get_track_button_cooldown_text(language: str | None, seconds: int) -> str:
@@ -1307,59 +1338,153 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
     if not chat_id or not text or text.startswith("/") or text == CANCEL_BUTTON or text in TRACK_BUTTON_TEXTS:
         return False
 
+    global_ai_enabled = False
+    group_ai_enabled = False
+    ai_called = False
+    chat_title = chat.get("title") or ""
     try:
-        if not db.get_global_ai_enabled() or not db.get_chat_ai_enabled(chat_id):
+        global_ai_enabled = db.get_global_ai_enabled()
+        group_ai_enabled = db.get_chat_ai_enabled(chat_id)
+        if not global_ai_enabled or not group_ai_enabled:
+            app.logger.info(
+                "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s",
+                chat_id,
+                chat_title,
+                text,
+                global_ai_enabled,
+                group_ai_enabled,
+                ai_called,
+            )
             return False
     except Exception:
-        app.logger.exception("AI gate check failed for chat %s", chat_id)
+        app.logger.exception(
+            "AI gate check failed for chat %s group_title=%r text=%r",
+            chat_id,
+            chat_title,
+            text,
+        )
         return False
 
-    handler = None
+    ai_service = None
     for module_name in ("services.ai_service", "ai_service"):
         try:
-            module = __import__(module_name, fromlist=["*"])
+            ai_service = __import__(module_name, fromlist=["*"])
+            break
         except ImportError:
             continue
-        for attr in ("handle_group_message", "handle_message", "process_group_message"):
-            candidate = getattr(module, attr, None)
-            if callable(candidate):
-                handler = candidate
-                break
-        if handler:
-            break
 
-    if not handler:
+    if not ai_service:
+        app.logger.info(
+            "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s error=%r",
+            chat_id,
+            chat_title,
+            text,
+            global_ai_enabled,
+            group_ai_enabled,
+            ai_called,
+            "ai_service_missing",
+        )
         return False
 
     try:
-        result = handler(message)
-    except Exception:
-        app.logger.exception("AI handler failed for chat %s", chat_id)
+        analyzer = getattr(ai_service, "analyze_message", None) or getattr(ai_service, "handle_group_message", None)
+        if not callable(analyzer):
+            app.logger.info(
+                "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s error=%r",
+                chat_id,
+                chat_title,
+                text,
+                global_ai_enabled,
+                group_ai_enabled,
+                ai_called,
+                "ai_handler_missing",
+            )
+            return False
+        ai_called = True
+        if analyzer.__name__ == "handle_group_message":
+            result = analyzer(message)
+        else:
+            result = analyzer(text)
+    except Exception as exc:
+        if "OPENAI_API_KEY is missing" in str(exc):
+            app.logger.error("OPENAI_API_KEY is missing")
+        app.logger.exception(
+            "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s error=%r",
+            chat_id,
+            chat_title,
+            text,
+            global_ai_enabled,
+            group_ai_enabled,
+            ai_called,
+            str(exc),
+        )
         return False
 
-    if not result:
-        return False
+    if not isinstance(result, dict):
+        result = {}
 
-    detected_intent = ""
-    bl_code = ""
-    ai_response = ""
-    if isinstance(result, dict):
-        ai_response = str(result.get("response") or result.get("text") or "").strip()
-        detected_intent = str(result.get("detected_intent") or result.get("intent") or "").strip()
-        bl_code = str(result.get("bl_code") or "").strip()
-    else:
-        ai_response = str(result).strip()
+    detected_intent = str(result.get("intent") or "unknown").strip() or "unknown"
+    bl_code = str(result.get("bl_code") or "").strip()
+    ai_language = str(result.get("language") or "").strip()
+    ai_response = str(result.get("reply") or "").strip()
+
+    if detected_intent == "check_cargo_status":
+        bl = db.find_bl_by_code(bl_code) if bl_code else None
+        if not bl:
+            ai_response = get_ai_ask_bl_text(ai_language, chat_id=chat_id)
+        else:
+            app.logger.info(
+                "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s intent=%s bl_code=%s",
+                chat_id,
+                chat_title,
+                text,
+                global_ai_enabled,
+                group_ai_enabled,
+                ai_called,
+                detected_intent,
+                bl_code,
+            )
+            send_bl_status(chat_id, bl)
+            try:
+                sender = message.get("from") or {}
+                db.record_ai_log(
+                    chat_id=chat_id,
+                    group_title=chat_title,
+                    user_id=sender.get("id") or "",
+                    username=sender.get("username") or telegram_user_name(sender),
+                    original_text=text,
+                    detected_intent=detected_intent,
+                    bl_code=bl_code,
+                    ai_response=f"[real_status_sent] {bl.get('code') or bl_code}",
+                )
+            except Exception:
+                app.logger.exception("AI log write failed for chat %s", chat_id)
+            return True
 
     if not ai_response:
-        return bool(result)
+        if detected_intent in {"ask_for_bl", "unknown"}:
+            ai_response = get_ai_unknown_text(ai_language, chat_id=chat_id)
+        else:
+            ai_response = get_ai_unknown_text(ai_language, chat_id=chat_id)
 
     sender = message.get("from") or {}
-    language = get_chat_message_language(chat_id)
+    language = normalize_ai_language(ai_language, chat_id=chat_id)
+    app.logger.info(
+        "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s intent=%s bl_code=%s",
+        chat_id,
+        chat_title,
+        text,
+        global_ai_enabled,
+        group_ai_enabled,
+        ai_called,
+        detected_intent,
+        bl_code,
+    )
     send_group_message_with_keyboard(chat_id, ai_response, language=language)
     try:
         db.record_ai_log(
             chat_id=chat_id,
-            group_title=chat.get("title") or "",
+            group_title=chat_title,
             user_id=sender.get("id") or "",
             username=sender.get("username") or telegram_user_name(sender),
             original_text=text,
