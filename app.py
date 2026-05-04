@@ -1296,6 +1296,82 @@ def remember_group_chat(chat: dict, is_active: bool = True):
     )
 
 
+def maybe_handle_group_ai_message(message: dict) -> bool:
+    chat = message.get("chat") or {}
+    chat_type = chat.get("type")
+    if chat_type not in {"group", "supergroup"}:
+        return False
+
+    chat_id = chat.get("id")
+    text = (message.get("text") or "").strip()
+    if not chat_id or not text or text.startswith("/") or text == CANCEL_BUTTON or text in TRACK_BUTTON_TEXTS:
+        return False
+
+    try:
+        if not db.get_global_ai_enabled() or not db.get_chat_ai_enabled(chat_id):
+            return False
+    except Exception:
+        app.logger.exception("AI gate check failed for chat %s", chat_id)
+        return False
+
+    handler = None
+    for module_name in ("services.ai_service", "ai_service"):
+        try:
+            module = __import__(module_name, fromlist=["*"])
+        except ImportError:
+            continue
+        for attr in ("handle_group_message", "handle_message", "process_group_message"):
+            candidate = getattr(module, attr, None)
+            if callable(candidate):
+                handler = candidate
+                break
+        if handler:
+            break
+
+    if not handler:
+        return False
+
+    try:
+        result = handler(message)
+    except Exception:
+        app.logger.exception("AI handler failed for chat %s", chat_id)
+        return False
+
+    if not result:
+        return False
+
+    detected_intent = ""
+    bl_code = ""
+    ai_response = ""
+    if isinstance(result, dict):
+        ai_response = str(result.get("response") or result.get("text") or "").strip()
+        detected_intent = str(result.get("detected_intent") or result.get("intent") or "").strip()
+        bl_code = str(result.get("bl_code") or "").strip()
+    else:
+        ai_response = str(result).strip()
+
+    if not ai_response:
+        return bool(result)
+
+    sender = message.get("from") or {}
+    language = get_chat_message_language(chat_id)
+    send_group_message_with_keyboard(chat_id, ai_response, language=language)
+    try:
+        db.record_ai_log(
+            chat_id=chat_id,
+            group_title=chat.get("title") or "",
+            user_id=sender.get("id") or "",
+            username=sender.get("username") or telegram_user_name(sender),
+            original_text=text,
+            detected_intent=detected_intent,
+            bl_code=bl_code,
+            ai_response=ai_response,
+        )
+    except Exception:
+        app.logger.exception("AI log write failed for chat %s", chat_id)
+    return True
+
+
 def send_bl_status(chat_id, bl: dict):
     text = db.render_message(bl, bl["batch_name"])
     batch = db.get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
@@ -1423,6 +1499,9 @@ def handle_telegram_message(message: dict):
             get_no_active_cargo_text(language),
             language=language,
         )
+        return
+
+    if maybe_handle_group_ai_message(message):
         return
 
     if text == CANCEL_BUTTON or db.get_chat_state(chat_id) == STATE_WAITING_BL:
@@ -1712,6 +1791,26 @@ def api_bl_list(batch_id):
 def api_chats():
     include_inactive = request.args.get("all") == "1"
     return jsonify(db.get_telegram_chats(include_inactive=include_inactive))
+
+
+@app.route("/api/chats/config")
+@login_required
+def api_chats_config():
+    return jsonify({"global_ai_enabled": db.get_global_ai_enabled()})
+
+
+@app.route("/api/chats/<chat_id>/toggle-ai", methods=["POST"])
+@editor_required
+def api_toggle_chat_ai(chat_id):
+    enabled = db.toggle_chat_ai_enabled(chat_id)
+    return jsonify({"ok": True, "chat_id": str(chat_id), "ai_enabled": enabled})
+
+
+@app.route("/api/settings/toggle-global-ai", methods=["POST"])
+@editor_required
+def api_toggle_global_ai():
+    enabled = db.toggle_global_ai_enabled()
+    return jsonify({"ok": True, "global_ai_enabled": enabled})
 
 
 @app.route("/api/google-sheets/config")

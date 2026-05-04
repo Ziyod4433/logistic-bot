@@ -1674,7 +1674,11 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <div class="card" style="margin-bottom:16px">
           <div class="card-h">
             <span class="card-title">Как это работает</span>
-            <button class="btn btn-ghost btn-sm" onclick="loadChatsPage()">↻ Обновить</button>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span id="global-ai-status-badge" class="badge badge-muted">AI Agent: GLOBAL OFF</span>
+              <button id="global-ai-toggle-btn" class="btn btn-amber btn-sm editor-only" onclick="toggleGlobalAI()">Включить AI глобально</button>
+              <button class="btn btn-ghost btn-sm" onclick="loadChatsPage()">↻ Обновить</button>
+            </div>
           </div>
           <div class="card-body" style="color:var(--muted2);font-size:13px;line-height:1.7">
             Бот автоматически показывает все группы, где он состоит. Выбери партию прямо в этой таблице и нажми <b>Открыть в партии</b> — нужная партия откроется сразу, а Chat ID группы уже будет подставлен в форму добавления BL.
@@ -1688,7 +1692,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
           <table class="tbl">
             <thead><tr>
-              <th>Название</th><th>Chat ID</th><th>Тип</th><th>Привязано</th><th>Статус</th><th>Партия</th><th>Действие</th>
+              <th>Название</th><th>Chat ID</th><th>Тип</th><th>Привязано</th><th>Статус</th><th>AI</th><th>Партия</th><th>Действие</th>
             </tr></thead>
             <tbody id="known-chats-page-table"></tbody>
           </table>
@@ -2514,6 +2518,7 @@ let currentBatch = null;
 let allBatches = [];
 let allBL = [];
 let knownChats = [];
+let globalAiEnabled = false;
 let pendingChatTransfer = null;
 let editingBLId = null;
 let movingBLId = null;
@@ -3214,6 +3219,7 @@ function renderChatsPage() {
   if (!table || !count) return;
 
   count.textContent = `${knownChats.length} групп доступно`;
+  renderGlobalAiStatus();
   table.innerHTML = knownChats.length ? knownChats.map(chat=>`
     <tr>
       <td>
@@ -3224,6 +3230,12 @@ function renderChatsPage() {
       <td>${chat.chat_type === "supergroup" ? '<span class="badge badge-blue">supergroup</span>' : '<span class="badge badge-muted">group</span>'}</td>
       <td>${chat.linked_count ? `<span class="badge badge-green">${chat.linked_count}</span>` : '<span style="color:var(--muted);font-size:11px">нет</span>'}</td>
       <td>${chat.is_active ? '<span class="badge badge-green">активна</span>' : '<span class="badge badge-red">удалена</span>'}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="badge ${chat.ai_enabled ? 'badge-green' : 'badge-muted'}">${chat.ai_enabled ? 'AI ON' : 'AI OFF'}</span>
+          <button class="btn ${chat.ai_enabled ? 'btn-ghost' : 'btn-amber'} btn-xs editor-only" onclick='toggleChatAI(${JSON.stringify(String(chat.chat_id))})'>${chat.ai_enabled ? 'Выключить AI' : 'Включить AI'}</button>
+        </div>
+      </td>
       <td>
         <select class="inp editor-only" id="${getChatBatchSelectId(chat.chat_id)}" style="min-width:220px;padding:8px 12px;font-size:12px;margin:0" ${allBatches.length ? "" : "disabled"}>
           ${renderBatchOptions()}
@@ -3236,7 +3248,19 @@ function renderChatsPage() {
         </div>
       </td>
     </tr>
-  `).join("") : `<tr><td colspan="7"><div class="empty"><div class="empty-icon">👥</div><p>Пока нет найденных групп. Добавь бота в Telegram-группу и обнови список.</p></div></td></tr>`;
+  `).join("") : `<tr><td colspan="8"><div class="empty"><div class="empty-icon">👥</div><p>Пока нет найденных групп. Добавь бота в Telegram-группу и обнови список.</p></div></td></tr>`;
+}
+
+function renderGlobalAiStatus() {
+  const badge = document.getElementById("global-ai-status-badge");
+  const button = document.getElementById("global-ai-toggle-btn");
+  if (badge) {
+    badge.className = `badge ${globalAiEnabled ? 'badge-green' : 'badge-muted'}`;
+    badge.textContent = `AI Agent: ${globalAiEnabled ? 'GLOBAL ON' : 'GLOBAL OFF'}`;
+  }
+  if (button) {
+    button.textContent = globalAiEnabled ? "Выключить AI глобально" : "Включить AI глобально";
+  }
 }
 
 function populateChatSelect(id, selected="") {
@@ -3383,6 +3407,46 @@ async function copyChatId(chatId) {
   }
 }
 
+async function loadChatAiConfig() {
+  try {
+    const config = await api("/api/chats/config");
+    globalAiEnabled = !!config.global_ai_enabled;
+    renderGlobalAiStatus();
+  } catch (e) {
+    globalAiEnabled = false;
+    renderGlobalAiStatus();
+    throw e;
+  }
+}
+
+async function toggleGlobalAI() {
+  if (!ensureEditor()) return;
+  try {
+    const res = await api("/api/settings/toggle-global-ai", "POST");
+    globalAiEnabled = !!res.global_ai_enabled;
+    renderGlobalAiStatus();
+    toast(globalAiEnabled ? "Глобальный AI включён" : "Глобальный AI выключен", "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function toggleChatAI(chatId) {
+  if (!ensureEditor()) return;
+  try {
+    const res = await api(`/api/chats/${encodeURIComponent(String(chatId))}/toggle-ai`, "POST");
+    knownChats = knownChats.map(chat =>
+      String(chat.chat_id) === String(chatId)
+        ? { ...chat, ai_enabled: !!res.ai_enabled }
+        : chat
+    );
+    renderChatsPage();
+    toast(res.ai_enabled ? "AI включён для группы" : "AI выключен для группы", "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
 async function loadKnownChats() {
   try {
     knownChats = await api("/api/chats?all=1");
@@ -3398,7 +3462,7 @@ async function loadKnownChats() {
 }
 
 async function loadChatsPage() {
-  await Promise.all([loadKnownChats(), ensureBatchesLoaded(true)]);
+  await Promise.all([loadKnownChats(), ensureBatchesLoaded(true), loadChatAiConfig()]);
   renderChatsPage();
 }
 

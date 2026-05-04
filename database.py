@@ -500,9 +500,11 @@ def init_db():
             username TEXT DEFAULT '',
             moderator_tg_id TEXT DEFAULT '',
             sales_manager_tg_id TEXT DEFAULT '',
+            ai_enabled INTEGER NOT NULL DEFAULT 0,
             is_active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT DEFAULT (datetime('now','localtime')),
-            last_seen_at TEXT DEFAULT (datetime('now','localtime'))
+            last_seen_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
         CREATE TABLE IF NOT EXISTS telegram_chat_members (
@@ -600,6 +602,19 @@ def init_db():
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL DEFAULT '',
             updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS ai_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL DEFAULT '',
+            group_title TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL DEFAULT '',
+            username TEXT NOT NULL DEFAULT '',
+            original_text TEXT NOT NULL DEFAULT '',
+            detected_intent TEXT NOT NULL DEFAULT '',
+            bl_code TEXT NOT NULL DEFAULT '',
+            ai_response TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
         CREATE TABLE IF NOT EXISTS analytics_sales_records (
@@ -935,6 +950,8 @@ def init_db():
     telegram_chat_columns = [
         ("moderator_tg_id", "TEXT DEFAULT ''"),
         ("sales_manager_tg_id", "TEXT DEFAULT ''"),
+        ("ai_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        ("updated_at", "TEXT DEFAULT ''"),
     ]
     for column_name, column_def in telegram_chat_columns:
         if not _table_has_column(conn, "telegram_chats", column_name):
@@ -979,6 +996,13 @@ def init_db():
                     LIMIT 1
                 ),
                 ''
+            ),
+            ai_enabled = COALESCE(ai_enabled, 0),
+            updated_at = COALESCE(
+                NULLIF(updated_at, ''),
+                NULLIF(last_seen_at, ''),
+                NULLIF(created_at, ''),
+                datetime('now','localtime')
             )
         """
     )
@@ -2903,6 +2927,68 @@ def set_setting(key: str, value: str) -> None:
         conn.close()
 
 
+def get_global_ai_enabled() -> bool:
+    return get_setting("global_ai_enabled", "0") == "1"
+
+
+def set_global_ai_enabled(enabled: bool) -> bool:
+    set_setting("global_ai_enabled", "1" if enabled else "0")
+    return bool(enabled)
+
+
+def toggle_global_ai_enabled() -> bool:
+    new_value = not get_global_ai_enabled()
+    set_global_ai_enabled(new_value)
+    return new_value
+
+
+def get_chat_ai_enabled(chat_id) -> bool:
+    chat_value = str(chat_id or "").strip()
+    if not chat_value:
+        return False
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT ai_enabled FROM telegram_chats WHERE chat_id = ? LIMIT 1",
+            (chat_value,),
+        ).fetchone()
+        return bool(row and _to_int(row["ai_enabled"]))
+    finally:
+        conn.close()
+
+
+def set_chat_ai_enabled(chat_id, enabled: bool):
+    chat_value = str(chat_id or "").strip()
+    if not chat_value:
+        return False
+    enabled_value = 1 if enabled else 0
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO telegram_chats(
+                chat_id, title, chat_type, username, moderator_tg_id, sales_manager_tg_id,
+                ai_enabled, is_active, created_at, last_seen_at, updated_at
+            )
+            VALUES (?, '', 'group', '', '', '', ?, 1, datetime('now','localtime'), datetime('now','localtime'), datetime('now','localtime'))
+            ON CONFLICT(chat_id) DO UPDATE SET
+                ai_enabled = excluded.ai_enabled,
+                updated_at = datetime('now','localtime')
+            """,
+            (chat_value, enabled_value),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def toggle_chat_ai_enabled(chat_id) -> bool:
+    current = get_chat_ai_enabled(chat_id)
+    set_chat_ai_enabled(chat_id, not current)
+    return not current
+
+
 def get_announcement_template() -> str:
     return get_setting("announcement_template", DEFAULT_ANNOUNCEMENT_TEMPLATE) or DEFAULT_ANNOUNCEMENT_TEMPLATE
 
@@ -3072,13 +3158,14 @@ def set_chat_response_assignments(chat_id, moderator_tg_id="", sales_manager_tg_
         conn.execute(
             """
             INSERT INTO telegram_chats(
-                chat_id, title, chat_type, username, moderator_tg_id, sales_manager_tg_id, is_active, created_at, last_seen_at
+                chat_id, title, chat_type, username, moderator_tg_id, sales_manager_tg_id, is_active, created_at, last_seen_at, updated_at
             )
-            VALUES (?, '', 'group', '', ?, ?, 1, datetime('now','localtime'), datetime('now','localtime'))
+            VALUES (?, '', 'group', '', ?, ?, 1, datetime('now','localtime'), datetime('now','localtime'), datetime('now','localtime'))
             ON CONFLICT(chat_id) DO UPDATE SET
                 moderator_tg_id = excluded.moderator_tg_id,
                 sales_manager_tg_id = excluded.sales_manager_tg_id,
-                last_seen_at = datetime('now','localtime')
+                last_seen_at = datetime('now','localtime'),
+                updated_at = datetime('now','localtime')
             """,
             (chat_value, moderator_value, sales_value),
         )
@@ -3520,14 +3607,15 @@ def upsert_telegram_chat(chat_id, title, chat_type, username="", is_active=True)
     conn = get_conn()
     conn.execute(
         """
-        INSERT INTO telegram_chats(chat_id, title, chat_type, username, is_active, created_at, last_seen_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'))
+        INSERT INTO telegram_chats(chat_id, title, chat_type, username, is_active, created_at, last_seen_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'), datetime('now','localtime'))
         ON CONFLICT(chat_id) DO UPDATE SET
             title = excluded.title,
             chat_type = excluded.chat_type,
             username = excluded.username,
             is_active = excluded.is_active,
-            last_seen_at = datetime('now','localtime')
+            last_seen_at = datetime('now','localtime'),
+            updated_at = datetime('now','localtime')
         """,
         (str(chat_id), title or "", chat_type or "group", username or "", 1 if is_active else 0),
     )
@@ -3552,6 +3640,44 @@ def get_telegram_chats(include_inactive=False):
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def record_ai_log(
+    *,
+    chat_id,
+    group_title="",
+    user_id="",
+    username="",
+    original_text="",
+    detected_intent="",
+    bl_code="",
+    ai_response="",
+):
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO ai_logs(
+                chat_id, group_title, user_id, username,
+                original_text, detected_intent, bl_code, ai_response, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(chat_id or "").strip(),
+                str(group_title or "").strip(),
+                str(user_id or "").strip(),
+                str(username or "").strip(),
+                str(original_text or "").strip(),
+                str(detected_intent or "").strip(),
+                str(bl_code or "").strip(),
+                str(ai_response or "").strip(),
+                current_ts(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def create_problem(bl_id, problem_type, description=""):
