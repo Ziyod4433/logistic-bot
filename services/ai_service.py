@@ -13,6 +13,43 @@ VALID_INTENTS = {
     "unknown",
 }
 VALID_LANGUAGES = {"uz_latin", "uz_cyrillic", "ru", "mixed"}
+GREETING_MARKERS = (
+    "salom",
+    "assalomu",
+    "assalom",
+    "privet",
+    "hello",
+    "hi",
+    "здравствуйте",
+    "привет",
+    "салом",
+)
+STATUS_MARKERS = (
+    "yukim",
+    "yuk",
+    "holat",
+    "status",
+    "qayerda",
+    "qachon",
+    "keladi",
+    "kelarkan",
+    "груз",
+    "статус",
+    "где",
+    "когда",
+    "доставка",
+)
+COMPLAINT_MARKERS = (
+    "muammo",
+    "shikast",
+    "yo'qol",
+    "yaroqsiz",
+    "jalob",
+    "жалоб",
+    "проблем",
+    "повреж",
+    "потер",
+)
 
 
 def _get_openai_api_key() -> str:
@@ -91,6 +128,65 @@ def _fallback_reply(intent: str, language: str, bl_code: str | None = None) -> s
     return "Rahmat. Iltimos, savolingizni aniqroq yozing yoki BL kodingizni yuboring."
 
 
+def _general_greeting_reply(language: str) -> str:
+    if language == "ru":
+        return "Здравствуйте! Чтобы я помог со статусом груза, отправьте, пожалуйста, ваш BL-код."
+    if language == "uz_cyrillic":
+        return "Ассалому алайкум! Юк ҳолатини текширишим учун, илтимос, BL кодингизни юборинг."
+    return "Assalomu alaykum! Yuk holatini tekshirishim uchun, iltimos, BL kodingizni yuboring."
+
+
+def _heuristic_result(text: str) -> dict:
+    message_text = str(text or "").strip()
+    language = _detect_language(message_text)
+    bl_code = _extract_bl_code(message_text)
+    lowered = message_text.lower()
+
+    if bl_code:
+        return {
+            "intent": "check_cargo_status",
+            "bl_code": bl_code,
+            "language": language,
+            "confidence": 0.96,
+            "reply": _fallback_reply("check_cargo_status", language, bl_code),
+        }
+
+    if any(marker in lowered for marker in COMPLAINT_MARKERS):
+        return {
+            "intent": "complaint",
+            "bl_code": None,
+            "language": language,
+            "confidence": 0.8,
+            "reply": _fallback_reply("complaint", language, None),
+        }
+
+    if any(marker in lowered for marker in STATUS_MARKERS):
+        return {
+            "intent": "ask_for_bl",
+            "bl_code": None,
+            "language": language,
+            "confidence": 0.82,
+            "reply": _fallback_reply("ask_for_bl", language, None),
+        }
+
+    if any(marker in lowered for marker in GREETING_MARKERS):
+        return {
+            "intent": "general_question",
+            "bl_code": None,
+            "language": language,
+            "confidence": 0.78,
+            "reply": _general_greeting_reply(language),
+        }
+
+    return {
+        "intent": "unknown",
+        "bl_code": None,
+        "language": language,
+        "confidence": 0.35,
+        "reply": _fallback_reply("unknown", language, None),
+    }
+
+
 def _normalize_result(result: dict, source_text: str) -> dict:
     language = str(result.get("language") or _detect_language(source_text)).strip().lower()
     if language not in VALID_LANGUAGES:
@@ -130,10 +226,14 @@ def analyze_message(text: str) -> dict:
     message_text = str(text or "").strip()
     fallback_language = _detect_language(message_text)
     fallback_bl = _extract_bl_code(message_text)
+    heuristic = _heuristic_result(message_text)
+
+    if heuristic.get("intent") in {"check_cargo_status", "ask_for_bl", "complaint", "general_question"}:
+        return heuristic
 
     api_key = _get_openai_api_key()
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is missing")
+        return heuristic
 
     system_prompt = (
         "You are a Telegram logistics intent classifier for Buraq Logistics. "
@@ -157,17 +257,22 @@ def analyze_message(text: str) -> dict:
             {"role": "user", "content": message_text},
         ],
     }
-    response = req.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        data=json.dumps(payload),
-        timeout=30,
-    )
-    response.raise_for_status()
-    data = response.json()
+    try:
+        response = req.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            data=json.dumps(payload),
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except req.HTTPError:
+        return heuristic
+    except req.RequestException:
+        return heuristic
     content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "{}")
     try:
         parsed = json.loads(content)
