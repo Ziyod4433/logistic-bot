@@ -71,6 +71,7 @@ TRACK_BUTTON_LABELS = {
 TRACK_BUTTON_TEXTS = set(TRACK_BUTTON_LABELS.values())
 GROUP_REMOVE_COMMANDS = {"removebot", "leavebot", "botni_ochir", "hidekeyboard"}
 MENU_RESTORE_COMMANDS = {"menu", "keyboard", "showmenu", "tugma", "knopka"}
+AI_STATUS_COMMANDS = {"aistatus", "aidiag", "ai_status", "ai_diag"}
 NO_ACTIVE_CARGO_MESSAGES = {
     "uz_latn": "Hozirgi vaqtda yo'lda kelayotgan yukingiz mavjud emas",
     "uz_cyrl": "Ҳозирги вақтда йўлда келаётган юкингиз мавжуд эмас",
@@ -1497,6 +1498,52 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
     return True
 
 
+def send_ai_diagnostic(chat_id, chat: dict):
+    chat_title = (chat or {}).get("title") or ""
+    chat_type = (chat or {}).get("type") or ""
+    chat_id_value = (chat or {}).get("id")
+    global_ai_enabled = False
+    group_ai_enabled = False
+    ai_module_ok = False
+    key_present = False
+    model_name = ""
+    error_text = ""
+    try:
+        global_ai_enabled = db.get_global_ai_enabled()
+        group_ai_enabled = db.get_chat_ai_enabled(chat_id_value)
+    except Exception as exc:
+        error_text = f"DB settings read failed: {exc}"
+
+    for module_name in ("services.ai_service", "ai_service"):
+        try:
+            ai_service = __import__(module_name, fromlist=["*"])
+            ai_module_ok = True
+            runtime_status_getter = getattr(ai_service, "get_runtime_status", None)
+            if callable(runtime_status_getter):
+                runtime_status = runtime_status_getter() or {}
+                key_present = bool(runtime_status.get("openai_api_key_present"))
+                model_name = str(runtime_status.get("openai_model") or "").strip()
+            break
+        except Exception as exc:
+            error_text = str(exc)
+
+    lines = [
+        "AI diagnostic",
+        f"chat_id: {chat_id_value}",
+        f"group_title: {chat_title}",
+        f"chat_type: {chat_type}",
+        f"global_ai_enabled: {global_ai_enabled}",
+        f"group_ai_enabled: {group_ai_enabled}",
+        f"ai_module_ok: {ai_module_ok}",
+        f"openai_api_key_present: {key_present}",
+    ]
+    if model_name:
+        lines.append(f"openai_model: {model_name}")
+    if error_text:
+        lines.append(f"error: {error_text}")
+    telegram_send_message(chat_id, "<pre>" + html.escape("\n".join(lines)) + "</pre>")
+
+
 def send_bl_status(chat_id, bl: dict):
     text = db.render_message(bl, bl["batch_name"])
     batch = db.get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
@@ -1552,8 +1599,21 @@ def handle_telegram_message(message: dict):
     if not chat_id or not text:
         return
 
+    if chat_type in {"group", "supergroup"} and not text.startswith("/"):
+        app.logger.info(
+            "TG_GROUP_TEXT chat_id=%s group_title=%r sender_id=%s text=%r",
+            chat_id,
+            chat.get("title") or "",
+            sender_id,
+            text,
+        )
+
     bot_command = extract_bot_command(text)
     if handle_group_remove_request(message, bot_command):
+        return
+
+    if bot_command in AI_STATUS_COMMANDS:
+        send_ai_diagnostic(chat_id, chat)
         return
 
     if bot_command in MENU_RESTORE_COMMANDS:

@@ -4,15 +4,40 @@ import re
 
 import requests as req
 
-OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
-OPENAI_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
+
+VALID_INTENTS = {
+    "check_cargo_status",
+    "ask_for_bl",
+    "complaint",
+    "general_question",
+    "unknown",
+}
+VALID_LANGUAGES = {"uz_latin", "uz_cyrillic", "ru", "mixed"}
+
+
+def _get_openai_api_key() -> str:
+    return (os.getenv("OPENAI_API_KEY") or "").strip()
+
+
+def _get_openai_model() -> str:
+    return (os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
+
+
+def get_runtime_status() -> dict:
+    api_key = _get_openai_api_key()
+    return {
+        "openai_api_key_present": bool(api_key),
+        "openai_model": _get_openai_model(),
+    }
 
 
 def _detect_language(text: str) -> str:
     raw = str(text or "")
     if not raw.strip():
         return "mixed"
-    has_cyrillic = bool(re.search(r"[А-Яа-яЁёЎўҚқҒғҲҳИиЙйЛл]", raw))
+
+    lowered = raw.lower()
+    has_cyrillic = bool(re.search(r"[А-Яа-яЁёҚқҒғҲҳЎўЪъЬь]", raw))
     has_latin = bool(re.search(r"[A-Za-z]", raw))
     russian_markers = (
         "груз",
@@ -22,7 +47,7 @@ def _detect_language(text: str) -> str:
         "доставка",
         "пожалуйста",
     )
-    if any(marker in raw.lower() for marker in russian_markers):
+    if any(marker in lowered for marker in russian_markers):
         return "ru"
     if has_cyrillic and has_latin:
         return "mixed"
@@ -51,7 +76,7 @@ def _fallback_reply(intent: str, language: str, bl_code: str | None = None) -> s
         if intent in {"check_cargo_status", "ask_for_bl", "unknown"}:
             return "Пожалуйста, отправьте BL-код, чтобы я мог проверить статус груза."
         if intent == "complaint":
-            return "Спасибо, мы зафиксировали ваше обращение. Пожалуйста, при возможности отправьте BL-код."
+            return "Спасибо, мы зафиксировали ваше обращение. Пожалуйста, по возможности отправьте BL-код."
         return "Спасибо за сообщение. Пожалуйста, уточните вопрос или отправьте BL-код."
     if language == "uz_cyrillic":
         if intent in {"check_cargo_status", "ask_for_bl", "unknown"}:
@@ -68,11 +93,11 @@ def _fallback_reply(intent: str, language: str, bl_code: str | None = None) -> s
 
 def _normalize_result(result: dict, source_text: str) -> dict:
     language = str(result.get("language") or _detect_language(source_text)).strip().lower()
-    if language not in {"uz_latin", "uz_cyrillic", "ru", "mixed"}:
+    if language not in VALID_LANGUAGES:
         language = _detect_language(source_text)
 
     intent = str(result.get("intent") or "unknown").strip()
-    if intent not in {"check_cargo_status", "ask_for_bl", "complaint", "general_question", "unknown"}:
+    if intent not in VALID_INTENTS:
         intent = "unknown"
 
     raw_bl = result.get("bl_code")
@@ -106,7 +131,8 @@ def analyze_message(text: str) -> dict:
     fallback_language = _detect_language(message_text)
     fallback_bl = _extract_bl_code(message_text)
 
-    if not OPENAI_API_KEY:
+    api_key = _get_openai_api_key()
+    if not api_key:
         raise RuntimeError("OPENAI_API_KEY is missing")
 
     system_prompt = (
@@ -123,7 +149,7 @@ def analyze_message(text: str) -> dict:
     )
 
     payload = {
-        "model": OPENAI_MODEL,
+        "model": _get_openai_model(),
         "temperature": 0.1,
         "response_format": {"type": "json_object"},
         "messages": [
@@ -134,7 +160,7 @@ def analyze_message(text: str) -> dict:
     response = req.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
         data=json.dumps(payload),
@@ -142,10 +168,7 @@ def analyze_message(text: str) -> dict:
     )
     response.raise_for_status()
     data = response.json()
-    content = (
-        ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
-        or "{}"
-    )
+    content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "{}")
     try:
         parsed = json.loads(content)
     except Exception:
