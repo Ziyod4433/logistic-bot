@@ -407,6 +407,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
             code TEXT NOT NULL,
+            merged_codes TEXT DEFAULT '',
             client_name TEXT DEFAULT '',
             chat_id TEXT DEFAULT '',
             status TEXT DEFAULT 'Xitoy',
@@ -904,6 +905,7 @@ def init_db():
             conn.execute(f"ALTER TABLE batches ADD COLUMN {column_name} {column_def}")
 
     legacy_columns = [
+        ("merged_codes", "TEXT DEFAULT ''"),
         ("cargo_type", "TEXT DEFAULT ''"),
         ("weight_kg", "REAL NOT NULL DEFAULT 0"),
         ("volume_cbm", "REAL NOT NULL DEFAULT 0"),
@@ -1365,6 +1367,65 @@ def _sum_quantity_breakdown(value, fallback=0):
         except (TypeError, ValueError):
             continue
     return total or _to_int(fallback)
+
+
+def _split_quantity_breakdown_parts(value, fallback=0):
+    text = str(value or "").strip()
+    if text:
+        return [part.replace(",", ".").strip() for part in re.findall(r"\d+(?:[.,]\d+)?", text) if part.strip()]
+    fallback_value = _to_int(fallback)
+    return [str(fallback_value)] if fallback_value else []
+
+
+def _merge_quantity_breakdowns(*pairs):
+    parts = []
+    for value, fallback in pairs:
+        parts.extend(_split_quantity_breakdown_parts(value, fallback))
+    cleaned = [part for part in parts if str(part or "").strip()]
+    return " + ".join(cleaned)
+
+
+def _split_merged_codes(value):
+    text = str(value or "").strip()
+    if not text:
+        return []
+    return [part.strip().upper() for part in text.split(",") if part.strip()]
+
+
+def _merge_code_aliases(primary_code, primary_aliases, source_code, source_aliases):
+    primary_value = str(primary_code or "").strip().upper()
+    values = []
+    seen = set()
+    for candidate in [source_code, *(_split_merged_codes(primary_aliases) + _split_merged_codes(source_aliases))]:
+        normalized = str(candidate or "").strip().upper()
+        if not normalized or normalized == primary_value or normalized in seen:
+            continue
+        seen.add(normalized)
+        values.append(normalized)
+    return ", ".join(values)
+
+
+def _merge_unique_texts(*values, separator=" / "):
+    seen = set()
+    result = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return separator.join(result)
+
+
+def _display_bl_code(value, merged_codes=""):
+    primary = str(value or "").strip().upper()
+    aliases = _split_merged_codes(merged_codes)
+    if not primary:
+        return " / ".join(aliases)
+    return " / ".join([primary, *aliases]) if aliases else primary
 
 
 def current_ts():
@@ -2205,6 +2266,9 @@ def get_bl_by_batch(batch_id):
         item["duplicate_batch_names"] = duplicate_info.get("batch_names") or []
         item["duplicate_codes"] = duplicate_info.get("codes") or []
         item["duplicate_count"] = int(duplicate_info.get("count") or 0)
+        item["display_code"] = _display_bl_code(item.get("code"), item.get("merged_codes"))
+        item["merged_code_list"] = _split_merged_codes(item.get("merged_codes"))
+        item["has_merged_codes"] = bool(item["merged_code_list"])
     return items
 
 
@@ -2217,19 +2281,25 @@ def get_bl_by_id(bl_id):
 
 def find_bl_by_code(code):
     conn = get_conn()
+    normalized_code = str(code or "").strip().upper()
     row = conn.execute(
         """
         SELECT bl.*, b.name AS batch_name
         FROM bl_codes bl
         JOIN batches b ON b.id = bl.batch_id
-        WHERE UPPER(bl.code) = UPPER(?)
+        WHERE UPPER(bl.code) = ?
+           OR (',' || REPLACE(UPPER(COALESCE(bl.merged_codes, '')), ' ', '') || ',') LIKE '%,' || REPLACE(?, ' ', '') || ',%'
         ORDER BY bl.created_at DESC
         LIMIT 1
         """,
-        (code.strip(),),
+        (normalized_code, normalized_code),
     ).fetchone()
     conn.close()
-    return dict(row) if row else None
+    item = dict(row) if row else None
+    if item:
+        item["display_code"] = _display_bl_code(item.get("code"), item.get("merged_codes"))
+        item["merged_code_list"] = _split_merged_codes(item.get("merged_codes"))
+    return item
 
 
 def find_latest_bl_by_chat(chat_id):
@@ -2697,6 +2767,129 @@ def move_bl_to_batch(bl_id, target_batch_id):
             "from_batch_id": current_batch_id,
             "to_batch_id": target_batch_id,
             "to_batch_name": target_batch["name"],
+        }
+    finally:
+        conn.close()
+
+
+def merge_bl_into_target(source_bl_id, target_bl_id):
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        source = conn.execute("SELECT * FROM bl_codes WHERE id = ?", (source_bl_id,)).fetchone()
+        target = conn.execute("SELECT * FROM bl_codes WHERE id = ?", (target_bl_id,)).fetchone()
+        if not source or not target:
+            raise ValueError("BL не найден")
+        if _to_int(source["id"]) == _to_int(target["id"]):
+            raise ValueError("Нельзя объединить BL сам с собой")
+        if _to_int(source["batch_id"]) != _to_int(target["batch_id"]):
+            raise ValueError("Объединение возможно только внутри одной партии")
+
+        merged_breakdown = _merge_quantity_breakdowns(
+            (target["quantity_places_breakdown"], target["quantity_places"]),
+            (source["quantity_places_breakdown"], source["quantity_places"]),
+        )
+        merged_codes = _merge_code_aliases(
+            target["code"],
+            target["merged_codes"],
+            source["code"],
+            source["merged_codes"],
+        )
+        merged_cargo_type = _merge_unique_texts(target["cargo_type"], source["cargo_type"])
+        merged_description = _merge_unique_texts(
+            target["cargo_description"],
+            source["cargo_description"],
+            separator=" | ",
+        )
+        merged_client_name = str(target["client_name"] or "").strip() or str(source["client_name"] or "").strip()
+        merged_chat_id = str(target["chat_id"] or "").strip() or str(source["chat_id"] or "").strip()
+        merged_language = _normalize_message_language(
+            str(target["message_language"] or "").strip() or str(source["message_language"] or "").strip()
+        )
+        merged_moderator = str(target["moderator_tg_id"] or "").strip() or str(source["moderator_tg_id"] or "").strip()
+        merged_sales = str(target["sales_manager_tg_id"] or "").strip() or str(source["sales_manager_tg_id"] or "").strip()
+
+        conn.execute(
+            """
+            UPDATE bl_codes
+            SET
+                merged_codes = ?,
+                client_name = ?,
+                chat_id = ?,
+                message_language = ?,
+                moderator_tg_id = ?,
+                sales_manager_tg_id = ?,
+                cargo_type = ?,
+                weight_kg = ?,
+                volume_cbm = ?,
+                quantity_places = ?,
+                quantity_places_breakdown = ?,
+                cargo_description = ?,
+                status_updated_at = datetime('now','localtime')
+            WHERE id = ?
+            """,
+            (
+                merged_codes,
+                merged_client_name,
+                merged_chat_id,
+                merged_language,
+                merged_moderator,
+                merged_sales,
+                merged_cargo_type,
+                _to_float(target["weight_kg"]) + _to_float(source["weight_kg"]),
+                _to_float(target["volume_cbm"]) + _to_float(source["volume_cbm"]),
+                _sum_quantity_breakdown(
+                    merged_breakdown,
+                    _to_int(target["quantity_places"]) + _to_int(source["quantity_places"]),
+                ),
+                merged_breakdown,
+                merged_description,
+                target_bl_id,
+            ),
+        )
+
+        for table_name in ("files", "problems"):
+            conn.execute(f"UPDATE {table_name} SET bl_id = ? WHERE bl_id = ?", (target_bl_id, source_bl_id))
+
+        for table_name in (
+            "send_logs",
+            "communication_survey_sends",
+            "communication_survey_dispatches",
+            "communication_ratings",
+            "communication_rating_events",
+        ):
+            conn.execute(f"UPDATE {table_name} SET bl_id = ? WHERE bl_id = ?", (target_bl_id, source_bl_id))
+
+        target_excluded = conn.execute(
+            "SELECT is_excluded FROM batch_send_exclusions WHERE batch_id = ? AND bl_id = ?",
+            (target["batch_id"], target_bl_id),
+        ).fetchone()
+        source_excluded = conn.execute(
+            "SELECT is_excluded FROM batch_send_exclusions WHERE batch_id = ? AND bl_id = ?",
+            (source["batch_id"], source_bl_id),
+        ).fetchone()
+        if (target_excluded and _to_int(target_excluded["is_excluded"])) or (source_excluded and _to_int(source_excluded["is_excluded"])):
+            conn.execute(
+                """
+                INSERT INTO batch_send_exclusions(batch_id, bl_id, is_excluded, updated_at)
+                VALUES (?, ?, 1, datetime('now','localtime'))
+                ON CONFLICT(batch_id, bl_id) DO UPDATE SET
+                    is_excluded = 1,
+                    updated_at = datetime('now','localtime')
+                """,
+                (target["batch_id"], target_bl_id),
+            )
+        conn.execute("DELETE FROM batch_send_exclusions WHERE batch_id = ? AND bl_id = ?", (source["batch_id"], source_bl_id))
+
+        conn.execute("DELETE FROM tracking_delivery_coverage WHERE bl_id IN (?, ?)", (source_bl_id, target_bl_id))
+        conn.execute("DELETE FROM bl_codes WHERE id = ?", (source_bl_id,))
+        conn.commit()
+        return {
+            "source_bl_id": int(source_bl_id),
+            "target_bl_id": int(target_bl_id),
+            "target_code": target["code"],
+            "display_code": _display_bl_code(target["code"], merged_codes),
+            "batch_id": int(target["batch_id"]),
         }
     finally:
         conn.close()
@@ -3439,7 +3632,7 @@ def _render_single_message(bl: dict, batch_name: str) -> str:
         batch_name=_normalize_template_value(batch_name),
         batch_date=_normalize_template_value(batch_name),
         today_date=_normalize_template_value(today_date),
-        bl_code=_normalize_template_value(bl.get("code", "")),
+        bl_code=_normalize_template_value(_display_bl_code(bl.get("code", ""), bl.get("merged_codes", ""))),
         client_name=_normalize_template_value(bl.get("client_name", "")),
         status=_normalize_template_value(_message_status_label(status, language)),
         cargo_info=format_cargo_info(bl, language),

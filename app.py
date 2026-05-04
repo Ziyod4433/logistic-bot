@@ -2218,6 +2218,20 @@ def api_move_bl(bl_id):
     return jsonify({"ok": True, "result": result})
 
 
+@app.route("/api/bl/<int:bl_id>/merge", methods=["POST"])
+@editor_required
+def api_merge_bl(bl_id):
+    data = request.json or {}
+    target_bl_id = data.get("target_bl_id")
+    if not target_bl_id:
+        return jsonify({"error": "target_bl_id обязателен"}), 400
+    try:
+        result = db.merge_bl_into_target(bl_id, target_bl_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "result": result})
+
+
 @app.route("/api/bl/<int:bl_id>/files")
 @login_required
 def api_files(bl_id):

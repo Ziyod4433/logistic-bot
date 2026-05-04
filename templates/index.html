@@ -2421,6 +2421,30 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   </div>
 </div>
 
+<div class="overlay" id="merge-bl-modal">
+  <div class="modal" style="width:500px">
+    <div class="modal-title">Объединить <em>BL коды</em></div>
+    <input type="hidden" id="merge-bl-id">
+    <div class="form-g">
+      <label>BL код, который будет объединён</label>
+      <input class="inp mono" id="merge-bl-source-code" readonly>
+    </div>
+    <div class="form-g">
+      <label>Объединить с</label>
+      <select class="inp" id="merge-bl-target">
+        <option value="">Выбери основной BL</option>
+      </select>
+      <div style="font-size:11px;color:var(--muted2);margin-top:5px">
+        Данные, файлы и инциденты будут перенесены в основной BL. Второй код станет алиасом и в Telegram будет приходить одним блоком.
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('merge-bl-modal')">Отмена</button>
+      <button class="btn btn-amber editor-only" onclick="mergeBL()">Объединить</button>
+    </div>
+  </div>
+</div>
+
 <!-- Problem modal -->
 <div class="overlay" id="problem-modal">
   <div class="modal" style="width:460px">
@@ -2522,6 +2546,7 @@ let globalAiEnabled = false;
 let pendingChatTransfer = null;
 let editingBLId = null;
 let movingBLId = null;
+let mergingBLId = null;
 let allClients = [];
 let currentClientName = "";
 let sheetImportRows = [];
@@ -2708,7 +2733,17 @@ function refreshPage() {
 
 // ── Modals ────────────────────────────────────────────────
 function openModal(id) { document.getElementById(id).classList.add("open"); }
-function closeModal(id) { document.getElementById(id).classList.remove("open"); }
+function closeModal(id) {
+  document.getElementById(id).classList.remove("open");
+  if (id === "move-bl-modal") {
+    movingBLId = null;
+  }
+  if (id === "merge-bl-modal") {
+    mergingBLId = null;
+    const target = document.getElementById("merge-bl-target");
+    if (target) target.value = "";
+  }
+}
 document.querySelectorAll(".overlay").forEach(m=>{
   m.addEventListener("click", e=>{ if(e.target===m) m.classList.remove("open"); });
 });
@@ -3064,10 +3099,11 @@ function renderBL(list, batchName) {
       <td>
         <div style="display:flex;gap:5px">
           <button class="btn btn-ghost btn-xs editor-only" onclick="openEditBL(${b.id})">✏️ Ред.</button>
-          <button class="btn btn-ghost btn-xs editor-only" onclick='openMoveBLModal(${b.id}, ${JSON.stringify(String(b.code || ""))}, ${Number(b.batch_id || 0)})'>⇄ Перенести</button>
+          <button class="btn btn-ghost btn-xs editor-only" onclick="openMergeBLModal(${b.id})" ${list.length < 2 ? 'disabled title="Нужен второй BL в этой партии"' : ''}>🧩 Объед.</button>
+          <button class="btn btn-ghost btn-xs editor-only" onclick='openMoveBLModal(${b.id}, ${JSON.stringify(String(b.display_code || b.code || ""))}, ${Number(b.batch_id || 0)})'>⇄ Перенести</button>
           <button class="btn btn-ghost btn-xs editor-only" onclick="toggleBatchSendExclusion(${b.id}, ${b.send_excluded ? 'false' : 'true'})">${b.send_excluded ? '↩ Вкл.' : '🚫 Искл.'}</button>
-          <button class="btn btn-ghost btn-xs editor-only" onclick="openProblemModal(${b.id},'${esc(b.code)}')">＋ Инцидент</button>
-          <button class="btn btn-green btn-xs editor-only" onclick="sendOne(${b.id},'${esc(b.code)}')" ${!b.chat_id?'disabled title="Нет chat_id"':''}>📤</button>
+          <button class="btn btn-ghost btn-xs editor-only" onclick="openProblemModal(${b.id},'${esc(b.display_code || b.code)}')">＋ Инцидент</button>
+          <button class="btn btn-green btn-xs editor-only" onclick="sendOne(${b.id},'${esc(b.display_code || b.code)}')" ${!b.chat_id?'disabled title="Нет chat_id"':''}>📤</button>
           <button class="btn btn-red btn-xs editor-only" onclick="deleteBL(${b.id})">✕</button>
         </div>
       </td>
@@ -3080,9 +3116,14 @@ function renderBatchBLCodeCell(bl) {
   const sentNow = !!bl.tracking_sent_current;
   const excluded = !!bl.send_excluded;
   const codeColor = sentNow ? "var(--green)" : "var(--amber)";
+  const displayCode = bl.display_code || bl.code || "";
+  const mergedCodes = Array.isArray(bl.merged_code_list) ? bl.merged_code_list.filter(Boolean) : [];
   const badges = [];
   if (sentNow) {
     badges.push(`<span class="badge badge-green">✅ отправлено</span>`);
+  }
+  if (bl.has_merged_codes && mergedCodes.length) {
+    badges.push(`<span class="badge badge-blue">🧩 ${mergedCodes.length + 1} кода</span>`);
   }
   if (bl.tracking_sent_via_other_batch && bl.tracking_sent_via_batch_name) {
     badges.push(`<span class="badge badge-blue">через ${esc(bl.tracking_sent_via_batch_name)}</span>`);
@@ -3098,9 +3139,13 @@ function renderBatchBLCodeCell(bl) {
   const sentAt = bl.tracking_sent_at
     ? `<div style="font-size:11px;color:var(--muted2);margin-top:4px">${esc(bl.tracking_sent_at)}</div>`
     : "";
+  const aliases = mergedCodes.length
+    ? `<div style="font-size:11px;color:var(--muted2);margin-top:4px">алиасы: ${esc(mergedCodes.join(", "))}</div>`
+    : "";
   return `
-    <div class="mono" style="color:${codeColor};font-weight:600">${esc(bl.code)}</div>
+    <div class="mono" style="color:${codeColor};font-weight:600">${esc(displayCode)}</div>
     ${badges.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${badges.join("")}</div>` : ``}
+    ${aliases}
     ${sentAt}
   `;
 }
@@ -3108,7 +3153,9 @@ function renderBatchBLCodeCell(bl) {
 function filterBL() {
   const q = document.getElementById("bl-search").value.toLowerCase();
   renderBL(allBL.filter(b=>
-    b.code.toLowerCase().includes(q) ||
+    (b.code || "").toLowerCase().includes(q) ||
+    (b.display_code || "").toLowerCase().includes(q) ||
+    (b.merged_codes || "").toLowerCase().includes(q) ||
     (b.client_name||"").toLowerCase().includes(q)
   ));
 }
@@ -3793,6 +3840,62 @@ async function openMoveBLModal(blId, code, batchId) {
   targetSelect.innerHTML = `<option value="">Выбери партию для переноса</option>${options}`;
   targetSelect.value = "";
   openModal("move-bl-modal");
+}
+
+function formatBLDisplayForOption(bl) {
+  const code = bl.display_code || bl.code || "";
+  const client = bl.client_name ? ` · ${bl.client_name}` : "";
+  const chat = bl.chat_id ? ` · ${bl.chat_id}` : "";
+  return `${code}${client}${chat}`;
+}
+
+async function openMergeBLModal(blId) {
+  if (!ensureEditor()) return;
+  const source = (allBL || []).find(b => Number(b.id) === Number(blId));
+  if (!source) {
+    toast("BL не найден", "err");
+    return;
+  }
+
+  const targets = (allBL || []).filter(b => Number(b.id) !== Number(blId));
+  if (!targets.length) {
+    toast("В партии нужен минимум второй BL для объединения", "err");
+    return;
+  }
+
+  mergingBLId = blId;
+  document.getElementById("merge-bl-id").value = blId;
+  document.getElementById("merge-bl-source-code").value = source.display_code || source.code || "";
+  const targetSelect = document.getElementById("merge-bl-target");
+  targetSelect.innerHTML = `<option value="">Выбери основной BL</option>${
+    targets.map(target => `<option value="${target.id}">${esc(formatBLDisplayForOption(target))}</option>`).join("")
+  }`;
+  targetSelect.value = "";
+  openModal("merge-bl-modal");
+}
+
+async function mergeBL() {
+  if (!ensureEditor()) return;
+  const sourceId = mergingBLId || document.getElementById("merge-bl-id").value;
+  const targetId = Number(document.getElementById("merge-bl-target").value || 0);
+  if (!sourceId) return;
+  if (!targetId) {
+    toast("Выбери основной BL", "err");
+    return;
+  }
+  if (!confirm("Объединить эти BL?\n\nВторой BL будет удалён как отдельная строка, а его данные, файлы и инциденты перейдут в основной BL.")) {
+    return;
+  }
+
+  try {
+    const result = await api(`/api/bl/${sourceId}/merge`, "POST", { target_bl_id: targetId });
+    closeModal("merge-bl-modal");
+    mergingBLId = null;
+    await loadBatchDetail(currentBatchId);
+    toast(`BL объединён в ${result.result?.display_code || result.result?.target_code || ""}`, "ok");
+  } catch(e) {
+    toast(e.message, "err");
+  }
 }
 
 async function moveBLToBatch() {
