@@ -518,6 +518,7 @@ def build_main_reply_markup(*, chat_id=None, language: str | None = None) -> dic
         "resize_keyboard": True,
         "one_time_keyboard": False,
         "is_persistent": True,
+        "input_field_placeholder": get_track_button_text(chat_id=chat_id, language=language),
     }
 
 
@@ -527,6 +528,7 @@ def build_group_track_reply_markup(*, chat_id=None, language: str | None = None)
         "resize_keyboard": True,
         "one_time_keyboard": False,
         "is_persistent": True,
+        "input_field_placeholder": get_track_button_text(chat_id=chat_id, language=language),
     }
 
 
@@ -1190,19 +1192,35 @@ def send_group_welcome_bundle(chat_id, button_text: str | None = None):
     enqueue_welcome_media(chat_id)
 
 
-def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None, reply_markup: dict | None = None):
+def send_with_track_keyboard(
+    chat_id,
+    text: str,
+    *,
+    language: str | None = None,
+    reply_markup: dict | None = None,
+    parse_mode: str | None = "HTML",
+):
     if is_group_chat_id(chat_id):
         telegram_send_message(
             chat_id,
             text,
             reply_markup=build_group_track_reply_markup(chat_id=chat_id, language=language),
+            parse_mode=parse_mode,
         )
         return
     telegram_send_message(
         chat_id,
         text,
         reply_markup=reply_markup or build_main_reply_markup(chat_id=chat_id, language=language),
+        parse_mode=parse_mode,
     )
+
+
+def _plain_text_message(text: str) -> str:
+    raw = str(text or "")
+    cleaned = re.sub(r"<br\s*/?>", "\n", raw, flags=re.IGNORECASE)
+    cleaned = re.sub(r"</?[^>]+>", "", cleaned)
+    return html.unescape(cleaned).strip()
 
 
 def communication_rating_label(score: int) -> str:
@@ -1622,7 +1640,16 @@ def send_bl_status(chat_id, bl: dict):
     show_packing_list = not db.is_customer_delivery_eta((batch or {}).get("eta_destination") or "")
     language = normalize_message_language(bl.get("message_language"))
     reply_markup = bl_file_markup(bl["id"]) if show_packing_list else None
-    send_with_track_keyboard(chat_id, text, language=language, reply_markup=reply_markup)
+    try:
+        send_with_track_keyboard(chat_id, text, language=language, reply_markup=reply_markup)
+    except Exception:
+        send_with_track_keyboard(
+            chat_id,
+            _plain_text_message(text),
+            language=language,
+            reply_markup=reply_markup,
+            parse_mode=None,
+        )
 
 
 def send_requested_file(chat_id, file_info: dict | None):
@@ -1816,21 +1843,19 @@ def send_bl_package(bl: dict, batch_name: str, include_related_batches: bool = T
         )
         db.record_tracking_delivery(bl, include_related_batches=include_related_batches)
     except Exception as exc:
-        message = str(exc)
-        if "can't parse entities" in message.lower() or "parse entities" in message.lower():
-            try:
-                fallback_message = re.sub(r"</?b>", "", rendered_message)
-                send_with_track_keyboard(
-                    bl["chat_id"],
-                    fallback_message,
-                    language=language,
-                    reply_markup=reply_markup,
-                )
-                db.record_tracking_delivery(bl, include_related_batches=include_related_batches)
-                return True, ""
-            except Exception as fallback_exc:
-                return False, str(fallback_exc)
-        return False, message
+        try:
+            fallback_message = _plain_text_message(rendered_message)
+            send_with_track_keyboard(
+                bl["chat_id"],
+                fallback_message,
+                language=language,
+                reply_markup=reply_markup,
+                parse_mode=None,
+            )
+            db.record_tracking_delivery(bl, include_related_batches=include_related_batches)
+            return True, ""
+        except Exception as fallback_exc:
+            return False, str(fallback_exc or exc)
 
     return True, ""
 
