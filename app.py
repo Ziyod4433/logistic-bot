@@ -844,8 +844,14 @@ def telegram_api(method: str, *, timeout: int = 15, **kwargs):
         timeout=timeout,
         **kwargs,
     )
-    response.raise_for_status()
-    return response.json()
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if not response.ok or payload.get("ok") is False:
+        description = payload.get("description") or response.text or f"HTTP {response.status_code}"
+        raise RuntimeError(f"Telegram {method}: {description}")
+    return payload
 
 
 def telegram_send_message(
@@ -1186,7 +1192,11 @@ def send_group_welcome_bundle(chat_id, button_text: str | None = None):
 
 def send_with_track_keyboard(chat_id, text: str, *, language: str | None = None, reply_markup: dict | None = None):
     if is_group_chat_id(chat_id):
-        telegram_send_message(chat_id, text, reply_markup=reply_markup)
+        telegram_send_message(
+            chat_id,
+            text,
+            reply_markup=build_group_track_reply_markup(chat_id=chat_id, language=language),
+        )
         return
     telegram_send_message(
         chat_id,
@@ -1792,16 +1802,35 @@ def send_bl_package(bl: dict, batch_name: str, include_related_batches: bool = T
 
     try:
         language = normalize_message_language(bl.get("message_language"))
-        reply_markup = bl_file_markup(bl["id"])
+        reply_markup = None if is_group_chat_id(bl["chat_id"]) else bl_file_markup(bl["id"])
+        rendered_message = db.render_message(
+            bl,
+            batch_name,
+            include_related_batches=include_related_batches,
+        )
         send_with_track_keyboard(
             bl["chat_id"],
-            db.render_message(bl, batch_name, include_related_batches=include_related_batches),
+            rendered_message,
             language=language,
             reply_markup=reply_markup,
         )
         db.record_tracking_delivery(bl, include_related_batches=include_related_batches)
     except Exception as exc:
-        return False, str(exc)
+        message = str(exc)
+        if "can't parse entities" in message.lower() or "parse entities" in message.lower():
+            try:
+                fallback_message = re.sub(r"</?b>", "", rendered_message)
+                send_with_track_keyboard(
+                    bl["chat_id"],
+                    fallback_message,
+                    language=language,
+                    reply_markup=reply_markup,
+                )
+                db.record_tracking_delivery(bl, include_related_batches=include_related_batches)
+                return True, ""
+            except Exception as fallback_exc:
+                return False, str(fallback_exc)
+        return False, message
 
     return True, ""
 
