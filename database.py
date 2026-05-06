@@ -550,6 +550,7 @@ def init_db():
             bl_id INTEGER REFERENCES bl_codes(id) ON DELETE SET NULL,
             batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
             batch_name TEXT DEFAULT '',
+            message_id TEXT NOT NULL DEFAULT '',
             sent_at TEXT NOT NULL DEFAULT ''
         );
 
@@ -939,6 +940,13 @@ def init_db():
     for column_name, column_def in communication_rating_columns:
         if not _table_has_column(conn, "communication_ratings", column_name):
             conn.execute(f"ALTER TABLE communication_ratings ADD COLUMN {column_name} {column_def}")
+
+    communication_dispatch_columns = [
+        ("message_id", "TEXT NOT NULL DEFAULT ''"),
+    ]
+    for column_name, column_def in communication_dispatch_columns:
+        if not _table_has_column(conn, "communication_survey_dispatches", column_name):
+            conn.execute(f"ALTER TABLE communication_survey_dispatches ADD COLUMN {column_name} {column_def}")
 
     moderator_request_columns = [
         ("assigned_moderator_id", "TEXT NOT NULL DEFAULT ''"),
@@ -4298,9 +4306,9 @@ def record_communication_survey_send(month_key, recipient):
         cursor = conn.execute(
             """
             INSERT INTO communication_survey_dispatches(
-                month_key, chat_id, client_name, bl_id, batch_id, batch_name, sent_at
+                month_key, chat_id, client_name, bl_id, batch_id, batch_name, message_id, sent_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 month_key,
@@ -4309,6 +4317,7 @@ def record_communication_survey_send(month_key, recipient):
                 recipient.get("bl_id"),
                 recipient.get("batch_id"),
                 recipient.get("batch_name", ""),
+                "",
                 sent_at,
             ),
         )
@@ -4337,6 +4346,62 @@ def record_communication_survey_send(month_key, recipient):
         )
         conn.commit()
         return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def save_communication_survey_dispatch_message_id(dispatch_id, message_id):
+    if not dispatch_id:
+        return
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE communication_survey_dispatches
+            SET message_id = ?
+            WHERE id = ?
+            """,
+            (str(message_id or "").strip(), dispatch_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_communication_survey_dispatch(dispatch_id):
+    if not dispatch_id:
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, month_key, chat_id, client_name, bl_id, batch_id, batch_name, message_id, sent_at
+            FROM communication_survey_dispatches
+            WHERE id = ?
+            """,
+            (dispatch_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_communication_survey_dispatch_for_event(event_id):
+    if not event_id:
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT d.id, d.month_key, d.chat_id, d.client_name, d.bl_id, d.batch_id, d.batch_name, d.message_id, d.sent_at
+            FROM communication_rating_events e
+            JOIN communication_survey_dispatches d ON d.id = e.dispatch_id
+            WHERE e.id = ?
+            LIMIT 1
+            """,
+            (event_id,),
+        ).fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()
 

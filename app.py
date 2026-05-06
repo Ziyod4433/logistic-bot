@@ -1204,7 +1204,6 @@ def send_with_track_keyboard(
         telegram_send_message(
             chat_id,
             text,
-            reply_markup=build_group_track_reply_markup(chat_id=chat_id, language=language),
             parse_mode=parse_mode,
         )
         return
@@ -1231,11 +1230,14 @@ def send_communication_survey(recipient: dict, month_key: str):
     dispatch_id = db.record_communication_survey_send(month_key, recipient)
     text = db.render_communication_rate_message(recipient, month_key)
     try:
-        telegram_send_message(
+        response = telegram_send_message(
             recipient["chat_id"],
             text,
             reply_markup=communication_rating_markup(dispatch_id),
         )
+        message_id = (((response or {}).get("result") or {}).get("message_id"))
+        if message_id is not None:
+            db.save_communication_survey_dispatch_message_id(dispatch_id, message_id)
     except Exception:
         db.delete_communication_survey_dispatch(dispatch_id)
         raise
@@ -2958,12 +2960,40 @@ def api_delete_communication_rate_entry():
     event_id = data.get("event_id")
     dispatch_id = data.get("dispatch_id")
 
-    if event_id:
-        db.delete_communication_rating_event(event_id)
-        return jsonify({"ok": True, "deleted": "event"})
     if dispatch_id:
+        dispatch = db.get_communication_survey_dispatch(dispatch_id)
+        if dispatch:
+            message_id = str(dispatch.get("message_id") or "").strip()
+            chat_id = dispatch.get("chat_id")
+            if chat_id and message_id:
+                try:
+                    telegram_delete_message(chat_id, int(message_id))
+                except Exception:
+                    app.logger.exception(
+                        "Failed to delete communication survey message chat_id=%s message_id=%s",
+                        chat_id,
+                        message_id,
+                    )
         db.delete_communication_survey_dispatch(dispatch_id)
         return jsonify({"ok": True, "deleted": "dispatch"})
+    if event_id:
+        dispatch = db.get_communication_survey_dispatch_for_event(event_id)
+        if dispatch:
+            message_id = str(dispatch.get("message_id") or "").strip()
+            chat_id = dispatch.get("chat_id")
+            if chat_id and message_id:
+                try:
+                    telegram_delete_message(chat_id, int(message_id))
+                except Exception:
+                    app.logger.exception(
+                        "Failed to delete communication survey message via event chat_id=%s message_id=%s",
+                        chat_id,
+                        message_id,
+                    )
+            db.delete_communication_survey_dispatch(dispatch.get("id"))
+            return jsonify({"ok": True, "deleted": "dispatch"})
+        db.delete_communication_rating_event(event_id)
+        return jsonify({"ok": True, "deleted": "event"})
     return jsonify({"error": "Не указано, что удалять"}), 400
 
 

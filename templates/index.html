@@ -4549,18 +4549,21 @@ function formatCommunicationTime(value) {
 
 async function deleteCommunicationRateRow(eventId, dispatchId, clientName) {
   if (!ensureEditor()) return;
+  const useDispatchDelete = !!dispatchId;
   const hasAnswer = !!eventId;
   const label = clientName || "эту строку";
-  const question = hasAnswer
-    ? `Удалить ответ по Moderator Score для ${label}?`
-    : `Удалить отправку опроса для ${label}?`;
+  const question = useDispatchDelete
+    ? `Удалить опрос Moderator Score для ${label}?\nСообщение в группе тоже будет удалено.`
+    : hasAnswer
+      ? `Удалить ответ по Moderator Score для ${label}?`
+      : `Удалить отправку опроса для ${label}?`;
   if (!confirm(question)) return;
   try {
     await api("/api/communication-rate/delete", "POST", {
-      event_id: eventId || null,
-      dispatch_id: eventId ? null : (dispatchId || null),
+      event_id: useDispatchDelete ? null : (eventId || null),
+      dispatch_id: useDispatchDelete ? dispatchId : null,
     });
-    toast(hasAnswer ? "Ответ удалён" : "Отправка удалена", "ok");
+    toast(useDispatchDelete ? "Опрос удалён" : (hasAnswer ? "Ответ удалён" : "Отправка удалена"), "ok");
     loadCommunicationRatePage();
   } catch (e) {
     toast(e.message, "err");
