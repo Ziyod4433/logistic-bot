@@ -482,9 +482,11 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   font-size: 13px; vertical-align: middle;
 }
 .tbl td.bl-actions-cell {
-  min-width: 520px;
+  min-width: 430px;
+  width: 430px;
   white-space: normal;
-  padding-left: 8px;
+  padding-left: 10px;
+  padding-right: 10px;
 }
 .tbl tr:last-child td { border-bottom: none; }
 .tbl tbody tr { transition: background .1s; }
@@ -555,14 +557,19 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .btn-blue:hover { background: rgba(56,189,248,.18); }
 .bl-actions {
   display:flex;
-  gap:5px;
+  gap:4px;
   flex-wrap:nowrap;
   align-items:center;
-  justify-content:flex-end;
+  justify-content:flex-start;
+}
+.bl-actions .btn-xs {
+  padding: 5px 8px;
+  font-size: 10.5px;
 }
 @media (max-width: 1480px) {
   .tbl td.bl-actions-cell {
-    min-width: 400px;
+    min-width: 390px;
+    width: 390px;
   }
   .bl-actions {
     flex-wrap:wrap;
@@ -2999,6 +3006,7 @@ function setBLLanguage(prefix, value) {
   const normalized =
     value === "uz_cyrl" ? "uz_cyrl"
     : value === "ru" ? "ru"
+    : value === "en" ? "en"
     : "uz_latn";
   const hidden = document.getElementById(`${prefix}-language`);
   if (hidden) hidden.value = normalized;
@@ -3006,6 +3014,7 @@ function setBLLanguage(prefix, value) {
     { key: "uz_latn", buttonId: `${prefix}-lang-uz-latn` },
     { key: "uz_cyrl", buttonId: `${prefix}-lang-uz-cyrl` },
     { key: "ru", buttonId: `${prefix}-lang-ru` },
+    { key: "en", buttonId: `${prefix}-lang-en` },
   ];
   options.forEach(option => {
     const btn = document.getElementById(option.buttonId);
