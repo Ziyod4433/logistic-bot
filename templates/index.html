@@ -481,6 +481,10 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.04);
   font-size: 13px; vertical-align: middle;
 }
+.tbl td.bl-actions-cell {
+  width: 1%;
+  white-space: normal;
+}
 .tbl tr:last-child td { border-bottom: none; }
 .tbl tbody tr { transition: background .1s; }
 .tbl tbody tr:hover td { background: rgba(255,255,255,.03); }
@@ -548,6 +552,12 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .btn-green:hover { background: rgba(16,185,129,.2); }
 .btn-blue  { background: rgba(56,189,248,.1);  color: var(--blue);  border: 1px solid rgba(56,189,248,.2); }
 .btn-blue:hover { background: rgba(56,189,248,.18); }
+.bl-actions {
+  display:flex;
+  gap:5px;
+  flex-wrap:wrap;
+  align-items:center;
+}
 
 /* ── FORM ────────────────────────────────────────────── */
 .form-g { margin-bottom: 14px; }
@@ -2258,6 +2268,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <button type="button" class="btn btn-amber btn-sm" id="add-bl-lang-uz-latn" onclick="setBLLanguage('add-bl','uz_latn')">O'zbekcha (lotin)</button>
         <button type="button" class="btn btn-ghost btn-sm" id="add-bl-lang-uz-cyrl" onclick="setBLLanguage('add-bl','uz_cyrl')">Ўзбекча (кирилл)</button>
         <button type="button" class="btn btn-ghost btn-sm" id="add-bl-lang-ru" onclick="setBLLanguage('add-bl','ru')">Русский</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="add-bl-lang-en" onclick="setBLLanguage('add-bl','en')">English</button>
       </div>
     </div>
     <div class="form-g">
@@ -2375,6 +2386,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <button type="button" class="btn btn-amber btn-sm" id="edit-bl-lang-uz-latn" onclick="setBLLanguage('edit-bl','uz_latn')">O'zbekcha (lotin)</button>
         <button type="button" class="btn btn-ghost btn-sm" id="edit-bl-lang-uz-cyrl" onclick="setBLLanguage('edit-bl','uz_cyrl')">Ўзбекча (кирилл)</button>
         <button type="button" class="btn btn-ghost btn-sm" id="edit-bl-lang-ru" onclick="setBLLanguage('edit-bl','ru')">Русский</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="edit-bl-lang-en" onclick="setBLLanguage('edit-bl','en')">English</button>
       </div>
     </div>
     <hr class="divider">
@@ -3096,8 +3108,8 @@ function renderBL(list, batchName) {
           ? `<span class="badge badge-red" style="margin-left:6px">⚠ ${b.problem_count}</span>`
           : ``}
       </td>
-      <td>
-        <div style="display:flex;gap:5px">
+      <td class="bl-actions-cell">
+        <div class="bl-actions">
           <button class="btn btn-ghost btn-xs editor-only" onclick="openEditBL(${b.id})">✏️ Ред.</button>
           <button class="btn btn-ghost btn-xs editor-only" onclick="openMergeBLModal(${b.id})" ${list.length < 2 ? 'disabled title="Нужен второй BL в этой партии"' : ''}>🧩 Объед.</button>
           <button class="btn btn-ghost btn-xs editor-only" onclick='openMoveBLModal(${b.id}, ${JSON.stringify(String(b.display_code || b.code || ""))}, ${Number(b.batch_id || 0)})'>⇄ Перенести</button>

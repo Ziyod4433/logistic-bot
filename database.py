@@ -81,6 +81,7 @@ MESSAGE_LANGUAGES = {
     "uz_latn": "O'zbekcha (lotin)",
     "uz_cyrl": "Ўзбекча (кирилл)",
     "ru": "Русский",
+    "en": "English",
 }
 
 DEFAULT_MESSAGE_LANGUAGE = "uz_latn"
@@ -187,6 +188,12 @@ ETA_DESTINATION_LABELS_LOCALIZED = {
         "Qozoq furaga ortilish": "Срок погрузки на казахскую фуру",
         "Mijozga yetib borish": "Срок доставки клиенту",
     },
+    "en": {
+        "Toshkent": "Arrival time to Tashkent",
+        "Horgos (Qozoq)": "Arrival time to Horgos",
+        "Qozoq furaga ortilish": "Loading time onto Kazakh truck",
+        "Mijozga yetib borish": "Delivery time to client",
+    },
 }
 
 STATUS_MESSAGE_LABELS = {
@@ -230,6 +237,28 @@ STATUS_MESSAGE_LABELS = {
         DELIVERED_STATUS: "Доставлено клиенту",
         LEGACY_DELIVERED_STATUS: "Доставлено клиенту",
     },
+    "en": {
+        "Xitoy": "China",
+        "Yiwu": "Yiwu",
+        "Zhongshan": "Zhongshan",
+        "Horgos (Qozoq)": "Horgos (Kazakhstan)",
+        "Nurjo'li": "Nurjo'li",
+        "Jarkent": "Jarkent",
+        "Almata": "Almaty",
+        "Taraz": "Taraz",
+        "Shimkent": "Shymkent",
+        "Qonusbay": "Qonusbay",
+        "Saryagash": "Saryagash",
+        "Yallama": "Yallama",
+        "Toshkent(Chuqursoy ULS da)": "Tashkent (Chuqursoy ULS)",
+        "Kashgar (Qirg'iz)": "Kashgar (Kyrgyzstan)",
+        "Irkeshtam": "Irkeshtam",
+        "Osh": "Osh",
+        "Dostlik": "Dostlik",
+        "Andijon": "Andijan",
+        DELIVERED_STATUS: "Delivered to client",
+        LEGACY_DELIVERED_STATUS: "Delivered to client",
+    },
 }
 
 TEMPLATE_LOCALIZATION = {
@@ -256,6 +285,18 @@ TEMPLATE_LOCALIZATION = {
         "📲Aloqa uchun:": "📲Для связи:",
         "🖇Tovar bo'yicha packing list⤵️": "🖇Packing list по товару⤵️",
         "Packing list biriktirilmagan": "Packing list не прикреплён",
+    },
+    "en": {
+        "👋Assalomu alaykum hurmatli mijoz!": "👋Hello, dear client!",
+        "📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:⤵️": "📦 Updated tracking information for your cargo:⤵️",
+        "🚛 Partiya:": "🚛 Batch:",
+        "🗓Bugungi sana:": "🗓Update date:",
+        "🆔 BL-kod:": "🆔 BL code:",
+        "📍 Joriy holati:": "📍 Current status:",
+        "📄 Yuk haqida ma'lumotlar:": "📄 Cargo information:",
+        "📲Aloqa uchun:": "📲Contact:",
+        "🖇Tovar bo'yicha packing list⤵️": "🖇Packing list⤵️",
+        "Packing list biriktirilmagan": "Packing list not attached",
     },
 }
 
@@ -357,6 +398,8 @@ def _packing_list_label(language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
         return "🖇Товар бўйича packing list⤵️"
     if normalized_language == "ru":
         return "🖇Packing list по товару⤵️"
+    if normalized_language == "en":
+        return "🖇Packing list⤵️"
     return "🖇Tovar bo'yicha packing list⤵️"
 
 
@@ -1952,6 +1995,14 @@ def _cargo_labels(language: str) -> dict:
             "places": "Количество мест",
             "description": "Описание",
         }
+    if lang == "en":
+        return {
+            "cargo_type": "Cargo type",
+            "weight": "Weight",
+            "volume": "Volume",
+            "places": "Places",
+            "description": "Description",
+        }
     return {
         "cargo_type": "Tovar turi",
         "weight": "Og'irligi",
@@ -1967,6 +2018,8 @@ def _cargo_total_suffix(language: str) -> str:
         return " (Умумий)"
     if lang == "ru":
         return " (Общий)"
+    if lang == "en":
+        return " (Total)"
     return " (Umumiy)"
 
 

@@ -67,6 +67,7 @@ TRACK_BUTTON_LABELS = {
     "uz_latn": "Yuk holati",
     "uz_cyrl": "Юк ҳолати",
     "ru": "Статус груза",
+    "en": "Cargo status",
 }
 TRACK_BUTTON_TEXTS = set(TRACK_BUTTON_LABELS.values())
 GROUP_REMOVE_COMMANDS = {"removebot", "leavebot", "botni_ochir", "hidekeyboard"}
@@ -77,22 +78,26 @@ NO_ACTIVE_CARGO_MESSAGES = {
     "uz_latn": "Hozirgi vaqtda yo'lda kelayotgan yukingiz mavjud emas",
     "uz_cyrl": "Ҳозирги вақтда йўлда келаётган юкингиз мавжуд эмас",
     "ru": "В данный момент у вас нет груза в пути",
+    "en": "You currently have no cargo in transit",
 }
 AI_ASK_BL_MESSAGES = {
     "uz_latn": "Kechirasiz, yuk holatini tekshirish uchun BL kodingizni yuboring.",
     "uz_cyrl": "Кечирасиз, юк ҳолатини текшириш учун BL кодингизни юборинг.",
     "ru": "Пожалуйста, отправьте BL-код, чтобы я мог проверить статус груза.",
+    "en": "Please send your BL code so I can check the cargo status.",
 }
 AI_UNKNOWN_MESSAGES = {
     "uz_latn": "Kechirasiz, xabaringizni to'liq tushunmadim. Iltimos, BL kodingizni yuboring.",
     "uz_cyrl": "Кечирасиз, хабарингизни тўлиқ тушунмадим. Илтимос, BL кодингизни юборинг.",
     "ru": "Извините, я не до конца понял ваше сообщение. Пожалуйста, отправьте BL-код.",
+    "en": "Sorry, I couldn't fully understand your message. Please send your BL code.",
 }
 TRACK_BUTTON_COOLDOWN_SECONDS = 60
 TRACK_BUTTON_COOLDOWN_MESSAGES = {
     "uz_latn": "⏳ Iltimos, keyingi so'rov uchun <b>{seconds}</b> soniya kuting.",
     "uz_cyrl": "⏳ Илтимос, кейинги сўров учун <b>{seconds}</b> сония кутинг.",
     "ru": "⏳ Пожалуйста, подождите <b>{seconds}</b> сек. перед следующим запросом.",
+    "en": "⏳ Please wait <b>{seconds}</b> sec. before your next request.",
 }
 CANCEL_BUTTON = "❌ Отмена"
 STATE_WAITING_BL = "waiting_bl"
@@ -568,6 +573,8 @@ def get_menu_restore_text(language: str | None = None) -> str:
         return "✅ Юқоридаги меню қайта ёқилди. Пастдаги <b>Юк ҳолати</b> тугмасидан фойдаланинг."
     if normalized_language == "ru":
         return "✅ Меню снова включено. Используйте нижнюю кнопку <b>Статус груза</b>."
+    if normalized_language == "en":
+        return "✅ Menu is enabled again. Use the lower <b>Cargo status</b> button."
     return "✅ Menu qayta yoqildi. Pastdagi <b>Yuk holati</b> tugmasidan foydalaning."
 
 
