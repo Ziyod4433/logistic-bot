@@ -482,7 +482,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   font-size: 13px; vertical-align: middle;
 }
 .tbl td.bl-actions-cell {
-  width: 1%;
+  min-width: 470px;
   white-space: normal;
 }
 .tbl tr:last-child td { border-bottom: none; }
@@ -555,8 +555,17 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .bl-actions {
   display:flex;
   gap:5px;
-  flex-wrap:wrap;
+  flex-wrap:nowrap;
   align-items:center;
+  justify-content:flex-end;
+}
+@media (max-width: 1480px) {
+  .tbl td.bl-actions-cell {
+    min-width: 360px;
+  }
+  .bl-actions {
+    flex-wrap:wrap;
+  }
 }
 
 /* ── FORM ────────────────────────────────────────────── */
