@@ -471,6 +471,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 
 /* ── TABLE ───────────────────────────────────────────── */
 .tbl { width: 100%; border-collapse: collapse; }
+#bl-table { table-layout: fixed; }
 .tbl th {
   text-align: left; padding: 12px 16px;
   font-size: 9.5px; text-transform: uppercase; letter-spacing: 1.5px;
@@ -481,12 +482,33 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.04);
   font-size: 13px; vertical-align: middle;
 }
+#bl-table td {
+  padding: 14px 12px;
+}
+#bl-table td.bl-code-cell {
+  width: 170px;
+}
+#bl-table td.bl-client-cell {
+  width: 78px;
+}
+#bl-table td.bl-cargo-cell {
+  width: 124px;
+}
+#bl-table td.bl-places-cell {
+  width: 102px;
+}
+#bl-table td.bl-chat-cell {
+  width: 175px;
+}
+#bl-table td.bl-files-cell {
+  width: 72px;
+}
 .tbl td.bl-actions-cell {
-  min-width: 430px;
-  width: 430px;
+  min-width: 420px;
+  width: 420px;
   white-space: normal;
-  padding-left: 10px;
-  padding-right: 10px;
+  padding-left: 8px;
+  padding-right: 8px;
 }
 .tbl tr:last-child td { border-bottom: none; }
 .tbl tbody tr { transition: background .1s; }
@@ -563,13 +585,37 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   justify-content:flex-start;
 }
 .bl-actions .btn-xs {
-  padding: 5px 8px;
-  font-size: 10.5px;
+  padding: 5px 7px;
+  font-size: 10px;
+}
+#bl-table .bl-code-wrap,
+#bl-table .bl-chat-wrap {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+#bl-table .bl-code-meta {
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+  margin-top:6px;
+  max-width:100%;
+}
+#bl-table .bl-code-aliases,
+#bl-table .bl-code-sent-at {
+  font-size:11px;
+  color:var(--muted2);
+  margin-top:4px;
+  word-break:break-word;
+}
+#bl-table .bl-chat-wrap > div:first-child {
+  white-space: normal;
+  word-break: break-word;
 }
 @media (max-width: 1480px) {
   .tbl td.bl-actions-cell {
-    min-width: 390px;
-    width: 390px;
+    min-width: 420px;
+    width: 420px;
   }
   .bl-actions {
     flex-wrap:wrap;
@@ -3113,16 +3159,16 @@ async function loadBatchDetail(batchId) {
 function renderBL(list, batchName) {
   const t = document.getElementById("bl-table");
   t.innerHTML = list.length ? list.map(b=>`
-    <tr class="${b.is_late ? 'row-late' : ''} ${b.problem_count ? 'row-problem' : ''}">
-      <td>${renderBatchBLCodeCell(b)}</td>
-      <td>${b.client_name ? `<span style="font-weight:500">${esc(b.client_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
-      <td>${renderCargoChips(b)}</td>
-      <td>${renderPlacesCell(b)}</td>
-      <td>${renderChatCell(b.chat_id)}</td>
-      <td>
-        ${b.file_count > 0
-          ? `<span class="badge badge-blue">📎 ${b.file_count}</span>`
-          : `<span style="color:var(--muted);font-size:11px">нет</span>`}
+      <tr class="${b.is_late ? 'row-late' : ''} ${b.problem_count ? 'row-problem' : ''}">
+        <td class="bl-code-cell">${renderBatchBLCodeCell(b)}</td>
+        <td class="bl-client-cell">${b.client_name ? `<span style="font-weight:500">${esc(b.client_name)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+        <td class="bl-cargo-cell">${renderCargoChips(b)}</td>
+        <td class="bl-places-cell">${renderPlacesCell(b)}</td>
+        <td class="bl-chat-cell">${renderChatCell(b.chat_id)}</td>
+        <td class="bl-files-cell">
+          ${b.file_count > 0
+            ? `<span class="badge badge-blue">📎 ${b.file_count}</span>`
+            : `<span style="color:var(--muted);font-size:11px">нет</span>`}
         ${b.problem_count > 0
           ? `<span class="badge badge-red" style="margin-left:6px">⚠ ${b.problem_count}</span>`
           : ``}
@@ -3168,18 +3214,20 @@ function renderBatchBLCodeCell(bl) {
     badges.push(`<span class="badge badge-red">⛔ исключён</span>`);
   }
   const sentAt = bl.tracking_sent_at
-    ? `<div style="font-size:11px;color:var(--muted2);margin-top:4px">${esc(bl.tracking_sent_at)}</div>`
+    ? `<div class="bl-code-sent-at">${esc(bl.tracking_sent_at)}</div>`
     : "";
   const aliases = mergedCodes.length
-    ? `<div style="font-size:11px;color:var(--muted2);margin-top:4px">алиасы: ${esc(mergedCodes.join(", "))}</div>`
+    ? `<div class="bl-code-aliases">алиасы: ${esc(mergedCodes.join(", "))}</div>`
     : "";
-  return `
-    <div class="mono" style="color:${codeColor};font-weight:600">${esc(displayCode)}</div>
-    ${badges.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${badges.join("")}</div>` : ``}
-    ${aliases}
-    ${sentAt}
-  `;
-}
+    return `
+      <div class="bl-code-wrap">
+      <div class="mono" style="color:${codeColor};font-weight:600">${esc(displayCode)}</div>
+      ${badges.length ? `<div class="bl-code-meta">${badges.join("")}</div>` : ``}
+      ${aliases}
+      ${sentAt}
+      </div>
+    `;
+  }
 
 function filterBL() {
   const q = document.getElementById("bl-search").value.toLowerCase();
@@ -3197,12 +3245,14 @@ function renderChatCell(chatId) {
   }
   const chat = knownChats.find(c=>String(c.chat_id)===String(chatId));
   if (!chat) {
-    return `<span class="mono" style="font-size:11px;color:var(--muted2)">${esc(chatId)}</span>`;
+    return `<div class="bl-chat-wrap"><span class="mono" style="font-size:11px;color:var(--muted2)">${esc(chatId)}</span></div>`;
   }
   return `
-    <div style="font-weight:500">${esc(chat.title || "Без названия")}</div>
-    <div class="mono" style="font-size:11px;color:var(--muted2)">${esc(chat.chat_id)}</div>
-  `;
+      <div class="bl-chat-wrap">
+      <div style="font-weight:500">${esc(chat.title || "Без названия")}</div>
+      <div class="mono" style="font-size:11px;color:var(--muted2)">${esc(chat.chat_id)}</div>
+      </div>
+    `;
 }
 
 function num(v) {
