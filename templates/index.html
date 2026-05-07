@@ -3178,7 +3178,6 @@ function renderBL(list, batchName) {
           <button class="btn btn-ghost btn-xs editor-only" onclick="openEditBL(${b.id})">✏️ Ред.</button>
           <button class="btn btn-ghost btn-xs editor-only" onclick="openMergeBLModal(${b.id})" ${list.length < 2 ? 'disabled title="Нужен второй BL в этой партии"' : ''}>🧩 Объед.</button>
           <button class="btn btn-ghost btn-xs editor-only" onclick='openMoveBLModal(${b.id}, ${JSON.stringify(String(b.display_code || b.code || ""))}, ${Number(b.batch_id || 0)})'>⇄ Перенести</button>
-          <button class="btn btn-ghost btn-xs editor-only" onclick="toggleBatchSendExclusion(${b.id}, ${b.send_excluded ? 'false' : 'true'})">${b.send_excluded ? '↩ Вкл.' : '🚫 Искл.'}</button>
           <button class="btn btn-ghost btn-xs editor-only" onclick="openProblemModal(${b.id},'${esc(b.display_code || b.code)}')">＋ Инцидент</button>
           <button class="btn btn-green btn-xs editor-only" onclick="sendOne(${b.id},'${esc(b.display_code || b.code)}')" ${!b.chat_id?'disabled title="Нет chat_id"':''}>📤</button>
           <button class="btn btn-red btn-xs editor-only" onclick="deleteBL(${b.id})">✕</button>
