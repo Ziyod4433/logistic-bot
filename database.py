@@ -314,6 +314,70 @@ def get_conn():
     return conn
 
 
+def _extract_eta_last_number(value: str) -> int | None:
+    matches = re.findall(r"\d+", value or "")
+    if not matches:
+        return None
+    try:
+        return int(matches[-1])
+    except Exception:
+        return None
+
+
+def _russian_days_word(number: int | None) -> str:
+    if number is None:
+        return "дней"
+    number = abs(int(number))
+    last_two = number % 100
+    last = number % 10
+    if 11 <= last_two <= 14:
+        return "дней"
+    if last == 1:
+        return "день"
+    if last in (2, 3, 4):
+        return "дня"
+    return "дней"
+
+
+def _english_days_word(number: int | None, has_range: bool = False) -> str:
+    if has_range:
+        return "days"
+    return "day" if number == 1 else "days"
+
+
+def _localize_eta_value(value: str, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    normalized_language = _normalize_message_language(language)
+    if normalized_language == "uz_latn":
+        return text
+
+    last_number = _extract_eta_last_number(text)
+    has_range = bool(re.search(r"\d+\s*-\s*\d+", text))
+    day_word_map = {
+        "uz_cyrl": "кун",
+        "ru": _russian_days_word(last_number),
+        "en": _english_days_word(last_number, has_range),
+    }
+    replacement = day_word_map.get(normalized_language)
+    if not replacement:
+        return text
+
+    if re.search(r"\b(kun|кун|day|days|день|дня|дней)\b", text, flags=re.I):
+        return re.sub(
+            r"\b(kun|кун|day|days|день|дня|дней)\b",
+            replacement,
+            text,
+            flags=re.I,
+        )
+
+    if re.fullmatch(r"\d+(?:\s*-\s*\d+)?", text):
+        return f"{text} {replacement}"
+
+    return text
+
+
 def _is_locked_error(exc: Exception) -> bool:
     return "locked" in str(exc or "").lower()
 
@@ -3685,7 +3749,7 @@ def _render_single_message(bl: dict, batch_name: str) -> str:
     packing_list = "" if is_customer_delivery else format_packing_list(bl.get("id"), language)
     packing_list_text = ""
     arrival_eta = ((batch or {}).get("eta_to_toshkent") or "").strip()
-    arrival_eta_value = arrival_eta or expected_date
+    arrival_eta_value = _localize_eta_value(arrival_eta or expected_date, language)
     arrival_eta_label = _eta_destination_label(eta_destination, language)
     today_date = datetime.now(TASHKENT_TZ).strftime("%d.%m.%Y")
 
