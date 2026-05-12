@@ -5723,8 +5723,10 @@ if ((INITIAL_VIEW || "dashboard") === "analytics") {
   document.querySelectorAll(".nav-link").forEach(n=>n.classList.remove("active"));
   document.getElementById("page-analytics")?.classList.add("active");
   document.querySelector(`[onclick="goto('analytics')"]`)?.classList.add("active");
-  document.getElementById("crumb-page").textContent = "Sales Monitor";
-  document.getElementById("crumb-sub").textContent = "";
+  const __crumb = document.getElementById("crumb-page") || document.getElementById("breadcrumb");
+  if (__crumb) __crumb.innerHTML = "Sales Monitor";
+  const __crumbSub = document.getElementById("crumb-sub");
+  if (__crumbSub) __crumbSub.textContent = "";
   showAnalyticsTab(INITIAL_ANALYTICS_TAB || "monitor", false);
   loadAnalyticsPage(INITIAL_ANALYTICS_TAB || "monitor");
 } else {
