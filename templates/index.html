@@ -1374,19 +1374,11 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         </div>
 
         <div class="analytics-tabs">
-          <button class="analytics-tab-btn active" data-analytics-tab="overview" onclick="showAnalyticsTab('overview')">1. Umumiy ko‘rsatkichlar</button>
-          <button class="analytics-tab-btn" data-analytics-tab="sales-growth" onclick="showAnalyticsTab('sales-growth')">2. Savdo o‘sishi</button>
-          <button class="analytics-tab-btn" data-analytics-tab="cashflow" onclick="showAnalyticsTab('cashflow')">3. Cashflow</button>
-          <button class="analytics-tab-btn" data-analytics-tab="managers" onclick="showAnalyticsTab('managers')">4. Menejerlar KPI</button>
-          <button class="analytics-tab-btn" data-analytics-tab="logists" onclick="showAnalyticsTab('logists')">5. Logist KPI</button>
-          <button class="analytics-tab-btn" data-analytics-tab="debts" onclick="showAnalyticsTab('debts')">6. Qarzlar</button>
-          <button class="analytics-tab-btn" data-analytics-tab="shipments" onclick="showAnalyticsTab('shipments')">7. Fura / BL analytics</button>
-          <button class="analytics-tab-btn" data-analytics-tab="export" onclick="showAnalyticsTab('export')">8. Hisobot eksport</button>
-          <button class="analytics-tab-btn" data-analytics-tab="monitor" onclick="showAnalyticsTab('monitor')">9. Sales Monitor</button>
-          <button class="analytics-tab-btn" data-analytics-tab="sync" onclick="showAnalyticsTab('sync')">10. Import / Sync</button>
+          <button class="analytics-tab-btn active" data-analytics-tab="monitor" onclick="showAnalyticsTab(‘monitor’)">Sales Monitor</button>
+          <button class="analytics-tab-btn" data-analytics-tab="sync" onclick="showAnalyticsTab(‘sync’)">Import / Sync</button>
         </div>
 
-        <div class="analytics-section active" id="analytics-section-overview">
+        <div class="analytics-section" id="analytics-section-overview">
           <div class="analytics-kpi-grid" id="analytics-overview-kpis"></div>
           <div class="analytics-split" style="margin-top:18px">
             <div class="card">
@@ -1550,7 +1542,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
         </div>
 
-        <div class="analytics-section" id="analytics-section-monitor">
+        <div class="analytics-section active" id="analytics-section-monitor">
           <div class="analytics-subgrid-2">
             <div class="card">
               <div class="card-h"><span class="card-title">Sales Monitor</span></div>
