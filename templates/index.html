@@ -1184,7 +1184,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <nav>
       <div class="nav-section">Главное</div>
       <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Dashboard</div>
-      <div class="nav-link" onclick="goto('analytics')"><span class="ico">📈</span> Data Analytics</div>
+      <div class="nav-link" onclick="goto('analytics')"><span class="ico">📈</span> Sales Monitor</div>
       <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
       <div class="nav-link" onclick="goto('clients')"><span class="ico">👥</span> Клиенты</div>
       <div class="nav-link" onclick="goto('chats')"><span class="ico">💬</span> Telegram группы <span class="badge-count" id="nav-chat-count">0</span></div>
@@ -1287,8 +1287,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="page" id="page-analytics">
         <div class="analytics-head">
           <div>
-            <div class="page-h" style="margin:0">Data Analytics <em>/ Business Intelligence</em></div>
-            <p>Google Sheets va lokal bazadan ma’lumotlarni yig‘ib, tozalab, saqlab va tahlil qilish uchun yagona panel.</p>
+            <div class="page-h" style="margin:0">Sales Monitor</div>
           </div>
         </div>
 
@@ -2749,7 +2748,7 @@ function goto(page) {
 
   const labels = {
     dashboard:"Dashboard",
-    analytics:"Data Analytics",
+    analytics:"Sales Monitor",
     batches:"Партии",
     clients:"Клиенты",
     chats:"Telegram группы",
@@ -5665,7 +5664,7 @@ function showAnalyticsTab(tab, shouldLoad = true) {
 }
 
 async function refreshAnalyticsActiveTab(prefetchedOverview = null) {
-  const tab = ANALYTICS_STATE.tab || "overview";
+  const tab = ANALYTICS_STATE.tab || "monitor";
   if (tab === "overview") return loadAnalyticsOverview(prefetchedOverview);
   if (tab === "sales-growth") return loadAnalyticsSalesGrowth();
   if (tab === "cashflow") return loadAnalyticsCashflow();
@@ -5681,9 +5680,9 @@ async function loadAnalyticsPage(initialTab = null) {
     if (initialTab) {
       ANALYTICS_STATE.tab = initialTab;
     }
-    showAnalyticsTab(ANALYTICS_STATE.tab || "overview", false);
+    showAnalyticsTab(ANALYTICS_STATE.tab || "monitor", false);
     const prefetchedOverview = await ensureAnalyticsFilterOptions();
-    await refreshAnalyticsActiveTab(prefetchedOverview && ANALYTICS_STATE.tab === "overview" ? prefetchedOverview : null);
+    await refreshAnalyticsActiveTab(null);
     if (ANALYTICS_STATE.tab === "export") {
       // export is static
     }
@@ -5727,10 +5726,10 @@ if ((INITIAL_VIEW || "dashboard") === "analytics") {
   document.querySelectorAll(".nav-link").forEach(n=>n.classList.remove("active"));
   document.getElementById("page-analytics")?.classList.add("active");
   document.querySelector(`[onclick="goto('analytics')"]`)?.classList.add("active");
-  document.getElementById("crumb-page").textContent = "Data Analytics";
-  document.getElementById("crumb-sub").textContent = "Business Intelligence";
-  showAnalyticsTab(INITIAL_ANALYTICS_TAB || "overview", false);
-  loadAnalyticsPage(INITIAL_ANALYTICS_TAB || "overview");
+  document.getElementById("crumb-page").textContent = "Sales Monitor";
+  document.getElementById("crumb-sub").textContent = "";
+  showAnalyticsTab(INITIAL_ANALYTICS_TAB || "monitor", false);
+  loadAnalyticsPage(INITIAL_ANALYTICS_TAB || "monitor");
 } else {
   goto(INITIAL_VIEW || "dashboard");
 }
