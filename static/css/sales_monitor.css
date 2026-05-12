@@ -308,39 +308,36 @@ body::before {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 22px 0 10px;
+  padding: 26px 0 12px;
 }
 
 .circc {
   position: relative;
-  width: 190px;
-  height: 190px;
+  width: 250px;
+  height: 250px;
 }
 
 .circsvg {
-  width: 190px;
-  height: 190px;
-}
-
-.circsvg {
+  width: 250px;
+  height: 250px;
   transform: rotate(-90deg);
 }
 
 .circbg {
   fill: none;
   stroke: var(--border);
-  stroke-width: 14;
+  stroke-width: 16;
 }
 
 .circfill {
   fill: none;
-  stroke-width: 14;
+  stroke-width: 16;
   stroke-linecap: round;
   stroke: url(#monitor-orange);
-  stroke-dasharray: 490;
-  stroke-dashoffset: 490;
-  transition: stroke-dashoffset 0.9s cubic-bezier(0.4, 0, 0.2, 1);
-  filter: drop-shadow(0 0 8px rgba(245, 166, 35, 0.55));
+  stroke-dasharray: 660;
+  stroke-dashoffset: 660;
+  transition: stroke-dashoffset 1.1s cubic-bezier(0.4, 0, 0.2, 1);
+  filter: drop-shadow(0 0 12px rgba(245, 166, 35, 0.65));
 }
 
 .circcenter {
@@ -355,16 +352,17 @@ body::before {
 
 .circpct {
   font-family: "Bebas Neue", sans-serif;
-  font-size: 48px;
+  font-size: 62px;
   line-height: 1;
   color: var(--orange);
-  text-shadow: 0 0 20px rgba(245, 166, 35, 0.5);
+  text-shadow: 0 0 28px rgba(245, 166, 35, 0.55);
 }
 
 .circsub {
-  font-size: 10px;
-  letter-spacing: 2px;
+  font-size: 11px;
+  letter-spacing: 3px;
   color: var(--muted);
+  margin-top: 2px;
 }
 
 .plan-badge-row {
@@ -704,22 +702,22 @@ body.monitor-fullscreen .overall-card {
 }
 
 body.monitor-fullscreen .circwrap {
-  padding: 34px 0 18px;
+  padding: 38px 0 20px;
 }
 
 body.monitor-fullscreen .circc,
 body.monitor-fullscreen .circsvg {
-  width: 320px;
-  height: 320px;
+  width: 380px;
+  height: 380px;
 }
 
 body.monitor-fullscreen .circpct {
-  font-size: 76px;
+  font-size: 96px;
 }
 
 body.monitor-fullscreen .circsub {
-  font-size: 13px;
-  letter-spacing: 3px;
+  font-size: 14px;
+  letter-spacing: 4px;
 }
 
 body.monitor-fullscreen .pgrid {
@@ -749,6 +747,114 @@ body.monitor-fullscreen .dept-monitor {
   width: 100%;
   background: linear-gradient(90deg, var(--blue), var(--purple), var(--orange));
   transition: width 1s linear;
+}
+
+/* Config modal */
+.cfg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(6, 8, 15, 0.82);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cfg-overlay[hidden] { display: none; }
+
+.cfg-modal {
+  width: 480px;
+  max-width: 95vw;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--bg2);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.cfg-title {
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 20px;
+  letter-spacing: 3px;
+  color: var(--orange);
+}
+
+.cfg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.cfg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cfg-field.full { grid-column: 1 / -1; }
+
+.cfg-label {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.cfg-input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg3);
+  color: var(--orange);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  outline: none;
+}
+
+.cfg-input:focus { border-color: var(--orange); }
+
+.cfg-hint {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.cfg-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.cfg-status {
+  font-size: 11px;
+  color: var(--green);
+  min-height: 16px;
+}
+
+.cfg-status.error { color: var(--red); }
+
+/* Live badge on source-box */
+.source-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--green);
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+.source-live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse 1.5s infinite;
 }
 
 @keyframes pulse {

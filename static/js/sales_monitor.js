@@ -1,11 +1,13 @@
 (function () {
   const bootstrap = window.SALES_MONITOR_BOOTSTRAP || {};
   const query = new URLSearchParams(window.location.search);
+  const REFRESH_SECONDS = 120; // 2 minutes
+
   const state = {
     plans: Array.isArray(bootstrap.salesPlans) ? bootstrap.salesPlans : [],
     planId: query.get("sales_plan_id") || bootstrap.activePlanId || "",
-    metric: query.get("metric") || "amount_usd",
-    countdownSeconds: 300,
+    metric: query.get("metric") || "cbm",
+    countdownSeconds: REFRESH_SECONDS,
     countdownHandle: null,
     clockHandle: null,
     refreshHandle: null,
@@ -20,6 +22,7 @@
     metricSelect: byId("metric-select"),
     refreshBtn: byId("refresh-btn"),
     fullscreenBtn: byId("fullscreen-btn"),
+    configBtn: byId("config-btn"),
     rotationTimer: byId("rotation-timer"),
     rotationLine: byId("rotation-line"),
     clock: byId("clock"),
@@ -52,6 +55,17 @@
     main: document.querySelector(".main"),
     bottom: document.querySelector(".bottom"),
     empty: byId("monitor-empty"),
+    // config modal
+    cfgOverlay: byId("cfg-overlay"),
+    cfgSheetId: byId("cfg-sheet-id"),
+    cfgSheetName: byId("cfg-sheet-name"),
+    cfgCbmCol: byId("cfg-cbm-col"),
+    cfgDateCol: byId("cfg-date-col"),
+    cfgSellerCol: byId("cfg-seller-col"),
+    cfgHeaderRows: byId("cfg-header-rows"),
+    cfgSaveBtn: byId("cfg-save-btn"),
+    cfgCancelBtn: byId("cfg-cancel-btn"),
+    cfgStatus: byId("cfg-status"),
   };
 
   const METRIC_LABELS = {
@@ -63,19 +77,22 @@
   const DEPARTMENT_META = {
     logists: {
       key: "logists",
-      title: "LOGISTLAR",
+      title: "SOTUVCHILAR",
       tone: "blue",
       accentClass: "ca-b",
-      note: "Keyingi bo'lim 5 daqiqada: Savdo bo‘limi",
+      note: "Keyingi yangilanish 2 daqiqada",
     },
     sales: {
       key: "sales",
-      title: "SAVDO BO‘LIMI",
+      title: "SAVDO BO'LIMI",
       tone: "purple",
       accentClass: "ca-p",
-      note: "Keyingi bo'lim 5 daqiqada: Logistlar",
+      note: "Keyingi yangilanish 2 daqiqada",
     },
   };
+
+  // CIRCLE RADIUS — must match SVG cx/cy/r in monitor.html (r=105)
+  const CIRCLE_RADIUS = 105;
 
   function escapeHtml(value) {
     return String(value || "")
@@ -132,18 +149,18 @@
     const minutes = Math.floor(state.countdownSeconds / 60);
     const seconds = state.countdownSeconds % 60;
     els.rotationTimer.textContent = `${minutes}:${String(seconds).padStart(2, "0")}`;
-    els.rotationLine.style.width = `${Math.max(0, Math.min(100, (state.countdownSeconds / 300) * 100))}%`;
+    els.rotationLine.style.width = `${Math.max(0, Math.min(100, (state.countdownSeconds / REFRESH_SECONDS) * 100))}%`;
   }
 
   function restartCountdown() {
-    state.countdownSeconds = 300;
+    state.countdownSeconds = REFRESH_SECONDS;
     renderCountdown();
     clearInterval(state.countdownHandle);
     state.countdownHandle = window.setInterval(() => {
       state.countdownSeconds = Math.max(0, state.countdownSeconds - 1);
       renderCountdown();
       if (state.countdownSeconds <= 0) {
-        state.countdownSeconds = 300;
+        state.countdownSeconds = REFRESH_SECONDS;
       }
     }, 1000);
   }
@@ -169,7 +186,7 @@
   }
 
   function renderEmpty(message) {
-    els.empty.textContent = message || "Google Sheets ma’lumotlari hali import qilinmagan.";
+    els.empty.textContent = message || "Ma'lumot topilmadi.";
     els.empty.hidden = false;
     els.empty.classList.add("active");
     els.main.classList.add("is-empty");
@@ -184,8 +201,7 @@
   }
 
   function renderArc(percent) {
-    const radius = 78;
-    const circumference = 2 * Math.PI * radius;
+    const circumference = 2 * Math.PI * CIRCLE_RADIUS;
     const normalized = Math.max(0, Math.min(100, Number(percent || 0)));
     const offset = circumference - (normalized / 100) * circumference;
     els.progressArc.style.strokeDasharray = String(circumference);
@@ -194,7 +210,7 @@
 
   function renderMonthly(rows, metric, label) {
     if (!rows.length) {
-      els.monthlyBars.innerHTML = '<div class="bar-item"><div class="bar-name">Ma’lumot yo‘q</div></div>';
+      els.monthlyBars.innerHTML = '<div class="bar-item"><div class="bar-name">Ma\'lumot yo\'q</div></div>';
       return;
     }
     const max = Math.max(...rows.map((row) => Number(row.value || 0)), 0) || 1;
@@ -220,7 +236,7 @@
     return `
       <div class="lr">
         <div class="lrank ${rankClass}">${index + 1}</div>
-        <div class="lav ${tone}">${escapeHtml(item.initials || initials(item.name, tone === "blue" ? "LG" : "SM"))}</div>
+        <div class="lav ${tone}">${escapeHtml(item.initials || initials(item.name, tone === "blue" ? "ST" : "SM"))}</div>
         <div class="li">
           <div class="lname">${escapeHtml(item.name)}</div>
           <div class="lsub">${escapeHtml(String(item.bl_count || 0))} BL</div>
@@ -236,16 +252,16 @@
 
   function renderLeaders(container, rows, tone) {
     if (!rows.length) {
-      container.innerHTML = '<div class="lr"><div class="lname">Ma’lumot yo‘q</div></div>';
+      container.innerHTML = '<div class="lr"><div class="lname">Ma\'lumot yo\'q</div></div>';
       return;
     }
     container.innerHTML = rows.map((row, index) => leaderboardRow(row, index, tone)).join("");
   }
 
   function shareTitle(metric) {
-    if (metric === "cbm") return "KUB BO‘YICHA REJA ULUSHI";
-    if (metric === "bl_count") return "BL BO‘YICHA REJA ULUSHI";
-    return "DOLLAR BO‘YICHA REJA ULUSHI";
+    if (metric === "cbm") return "KUB BO'YICHA REJA ULUSHI";
+    if (metric === "bl_count") return "BL BO'YICHA REJA ULUSHI";
+    return "DOLLAR BO'YICHA REJA ULUSHI";
   }
 
   function setDepartmentAccent(meta) {
@@ -258,11 +274,18 @@
   }
 
   function renderDepartment(key, payload) {
-    const meta = DEPARTMENT_META[key] || DEPARTMENT_META.logists;
-    const department = payload.departments?.[key] || {};
+    const isOmborLive = payload.data_source === "ombor_live";
+    // In ombor_live mode always show logists (sellers), ignore sales tab
+    const effectiveKey = isOmborLive ? "logists" : key;
+    const meta = {
+      ...DEPARTMENT_META[effectiveKey] || DEPARTMENT_META.logists,
+      title: isOmborLive ? "SOTUVCHILAR" : (DEPARTMENT_META[effectiveKey] || DEPARTMENT_META.logists).title,
+      note: isOmborLive ? "Live · Ombor sheet" : (DEPARTMENT_META[effectiveKey] || DEPARTMENT_META.logists).note,
+    };
+    const department = payload.departments?.[effectiveKey] || {};
     const plan = payload.plan || {};
     const metric = plan.metric || state.metric;
-    const metricLabel = plan.metric_label || METRIC_LABELS[metric] || "USD";
+    const metricLabel = plan.metric_label || METRIC_LABELS[metric] || "m³";
 
     setDepartmentAccent(meta);
     els.deptTitle.textContent = meta.title;
@@ -287,6 +310,8 @@
   }
 
   function toggleDepartment(animated = true) {
+    // In ombor_live mode don't toggle
+    if (state.latestPayload?.data_source === "ombor_live") return;
     const nextKey = state.currentDepartment === "logists" ? "sales" : "logists";
     if (animated) {
       animateDepartmentChange(nextKey);
@@ -300,16 +325,17 @@
 
   function renderPayload(payload) {
     if (!payload || payload.empty) {
-      renderEmpty(payload?.message || "Google Sheets ma’lumotlari hali import qilinmagan.");
+      renderEmpty(payload?.message || "Ma'lumot topilmadi.");
       return;
     }
     clearEmpty();
     state.latestPayload = payload;
 
+    const isLive = payload.data_source === "ombor_live";
     const plan = payload.plan || {};
     const overall = payload.overall || {};
     const metric = plan.metric || state.metric;
-    const metricLabel = plan.metric_label || METRIC_LABELS[metric] || "USD";
+    const metricLabel = plan.metric_label || METRIC_LABELS[metric] || "m³";
     const targetValue = Number(plan.target_value || 0);
     const closedValue = Number(overall.closed_value || 0);
     const remainingValue = Number(overall.remaining_value || 0);
@@ -319,7 +345,13 @@
     els.planName.textContent = plan.name || "—";
     els.planPeriod.textContent = plan.period_start && plan.period_end ? `${plan.period_start} → ${plan.period_end}` : "—";
     els.lastUpdated.textContent = payload.last_updated || "—";
-    els.sourceName.textContent = payload.source_name || "Google Sheets / XLSX cache";
+
+    if (isLive) {
+      els.sourceName.innerHTML = `<span class="source-live">LIVE · ${escapeHtml(payload.source_name || "Ombor")}</span>`;
+    } else {
+      els.sourceName.textContent = payload.source_name || "Google Sheets / XLSX cache";
+    }
+
     els.monthlyMetricLabel.textContent = metric === "amount_usd" ? "USD" : metricLabel;
     els.shareTitle.textContent = shareTitle(metric);
 
@@ -334,7 +366,7 @@
       els.planBadge.className = "plan-badge success";
       els.planBadge.textContent = Number(overall.overshoot_value || 0) > 0
         ? `Plan oshirib bajarildi: +${formatMetricValue(overall.overshoot_value || 0, metric, metricLabel)}`
-        : "Plan bajarildi";
+        : "Plan bajarildi! 🎯";
     } else {
       els.planBadge.className = "plan-badge";
       els.planBadge.textContent = "Plan bajarilish jarayonida";
@@ -354,10 +386,11 @@
     renderDepartment(state.currentDepartment, payload);
   }
 
-  async function fetchMonitor(resetCountdown) {
+  async function fetchMonitor(resetCountdown, force) {
     const params = new URLSearchParams();
     if (state.planId) params.set("sales_plan_id", state.planId);
     if (state.metric) params.set("metric", state.metric);
+    if (force) params.set("force", "1");
 
     const response = await fetch(`/analytics/api/monitor?${params.toString()}`, {
       headers: { Accept: "application/json" },
@@ -365,7 +398,7 @@
     });
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(payload.error || "Monitor ma’lumotlarini olishda xatolik yuz berdi.");
+      throw new Error(payload.error || "Monitor ma'lumotlarini olishda xatolik.");
     }
     renderPayload(payload);
     if (resetCountdown) restartCountdown();
@@ -374,9 +407,8 @@
   function scheduleRefresh() {
     clearInterval(state.refreshHandle);
     state.refreshHandle = window.setInterval(() => {
-      toggleDepartment(true);
-      fetchMonitor(true).catch((error) => renderEmpty(error.message));
-    }, 300000);
+      fetchMonitor(true, false).catch((error) => renderEmpty(error.message));
+    }, REFRESH_SECONDS * 1000);
   }
 
   function onPlanChange() {
@@ -390,7 +422,7 @@
     if (state.planId) nextUrl.searchParams.set("sales_plan_id", state.planId);
     nextUrl.searchParams.set("metric", state.metric);
     window.history.replaceState({}, "", nextUrl);
-    fetchMonitor(true).catch((error) => renderEmpty(error.message));
+    fetchMonitor(true, false).catch((error) => renderEmpty(error.message));
   }
 
   function onMetricChange() {
@@ -399,15 +431,81 @@
     if (state.planId) nextUrl.searchParams.set("sales_plan_id", state.planId);
     nextUrl.searchParams.set("metric", state.metric);
     window.history.replaceState({}, "", nextUrl);
-    fetchMonitor(true).catch((error) => renderEmpty(error.message));
+    fetchMonitor(true, false).catch((error) => renderEmpty(error.message));
+  }
+
+  // --- Config modal ---
+  function openConfigModal() {
+    const plan = currentPlan();
+    if (!plan) return;
+    if (els.cfgSheetId) els.cfgSheetId.value = plan.ombor_sheet_id || "";
+    if (els.cfgSheetName) els.cfgSheetName.value = plan.ombor_sheet_name || "Ombor";
+    if (els.cfgCbmCol) els.cfgCbmCol.value = plan.ombor_cbm_col || "W";
+    if (els.cfgDateCol) els.cfgDateCol.value = plan.ombor_date_col || "AA";
+    if (els.cfgSellerCol) els.cfgSellerCol.value = plan.ombor_seller_col || "AH";
+    if (els.cfgHeaderRows) els.cfgHeaderRows.value = plan.ombor_header_rows != null ? plan.ombor_header_rows : 2;
+    if (els.cfgStatus) { els.cfgStatus.textContent = ""; els.cfgStatus.className = "cfg-status"; }
+    if (els.cfgOverlay) els.cfgOverlay.hidden = false;
+  }
+
+  function closeConfigModal() {
+    if (els.cfgOverlay) els.cfgOverlay.hidden = true;
+  }
+
+  async function saveConfig() {
+    const plan = currentPlan();
+    if (!plan || !state.planId) return;
+    const sheetIdRaw = (els.cfgSheetId?.value || "").trim();
+    // Extract sheet ID from full URL or use raw
+    const sheetIdMatch = sheetIdRaw.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    const sheetId = sheetIdMatch ? sheetIdMatch[1] : sheetIdRaw;
+
+    const body = {
+      ombor_sheet_id: sheetId,
+      ombor_sheet_name: (els.cfgSheetName?.value || "Ombor").trim(),
+      ombor_cbm_col: (els.cfgCbmCol?.value || "W").trim().toUpperCase(),
+      ombor_date_col: (els.cfgDateCol?.value || "AA").trim().toUpperCase(),
+      ombor_seller_col: (els.cfgSellerCol?.value || "AH").trim().toUpperCase(),
+      ombor_header_rows: parseInt(els.cfgHeaderRows?.value || "2", 10),
+    };
+
+    if (els.cfgStatus) { els.cfgStatus.textContent = "Saqlanmoqda…"; els.cfgStatus.className = "cfg-status"; }
+    try {
+      const resp = await fetch(`/analytics/api/plans/${state.planId}/ombor-config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error || "Xatolik");
+      // Update local plan cache
+      if (Array.isArray(data.plans)) {
+        state.plans = data.plans;
+        populatePlans();
+      }
+      if (els.cfgStatus) { els.cfgStatus.textContent = "✓ Saqlandi"; els.cfgStatus.className = "cfg-status"; }
+      window.setTimeout(closeConfigModal, 800);
+      fetchMonitor(true, true).catch((e) => renderEmpty(e.message));
+    } catch (err) {
+      if (els.cfgStatus) { els.cfgStatus.textContent = err.message; els.cfgStatus.className = "cfg-status error"; }
+    }
   }
 
   function bindEvents() {
     els.planSelect.addEventListener("change", onPlanChange);
     els.metricSelect.addEventListener("change", onMetricChange);
     els.refreshBtn.addEventListener("click", () => {
-      fetchMonitor(true).catch((error) => renderEmpty(error.message));
+      fetchMonitor(true, true).catch((error) => renderEmpty(error.message));
     });
+    if (els.configBtn) els.configBtn.addEventListener("click", openConfigModal);
+    if (els.cfgCancelBtn) els.cfgCancelBtn.addEventListener("click", closeConfigModal);
+    if (els.cfgSaveBtn) els.cfgSaveBtn.addEventListener("click", saveConfig);
+    if (els.cfgOverlay) {
+      els.cfgOverlay.addEventListener("click", (e) => {
+        if (e.target === els.cfgOverlay) closeConfigModal();
+      });
+    }
     els.fullscreenBtn.addEventListener("click", () => {
       if (!document.fullscreenElement) {
         document.documentElement.requestFullscreen?.();
@@ -427,7 +525,7 @@
     bindEvents();
     startClock();
     renderCountdown();
-    fetchMonitor(true).catch((error) => renderEmpty(error.message));
+    fetchMonitor(true, false).catch((error) => renderEmpty(error.message));
     scheduleRefresh();
   }
 

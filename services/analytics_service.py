@@ -1584,6 +1584,13 @@ def save_sales_plan(payload: dict[str, Any]) -> dict[str, Any]:
         target_metric = "amount_usd"
     target_value = _to_float(payload.get("target_value"))
     is_active = 1 if payload.get("is_active") else 0
+    # Ombor sheet config
+    ombor_sheet_id = _clean_text(payload.get("ombor_sheet_id") or "")
+    ombor_sheet_name = _clean_text(payload.get("ombor_sheet_name") or "Ombor")
+    ombor_cbm_col = _clean_text(payload.get("ombor_cbm_col") or "W").upper()
+    ombor_date_col = _clean_text(payload.get("ombor_date_col") or "AA").upper()
+    ombor_seller_col = _clean_text(payload.get("ombor_seller_col") or "AH").upper()
+    ombor_header_rows = max(0, _to_int(payload.get("ombor_header_rows") if payload.get("ombor_header_rows") is not None else 2))
     if not name:
         raise ValueError("Plan nomi kiritilmagan")
     if not period_start or not period_end:
@@ -1597,34 +1604,34 @@ def save_sales_plan(payload: dict[str, Any]) -> dict[str, Any]:
             conn.execute(
                 """
                 UPDATE analytics_sales_plans
-                SET name = ?, period_start = ?, period_end = ?, target_amount_usd = ?, target_metric = ?, target_value = ?, is_active = ?, updated_at = datetime('now','localtime')
+                SET name = ?, period_start = ?, period_end = ?, target_amount_usd = ?, target_metric = ?, target_value = ?, is_active = ?,
+                    ombor_sheet_id = ?, ombor_sheet_name = ?, ombor_cbm_col = ?, ombor_date_col = ?, ombor_seller_col = ?, ombor_header_rows = ?,
+                    updated_at = datetime('now','localtime')
                 WHERE id = ?
                 """,
                 (
-                    name,
-                    period_start,
-                    period_end,
+                    name, period_start, period_end,
                     target_value if target_metric == "amount_usd" else 0,
-                    target_metric,
-                    target_value,
-                    is_active,
+                    target_metric, target_value, is_active,
+                    ombor_sheet_id, ombor_sheet_name, ombor_cbm_col, ombor_date_col, ombor_seller_col, ombor_header_rows,
                     plan_id,
                 ),
             )
         else:
             conn.execute(
                 """
-                INSERT INTO analytics_sales_plans(name, period_start, period_end, target_amount_usd, target_metric, target_value, is_active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'))
+                INSERT INTO analytics_sales_plans(
+                    name, period_start, period_end, target_amount_usd, target_metric, target_value, is_active,
+                    ombor_sheet_id, ombor_sheet_name, ombor_cbm_col, ombor_date_col, ombor_seller_col, ombor_header_rows,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'))
                 """,
                 (
-                    name,
-                    period_start,
-                    period_end,
+                    name, period_start, period_end,
                     target_value if target_metric == "amount_usd" else 0,
-                    target_metric,
-                    target_value,
-                    is_active,
+                    target_metric, target_value, is_active,
+                    ombor_sheet_id, ombor_sheet_name, ombor_cbm_col, ombor_date_col, ombor_seller_col, ombor_header_rows,
                 ),
             )
         conn.commit()
@@ -1889,24 +1896,114 @@ def get_managers(args: Any) -> dict[str, Any]:
 
 
 def get_monitor(args: Any) -> dict[str, Any]:
-    dataset = _load_dataset()
+    from services import ombor_service
+
     plans = list_sales_plans()
     initial_filters = parse_filters(args)
     selected_plan = _get_selected_plan(initial_filters, plans)
     if not selected_plan:
         return {"empty": True, "message": "Avval sales plan tanlang yoki yarating."}
+
+    metric = _clean_text(args.get("metric") or selected_plan.get("target_metric") or "cbm")
+    if metric not in PLAN_METRIC_LABELS:
+        metric = "cbm"
+
+    plan_filters = _apply_plan_dates(initial_filters, selected_plan)
+    target_value = _to_float(selected_plan.get("target_value") or selected_plan.get("target_amount_usd"))
+    ombor_sheet_id = _clean_text(selected_plan.get("ombor_sheet_id") or "")
+
+    # --- Live Ombor sheet mode ---
+    if ombor_sheet_id:
+        force = bool(args.get("force"))
+        try:
+            ombor = ombor_service.fetch_ombor_data(
+                sheet_id=ombor_sheet_id,
+                sheet_name=_clean_text(selected_plan.get("ombor_sheet_name") or "Ombor"),
+                cbm_col=_clean_text(selected_plan.get("ombor_cbm_col") or "W"),
+                date_col=_clean_text(selected_plan.get("ombor_date_col") or "AA"),
+                seller_col=_clean_text(selected_plan.get("ombor_seller_col") or "AH"),
+                header_rows=max(0, _to_int(selected_plan.get("ombor_header_rows") if selected_plan.get("ombor_header_rows") is not None else 2)),
+                date_from=plan_filters.date_from,
+                date_to=plan_filters.date_to,
+                force=force,
+            )
+        except Exception as exc:
+            return {"empty": True, "message": f"Ombor sheet xatosi: {exc}"}
+
+        closed_value = ombor["total_cbm"]
+        total_bl = ombor["total_bl"]
+        remaining_value = max(target_value - closed_value, 0.0)
+        progress_percent = _round((closed_value / target_value) * 100 if target_value else 0.0, 2)
+
+        leaders: list[dict[str, Any]] = []
+        for s in ombor.get("sellers", []):
+            name = _clean_text(s["name"])
+            leaders.append({
+                "name": name,
+                "initials": "".join(p[0].upper() for p in name.split()[:2] if p) or "?",
+                "value": _round(s["cbm"]),
+                "bl_count": _to_int(s["bl_count"]),
+                "share_percent": _round(s["share_percent"]),
+            })
+
+        monthly = [
+            {
+                "month": m["month"],
+                "label": m["label"],
+                "value": _round(m["cbm"]),
+                "bl_count": _to_int(m["bl_count"]),
+            }
+            for m in ombor.get("monthly", [])
+        ]
+
+        return {
+            "empty": False,
+            "data_source": "ombor_live",
+            "plan": {
+                "id": _to_int(selected_plan.get("id")),
+                "name": _clean_text(selected_plan.get("name")),
+                "period_start": _clean_text(selected_plan.get("period_start")),
+                "period_end": _clean_text(selected_plan.get("period_end")),
+                "target_value": _round(target_value),
+                "metric": "cbm",
+                "metric_label": "m³",
+            },
+            "overall": {
+                "closed_value": _round(closed_value),
+                "remaining_value": _round(remaining_value),
+                "progress_percent": progress_percent,
+                "total_bl": total_bl,
+                "plan_completed": bool(target_value and closed_value >= target_value),
+                "overshoot_value": _round(max(closed_value - target_value, 0.0)),
+            },
+            "monthly": monthly,
+            "departments": {
+                "logists": {
+                    "closed_value": _round(closed_value),
+                    "plan_share_percent": progress_percent,
+                    "bl_count": total_bl,
+                    "leaders": leaders,
+                },
+                "sales": {
+                    "closed_value": 0.0,
+                    "plan_share_percent": 0.0,
+                    "bl_count": 0,
+                    "leaders": [],
+                },
+            },
+            "last_updated": ombor["fetched_at"],
+            "source_name": f"Google Sheets · {selected_plan.get(‘ombor_sheet_name’, ‘Ombor’)}",
+        }
+
+    # --- Fallback: existing analytics DB ---
+    dataset = _load_dataset()
     if not dataset["sales"]:
         return {"empty": True, "message": "Google Sheets ma’lumotlari hali import qilinmagan."}
-
-    metric = _clean_text(args.get("metric") or selected_plan.get("target_metric") or "amount_usd")
-    if metric not in PLAN_METRIC_LABELS:
-        metric = "amount_usd"
 
     latest_statuses = _latest_status_map(dataset["statuses"])
     shipment_by_reys = _shipment_map(dataset["shipments"])
     logists_map = _logists_by_reys(dataset["logists"])
 
-    plan_filters = _apply_plan_dates(initial_filters, selected_plan)
     plan_sales_rows = _filter_sales(dataset["sales"], plan_filters, latest_statuses, shipment_by_reys, logists_map)
     all_time_sales_rows = _filter_sales(
         dataset["sales"],
@@ -1917,7 +2014,6 @@ def get_monitor(args: Any) -> dict[str, Any]:
     )
     logist_rows = _filter_logists(dataset["logists"], _filters_without_dates(plan_filters))
 
-    target_value = _to_float(selected_plan.get("target_value") or selected_plan.get("target_amount_usd"))
     closed_value = _plan_metric_value(metric, plan_sales_rows)
     remaining_value = max(target_value - closed_value, 0.0)
     progress_percent = _round((closed_value / target_value) * 100 if target_value else 0.0, 2)
@@ -1928,6 +2024,7 @@ def get_monitor(args: Any) -> dict[str, Any]:
 
     return {
         "empty": False,
+        "data_source": "analytics_db",
         "plan": {
             "id": _to_int(selected_plan.get("id")),
             "name": _clean_text(selected_plan.get("name")),
