@@ -346,6 +346,8 @@ def normalize_ai_language(language: str | None, chat_id=None) -> str:
         return "uz_cyrl"
     if value == "ru":
         return "ru"
+    if value == "en" or value == "english":
+        return "en"
     return get_chat_message_language(chat_id) if chat_id is not None else normalize_message_language(None)
 
 
