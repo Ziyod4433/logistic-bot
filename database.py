@@ -1282,6 +1282,20 @@ def init_db():
         cursor.execute("UPDATE batches SET status = ? WHERE status = ?", (new_status, old_status))
         cursor.execute("UPDATE bl_codes SET status = ? WHERE status = ?", (new_status, old_status))
 
+    # Migration: ombor sheet config per sales plan
+    for _col_def in [
+        "ombor_sheet_id TEXT NOT NULL DEFAULT ''",
+        "ombor_sheet_name TEXT NOT NULL DEFAULT 'Ombor'",
+        "ombor_cbm_col TEXT NOT NULL DEFAULT 'W'",
+        "ombor_date_col TEXT NOT NULL DEFAULT 'AA'",
+        "ombor_seller_col TEXT NOT NULL DEFAULT 'AH'",
+        "ombor_header_rows INTEGER NOT NULL DEFAULT 2",
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE analytics_sales_plans ADD COLUMN {_col_def}")
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
     conn.close()
 

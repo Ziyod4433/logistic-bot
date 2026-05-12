@@ -3284,6 +3284,22 @@ def analytics_api_monitor():
     return jsonify(monitor_service.get_monitor_payload(request.args))
 
 
+@app.route("/analytics/api/plans/<int:plan_id>/ombor-config", methods=["POST"])
+@editor_required
+def analytics_api_plan_ombor_config(plan_id: int):
+    payload = request.json or {}
+    payload["id"] = plan_id
+    try:
+        existing_plans = analytics_service.list_sales_plans()
+        plan = next((p for p in existing_plans if int(p.get("id") or 0) == plan_id), None)
+        if not plan:
+            return jsonify({"error": "Plan topilmadi"}), 404
+        merged = {**plan, **payload}
+        return jsonify(analytics_service.save_sales_plan(merged))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.route("/api/template")
 @login_required
 def api_get_template():

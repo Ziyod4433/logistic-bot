@@ -23,7 +23,7 @@
     <div class="logo">BUR<span>AQ</span> <span class="logo-sub">LOGISTICS</span></div>
     <div class="header-center">SALES MONITOR</div>
     <div class="hr">
-      <div class="rinfo">Yangilanish <span id="rotation-timer">5:00</span></div>
+      <div class="rinfo">Yangilanish <span id="rotation-timer">2:00</span></div>
       <div class="live">LIVE</div>
       <div class="clock" id="clock">--:--:--</div>
     </div>
@@ -37,8 +37,8 @@
     <div class="control-group">
       <label class="cl" for="metric-select">METRIC</label>
       <select id="metric-select" class="ci ci-sm">
-        <option value="amount_usd">USD</option>
         <option value="cbm">m³</option>
+        <option value="amount_usd">USD</option>
         <option value="bl_count">BL</option>
       </select>
     </div>
@@ -48,6 +48,7 @@
     </div>
     <div class="control-actions">
       <button class="cb" id="refresh-btn" type="button">Yangilash</button>
+      <button class="cb cb-ghost" id="config-btn" type="button">⚙ Sozlash</button>
       <button class="cb cb-ghost" id="fullscreen-btn" type="button">Full screen</button>
     </div>
   </section>
@@ -60,14 +61,15 @@
           <div class="cs">
             <div class="csi">Plan: <b class="o" id="plan-name">—</b></div>
             <div class="csi">Davr: <b class="o" id="plan-period">—</b></div>
-            <div class="csi">So‘nggi sync: <b class="o" id="last-updated">—</b></div>
+            <div class="csi">So'nggi sync: <b class="o" id="last-updated">—</b></div>
           </div>
         </div>
         <div class="circwrap">
           <div class="circc">
-            <svg class="circsvg" width="190" height="190" viewBox="0 0 190 190" aria-hidden="true">
-              <circle class="circbg" cx="95" cy="95" r="78"></circle>
-              <circle class="circfill" id="progress-arc" cx="95" cy="95" r="78"></circle>
+            <!-- r=105, cx/cy=125, viewBox=0 0 250 250, circumference≈660 -->
+            <svg class="circsvg" width="250" height="250" viewBox="0 0 250 250" aria-hidden="true">
+              <circle class="circbg" cx="125" cy="125" r="105"></circle>
+              <circle class="circfill" id="progress-arc" cx="125" cy="125" r="105"></circle>
             </svg>
             <div class="circcenter">
               <div class="circpct" id="progress-percent">0%</div>
@@ -79,9 +81,9 @@
           <span class="plan-badge" id="plan-badge">Plan kuzatilmoqda</span>
         </div>
         <div class="pgrid">
-          <div class="pbox"><div class="pv o" id="plan-target">0 USD</div><div class="pl">PLAN</div></div>
-          <div class="pbox"><div class="pv g" id="plan-closed">0 USD</div><div class="pl">FACT</div></div>
-          <div class="pbox"><div class="pv" id="plan-remaining">0 USD</div><div class="pl">QOLDIQ</div></div>
+          <div class="pbox"><div class="pv o" id="plan-target">0 m³</div><div class="pl">PLAN</div></div>
+          <div class="pbox"><div class="pv g" id="plan-closed">0 m³</div><div class="pl">FACT</div></div>
+          <div class="pbox"><div class="pv" id="plan-remaining">0 m³</div><div class="pl">QOLDIQ</div></div>
           <div class="pbox"><div class="pv" id="plan-bl">0 BL</div><div class="pl">TOTAL BL</div></div>
         </div>
       </article>
@@ -90,7 +92,7 @@
         <div class="ch">
           <div class="ct o">OYLIK DINAMIKA</div>
           <div class="cs">
-            <div class="csi">Metric: <b class="o" id="monthly-metric-label">USD</b></div>
+            <div class="csi">Metric: <b class="o" id="monthly-metric-label">m³</b></div>
           </div>
         </div>
         <div class="bars" id="monthly-bars"></div>
@@ -100,11 +102,11 @@
     <article class="card card-accent ca-b dept-monitor" id="dept-monitor">
       <div class="ch">
         <div class="dept-header-row">
-          <div class="ct b" id="dept-title">LOGISTLAR</div>
-          <div class="dept-rotate-note" id="dept-rotate-note">5 daqiqada almashadi</div>
+          <div class="ct b" id="dept-title">SOTUVCHILAR</div>
+          <div class="dept-rotate-note" id="dept-rotate-note">Live · Ombor sheet</div>
         </div>
         <div class="cs">
-          <div class="csi">Yopilgan: <b class="b" id="dept-total">0 USD</b></div>
+          <div class="csi">Jami: <b class="b" id="dept-total">0 m³</b></div>
           <div class="csi">Plan ulushi: <b class="b" id="dept-share">0%</b></div>
           <div class="csi">BL: <b class="b" id="dept-bl">0</b></div>
         </div>
@@ -117,11 +119,11 @@
 
   <section class="bottom">
     <div class="sc sc-title">
-      <div class="share-title" id="share-title">DOLLAR BO‘YICHA REJA ULUSHI</div>
-      <div class="share-subtitle">Logistlar va Savdo bo‘limi umumiy plan fonida alohida ko‘rsatiladi.</div>
+      <div class="share-title" id="share-title">KUB BO'YICHA REJA ULUSHI</div>
+      <div class="share-subtitle">Sotuvchilar umumiy plan fonida alohida ko'rsatiladi.</div>
     </div>
     <div class="sc">
-      <div class="sl">LOGISTLAR</div>
+      <div class="sl">SOTUVCHILAR</div>
       <div class="st"><div class="sf sf-blue" id="logists-share-bar"></div></div>
       <div class="sp sp-blue" id="logists-share-value">0%</div>
     </div>
@@ -134,6 +136,47 @@
 
   <div class="monitor-empty" id="monitor-empty" hidden></div>
   <div class="tbar"><div class="tf" id="rotation-line"></div></div>
+
+  <!-- Config modal -->
+  <div class="cfg-overlay" id="cfg-overlay" hidden>
+    <div class="cfg-modal">
+      <div class="cfg-title">⚙ OMBOR SHEET SOZLAMALARI</div>
+      <div class="cfg-grid">
+        <div class="cfg-field full">
+          <label class="cfg-label" for="cfg-sheet-id">Google Sheet URL yoki ID</label>
+          <input class="cfg-input" id="cfg-sheet-id" type="text" placeholder="https://docs.google.com/spreadsheets/d/…">
+          <div class="cfg-hint">Sheet havola bo'yicha ochiq bo'lishi kerak (Anyone with link → Viewer)</div>
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cfg-sheet-name">Varaq nomi (tab)</label>
+          <input class="cfg-input" id="cfg-sheet-name" type="text" placeholder="Ombor">
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cfg-header-rows">Sarlavha qatorlari soni</label>
+          <input class="cfg-input" id="cfg-header-rows" type="number" min="0" max="10" placeholder="2">
+          <div class="cfg-hint">Nechta qatorni o'tkazib yuborish (odatda 2)</div>
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cfg-cbm-col">CBM ustun (m³)</label>
+          <input class="cfg-input" id="cfg-cbm-col" type="text" placeholder="W" maxlength="3">
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cfg-date-col">Sana ustun (Date of Arrive)</label>
+          <input class="cfg-input" id="cfg-date-col" type="text" placeholder="AA" maxlength="3">
+        </div>
+        <div class="cfg-field full">
+          <label class="cfg-label" for="cfg-seller-col">Sotuvchi ustun (SOTUVCHI)</label>
+          <input class="cfg-input" id="cfg-seller-col" type="text" placeholder="AH" maxlength="3">
+          <div class="cfg-hint">Bo'sh kataklar "Retention" sifatida hisoblanadi</div>
+        </div>
+      </div>
+      <div class="cfg-status" id="cfg-status"></div>
+      <div class="cfg-actions">
+        <button class="cb cb-ghost" id="cfg-cancel-btn" type="button">Bekor qilish</button>
+        <button class="cb" id="cfg-save-btn" type="button">Saqlash va yangilash</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     window.SALES_MONITOR_BOOTSTRAP = {
