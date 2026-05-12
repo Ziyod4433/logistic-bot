@@ -1992,7 +1992,7 @@ def get_monitor(args: Any) -> dict[str, Any]:
                 },
             },
             "last_updated": ombor["fetched_at"],
-            "source_name": f"Google Sheets · {selected_plan.get(‘ombor_sheet_name’, ‘Ombor’)}",
+            "source_name": "Google Sheets - " + str(selected_plan.get("ombor_sheet_name") or "Ombor"),
         }
 
     # --- Fallback: existing analytics DB ---
