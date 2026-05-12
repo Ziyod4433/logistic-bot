@@ -1291,7 +1291,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
         </div>
 
-        <div class="card">
+        <div class="card" style="display:none">
           <div class="card-h">
             <span class="card-title">Filtrlar</span>
             <span class="analytics-table-note">Sukut bo‘yicha joriy oy ko‘rsatiladi.</span>
@@ -2625,11 +2625,11 @@ let selectedBatchSendIds = new Set();
 let includeRelatedBatchCargo = true;
 let moderatorResponseGroups = [];
 const INITIAL_VIEW = {{ (initial_view if initial_view is defined else 'dashboard')|tojson }};
-const INITIAL_ANALYTICS_TAB = {{ (initial_analytics_tab if initial_analytics_tab is defined else 'overview')|tojson }};
+const INITIAL_ANALYTICS_TAB = {{ (initial_analytics_tab if initial_analytics_tab is defined else 'monitor')|tojson }};
 const IS_EDITOR = {{ 'true' if is_editor else 'false' }};
 const CURRENT_ROLE = {{ current_role|tojson }};
 const ANALYTICS_STATE = {
-  tab: INITIAL_ANALYTICS_TAB || "overview",
+  tab: INITIAL_ANALYTICS_TAB || "monitor",
   charts: {},
   filterOptionsLoaded: false,
   syncStatus: null,
@@ -5681,13 +5681,10 @@ async function loadAnalyticsPage(initialTab = null) {
       ANALYTICS_STATE.tab = initialTab;
     }
     showAnalyticsTab(ANALYTICS_STATE.tab || "monitor", false);
-    const prefetchedOverview = await ensureAnalyticsFilterOptions();
-    await refreshAnalyticsActiveTab(null);
-    if (ANALYTICS_STATE.tab === "export") {
-      // export is static
-    }
     if (ANALYTICS_STATE.tab === "sync") {
       await loadAnalyticsSync();
+    } else {
+      await refreshAnalyticsActiveTab(null);
     }
   } catch (e) {
     toast(e.message, "err");
@@ -5714,7 +5711,7 @@ function esc(str) {
 window.__ANALYTICS_STATE__ = ANALYTICS_STATE;
 window.__BURAQ_ANALYTICS_BOOTSTRAP__ = {
   initialView: INITIAL_VIEW || "dashboard",
-  initialAnalyticsTab: INITIAL_ANALYTICS_TAB || "overview",
+  initialAnalyticsTab: INITIAL_ANALYTICS_TAB || "monitor",
   isEditor: !!IS_EDITOR,
   currentRole: CURRENT_ROLE || "",
 };
