@@ -2030,6 +2030,13 @@ def analytics_monitor_page():
     )
 
 
+@app.route("/analytics/monitor/preview")
+@login_required
+def analytics_monitor_preview():
+    """Side-by-side preview of 5 candidate 3D circle styles for the Sales Monitor."""
+    return render_template("analytics/monitor_preview.html")
+
+
 @app.route("/health")
 def health():
     return jsonify(
