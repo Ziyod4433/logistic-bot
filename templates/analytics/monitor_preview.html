@@ -444,6 +444,189 @@
     100% { transform: rotate(360deg) translateY(140px) rotate(-360deg); }
   }
 
+  /* ╔══════════════════════════════════════════════════════════════
+     VARIANT 6 — GAUGE METER (analog speedometer feel)
+     ══════════════════════════════════════════════════════════════ */
+  .v6 .gauge-bg   { stroke: #0a1c14; stroke-width: 28; fill: none; }
+  .v6 .gauge-fill { stroke: url(#g6); stroke-width: 26; fill: none; stroke-linecap: butt; filter: url(#glow6); }
+  .v6 .tick-major { stroke: rgba(110,231,183,.9); stroke-width: 3; }
+  .v6 .tick-minor { stroke: rgba(110,231,183,.5); stroke-width: 1.5; }
+  .v6 .needle {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 4px; height: 130px;
+    background: linear-gradient(180deg, var(--green3) 0%, var(--green) 50%, transparent 100%);
+    box-shadow: 0 0 12px var(--green2), 0 0 24px rgba(16,185,129,.6);
+    transform-origin: center bottom;
+    transform: translate(-50%, -100%) rotate(-103deg); /* 21.3% of 360° from start */
+    z-index: 6;
+    animation: needle-jitter 1.6s ease-in-out infinite;
+    border-radius: 2px;
+  }
+  .v6 .needle::after {
+    content: '';
+    position: absolute;
+    bottom: -8px; left: 50%;
+    width: 16px; height: 16px;
+    transform: translateX(-50%);
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--green3), var(--green));
+    box-shadow: 0 0 14px var(--green2);
+  }
+  @keyframes needle-jitter {
+    0%, 100% { transform: translate(-50%, -100%) rotate(-103deg); }
+    25%      { transform: translate(-50%, -100%) rotate(-101deg); }
+    75%      { transform: translate(-50%, -100%) rotate(-104deg); }
+  }
+  .v6 .glass-cover {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 280px; height: 280px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 30% 25%, rgba(255,255,255,.08), transparent 50%);
+    pointer-events: none;
+    z-index: 7;
+  }
+
+  /* ╔══════════════════════════════════════════════════════════════
+     VARIANT 7 — NEURAL MESH (connected glowing nodes)
+     ══════════════════════════════════════════════════════════════ */
+  .v7 .mesh-bg   { stroke: #0a1c14; stroke-width: 22; fill: none; }
+  .v7 .mesh-fill { stroke: url(#g7); stroke-width: 22; fill: none; stroke-linecap: round; filter: url(#glow7); }
+  .v7 .node {
+    position: absolute;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--green3), var(--green));
+    box-shadow: 0 0 12px var(--green2), 0 0 26px rgba(16,185,129,.7);
+    z-index: 5;
+    animation: node-pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes node-pulse {
+    0%, 100% { transform: scale(1); opacity: .85; }
+    50%      { transform: scale(1.35); opacity: 1; }
+  }
+  .v7 .node.n1 { top: 8%;  left: 50%; margin-left:-7px; animation-delay: 0s; }
+  .v7 .node.n2 { top: 22%; left: 84%; margin-left:-7px; animation-delay: .3s; }
+  .v7 .node.n3 { top: 50%; left: 92%; margin-left:-7px; margin-top:-7px; animation-delay: .6s; }
+  .v7 .node.n4 { top: 78%; left: 84%; margin-left:-7px; animation-delay: .9s; }
+  .v7 .node.n5 { top: 92%; left: 50%; margin-left:-7px; animation-delay: 1.2s; }
+  .v7 .node.n6 { top: 78%; left: 16%; margin-left:-7px; animation-delay: 1.5s; }
+  .v7 .node.n7 { top: 50%; left: 8%;  margin-left:-7px; margin-top:-7px; animation-delay: 1.8s; }
+  .v7 .node.n8 { top: 22%; left: 16%; margin-left:-7px; animation-delay: 2.1s; }
+  .v7 .connection-svg {
+    position: absolute; inset: 0;
+    z-index: 3;
+    pointer-events: none;
+  }
+  .v7 .conn-line {
+    stroke: rgba(110,231,183,.35);
+    stroke-width: 1.5;
+    fill: none;
+    stroke-dasharray: 4 4;
+    animation: dash-flow 3s linear infinite;
+  }
+  @keyframes dash-flow { to { stroke-dashoffset: -100; } }
+
+  /* ╔══════════════════════════════════════════════════════════════
+     VARIANT 8 — CRYSTAL FACETS (emerald-cut polygon ring)
+     ══════════════════════════════════════════════════════════════ */
+  .v8 .crystal-bg   { stroke: #0a1c14; stroke-width: 26; fill: none; }
+  .v8 .facet {
+    fill: url(#g8-facet);
+    stroke: rgba(110,231,183,.65);
+    stroke-width: 1;
+    filter: url(#glow8);
+  }
+  .v8 .facet-dim { fill: rgba(16,185,129,.35); }
+  .v8 .shine-sweep {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+      transparent 0deg,
+      rgba(255,255,255,.3) 12deg,
+      rgba(255,255,255,.1) 24deg,
+      transparent 40deg,
+      transparent 360deg);
+    mask: radial-gradient(circle, transparent 110px, black 130px, black 170px, transparent 178px);
+    -webkit-mask: radial-gradient(circle, transparent 110px, black 130px, black 170px, transparent 178px);
+    animation: rot-cw 5s linear infinite;
+    z-index: 4;
+    mix-blend-mode: screen;
+  }
+
+  /* ╔══════════════════════════════════════════════════════════════
+     VARIANT 9 — DIMENSIONAL TUNNEL (perspective depth)
+     ══════════════════════════════════════════════════════════════ */
+  .v9 { perspective: 800px; }
+  .v9 .tunnel-ring {
+    position: absolute;
+    top: 50%; left: 50%;
+    border: 2px solid rgba(110,231,183,.45);
+    border-radius: 50%;
+    transform-style: preserve-3d;
+    box-shadow: 0 0 14px rgba(16,185,129,.45);
+  }
+  .v9 .tunnel-ring.r1 { width: 320px; height: 320px; margin: -160px 0 0 -160px; animation: tunnel-r1 8s linear infinite; opacity: .35; }
+  .v9 .tunnel-ring.r2 { width: 270px; height: 270px; margin: -135px 0 0 -135px; animation: tunnel-r2 8s linear infinite; opacity: .55; border-color: rgba(110,231,183,.6); }
+  .v9 .tunnel-ring.r3 { width: 220px; height: 220px; margin: -110px 0 0 -110px; animation: tunnel-r3 8s linear infinite; opacity: .75; border-color: rgba(110,231,183,.75); border-width: 2.5px; }
+  .v9 .tunnel-ring.r4 { width: 170px; height: 170px; margin: -85px 0 0 -85px;   animation: tunnel-r4 8s linear infinite; opacity: 1; border-color: var(--green2); border-width: 3px; box-shadow: 0 0 24px var(--green2); }
+  @keyframes tunnel-r1 { to { transform: rotateX(70deg) rotateZ(360deg); } 0% { transform: rotateX(70deg) rotateZ(0deg); } }
+  @keyframes tunnel-r2 { to { transform: rotateX(60deg) rotateZ(-360deg); } 0% { transform: rotateX(60deg) rotateZ(0deg); } }
+  @keyframes tunnel-r3 { to { transform: rotateX(50deg) rotateZ(360deg); } 0% { transform: rotateX(50deg) rotateZ(0deg); } }
+  @keyframes tunnel-r4 { to { transform: rotateX(40deg) rotateZ(-360deg); } 0% { transform: rotateX(40deg) rotateZ(0deg); } }
+  .v9 .well-glow {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 130px; height: 130px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(110,231,183,.8) 0%, rgba(16,185,129,.3) 50%, transparent 70%);
+    filter: blur(8px);
+    animation: well-pulse 2s ease-in-out infinite;
+    z-index: 2;
+  }
+  @keyframes well-pulse { 0%,100% { opacity: .65; transform: translate(-50%, -50%) scale(.9); } 50% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); } }
+
+  /* ╔══════════════════════════════════════════════════════════════
+     VARIANT 10 — DNA HELIX (twisting strands)
+     ══════════════════════════════════════════════════════════════ */
+  .v10 .helix-bg   { stroke: #0a1c14; stroke-width: 18; fill: none; }
+  .v10 .helix-fill { stroke: url(#g10); stroke-width: 18; fill: none; stroke-linecap: round; filter: url(#glow10); opacity: .3; }
+  .v10 .strand1, .v10 .strand2 {
+    fill: none;
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    filter: url(#glow10);
+  }
+  .v10 .strand1 { stroke: var(--green3); }
+  .v10 .strand2 { stroke: var(--green); }
+  .v10 .strand-anim {
+    animation: helix-rot 6s linear infinite;
+    transform-origin: 170px 170px;
+  }
+  .v10 .strand-anim.reverse { animation-direction: reverse; }
+  @keyframes helix-rot { to { transform: rotate(360deg); } }
+  .v10 .helix-node {
+    position: absolute;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--green2);
+    box-shadow: 0 0 10px var(--green2), 0 0 22px rgba(16,185,129,.6);
+    z-index: 5;
+    transform-origin: center center;
+  }
+  .v10 .helix-node.h1 { top: 50%; left: 50%; animation: h-node1 4s linear infinite; }
+  .v10 .helix-node.h2 { top: 50%; left: 50%; animation: h-node2 4s linear infinite; }
+  .v10 .helix-node.h3 { top: 50%; left: 50%; animation: h-node3 4s linear infinite; }
+  .v10 .helix-node.h4 { top: 50%; left: 50%; animation: h-node4 4s linear infinite; }
+  @keyframes h-node1 { 0% { transform: rotate(0deg) translateX(110px); } 100% { transform: rotate(360deg) translateX(110px); } }
+  @keyframes h-node2 { 0% { transform: rotate(90deg) translateX(110px); } 100% { transform: rotate(450deg) translateX(110px); } }
+  @keyframes h-node3 { 0% { transform: rotate(180deg) translateX(110px); } 100% { transform: rotate(540deg) translateX(110px); } }
+  @keyframes h-node4 { 0% { transform: rotate(270deg) translateX(110px); } 100% { transform: rotate(630deg) translateX(110px); } }
+
   .choose {
     margin: 48px auto 0;
     max-width: 900px;
@@ -468,6 +651,10 @@
       <linearGradient id="g3" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#34d399"/></linearGradient>
       <linearGradient id="g4" x1="20%" y1="0%" x2="80%" y2="100%"><stop offset="0%" stop-color="#0fb37a"/><stop offset="35%" stop-color="#34d399"/><stop offset="50%" stop-color="#a7f3d0"/><stop offset="65%" stop-color="#34d399"/><stop offset="100%" stop-color="#0fb37a"/></linearGradient>
       <linearGradient id="g5" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6ee7b7"/></linearGradient>
+      <linearGradient id="g6" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#34d399"/></linearGradient>
+      <linearGradient id="g7" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6ee7b7"/></linearGradient>
+      <linearGradient id="g8-facet" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="rgba(110,231,183,.7)"/><stop offset="50%" stop-color="rgba(52,211,153,.95)"/><stop offset="100%" stop-color="rgba(16,185,129,.5)"/></linearGradient>
+      <linearGradient id="g10" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6ee7b7"/></linearGradient>
 
       <filter id="glow1" x="-50%" y="-50%" width="200%" height="200%">
         <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b1"/>
@@ -490,6 +677,10 @@
         <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b"/>
         <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
+      <filter id="glow6"  x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <filter id="glow7"  x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <filter id="glow8"  x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <filter id="glow10" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
       <!-- Liquid distortion (used by V4) -->
       <filter id="liquid">
         <feTurbulence type="fractalNoise" baseFrequency="0.025" numOctaves="2" seed="3">
@@ -622,6 +813,167 @@
           <circle class="ring-fill" cx="160" cy="160" r="128" stroke-dasharray="804" stroke-dashoffset="633" transform="rotate(-90 160 160)"/>
         </svg>
         <div class="vpct" style="transform:translateZ(60px)"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- ───── VARIANT 6: GAUGE METER ───── -->
+    <div class="vcard">
+      <div class="vname">VARIANT 6</div>
+      <div class="vdesc">GAUGE METER · analog speedometer + jittering needle</div>
+      <div class="vbox v6" data-tilt>
+        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <div class="glass-cover"></div>
+        <svg class="main-svg" viewBox="0 0 320 320" width="320" height="320">
+          <circle class="gauge-bg"   cx="160" cy="160" r="128"/>
+          <circle class="gauge-fill" cx="160" cy="160" r="128" stroke-dasharray="804" stroke-dashoffset="633" transform="rotate(-90 160 160)"/>
+          <g transform="translate(160 160)">
+            <!-- Major ticks every 30° -->
+            <g>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(-150)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(-120)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(-90)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(-60)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(-30)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(0)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(30)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(60)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(90)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(120)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(150)"/>
+              <line class="tick-major" x1="0" y1="-150" x2="0" y2="-168" transform="rotate(180)"/>
+            </g>
+            <!-- Minor ticks every 10° -->
+            <g>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(-140)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(-130)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(-110)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(-100)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(-80)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(-70)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(-50)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(-40)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(-20)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(-10)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(10)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(20)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(40)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(50)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(70)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(80)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(100)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(110)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(130)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(140)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(160)"/>
+              <line class="tick-minor" x1="0" y1="-154" x2="0" y2="-168" transform="rotate(170)"/>
+            </g>
+          </g>
+        </svg>
+        <span class="needle"></span>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- ───── VARIANT 7: NEURAL MESH ───── -->
+    <div class="vcard">
+      <div class="vname">VARIANT 7</div>
+      <div class="vdesc">NEURAL MESH · pulsing nodes + flowing connections</div>
+      <div class="vbox v7" data-tilt>
+        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <svg class="connection-svg" viewBox="0 0 360 360">
+          <!-- connecting lines between adjacent nodes around the perimeter -->
+          <polygon class="conn-line" points="180,29 305,68 331,170 305,272 180,331 55,272 29,170 55,68" />
+          <!-- cross connections (a few diagonal lines for "mesh" feel) -->
+          <line class="conn-line" x1="180" y1="29" x2="180" y2="331"/>
+          <line class="conn-line" x1="55"  y1="68" x2="305" y2="272"/>
+          <line class="conn-line" x1="305" y1="68" x2="55"  y2="272"/>
+          <line class="conn-line" x1="29"  y1="170" x2="331" y2="170"/>
+        </svg>
+        <span class="node n1"></span><span class="node n2"></span><span class="node n3"></span><span class="node n4"></span>
+        <span class="node n5"></span><span class="node n6"></span><span class="node n7"></span><span class="node n8"></span>
+        <svg class="main-svg" viewBox="0 0 320 320" width="320" height="320" style="opacity:.45">
+          <circle class="mesh-bg"   cx="160" cy="160" r="128"/>
+          <circle class="mesh-fill" cx="160" cy="160" r="128" stroke-dasharray="804" stroke-dashoffset="633" transform="rotate(-90 160 160)"/>
+        </svg>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- ───── VARIANT 8: CRYSTAL FACETS ───── -->
+    <div class="vcard">
+      <div class="vname">VARIANT 8</div>
+      <div class="vdesc">CRYSTAL FACETS · emerald-cut polygon ring + light sweep</div>
+      <div class="vbox v8" data-tilt>
+        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <div class="shine-sweep"></div>
+        <svg class="main-svg" viewBox="0 0 320 320" width="320" height="320">
+          <circle class="crystal-bg" cx="160" cy="160" r="128"/>
+          <!-- 16 trapezoidal facets forming the ring; first 4 dim, next 12 bright (21.3% progress; visualised proportionally) -->
+          <g transform="translate(160 160)">
+            <g transform="rotate(-90)">
+              <!-- bright facets covering progress (~77° = 21.3% of 360°) -->
+              <polygon class="facet" points="0,-145 22,-141 24,-119 0,-122"/>
+              <polygon class="facet" points="22,-141 44,-132 47,-110 24,-119"/>
+              <polygon class="facet" points="44,-132 65,-119 70,-98 47,-110"/>
+              <polygon class="facet" points="65,-119 84,-101 90,-81 70,-98"/>
+              <!-- dim (background) facets — rest of the ring -->
+              <polygon class="facet facet-dim" points="84,-101 101,-81 109,-62 90,-81"/>
+              <polygon class="facet facet-dim" points="101,-81 115,-58 124,-39 109,-62"/>
+              <polygon class="facet facet-dim" points="115,-58 126,-32 137,-13 124,-39"/>
+              <polygon class="facet facet-dim" points="126,-32 134,-5 145,14 137,-13"/>
+              <polygon class="facet facet-dim" points="134,-5 138,22 149,42 145,14"/>
+              <polygon class="facet facet-dim" points="138,22 138,49 149,69 149,42"/>
+              <polygon class="facet facet-dim" points="138,49 134,76 144,95 149,69"/>
+              <polygon class="facet facet-dim" points="134,76 126,103 134,121 144,95"/>
+              <polygon class="facet facet-dim" points="126,103 115,128 122,144 134,121"/>
+              <polygon class="facet facet-dim" points="115,128 101,151 106,166 122,144"/>
+              <polygon class="facet facet-dim" points="101,151 84,172 87,186 106,166"/>
+              <polygon class="facet facet-dim" points="84,172 65,189 65,203 87,186"/>
+            </g>
+          </g>
+        </svg>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- ───── VARIANT 9: DIMENSIONAL TUNNEL ───── -->
+    <div class="vcard">
+      <div class="vname">VARIANT 9</div>
+      <div class="vdesc">DIMENSIONAL TUNNEL · concentric rings in 3D perspective</div>
+      <div class="vbox v9" data-tilt>
+        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <div class="well-glow"></div>
+        <div class="tunnel-ring r1"></div>
+        <div class="tunnel-ring r2"></div>
+        <div class="tunnel-ring r3"></div>
+        <div class="tunnel-ring r4"></div>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- ───── VARIANT 10: DNA HELIX ───── -->
+    <div class="vcard">
+      <div class="vname">VARIANT 10</div>
+      <div class="vdesc">DNA HELIX · twisting strands + travelling nodes</div>
+      <div class="vbox v10" data-tilt>
+        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <svg class="main-svg" viewBox="0 0 340 340" width="340" height="340">
+          <circle class="helix-bg"   cx="170" cy="170" r="128"/>
+          <circle class="helix-fill" cx="170" cy="170" r="128" stroke-dasharray="804" stroke-dashoffset="633" transform="rotate(-90 170 170)"/>
+          <!-- DNA strand 1: sinusoidal path going around -->
+          <g class="strand-anim">
+            <path class="strand1" d="M 170,40 Q 240,90 290,170 Q 240,250 170,300 Q 100,250 50,170 Q 100,90 170,40 Z" />
+          </g>
+          <!-- DNA strand 2: same but offset / counter-rotating -->
+          <g class="strand-anim reverse">
+            <path class="strand2" d="M 170,55 Q 105,95 60,170 Q 105,245 170,285 Q 235,245 280,170 Q 235,95 170,55 Z" />
+          </g>
+        </svg>
+        <span class="helix-node h1"></span>
+        <span class="helix-node h2"></span>
+        <span class="helix-node h3"></span>
+        <span class="helix-node h4"></span>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
       </div>
     </div>
 
