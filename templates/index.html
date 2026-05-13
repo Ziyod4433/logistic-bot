@@ -1313,9 +1313,10 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         </div>
 
         <!-- Tab buttons — simple independent switcher, no analytics.js dependency -->
-        <div class="analytics-tabs" id="sm-tabs">
+        <div class="analytics-tabs" id="sm-tabs" style="display:flex;align-items:center;gap:8px">
           <button type="button" class="analytics-tab-btn active" data-sm-tab="monitor" onclick="switchSMTab(‘monitor’)">Sales Monitor</button>
           <button type="button" class="analytics-tab-btn" data-sm-tab="sync" onclick="switchSMTab(‘sync’)">Import / Sync</button>
+          <span id="sm-tab-indicator" style="font-size:10px;opacity:.4;margin-left:auto">tab: monitor</span>
         </div>
 
         <!-- PANEL: Sales Monitor (iframe embed) -->
@@ -5668,6 +5669,9 @@ function switchSMTab(tab) {
   var panelSync    = document.getElementById("sm-panel-sync");
   if (panelMonitor) panelMonitor.classList.toggle("sm-hidden", tab !== "monitor");
   if (panelSync)    panelSync.classList.toggle("sm-hidden",    tab !== "sync");
+  // Debug indicator — shows current tab and whether panels were found
+  var ind = document.getElementById("sm-tab-indicator");
+  if (ind) ind.textContent = "tab: " + tab + (panelMonitor && panelSync ? "" : " ⚠ panels missing");
   ANALYTICS_STATE.tab = tab;
   // Load sync data when switching to sync tab
   if (tab === "sync" && typeof window.loadAnalyticsSync === "function") window.loadAnalyticsSync();
