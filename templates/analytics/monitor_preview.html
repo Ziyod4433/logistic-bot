@@ -3,81 +3,81 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sales Monitor — 3D + Parallax variants</title>
+  <title>Sales Monitor — Cinematic 3D variants</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg:     #06080f;
     --bg2:    #0c0f1a;
-    --bg3:    #111520;
     --border: #1a2035;
     --text:   #e8eaf0;
     --muted:  #6b7a9e;
     --green:  #10b981;
     --green2: #34d399;
     --green3: #6ee7b7;
+    --greenD: #064e3b;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { overflow-x: hidden; }
   body {
     background:
-      radial-gradient(circle at 25% 15%, rgba(16,185,129,.07) 0%, transparent 45%),
-      radial-gradient(circle at 75% 85%, rgba(16,185,129,.05) 0%, transparent 45%),
+      radial-gradient(circle at 25% 15%, rgba(16,185,129,.09) 0%, transparent 50%),
+      radial-gradient(circle at 75% 85%, rgba(16,185,129,.06) 0%, transparent 50%),
       var(--bg);
     color: var(--text);
     font-family: "Oswald", sans-serif;
     padding: 32px 24px 80px;
     min-height: 100vh;
-    perspective: 1400px;          /* page-level perspective for 3D */
+    perspective: 1400px;
   }
-  h1 { font-size: 28px; letter-spacing: 3px; color: var(--green); margin-bottom: 4px; }
-  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 28px; letter-spacing: 1px; }
-  .hint { color: var(--green3); font-size: 11px; margin-bottom: 36px; letter-spacing: 1.5px; opacity: .8; }
+  h1 { font-size: 28px; letter-spacing: 3px; color: var(--green); }
+  .subtitle { color: var(--muted); font-size: 13px; margin: 4px 0 4px; letter-spacing: 1px; }
+  .hint { color: var(--green3); font-size: 11px; margin-bottom: 32px; letter-spacing: 1.5px; opacity: .8; }
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-    gap: 36px;
-    max-width: 1700px;
+    grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    gap: 38px;
+    max-width: 1720px;
     margin: 0 auto;
   }
 
-  /* ╔═══════════════════════════════════════════════════════════
-     PARALLAX CARD — 3D tilt on mouse move
-     ═══════════════════════════════════════════════════════════ */
   .vcard {
     position: relative;
-    background: linear-gradient(165deg, var(--bg2) 0%, #0a0d18 100%);
+    background:
+      radial-gradient(circle at 30% 0%, rgba(16,185,129,.07) 0%, transparent 60%),
+      linear-gradient(165deg, var(--bg2) 0%, #08090f 100%);
     border: 1px solid var(--border);
     border-radius: 22px;
-    padding: 32px 24px;
+    padding: 32px 22px 28px;
     text-align: center;
     overflow: hidden;
     perspective: 1200px;
     transform-style: preserve-3d;
-    transition: box-shadow .25s ease;
+    transition: box-shadow .25s ease, transform .25s ease;
   }
-  .vcard:hover {
-    box-shadow: 0 30px 60px -20px rgba(16,185,129,.18);
-  }
-  /* Subtle ambient depth ring behind the card */
+  .vcard:hover { box-shadow: 0 40px 90px -30px rgba(16,185,129,.28); }
+  /* ambient ring behind */
   .vcard::before {
-    content: '';
+    content:'';
     position: absolute;
-    top: 50%; left: 50%;
-    width: 460px; height: 460px;
+    top: 55%; left: 50%;
+    width: 500px; height: 500px;
     transform: translate(-50%, -50%);
-    background: radial-gradient(circle, rgba(16,185,129,.08) 0%, transparent 60%);
+    background: radial-gradient(circle, rgba(16,185,129,.10) 0%, transparent 55%);
     pointer-events: none;
     z-index: 0;
+    animation: ambient-pulse 4s ease-in-out infinite;
   }
+  @keyframes ambient-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+
   .vname { font-size: 20px; letter-spacing: 4px; color: var(--green); font-weight: 700; position: relative; z-index: 5; }
-  .vdesc { font-size: 11px; color: var(--muted); letter-spacing: 1.5px; margin: 4px 0 28px; min-height: 30px; position: relative; z-index: 5; }
+  .vdesc { font-size: 11px; color: var(--muted); letter-spacing: 1.5px; margin: 4px 0 22px; min-height: 28px; position: relative; z-index: 5; }
 
   .vbox {
     position: relative;
-    width: 340px; height: 340px;
+    width: 360px; height: 360px;
     margin: 0 auto;
     display: flex;
     align-items: center;
@@ -86,30 +86,9 @@
     transition: transform .14s ease-out;
     will-change: transform;
   }
-  .vbox > svg { position: absolute; inset: 10px; transform: translateZ(0); }
+  .vbox > svg.main-svg { position: absolute; inset: 20px; transform: translateZ(0); }
 
-  /* Floating particles (foreground layer) */
-  .particles { position: absolute; inset: 0; pointer-events: none; transform: translateZ(50px); }
-  .particles span {
-    position: absolute;
-    width: 5px; height: 5px;
-    border-radius: 50%;
-    background: var(--green3);
-    box-shadow: 0 0 8px var(--green2);
-    opacity: 0;
-    animation: float 4s ease-in-out infinite;
-  }
-  .particles span:nth-child(1) { top: 10%; left: 50%; animation-delay: 0s; }
-  .particles span:nth-child(2) { top: 30%; left: 88%; animation-delay: .6s; }
-  .particles span:nth-child(3) { top: 65%; left: 92%; animation-delay: 1.2s; }
-  .particles span:nth-child(4) { top: 88%; left: 50%; animation-delay: 1.8s; }
-  .particles span:nth-child(5) { top: 65%; left: 8%;  animation-delay: 2.4s; }
-  .particles span:nth-child(6) { top: 30%; left: 12%; animation-delay: 3.0s; }
-  @keyframes float {
-    0%, 100% { opacity: 0; transform: translateY(0) scale(.6); }
-    50%      { opacity: 1; transform: translateY(-14px) scale(1); }
-  }
-
+  /* Percent text — always on top, with depth */
   .vpct {
     position: absolute;
     inset: 0;
@@ -117,141 +96,354 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    z-index: 6;
+    z-index: 12;
     pointer-events: none;
-    transform: translateZ(30px);  /* text floats above ring */
+    transform: translateZ(40px);
   }
   .vpct-num {
     font-family: "Bebas Neue", sans-serif;
-    font-size: 82px;
+    font-size: 86px;
     line-height: 1;
     color: var(--green2);
     text-shadow:
-      0 0 20px rgba(16,185,129,.7),
-      0 0 40px rgba(16,185,129,.4),
-      0 2px 4px rgba(0,0,0,.6);
+      0 0 22px rgba(16,185,129,.85),
+      0 0 50px rgba(16,185,129,.45),
+      0 3px 6px rgba(0,0,0,.7);
   }
   .vpct-sub {
     font-size: 13px;
     letter-spacing: 5px;
     color: var(--muted);
     margin-top: 10px;
-    text-shadow: 0 1px 2px rgba(0,0,0,.8);
+    text-shadow: 0 1px 3px rgba(0,0,0,.8);
   }
 
-  /* ════════════════════════════════════════════════════════════
-     VARIANT 1 — DEEP CATHODE (multi-layer halo + parallax shadow)
-     ════════════════════════════════════════════════════════════ */
-  .v1 .ring-bg   { stroke: #0e2419; stroke-width: 22; fill: none; }
+  /* Floating particles — bigger and brighter */
+  .particles { position: absolute; inset: 0; pointer-events: none; transform: translateZ(60px); z-index: 8; }
+  .particles span {
+    position: absolute;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--green3);
+    box-shadow:
+      0 0 10px var(--green2),
+      0 0 22px rgba(16,185,129,.55);
+    opacity: 0;
+    animation: float 4s ease-in-out infinite;
+  }
+  .particles span:nth-child(1) { top: 8%;  left: 50%; animation-delay: 0s; }
+  .particles span:nth-child(2) { top: 22%; left: 86%; animation-delay: .4s; }
+  .particles span:nth-child(3) { top: 50%; left: 95%; animation-delay: .8s; }
+  .particles span:nth-child(4) { top: 78%; left: 86%; animation-delay: 1.2s; }
+  .particles span:nth-child(5) { top: 92%; left: 50%; animation-delay: 1.6s; }
+  .particles span:nth-child(6) { top: 78%; left: 14%; animation-delay: 2.0s; }
+  .particles span:nth-child(7) { top: 50%; left: 5%;  animation-delay: 2.4s; }
+  .particles span:nth-child(8) { top: 22%; left: 14%; animation-delay: 2.8s; }
+  @keyframes float {
+    0%, 100% { opacity: 0; transform: translateY(0) scale(.5); }
+    50%      { opacity: 1; transform: translateY(-16px) scale(1.1); }
+  }
+
+  /* ╔══════════════════════════════════════════════════════════════
+     VARIANT 1 — PLASMA CORE
+     Pulsing energy orb behind the percent, electric arcs, distorted halo
+     ══════════════════════════════════════════════════════════════ */
+  .v1 .ring-bg   { stroke: #0b2418; stroke-width: 22; fill: none; }
   .v1 .ring-fill { stroke: url(#g1); stroke-width: 22; fill: none; stroke-linecap: round; filter: url(#glow1); }
-  .v1 svg { animation: v1-pulse 2.4s ease-in-out infinite; }
-  @keyframes v1-pulse { 0%,100% { opacity: 1; } 50% { opacity: .92; } }
   .v1::after {
+    /* core energy orb */
     content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 200px; height: 200px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(110,231,183,.5) 0%, rgba(16,185,129,.25) 35%, transparent 70%);
+    filter: blur(8px);
+    z-index: 2;
+    animation: v1-core 2.4s ease-in-out infinite;
+  }
+  @keyframes v1-core {
+    0%, 100% { transform: translate(-50%, -50%) scale(.9); opacity: .85; }
+    50%      { transform: translate(-50%, -50%) scale(1.08); opacity: 1; }
+  }
+  .v1 .corona {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 360px; height: 360px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: conic-gradient(from 0deg, transparent 0deg, rgba(16,185,129,.25) 60deg, transparent 130deg);
+    animation: rot 4.5s linear infinite;
+    z-index: 1;
+    filter: blur(10px);
+  }
+  @keyframes rot { to { transform: translate(-50%, -50%) rotate(360deg); } }
+  .v1 .bolt {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 3px; height: 60px;
+    background: linear-gradient(180deg, transparent, var(--green3), transparent);
+    transform-origin: center bottom;
+    opacity: 0;
+    z-index: 4;
+    box-shadow: 0 0 8px var(--green2);
+  }
+  .v1 .bolt:nth-child(1) { transform: translate(-50%, -180px) rotate(0deg);   animation: bolt 3.2s ease-out infinite; }
+  .v1 .bolt:nth-child(2) { transform: translate(-50%, -180px) rotate(72deg);  animation: bolt 3.2s ease-out .6s infinite; }
+  .v1 .bolt:nth-child(3) { transform: translate(-50%, -180px) rotate(144deg); animation: bolt 3.2s ease-out 1.2s infinite; }
+  .v1 .bolt:nth-child(4) { transform: translate(-50%, -180px) rotate(216deg); animation: bolt 3.2s ease-out 1.8s infinite; }
+  .v1 .bolt:nth-child(5) { transform: translate(-50%, -180px) rotate(288deg); animation: bolt 3.2s ease-out 2.4s infinite; }
+  @keyframes bolt {
+    0%  { opacity: 0; transform-origin: center bottom; }
+    10% { opacity: 1; }
+    20% { opacity: 0; }
+    100%{ opacity: 0; }
+  }
+
+  /* ╔══════════════════════════════════════════════════════════════
+     VARIANT 2 — AURORA BLOOM
+     Aurora-like flowing inside the ring + star particles
+     ══════════════════════════════════════════════════════════════ */
+  .v2 .ring-bg   { stroke: rgba(255,255,255,.06); stroke-width: 24; fill: none; }
+  .v2 .ring-fill { stroke: url(#g2); stroke-width: 24; fill: none; stroke-linecap: round; filter: url(#glow2); }
+  .v2 .aurora {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 270px; height: 270px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    overflow: hidden;
+    z-index: 2;
+    opacity: .85;
+  }
+  .v2 .aurora::before, .v2 .aurora::after {
+    content: '';
+    position: absolute;
+    inset: -50%;
+    background:
+      radial-gradient(ellipse at 30% 30%, rgba(110,231,183,.5), transparent 50%),
+      radial-gradient(ellipse at 70% 70%, rgba(52,211,153,.4),  transparent 50%),
+      radial-gradient(ellipse at 50% 50%, rgba(16,185,129,.3),  transparent 60%);
+    animation: aurora-flow 9s ease-in-out infinite;
+    filter: blur(20px);
+  }
+  .v2 .aurora::after {
+    animation: aurora-flow 9s ease-in-out -4.5s infinite reverse;
+    opacity: .7;
+  }
+  @keyframes aurora-flow {
+    0%, 100% { transform: translate(-10%, -10%) rotate(0deg); }
+    33%      { transform: translate(8%, -5%)  rotate(40deg); }
+    66%      { transform: translate(-5%, 8%)  rotate(-30deg); }
+  }
+  .v2 .stars {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 280px; height: 280px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    z-index: 3;
+    pointer-events: none;
+  }
+  .v2 .stars span {
+    position: absolute;
+    width: 2px; height: 2px;
+    background: white;
+    border-radius: 50%;
+    box-shadow: 0 0 4px white;
+    opacity: 0;
+    animation: twinkle 3s ease-in-out infinite;
+  }
+  .v2 .stars span:nth-child(1) { top: 20%; left: 60%; animation-delay: 0s; }
+  .v2 .stars span:nth-child(2) { top: 35%; left: 25%; animation-delay: .5s; }
+  .v2 .stars span:nth-child(3) { top: 55%; left: 75%; animation-delay: 1s; }
+  .v2 .stars span:nth-child(4) { top: 70%; left: 40%; animation-delay: 1.5s; }
+  .v2 .stars span:nth-child(5) { top: 45%; left: 50%; animation-delay: 2s; }
+  .v2 .stars span:nth-child(6) { top: 25%; left: 80%; animation-delay: 2.5s; }
+  @keyframes twinkle { 0%,100% { opacity: 0; } 50% { opacity: 1; transform: scale(1.5); } }
+
+  /* ╔══════════════════════════════════════════════════════════════
+     VARIANT 3 — TACTICAL HUD
+     Tick marks every 10°, rotating arc segments, radar sweep, micro-text
+     ══════════════════════════════════════════════════════════════ */
+  .v3 .ring-bg     { stroke: #0a1f17; stroke-width: 22; fill: none; }
+  .v3 .ring-fill   { stroke: url(#g3); stroke-width: 22; fill: none; stroke-linecap: round; filter: url(#glow3); }
+  .v3 .tick        { stroke: rgba(110,231,183,.4); stroke-width: 1.5; }
+  .v3 .tick.major  { stroke: rgba(110,231,183,.85); stroke-width: 2.2; }
+  .v3 .outer-seg-1, .v3 .outer-seg-2 {
+    stroke: rgba(110,231,183,.55); stroke-width: 2; fill: none;
+    stroke-linecap: round;
+  }
+  .v3 .outer-seg-1 { animation: rot-cw  9s linear infinite; transform-origin: center; }
+  .v3 .outer-seg-2 { animation: rot-ccw 14s linear infinite; transform-origin: center; }
+  @keyframes rot-cw  { to { transform: rotate(360deg); } }
+  @keyframes rot-ccw { to { transform: rotate(-360deg); } }
+  .v3 .radar {
+    position: absolute;
+    inset: 20px;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+      transparent 0deg,
+      rgba(110,231,183,.5) 8deg,
+      rgba(110,231,183,.15) 22deg,
+      transparent 40deg,
+      transparent 360deg
+    );
+    mask: radial-gradient(circle, transparent 100px, black 115px, black 175px, transparent 180px);
+    -webkit-mask: radial-gradient(circle, transparent 100px, black 115px, black 175px, transparent 180px);
+    animation: rot-cw 2.5s linear infinite;
+    z-index: 3;
+    filter: blur(.5px);
+  }
+  .v3 .hud-label {
+    position: absolute;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 9px;
+    color: var(--green3);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    opacity: .65;
+    z-index: 5;
+  }
+  .v3 .hud-label.l1 { top: 12%; left: 12%; }
+  .v3 .hud-label.l2 { top: 12%; right: 12%; text-align: right; }
+  .v3 .hud-label.l3 { bottom: 12%; left: 12%; }
+  .v3 .hud-label.l4 { bottom: 12%; right: 12%; text-align: right; }
+  .v3 .hud-blink { display:inline-block; width:6px;height:6px;border-radius:50%; background: var(--green2); margin-right:5px; box-shadow:0 0 6px var(--green2); animation: blink 1.2s ease-in-out infinite; vertical-align: middle; }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+  /* ╔══════════════════════════════════════════════════════════════
+     VARIANT 4 — LIQUID MERCURY
+     Liquid surface, moving caustics, blob distortions
+     ══════════════════════════════════════════════════════════════ */
+  .v4 .ring-bg   { stroke: #0a1c14; stroke-width: 26; fill: none; }
+  .v4 .ring-fill { stroke: url(#g4); stroke-width: 26; fill: none; stroke-linecap: round; filter: url(#glow4) url(#liquid); }
+  .v4 .liquid-bg {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 260px; height: 260px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 40% 30%, rgba(110,231,183,.45), transparent 50%),
+      radial-gradient(circle at 70% 60%, rgba(52,211,153,.35), transparent 55%),
+      radial-gradient(circle at 30% 70%, rgba(16,185,129,.4), transparent 50%);
+    filter: blur(14px);
+    animation: liquid-flow 6s ease-in-out infinite;
+    z-index: 1;
+  }
+  @keyframes liquid-flow {
+    0%, 100% { transform: translate(-50%, -50%) scale(1) rotate(0deg); }
+    33%      { transform: translate(-48%, -52%) scale(1.06) rotate(40deg); }
+    66%      { transform: translate(-52%, -48%) scale(.96) rotate(-30deg); }
+  }
+  .v4 .mercury-drop {
+    position: absolute;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, var(--green3), var(--green));
+    box-shadow:
+      0 0 10px var(--green2),
+      inset -2px -3px 5px rgba(0,0,0,.3),
+      inset 2px 2px 4px rgba(255,255,255,.4);
+    z-index: 5;
+    opacity: 0;
+  }
+  .v4 .mercury-drop.d1 { top: 50%; left: 50%; animation: drop1 5s ease-in-out infinite; }
+  .v4 .mercury-drop.d2 { top: 50%; left: 50%; animation: drop2 5s ease-in-out 1.7s infinite; }
+  .v4 .mercury-drop.d3 { top: 50%; left: 50%; animation: drop3 5s ease-in-out 3.3s infinite; }
+  @keyframes drop1 {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(.3); }
+    20%{ opacity: 1; }
+    100%{ opacity: 0; transform: translate(40px, -70px) scale(1.4); }
+  }
+  @keyframes drop2 {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(.3); }
+    20%{ opacity: 1; }
+    100%{ opacity: 0; transform: translate(-80px, 30px) scale(1.4); }
+  }
+  @keyframes drop3 {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(.3); }
+    20%{ opacity: 1; }
+    100%{ opacity: 0; transform: translate(60px, 60px) scale(1.4); }
+  }
+
+  /* ╔══════════════════════════════════════════════════════════════
+     VARIANT 5 — ORBITAL NEXUS
+     Orbital rings at 3D angles, planet core, moving satellites, nebula bg
+     ══════════════════════════════════════════════════════════════ */
+  .v5 .ring-bg   { stroke: #0a1c14; stroke-width: 22; fill: none; }
+  .v5 .ring-fill { stroke: url(#g5); stroke-width: 22; fill: none; stroke-linecap: round; filter: url(#glow5); }
+  .v5 .nebula {
     position: absolute;
     top: 50%; left: 50%;
     width: 320px; height: 320px;
     transform: translate(-50%, -50%);
     border-radius: 50%;
-    background: conic-gradient(from 0deg, transparent 0deg, rgba(16,185,129,.22) 60deg, transparent 130deg);
-    animation: v1-rotate 5s linear infinite;
-    z-index: 1;
-    filter: blur(8px);
+    background:
+      radial-gradient(ellipse at 30% 35%, rgba(167,243,208,.18), transparent 50%),
+      radial-gradient(ellipse at 70% 65%, rgba(16,185,129,.25), transparent 55%);
+    filter: blur(16px);
+    z-index: 0;
+    animation: nebula-drift 12s ease-in-out infinite;
   }
-  @keyframes v1-rotate { to { transform: translate(-50%, -50%) rotate(360deg); } }
-
-  /* ════════════════════════════════════════════════════════════
-     VARIANT 2 — CRYSTAL DEPTH (frosted dome + 3 glass layers)
-     ════════════════════════════════════════════════════════════ */
-  .v2 .ring-bg   { stroke: rgba(255,255,255,.05); stroke-width: 30; fill: none; }
-  .v2 .ring-fill { stroke: url(#g2); stroke-width: 30; fill: none; stroke-linecap: round; filter: url(#glow2); }
-  .v2::after {
-    content: '';
+  @keyframes nebula-drift {
+    0%,100% { transform: translate(-50%, -50%) rotate(0deg); }
+    50%     { transform: translate(-50%, -50%) rotate(180deg); }
+  }
+  .v5 .orbit {
     position: absolute;
     top: 50%; left: 50%;
-    width: 240px; height: 240px;
-    transform: translate(-50%, -50%) translateZ(-20px);
+    border: 1px dashed rgba(110,231,183,.32);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .v5 .orbit.o1 { width: 320px; height: 200px; transform: translate(-50%, -50%) rotateZ(20deg); animation: orbit-tilt 8s ease-in-out infinite; }
+  .v5 .orbit.o2 { width: 280px; height: 320px; transform: translate(-50%, -50%) rotateZ(-25deg); animation: orbit-tilt 11s ease-in-out -3s infinite reverse; }
+  @keyframes orbit-tilt {
+    0%,100% { transform: translate(-50%, -50%) rotateZ(20deg); }
+    50%     { transform: translate(-50%, -50%) rotateZ(-20deg); }
+  }
+  .v5 .planet {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 130px; height: 130px;
+    transform: translate(-50%, -50%);
     border-radius: 50%;
     background:
-      radial-gradient(circle at 35% 25%, rgba(110,231,183,.25), transparent 55%),
-      radial-gradient(circle at 65% 75%, rgba(16,185,129,.18), transparent 60%);
-    box-shadow: inset 0 -30px 60px rgba(0,0,0,.4), inset 0 30px 50px rgba(110,231,183,.12);
-    backdrop-filter: blur(4px);
-    animation: v2-shimmer 5s ease-in-out infinite;
-    z-index: 1;
-  }
-  @keyframes v2-shimmer {
-    0%,100% { transform: translate(-50%, -50%) translateZ(-20px) scale(1); }
-    50%     { transform: translate(-50%, -50%) translateZ(-10px) scale(1.05); }
-  }
-
-  /* ════════════════════════════════════════════════════════════
-     VARIANT 3 — METALLIC EMBOSS (brushed chrome + bevel + sweep)
-     ════════════════════════════════════════════════════════════ */
-  .v3 .ring-bg   { stroke: url(#g3-bg); stroke-width: 28; fill: none; }
-  .v3 .ring-fill { stroke: url(#g3); stroke-width: 26; fill: none; stroke-linecap: round; filter: url(#glow3); }
-  .v3::before {                        /* sweep highlight */
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    background: conic-gradient(
-      from 0deg,
-      transparent 0deg,
-      rgba(255,255,255,.22) 25deg,
-      transparent 50deg,
-      transparent 180deg,
-      rgba(255,255,255,.1) 200deg,
-      transparent 220deg
-    );
-    mask: radial-gradient(circle, transparent 130px, black 145px, black 165px, transparent 178px);
-    -webkit-mask: radial-gradient(circle, transparent 130px, black 145px, black 165px, transparent 178px);
-    animation: v3-rotate 7s linear infinite;
+      radial-gradient(circle at 30% 25%, rgba(110,231,183,.85), rgba(16,185,129,.7) 40%, rgba(6,78,59,.85) 80%);
+    box-shadow:
+      inset -12px -18px 24px rgba(0,0,0,.5),
+      inset 8px 10px 18px rgba(255,255,255,.18),
+      0 0 28px rgba(16,185,129,.5);
     z-index: 3;
+    animation: planet-spin 18s linear infinite;
   }
-  @keyframes v3-rotate { to { transform: rotate(360deg); } }
-
-  /* ════════════════════════════════════════════════════════════
-     VARIANT 4 — HOLOGRAPHIC (chromatic aberration + scan)
-     ════════════════════════════════════════════════════════════ */
-  .v4 .ring-bg { stroke: #0a1f17; stroke-width: 24; fill: none; }
-  .v4 .ring-r { stroke: rgba(110,231,183,.55); stroke-width: 24; fill: none; stroke-linecap: round; transform: translate(2.5px,0); filter: blur(.5px); }
-  .v4 .ring-g { stroke: url(#g4);                stroke-width: 24; fill: none; stroke-linecap: round; filter: url(#glow4); }
-  .v4 .ring-b { stroke: rgba(52,211,153,.55);  stroke-width: 24; fill: none; stroke-linecap: round; transform: translate(-2.5px,0); filter: blur(.5px); }
-  .v4::after {                                 /* scanning sweep */
-    content: '';
+  @keyframes planet-spin { to { background-position: 100% 0; } }
+  .v5 .satellite {
     position: absolute;
-    inset: 10px;
+    top: 50%; left: 50%;
+    width: 10px; height: 10px;
     border-radius: 50%;
-    background: conic-gradient(from 0deg,
-      transparent 0deg,
-      rgba(110,231,183,.6) 6deg,
-      rgba(110,231,183,.2) 12deg,
-      transparent 20deg,
-      transparent 360deg
-    );
-    mask: radial-gradient(circle, transparent 110px, black 130px, black 170px, transparent 184px);
-    -webkit-mask: radial-gradient(circle, transparent 110px, black 130px, black 170px, transparent 184px);
-    animation: v4-scan 2.6s linear infinite;
-    z-index: 3;
-    filter: blur(.6px);
+    background: var(--green3);
+    box-shadow: 0 0 12px var(--green2), 0 0 24px rgba(110,231,183,.6);
+    z-index: 6;
+    transform-origin: center center;
   }
-  @keyframes v4-scan { to { transform: rotate(360deg); } }
+  .v5 .satellite.s1 { animation: sat1 4.5s linear infinite; }
+  .v5 .satellite.s2 { animation: sat2 6.5s linear infinite reverse; }
+  @keyframes sat1 {
+    0%   { transform: rotate(0deg)   translateX(150px) rotate(0deg); }
+    100% { transform: rotate(360deg) translateX(150px) rotate(-360deg); }
+  }
+  @keyframes sat2 {
+    0%   { transform: rotate(0deg)   translateY(140px) rotate(0deg); }
+    100% { transform: rotate(360deg) translateY(140px) rotate(-360deg); }
+  }
 
-  /* ════════════════════════════════════════════════════════════
-     VARIANT 5 — DEPTH ORBITAL (3 layers, parallax-aware)
-     ════════════════════════════════════════════════════════════ */
-  .v5 .ring-outer      { stroke: rgba(16,185,129,.2);   stroke-width: 2;   fill: none; }
-  .v5 .ring-outer-d    { stroke: rgba(16,185,129,.35);  stroke-width: 1.5; fill: none; stroke-dasharray: 3 8; }
-  .v5 .ring-bg         { stroke: #102a1f;               stroke-width: 24;  fill: none; }
-  .v5 .ring-fill       { stroke: url(#g5);              stroke-width: 24;  fill: none; stroke-linecap: round; filter: url(#glow5); }
-  .v5 .ring-inner-d    { stroke: rgba(110,231,183,.25); stroke-width: 1.5; fill: none; stroke-dasharray: 4 6; }
-  .v5 .ring-outer-glint { stroke: rgba(110,231,183,.85); stroke-width: 2; fill: none; stroke-linecap: round; transform-origin: 170px 170px; animation: v5-outer 6s linear infinite; }
-  .v5 .ring-inner-glint { stroke: rgba(255,255,255,.65); stroke-width: 2; fill: none; stroke-linecap: round; transform-origin: 170px 170px; animation: v5-inner 4s linear infinite reverse; }
-  @keyframes v5-outer { to { transform: rotate(360deg); } }
-  @keyframes v5-inner { to { transform: rotate(360deg); } }
-
-  /* Choose banner */
   .choose {
     margin: 48px auto 0;
     max-width: 900px;
@@ -264,58 +456,61 @@
 </style>
 </head>
 <body>
-  <h1>SALES MONITOR — 3D + PARALLAX</h1>
-  <div class="subtitle">Premium / business · Active animation · Green theme</div>
-  <div class="hint">🖱  Move your cursor over each card — circle tilts in 3D toward your mouse · floating particles · multi-layer depth</div>
+  <h1>SALES MONITOR — CINEMATIC 3D</h1>
+  <div class="subtitle">5 fully-loaded scenes · green theme · parallax tilt · multi-layered animations</div>
+  <div class="hint">🖱  Hover any card — the whole scene tilts in 3D toward your cursor</div>
 
-  <!-- ─── Shared SVG filter defs — proper feGaussianBlur (no pixel staircase) ─── -->
+  <!-- ─── Shared SVG defs ─── -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
-      <linearGradient id="g1"    x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6ee7b7"/></linearGradient>
-      <linearGradient id="g2"    x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="rgba(110,231,183,.95)"/><stop offset="50%" stop-color="rgba(52,211,153,.85)"/><stop offset="100%" stop-color="rgba(16,185,129,.95)"/></linearGradient>
-      <linearGradient id="g3-bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#1a3a2a"/><stop offset="50%" stop-color="#0a1c14"/><stop offset="100%" stop-color="#1a3a2a"/></linearGradient>
-      <linearGradient id="g3"    x1="20%" y1="0%" x2="80%" y2="100%"><stop offset="0%" stop-color="#0fb37a"/><stop offset="35%" stop-color="#34d399"/><stop offset="50%" stop-color="#a7f3d0"/><stop offset="65%" stop-color="#34d399"/><stop offset="100%" stop-color="#0fb37a"/></linearGradient>
-      <linearGradient id="g4"    x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#34d399"/><stop offset="50%" stop-color="#10b981"/><stop offset="100%" stop-color="#6ee7b7"/></linearGradient>
-      <linearGradient id="g5"    x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6ee7b7"/></linearGradient>
+      <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6ee7b7"/></linearGradient>
+      <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#6ee7b7"/><stop offset="50%" stop-color="#34d399"/><stop offset="100%" stop-color="#10b981"/></linearGradient>
+      <linearGradient id="g3" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#34d399"/></linearGradient>
+      <linearGradient id="g4" x1="20%" y1="0%" x2="80%" y2="100%"><stop offset="0%" stop-color="#0fb37a"/><stop offset="35%" stop-color="#34d399"/><stop offset="50%" stop-color="#a7f3d0"/><stop offset="65%" stop-color="#34d399"/><stop offset="100%" stop-color="#0fb37a"/></linearGradient>
+      <linearGradient id="g5" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6ee7b7"/></linearGradient>
 
-      <!-- Soft glow filter — Gaussian blur instead of drop-shadow (no pixel staircase) -->
       <filter id="glow1" x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur1"/>
-        <feGaussianBlur in="SourceGraphic" stdDeviation="14" result="blur2"/>
-        <feMerge>
-          <feMergeNode in="blur2"/>
-          <feMergeNode in="blur1"/>
-          <feMergeNode in="SourceGraphic"/>
-        </feMerge>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b1"/>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="14" result="b2"/>
+        <feMerge><feMergeNode in="b2"/><feMergeNode in="b1"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
       <filter id="glow2" x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
       <filter id="glow3" x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
       <filter id="glow4" x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
       <filter id="glow5" x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <!-- Liquid distortion (used by V4) -->
+      <filter id="liquid">
+        <feTurbulence type="fractalNoise" baseFrequency="0.025" numOctaves="2" seed="3">
+          <animate attributeName="baseFrequency" dur="14s" values="0.020;0.035;0.020" repeatCount="indefinite"/>
+        </feTurbulence>
+        <feDisplacementMap in="SourceGraphic" scale="3"/>
       </filter>
     </defs>
   </svg>
 
   <div class="grid">
 
-    <!-- VARIANT 1 -->
+    <!-- ───── VARIANT 1: PLASMA CORE ───── -->
     <div class="vcard">
       <div class="vname">VARIANT 1</div>
-      <div class="vdesc">DEEP CATHODE · multi-halo + rotating corona</div>
+      <div class="vdesc">PLASMA CORE · pulsing orb + energy bolts + corona</div>
       <div class="vbox v1" data-tilt>
-        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span></span>
-        <svg viewBox="0 0 320 320" width="320" height="320">
+        <div class="corona"></div>
+        <span class="bolt"></span><span class="bolt"></span><span class="bolt"></span><span class="bolt"></span><span class="bolt"></span>
+        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <svg class="main-svg" viewBox="0 0 320 320" width="320" height="320">
           <circle class="ring-bg"   cx="160" cy="160" r="130"/>
           <circle class="ring-fill" cx="160" cy="160" r="130" stroke-dasharray="817" stroke-dashoffset="643" transform="rotate(-90 160 160)"/>
         </svg>
@@ -323,27 +518,15 @@
       </div>
     </div>
 
-    <!-- VARIANT 2 -->
+    <!-- ───── VARIANT 2: AURORA BLOOM ───── -->
     <div class="vcard">
       <div class="vname">VARIANT 2</div>
-      <div class="vdesc">CRYSTAL DEPTH · frosted dome + glass layers</div>
+      <div class="vdesc">AURORA BLOOM · flowing nebula + twinkling stars</div>
       <div class="vbox v2" data-tilt>
-        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span></span>
-        <svg viewBox="0 0 320 320" width="320" height="320">
-          <circle class="ring-bg"   cx="160" cy="160" r="125"/>
-          <circle class="ring-fill" cx="160" cy="160" r="125" stroke-dasharray="785" stroke-dashoffset="618" transform="rotate(-90 160 160)"/>
-        </svg>
-        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
-      </div>
-    </div>
-
-    <!-- VARIANT 3 -->
-    <div class="vcard">
-      <div class="vname">VARIANT 3</div>
-      <div class="vdesc">METALLIC EMBOSS · chrome + bevel + sweep</div>
-      <div class="vbox v3" data-tilt>
-        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span></span>
-        <svg viewBox="0 0 320 320" width="320" height="320">
+        <div class="aurora"></div>
+        <div class="stars"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <svg class="main-svg" viewBox="0 0 320 320" width="320" height="320">
           <circle class="ring-bg"   cx="160" cy="160" r="128"/>
           <circle class="ring-fill" cx="160" cy="160" r="128" stroke-dasharray="804" stroke-dashoffset="633" transform="rotate(-90 160 160)"/>
         </svg>
@@ -351,69 +534,117 @@
       </div>
     </div>
 
-    <!-- VARIANT 4 -->
+    <!-- ───── VARIANT 3: TACTICAL HUD ───── -->
     <div class="vcard">
-      <div class="vname">VARIANT 4</div>
-      <div class="vdesc">HOLOGRAPHIC · RGB aberration + scan</div>
-      <div class="vbox v4" data-tilt>
-        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span></span>
-        <svg viewBox="0 0 320 320" width="320" height="320">
-          <circle class="ring-bg" cx="160" cy="160" r="130"/>
-          <circle class="ring-r"  cx="160" cy="160" r="130" stroke-dasharray="817" stroke-dashoffset="643" transform="rotate(-90 160 160)"/>
-          <circle class="ring-b"  cx="160" cy="160" r="130" stroke-dasharray="817" stroke-dashoffset="643" transform="rotate(-90 160 160)"/>
-          <circle class="ring-g"  cx="160" cy="160" r="130" stroke-dasharray="817" stroke-dashoffset="643" transform="rotate(-90 160 160)"/>
+      <div class="vname">VARIANT 3</div>
+      <div class="vdesc">TACTICAL HUD · ticks + arc segments + radar sweep</div>
+      <div class="vbox v3" data-tilt>
+        <div class="radar"></div>
+        <span class="hud-label l1"><span class="hud-blink"></span>SYNC OK</span>
+        <span class="hud-label l2"><span class="hud-blink"></span>LIVE</span>
+        <span class="hud-label l3">TGT: 995 m³</span>
+        <span class="hud-label l4">DELTA: 783</span>
+        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <svg class="main-svg" viewBox="0 0 320 320" width="320" height="320">
+          <!-- 36 tick marks every 10° -->
+          <g transform="translate(160 160)">
+            <g class="ticks">
+              <!-- Major ticks every 45° -->
+              <line class="tick major" x1="0" y1="-148" x2="0" y2="-160" transform="rotate(0)"/>
+              <line class="tick major" x1="0" y1="-148" x2="0" y2="-160" transform="rotate(45)"/>
+              <line class="tick major" x1="0" y1="-148" x2="0" y2="-160" transform="rotate(90)"/>
+              <line class="tick major" x1="0" y1="-148" x2="0" y2="-160" transform="rotate(135)"/>
+              <line class="tick major" x1="0" y1="-148" x2="0" y2="-160" transform="rotate(180)"/>
+              <line class="tick major" x1="0" y1="-148" x2="0" y2="-160" transform="rotate(225)"/>
+              <line class="tick major" x1="0" y1="-148" x2="0" y2="-160" transform="rotate(270)"/>
+              <line class="tick major" x1="0" y1="-148" x2="0" y2="-160" transform="rotate(315)"/>
+              <!-- Minor ticks every 15° -->
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(15)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(30)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(60)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(75)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(105)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(120)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(150)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(165)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(195)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(210)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(240)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(255)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(285)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(300)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(330)"/>
+              <line class="tick" x1="0" y1="-152" x2="0" y2="-160" transform="rotate(345)"/>
+            </g>
+            <!-- Outer rotating arc segments -->
+            <circle class="outer-seg-1" cx="0" cy="0" r="140" stroke-dasharray="40 60 22 78 40 660"/>
+            <circle class="outer-seg-2" cx="0" cy="0" r="120" stroke-dasharray="14 30 8 38 660"/>
+          </g>
+          <circle class="ring-bg"   cx="160" cy="160" r="100"/>
+          <circle class="ring-fill" cx="160" cy="160" r="100" stroke-dasharray="628" stroke-dashoffset="494" transform="rotate(-90 160 160)"/>
         </svg>
         <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
       </div>
     </div>
 
-    <!-- VARIANT 5 -->
+    <!-- ───── VARIANT 4: LIQUID MERCURY ───── -->
     <div class="vcard">
-      <div class="vname">VARIANT 5</div>
-      <div class="vdesc">DEPTH ORBITAL · 3 rings + parallax glints</div>
-      <div class="vbox v5" data-tilt>
-        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span></span>
-        <svg viewBox="0 0 340 340" width="340" height="340">
-          <circle class="ring-outer"        cx="170" cy="170" r="160"/>
-          <circle class="ring-outer-d"      cx="170" cy="170" r="152"/>
-          <circle class="ring-bg"           cx="170" cy="170" r="130"/>
-          <circle class="ring-fill"         cx="170" cy="170" r="130" stroke-dasharray="817" stroke-dashoffset="643" transform="rotate(-90 170 170)"/>
-          <circle class="ring-inner-d"      cx="170" cy="170" r="108"/>
-          <circle class="ring-outer-glint"  cx="170" cy="170" r="156" stroke-dasharray="22 958"/>
-          <circle class="ring-inner-glint"  cx="170" cy="170" r="112" stroke-dasharray="14 690"/>
+      <div class="vname">VARIANT 4</div>
+      <div class="vdesc">LIQUID MERCURY · molten flow + floating droplets</div>
+      <div class="vbox v4" data-tilt>
+        <div class="liquid-bg"></div>
+        <span class="mercury-drop d1"></span>
+        <span class="mercury-drop d2"></span>
+        <span class="mercury-drop d3"></span>
+        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <svg class="main-svg" viewBox="0 0 320 320" width="320" height="320">
+          <circle class="ring-bg"   cx="160" cy="160" r="128"/>
+          <circle class="ring-fill" cx="160" cy="160" r="128" stroke-dasharray="804" stroke-dashoffset="633" transform="rotate(-90 160 160)"/>
         </svg>
         <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- ───── VARIANT 5: ORBITAL NEXUS ───── -->
+    <div class="vcard">
+      <div class="vname">VARIANT 5</div>
+      <div class="vdesc">ORBITAL NEXUS · planet core + tilted orbits + satellites</div>
+      <div class="vbox v5" data-tilt>
+        <div class="nebula"></div>
+        <div class="orbit o1"></div>
+        <div class="orbit o2"></div>
+        <div class="planet"></div>
+        <span class="satellite s1"></span>
+        <span class="satellite s2"></span>
+        <span class="particles"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <svg class="main-svg" viewBox="0 0 320 320" width="320" height="320">
+          <circle class="ring-bg"   cx="160" cy="160" r="128"/>
+          <circle class="ring-fill" cx="160" cy="160" r="128" stroke-dasharray="804" stroke-dashoffset="633" transform="rotate(-90 160 160)"/>
+        </svg>
+        <div class="vpct" style="transform:translateZ(60px)"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
       </div>
     </div>
 
   </div>
 
   <div class="choose">
-    <div style="font-size:16px;letter-spacing:2px">Hovered & felt the tilt? Pick: <b>VARIANT 1 / 2 / 3 / 4 / 5</b></div>
-    <div style="font-size:12px;color:var(--muted);margin-top:8px">…я применю выбранный к боевому <code>/analytics/monitor</code> с параллаксом и 3D-наклоном по движению устройства / мыши.</div>
+    <div style="font-size:16px;letter-spacing:2px">Pick the scene: <b>VARIANT 1 / 2 / 3 / 4 / 5</b></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">…я применю к боевому <code>/analytics/monitor</code> (TV + админка).</div>
   </div>
 
 <script>
-  // ── Mouse-parallax tilt for every .vbox[data-tilt] ──
-  // The circle assembly tilts in 3D toward the cursor, creating real depth feel.
-  // Inner text/particles sit on different Z planes (defined in CSS) so they
-  // visually shift relative to the ring as the card tilts.
+  // Mouse-parallax 3D tilt
   document.querySelectorAll('[data-tilt]').forEach(function (box) {
-    var MAX_TILT = 16;   // degrees
+    var MAX = 14;
     box.addEventListener('mousemove', function (e) {
       var rect = box.getBoundingClientRect();
-      var x = (e.clientX - rect.left) / rect.width  - 0.5;   // -0.5 … +0.5
+      var x = (e.clientX - rect.left) / rect.width  - 0.5;
       var y = (e.clientY - rect.top)  / rect.height - 0.5;
-      var rx = -y * MAX_TILT * 2;   // rotateX (vertical mouse → pitch)
-      var ry =  x * MAX_TILT * 2;   // rotateY (horizontal mouse → yaw)
-      box.style.transform = 'rotateX(' + rx.toFixed(2) + 'deg) rotateY(' + ry.toFixed(2) + 'deg)';
+      box.style.transform = 'rotateX(' + (-y * MAX * 2).toFixed(2) + 'deg) rotateY(' + (x * MAX * 2).toFixed(2) + 'deg)';
     });
-    box.addEventListener('mouseleave', function () {
-      box.style.transform = 'rotateX(0) rotateY(0)';
-    });
+    box.addEventListener('mouseleave', function () { box.style.transform = 'rotateX(0) rotateY(0)'; });
   });
-
-  // ── Optional: device orientation tilt (for tablets / phones) ──
+  // Device orientation (mobile)
   if (window.DeviceOrientationEvent && 'ontouchstart' in window) {
     window.addEventListener('deviceorientation', function (e) {
       if (e.beta == null || e.gamma == null) return;
