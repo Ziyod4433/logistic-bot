@@ -354,7 +354,10 @@
       renderPlans(res.plans || []);
       state.filterOptionsLoaded = false;
       await ensureOptions();
-      window.toast("Plan aktiv qilindi", "ok");
+      window.toast("Plan aktiv qilindi — monitor yangilanmoqda…", "ok");
+      // Auto-refresh monitor iframe so the activated plan appears immediately
+      const iframe = document.getElementById("monitor-frame");
+      if (iframe) iframe.src = "/analytics/monitor?r=" + Date.now();
     } catch (error) {
       window.toast(error.message, "err");
     }
