@@ -27,9 +27,10 @@
   <section class="controls">
     <div class="control-group">
       <label class="cl" for="plan-select">SALES PLAN</label>
-      <div style="display:flex;align-items:center;gap:8px">
+      <div style="display:flex;align-items:center;gap:6px">
         <select id="plan-select" class="ci"></select>
         <button class="cb cb-create" id="create-plan-btn" type="button" title="Yangi sales plan yaratish">+ Plan</button>
+        <button class="cb cb-create" id="manage-plans-btn" type="button" title="Planlarni boshqarish (tahrirlash / o'chirish)" style="padding:6px 10px">⚙</button>
       </div>
     </div>
     <div class="control-group">
@@ -176,10 +177,35 @@
     </div>
   </div>
 
-  <!-- Create Sales Plan modal -->
+  <!-- Manage Plans modal — list with edit/delete -->
+  <div class="cfg-overlay" id="mp-overlay" hidden>
+    <div class="cfg-modal" style="max-width:720px">
+      <div class="cfg-title">📋 SALES PLANLARNI BOSHQARISH</div>
+      <div id="mp-list-wrap" style="margin-top:12px;max-height:55vh;overflow-y:auto">
+        <table class="tbl" style="width:100%;border-collapse:collapse;color:#dde3f0">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);text-align:left">
+              <th style="padding:8px 6px;font-size:11px;letter-spacing:.6px;color:#6b7a9e">PLAN</th>
+              <th style="padding:8px 6px;font-size:11px;letter-spacing:.6px;color:#6b7a9e">DAVR</th>
+              <th style="padding:8px 6px;font-size:11px;letter-spacing:.6px;color:#6b7a9e">TARGET</th>
+              <th style="padding:8px 6px;font-size:11px;letter-spacing:.6px;color:#6b7a9e">HOLAT</th>
+              <th style="padding:8px 6px;font-size:11px;letter-spacing:.6px;color:#6b7a9e;width:170px">AMALLAR</th>
+            </tr>
+          </thead>
+          <tbody id="mp-tbody"></tbody>
+        </table>
+      </div>
+      <div class="cfg-status" id="mp-status" style="min-height:20px;margin-top:8px"></div>
+      <div class="cfg-actions">
+        <button class="cb cb-ghost" id="mp-close-btn" type="button">Yopish</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create / Edit Sales Plan modal -->
   <div class="cfg-overlay" id="cp-overlay" hidden>
     <div class="cfg-modal" style="max-width:460px">
-      <div class="cfg-title">+ YANGI SALES PLAN</div>
+      <div class="cfg-title" id="cp-modal-title">+ YANGI SALES PLAN</div>
       <div class="cfg-grid">
         <div class="cfg-field full">
           <label class="cfg-label" for="cp-name">Plan nomi</label>
@@ -226,36 +252,60 @@
   </script>
   <script src="{{ url_for('static', filename='js/sales_monitor.js') }}"></script>
   <script>
-  // ── Create sales plan modal ──────────────────────────────
+  // ── Plan CRUD: create / edit / delete sales plans ──────────────────
   (function () {
-    var overlay   = document.getElementById('cp-overlay');
-    var openBtn   = document.getElementById('create-plan-btn');
-    var saveBtn   = document.getElementById('cp-save-btn');
-    var cancelBtn = document.getElementById('cp-cancel-btn');
-    var status    = document.getElementById('cp-status');
+    var cpOverlay  = document.getElementById('cp-overlay');
+    var cpTitle    = document.getElementById('cp-modal-title');
+    var openBtn    = document.getElementById('create-plan-btn');
+    var saveBtn    = document.getElementById('cp-save-btn');
+    var cancelBtn  = document.getElementById('cp-cancel-btn');
+    var cpStatus   = document.getElementById('cp-status');
 
-    function openModal() {
-      // Pre-fill dates to current month
-      var now   = new Date();
-      var y     = now.getFullYear(), m = now.getMonth();
-      var first = new Date(y, m, 1);
-      var last  = new Date(y, m + 1, 0);
-      function fmt(d) { return d.toISOString().split('T')[0]; }
-      document.getElementById('cp-start').value = fmt(first);
-      document.getElementById('cp-end').value   = fmt(last);
-      document.getElementById('cp-name').value  = '';
-      document.getElementById('cp-target').value = '';
-      status.style.color = '';
-      status.textContent = '';
-      overlay.hidden = false;
+    var mpOverlay  = document.getElementById('mp-overlay');
+    var mpOpenBtn  = document.getElementById('manage-plans-btn');
+    var mpCloseBtn = document.getElementById('mp-close-btn');
+    var mpTbody    = document.getElementById('mp-tbody');
+    var mpStatus   = document.getElementById('mp-status');
+
+    // Edit mode state — when set, save will UPDATE instead of CREATE
+    var editingPlanId = null;
+
+    function fmtDate(d) { return d.toISOString().split('T')[0]; }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+    // ─── Create modal (and edit) ─────────────────────────────────────
+    function openCreateModal(plan) {
+      editingPlanId = plan ? Number(plan.id) : null;
+      cpTitle.textContent = plan ? '✎ PLANNI TAHRIRLASH' : '+ YANGI SALES PLAN';
+      saveBtn.textContent = plan ? 'Saqlash' : 'Yaratish';
+
+      if (plan) {
+        document.getElementById('cp-name').value   = plan.name || '';
+        document.getElementById('cp-start').value  = plan.period_start || '';
+        document.getElementById('cp-end').value    = plan.period_end || '';
+        document.getElementById('cp-metric').value = plan.target_metric || 'cbm';
+        document.getElementById('cp-target').value = plan.target_value || plan.target_amount_usd || '';
+        document.getElementById('cp-activate').checked = Number(plan.is_active || 0) === 1;
+      } else {
+        var now   = new Date();
+        var first = new Date(now.getFullYear(), now.getMonth(), 1);
+        var last  = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        document.getElementById('cp-start').value  = fmtDate(first);
+        document.getElementById('cp-end').value    = fmtDate(last);
+        document.getElementById('cp-name').value   = '';
+        document.getElementById('cp-target').value = '';
+        document.getElementById('cp-activate').checked = true;
+      }
+      cpStatus.style.color = ''; cpStatus.textContent = '';
+      saveBtn.disabled = false;
+      cpOverlay.hidden = false;
       document.getElementById('cp-name').focus();
     }
+    function closeCreateModal() { cpOverlay.hidden = true; editingPlanId = null; }
 
-    function closeModal() { overlay.hidden = true; }
-
-    openBtn.addEventListener('click', openModal);
-    cancelBtn.addEventListener('click', closeModal);
-    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeModal(); });
+    openBtn.addEventListener('click', function () { openCreateModal(null); });
+    cancelBtn.addEventListener('click', closeCreateModal);
+    cpOverlay.addEventListener('click', function (e) { if (e.target === cpOverlay) closeCreateModal(); });
 
     saveBtn.addEventListener('click', async function () {
       var name   = (document.getElementById('cp-name').value || '').trim();
@@ -265,37 +315,111 @@
       var target = Number(document.getElementById('cp-target').value) || 0;
       var doActivate = document.getElementById('cp-activate').checked;
 
-      if (!name)         { status.style.color='#f43f5e'; status.textContent='⚠ Plan nomini kiriting'; return; }
-      if (!start||!end)  { status.style.color='#f43f5e'; status.textContent='⚠ Sanalarni belgilang'; return; }
-      if (target <= 0)   { status.style.color='#f43f5e'; status.textContent='⚠ Maqsad qiymatini kiriting'; return; }
+      if (!name)        { cpStatus.style.color='#f43f5e'; cpStatus.textContent='⚠ Plan nomini kiriting'; return; }
+      if (!start||!end) { cpStatus.style.color='#f43f5e'; cpStatus.textContent='⚠ Sanalarni belgilang'; return; }
+      if (target <= 0)  { cpStatus.style.color='#f43f5e'; cpStatus.textContent='⚠ Maqsad qiymatini kiriting'; return; }
 
       saveBtn.disabled = true;
-      status.style.color = '';
-      status.textContent = 'Saqlanmoqda…';
+      cpStatus.style.color = ''; cpStatus.textContent = editingPlanId ? 'Saqlanmoqda…' : 'Yaratilmoqda…';
 
       try {
+        var payload = {
+          name: name, period_start: start, period_end: end,
+          target_metric: metric, target_value: target,
+          is_active: doActivate ? 1 : 0
+        };
+        if (editingPlanId) payload.id = editingPlanId;
+
         var res = await fetch('/analytics/api/plans', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, period_start: start, period_end: end, target_metric: metric, target_value: target })
+          body: JSON.stringify(payload)
         });
         var data = await res.json();
         if (!res.ok || data.error) throw new Error(data.error || ('Server xatosi: ' + res.status));
 
-        var planId = data.id || data.plan_id;
-        if (doActivate && planId) {
-          await fetch('/analytics/api/plans/' + planId + '/activate', { method: 'POST' });
-        }
-
-        status.style.color = '#10b981';
-        status.textContent = '✓ Plan yaratildi! Monitor yangilanmoqda…';
-        setTimeout(function () { closeModal(); window.location.reload(); }, 1100);
+        cpStatus.style.color = '#10b981';
+        cpStatus.textContent = editingPlanId ? '✓ Plan yangilandi! Monitor qayta yuklanmoqda…' : '✓ Plan yaratildi! Monitor qayta yuklanmoqda…';
+        setTimeout(function () { closeCreateModal(); window.location.reload(); }, 1100);
       } catch (err) {
-        status.style.color = '#f43f5e';
-        status.textContent = '✗ ' + err.message;
+        cpStatus.style.color = '#f43f5e';
+        cpStatus.textContent = '✗ ' + err.message;
         saveBtn.disabled = false;
       }
     });
+
+    // ─── Manage plans modal ──────────────────────────────────────────
+    async function loadPlansAndRender() {
+      mpStatus.style.color = ''; mpStatus.textContent = 'Yuklanmoqda…';
+      mpTbody.innerHTML = '';
+      try {
+        var res = await fetch('/analytics/api/plans');
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Server xatosi');
+        var plans = data.plans || [];
+        if (!plans.length) {
+          mpStatus.textContent = 'Hech qanday plan topilmadi. "+ Plan" tugmasi orqali yarating.';
+          return;
+        }
+        mpStatus.textContent = '';
+        mpTbody.innerHTML = plans.map(function (p) {
+          var isActive = Number(p.is_active || 0) === 1;
+          var target = p.target_value || p.target_amount_usd || 0;
+          var metricLabel = ({cbm:'m³', amount_usd:'USD', bl_count:'BL'})[p.target_metric] || p.target_metric || '';
+          return ''
+            + '<tr style="border-bottom:1px solid rgba(255,255,255,.05)">'
+            +   '<td style="padding:10px 6px;font-weight:600">' + esc(p.name || ('Plan #'+p.id)) + '</td>'
+            +   '<td style="padding:10px 6px;font-size:12px;color:#a0a8be">' + esc(p.period_start || '—') + ' → ' + esc(p.period_end || '—') + '</td>'
+            +   '<td style="padding:10px 6px;color:#f5a623">' + esc(String(target)) + ' ' + esc(metricLabel) + '</td>'
+            +   '<td style="padding:10px 6px">' + (isActive
+                  ? '<span style="background:rgba(16,185,129,.18);color:#10b981;padding:3px 8px;border-radius:6px;font-size:11px">AKTIV</span>'
+                  : '<span style="background:rgba(107,122,158,.18);color:#6b7a9e;padding:3px 8px;border-radius:6px;font-size:11px">Arxiv</span>') + '</td>'
+            +   '<td style="padding:10px 6px">'
+            +     '<button class="cb cb-ghost" data-action="edit" data-plan-id="' + esc(String(p.id)) + '" style="padding:5px 10px;font-size:11px;margin-right:4px">✎ Tahrirlash</button>'
+            +     '<button class="cb cb-ghost" data-action="delete" data-plan-id="' + esc(String(p.id)) + '" style="padding:5px 10px;font-size:11px;color:#f43f5e;border-color:rgba(244,63,94,.4)">🗑 O‘chirish</button>'
+            +   '</td>'
+            + '</tr>';
+        }).join('');
+
+        // Wire up actions
+        mpTbody.querySelectorAll('button[data-action]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var pid = Number(btn.dataset.planId);
+            var act = btn.dataset.action;
+            var plan = plans.find(function (p) { return Number(p.id) === pid; });
+            if (act === 'edit' && plan) {
+              mpOverlay.hidden = true;
+              openCreateModal(plan);
+            } else if (act === 'delete' && plan) {
+              if (!confirm('"' + (plan.name || 'Plan #'+pid) + '" planini o‘chirib tashlamoqchimisiz? Bu amalni qaytarib bo‘lmaydi.')) return;
+              deletePlan(pid, plan.name);
+            }
+          });
+        });
+      } catch (err) {
+        mpStatus.style.color = '#f43f5e';
+        mpStatus.textContent = '✗ ' + err.message;
+      }
+    }
+
+    async function deletePlan(planId, planName) {
+      mpStatus.style.color = ''; mpStatus.textContent = "'" + (planName || 'Plan') + "' o‘chirilmoqda…";
+      try {
+        var res = await fetch('/analytics/api/plans/' + planId, { method: 'DELETE' });
+        var data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Server xatosi');
+        mpStatus.style.color = '#10b981';
+        mpStatus.textContent = '✓ Plan o‘chirildi. Monitor qayta yuklanmoqda…';
+        setTimeout(function () { window.location.reload(); }, 900);
+      } catch (err) {
+        mpStatus.style.color = '#f43f5e';
+        mpStatus.textContent = '✗ ' + err.message;
+      }
+    }
+
+    mpOpenBtn.addEventListener('click', function () { mpOverlay.hidden = false; loadPlansAndRender(); });
+    mpCloseBtn.addEventListener('click', function () { mpOverlay.hidden = true; });
+    mpOverlay.addEventListener('click', function (e) { if (e.target === mpOverlay) mpOverlay.hidden = true; });
   })();
   </script>
 </body>
