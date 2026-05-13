@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sales Monitor — Fresh ideas (round 3)</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#06080f; --bg2:#0c0f1a; --border:#1a2035;
+    --text:#e8eaf0; --muted:#6b7a9e;
+    --green:#10b981; --green2:#34d399; --green3:#6ee7b7; --greenD:#064e3b;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { overflow-x:hidden; }
+  body {
+    background:
+      radial-gradient(circle at 30% 10%, rgba(16,185,129,.09) 0%, transparent 50%),
+      radial-gradient(circle at 70% 90%, rgba(16,185,129,.06) 0%, transparent 50%),
+      var(--bg);
+    color: var(--text);
+    font-family: "Oswald", sans-serif;
+    padding: 32px 24px 80px;
+    min-height: 100vh;
+    perspective: 1400px;
+  }
+  h1 { font-size:28px; letter-spacing:3px; color:var(--green); }
+  .subtitle { color:var(--muted); font-size:13px; margin:4px 0; letter-spacing:1px; }
+  .hint { color:var(--green3); font-size:11px; margin-bottom:32px; letter-spacing:1.5px; opacity:.8; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    gap: 38px;
+    max-width: 1720px;
+    margin: 0 auto;
+  }
+  .vcard {
+    position: relative;
+    background: linear-gradient(165deg, var(--bg2) 0%, #08090f 100%);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 32px 22px 28px;
+    text-align: center;
+    overflow: hidden;
+    perspective: 1200px;
+    transform-style: preserve-3d;
+  }
+  .vname { font-size:20px; letter-spacing:4px; color:var(--green); font-weight:700; position:relative; z-index:5; }
+  .vdesc { font-size:11px; color:var(--muted); letter-spacing:1.5px; margin:4px 0 22px; min-height:28px; position:relative; z-index:5; }
+
+  .vbox {
+    position: relative;
+    width: 360px; height: 360px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform-style: preserve-3d;
+    will-change: transform;
+    animation: breathing 4.5s cubic-bezier(.45,.05,.55,.95) infinite;
+  }
+  @keyframes breathing {
+    0%, 100% { transform: rotateX(0deg)  rotateY(0deg)   scale(1)    translateY(0); }
+    50%      { transform: rotateX(5deg)  rotateY(-5deg)  scale(1.04) translateY(-6px); }
+  }
+  .grid .vcard:nth-child(2n)   .vbox { animation-delay:-.8s;  animation-duration:5.2s; }
+  .grid .vcard:nth-child(3n)   .vbox { animation-delay:-1.8s; animation-duration:4.8s; }
+  .grid .vcard:nth-child(5n)   .vbox { animation-delay:-3s;   animation-duration:5.6s; }
+  .grid .vcard:nth-child(7n+1) .vbox { animation-delay:-2.3s; animation-duration:4.2s; }
+
+  .vpct {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 12; pointer-events: none;
+    transform: translateZ(40px);
+  }
+  .vpct-num {
+    font-family: "Bebas Neue", sans-serif;
+    font-size: 84px; line-height: 1;
+    color: var(--green2);
+    text-shadow: 0 0 22px rgba(16,185,129,.8), 0 0 50px rgba(16,185,129,.4), 0 3px 6px rgba(0,0,0,.7);
+  }
+  .vpct-sub { font-size:13px; letter-spacing:5px; color:var(--muted); margin-top:10px; text-shadow:0 1px 3px rgba(0,0,0,.8); }
+
+  /* ════════════════════════════════════════════════════════════
+     V19 — VOLCANIC CORE (morphing molten orb + rising embers)
+     ════════════════════════════════════════════════════════════ */
+  .v19 .ring-bg   { stroke:#0a1c14; stroke-width:20; fill:none; }
+  .v19 .ring-fill { stroke:url(#g); stroke-width:20; fill:none; stroke-linecap:round; filter:url(#sg); }
+  .v19 .molten {
+    position:absolute; top:50%; left:50%;
+    width:140px; height:140px;
+    transform: translate(-50%,-50%);
+    border-radius: 60% 40% 50% 50% / 50% 60% 40% 50%;
+    background: radial-gradient(circle at 35% 30%, var(--green3), var(--green) 45%, var(--greenD) 90%);
+    box-shadow: inset -16px -22px 30px rgba(0,0,0,.5), inset 10px 14px 20px rgba(255,255,255,.18), 0 0 40px rgba(16,185,129,.6);
+    animation: molten-morph 6s ease-in-out infinite;
+    z-index: 3;
+  }
+  @keyframes molten-morph {
+    0%,100% { border-radius: 60% 40% 50% 50% / 50% 60% 40% 50%; transform: translate(-50%,-50%) rotate(0deg); }
+    33%     { border-radius: 50% 60% 40% 50% / 60% 40% 60% 40%; transform: translate(-50%,-50%) rotate(120deg); }
+    66%     { border-radius: 40% 60% 50% 50% / 50% 50% 60% 40%; transform: translate(-50%,-50%) rotate(240deg); }
+  }
+  .v19 .ember {
+    position: absolute;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green3);
+    box-shadow: 0 0 10px var(--green2);
+    opacity: 0;
+    animation: ember-rise 3s ease-out infinite;
+    z-index: 5;
+  }
+  .v19 .ember:nth-child(1) { left:48%; top:60%; animation-delay:0s; }
+  .v19 .ember:nth-child(2) { left:55%; top:58%; animation-delay:.5s; }
+  .v19 .ember:nth-child(3) { left:42%; top:62%; animation-delay:1s; }
+  .v19 .ember:nth-child(4) { left:52%; top:55%; animation-delay:1.5s; }
+  .v19 .ember:nth-child(5) { left:46%; top:65%; animation-delay:2s; }
+  .v19 .ember:nth-child(6) { left:58%; top:62%; animation-delay:2.5s; }
+  @keyframes ember-rise {
+    0%   { opacity:0; transform:translate(0,0) scale(.4); }
+    20%  { opacity:1; }
+    100% { opacity:0; transform:translate(var(--dx,0), -160px) scale(1.4); }
+  }
+  .v19 .ember:nth-child(2n) { --dx: 12px; }
+  .v19 .ember:nth-child(3n) { --dx: -10px; }
+
+  /* ════════════════════════════════════════════════════════════
+     V20 — GALAXY SPIRAL (cosmic arms swirling)
+     ════════════════════════════════════════════════════════════ */
+  .v20 .arm-svg { position:absolute; inset:0; animation: rot-cw 16s linear infinite; }
+  @keyframes rot-cw { to { transform: rotate(360deg); } }
+  .v20 .arm { fill: none; stroke: url(#g); stroke-width: 9; stroke-linecap: round; filter: url(#sg); opacity:.85; }
+  .v20 .arm.thin { stroke-width: 3; opacity:.6; }
+  .v20 .core-bh {
+    position: absolute; top:50%; left:50%;
+    width: 90px; height: 90px;
+    transform: translate(-50%,-50%);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle, rgba(255,255,255,.95) 0%, rgba(110,231,183,.7) 15%, rgba(16,185,129,.45) 35%, rgba(6,78,59,.85) 80%);
+    box-shadow: 0 0 50px white, 0 0 80px var(--green2);
+    z-index: 5;
+    animation: bh-pulse 3s ease-in-out infinite;
+  }
+  @keyframes bh-pulse {
+    0%,100% { transform: translate(-50%,-50%) scale(1); }
+    50%     { transform: translate(-50%,-50%) scale(1.1); }
+  }
+  .v20 .star {
+    position: absolute;
+    width: 2px; height: 2px;
+    background: white;
+    border-radius: 50%;
+    box-shadow: 0 0 4px white;
+    opacity: 0;
+    animation: twinkle 3s ease-in-out infinite;
+  }
+  .v20 .star:nth-child(1)  { top:15%; left:30%; animation-delay:0s; }
+  .v20 .star:nth-child(2)  { top:22%; left:75%; animation-delay:.4s; }
+  .v20 .star:nth-child(3)  { top:65%; left:18%; animation-delay:.8s; }
+  .v20 .star:nth-child(4)  { top:80%; left:60%; animation-delay:1.2s; }
+  .v20 .star:nth-child(5)  { top:45%; left:90%; animation-delay:1.6s; }
+  .v20 .star:nth-child(6)  { top:30%; left:50%; animation-delay:2.0s; }
+  .v20 .star:nth-child(7)  { top:78%; left:34%; animation-delay:2.4s; }
+  .v20 .star:nth-child(8)  { top:55%; left:12%; animation-delay:2.8s; }
+  @keyframes twinkle { 0%,100% { opacity:0; } 50% { opacity:1; transform: scale(1.7); } }
+
+  /* ════════════════════════════════════════════════════════════
+     V21 — LIGHT PILLARS (radial vertical beams)
+     ════════════════════════════════════════════════════════════ */
+  .v21 .pillar {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 4px; height: 160px;
+    margin: -80px 0 0 -2px;
+    background: linear-gradient(180deg, transparent, var(--green2) 50%, transparent);
+    transform-origin: center center;
+    opacity: 0;
+    box-shadow: 0 0 8px var(--green2);
+    animation: pillar-flash 2.6s ease-in-out infinite;
+  }
+  @keyframes pillar-flash {
+    0%, 100% { opacity: 0; }
+    50%      { opacity: .85; }
+  }
+  .v21 .ring-fill { fill:none; stroke:url(#g); stroke-width:18; stroke-linecap:round; filter:url(#sg); }
+
+  /* ════════════════════════════════════════════════════════════
+     V22 — WAVE SPECTRUM (sine wave wrapping the ring)
+     ════════════════════════════════════════════════════════════ */
+  .v22 .ring-bg   { stroke:#0a1c14; stroke-width:24; fill:none; }
+  .v22 .wave-svg  { position:absolute; inset:0; }
+  .v22 .wave-path {
+    fill: none;
+    stroke: url(#g);
+    stroke-width: 3;
+    stroke-linecap: round;
+    filter: url(#sg);
+  }
+  .v22 .wave-path.w2 { stroke-width: 2; opacity: .5; }
+  .v22 .wave-path.w3 { stroke-width: 1.5; opacity: .35; }
+
+  /* ════════════════════════════════════════════════════════════
+     V23 — WATER RIPPLES (drops causing intersecting ripples)
+     ════════════════════════════════════════════════════════════ */
+  .v23 .ring-bg   { stroke:#0a1c14; stroke-width:18; fill:none; }
+  .v23 .ring-fill { stroke:url(#g); stroke-width:18; fill:none; stroke-linecap:round; filter:url(#sg); }
+  .v23 .ripple {
+    position: absolute;
+    width: 30px; height: 30px;
+    border: 2px solid var(--green2);
+    border-radius: 50%;
+    opacity: 0;
+    animation: ripple-out 3s ease-out infinite;
+    box-shadow: 0 0 10px rgba(16,185,129,.6);
+  }
+  .v23 .ripple.r1 { top: 35%; left: 30%; animation-delay: 0s; }
+  .v23 .ripple.r2 { top: 55%; left: 60%; animation-delay: 1s; }
+  .v23 .ripple.r3 { top: 30%; left: 65%; animation-delay: 2s; }
+  .v23 .ripple.r4 { top: 65%; left: 35%; animation-delay: .5s; }
+  @keyframes ripple-out {
+    0%   { transform: scale(.2); opacity: .9; border-width: 3px; }
+    100% { transform: scale(4);  opacity: 0;  border-width: 1px; }
+  }
+  .v23 .drop {
+    position: absolute;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green3);
+    box-shadow: 0 0 8px var(--green2);
+    animation: drop-fall 3s ease-out infinite;
+  }
+  .v23 .drop.d1 { top: 35%; left: 30%; animation-delay: 0s; }
+  .v23 .drop.d2 { top: 55%; left: 60%; animation-delay: 1s; }
+  .v23 .drop.d3 { top: 30%; left: 65%; animation-delay: 2s; }
+  .v23 .drop.d4 { top: 65%; left: 35%; animation-delay: .5s; }
+  @keyframes drop-fall { 0%,100% { opacity:1; } 30% { opacity:0; } }
+
+  /* ════════════════════════════════════════════════════════════
+     V24 — NEON GLASS TUBE (realistic neon w/ flicker)
+     ════════════════════════════════════════════════════════════ */
+  .v24 .tube-outer { stroke:#0a1c14; stroke-width:32; fill:none; }
+  .v24 .tube-glow  { stroke:rgba(16,185,129,.35); stroke-width:30; fill:none; filter:blur(10px); stroke-linecap:round; }
+  .v24 .tube-main  { stroke:var(--green2); stroke-width:14; fill:none; stroke-linecap:round; filter:url(#sg); animation: neon-flicker 5s ease-in-out infinite; }
+  .v24 .tube-inner { stroke:white; stroke-width:5; fill:none; stroke-linecap:round; opacity:.85; animation: neon-flicker 5s ease-in-out infinite; }
+  @keyframes neon-flicker {
+    0%, 100%   { opacity: 1; }
+    7%, 9%     { opacity: .45; }
+    8%         { opacity: 1; }
+    44%, 46%   { opacity: .55; }
+    45%        { opacity: 1; }
+    77%, 79%   { opacity: .65; }
+    78%        { opacity: 1; }
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     V25 — PRISM SPECTRUM (rainbow-green gradient ring)
+     ════════════════════════════════════════════════════════════ */
+  .v25 .prism-ring { stroke: url(#g-prism); stroke-width: 22; fill: none; stroke-linecap: round; filter: url(#sg); }
+  .v25 .prism-ring-bg { stroke: #0a1c14; stroke-width: 22; fill: none; }
+  .v25 .light-beam {
+    position: absolute;
+    top: 50%; left: 30px;
+    width: 80px; height: 4px;
+    background: linear-gradient(90deg, transparent, white);
+    margin-top: -2px;
+    z-index: 5;
+    box-shadow: 0 0 10px white;
+    animation: beam-pulse 3s ease-in-out infinite;
+  }
+  @keyframes beam-pulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+  .v25 .spectrum-dot {
+    position: absolute;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .v25 .spectrum-dot.s1 { top: 32%; left: 28%; background: #6ee7b7; color: #6ee7b7; }
+  .v25 .spectrum-dot.s2 { top: 50%; left: 22%; background: #34d399; color: #34d399; }
+  .v25 .spectrum-dot.s3 { top: 68%; left: 28%; background: #10b981; color: #10b981; }
+
+  /* ════════════════════════════════════════════════════════════
+     V26 — MATRIX RAIN (digital rain inside circle)
+     ════════════════════════════════════════════════════════════ */
+  .v26 .ring-bg   { stroke:#0a1c14; stroke-width:18; fill:none; }
+  .v26 .ring-fill { stroke:url(#g); stroke-width:18; fill:none; stroke-linecap:round; filter:url(#sg); }
+  .v26 .rain-mask {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 240px; height: 240px;
+    transform: translate(-50%,-50%);
+    border-radius: 50%;
+    overflow: hidden;
+    z-index: 2;
+  }
+  .v26 .rain-col {
+    position: absolute;
+    top: -50%;
+    width: 12px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 14px;
+    color: var(--green3);
+    text-shadow: 0 0 6px var(--green2);
+    line-height: 1.1;
+    opacity: .7;
+    animation: rain-fall 3s linear infinite;
+  }
+  .v26 .rain-col:nth-child(1) { left: 10%;  animation-delay: 0s;   animation-duration: 2.8s; }
+  .v26 .rain-col:nth-child(2) { left: 25%;  animation-delay: -1s;  animation-duration: 3.4s; }
+  .v26 .rain-col:nth-child(3) { left: 40%;  animation-delay: -.4s; animation-duration: 3s; }
+  .v26 .rain-col:nth-child(4) { left: 55%;  animation-delay: -1.8s; animation-duration: 2.6s; }
+  .v26 .rain-col:nth-child(5) { left: 70%;  animation-delay: -.7s; animation-duration: 3.6s; }
+  .v26 .rain-col:nth-child(6) { left: 85%;  animation-delay: -2.2s; animation-duration: 2.4s; }
+  @keyframes rain-fall { to { top: 110%; } }
+
+  /* ════════════════════════════════════════════════════════════
+     V27 — TURBINE BLADES (rotating jet turbine)
+     ════════════════════════════════════════════════════════════ */
+  .v27 .ring-bg   { stroke:#0a1c14; stroke-width:24; fill:none; }
+  .v27 .ring-fill { stroke:url(#g); stroke-width:24; fill:none; stroke-linecap:round; filter:url(#sg); }
+  .v27 .turbine { animation: rot-cw 1.8s linear infinite; transform-origin: center; }
+  .v27 .blade {
+    fill: url(#g);
+    stroke: var(--green2);
+    stroke-width: 1.5;
+    filter: url(#sg);
+    opacity: .85;
+  }
+  .v27 .hub-out { fill: rgba(16,185,129,.3); stroke: var(--green2); stroke-width: 2; }
+  .v27 .hub-in  { fill: var(--green); stroke: var(--green3); stroke-width: 1.5; }
+
+  /* ════════════════════════════════════════════════════════════
+     V28 — HOLOGRAM POLYHEDRON (rotating wireframe icosahedron)
+     ════════════════════════════════════════════════════════════ */
+  .v28 .holo-wrap {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 200px; height: 200px;
+    transform: translate(-50%, -50%);
+    transform-style: preserve-3d;
+    animation: holo-rot 10s linear infinite;
+  }
+  @keyframes holo-rot {
+    0%   { transform: translate(-50%,-50%) rotateX(20deg) rotateY(0deg); }
+    100% { transform: translate(-50%,-50%) rotateX(20deg) rotateY(360deg); }
+  }
+  .v28 .face {
+    position: absolute;
+    inset: 0;
+    border: 1.5px solid var(--green2);
+    border-radius: 50%;
+    box-shadow: 0 0 14px rgba(16,185,129,.5);
+  }
+  .v28 .face.f1 { transform: rotateY(0deg); }
+  .v28 .face.f2 { transform: rotateY(45deg); }
+  .v28 .face.f3 { transform: rotateY(90deg); border-color: var(--green3); }
+  .v28 .face.f4 { transform: rotateY(135deg); }
+  .v28 .face.f5 { transform: rotateX(45deg); }
+  .v28 .face.f6 { transform: rotateX(-45deg); }
+  .v28 .ring-fill { fill: none; stroke: url(#g); stroke-width: 6; stroke-linecap: round; filter: url(#sg); }
+
+  .choose {
+    margin: 48px auto 0;
+    max-width: 900px;
+    text-align: center;
+    padding: 22px 24px;
+    border: 1px dashed rgba(16,185,129,.3);
+    border-radius: 14px;
+  }
+  .choose b { color: var(--green); }
+</style>
+</head>
+<body>
+  <h1>SALES MONITOR — FRESH IDEAS (ROUND 3)</h1>
+  <div class="subtitle">10 brand-new scenes · enhanced breathing · green theme · TV-ready (no mouse)</div>
+  <div class="hint">⌁  Each card breathes visibly: tilt ±5° + scale 1.04 + Y float · 4.2–5.6 sec · de-synced across cards</div>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6ee7b7"/>
+      </linearGradient>
+      <linearGradient id="g-prism" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%"   stop-color="#a7f3d0"/>
+        <stop offset="20%"  stop-color="#6ee7b7"/>
+        <stop offset="40%"  stop-color="#34d399"/>
+        <stop offset="60%"  stop-color="#10b981"/>
+        <stop offset="80%"  stop-color="#059669"/>
+        <stop offset="100%" stop-color="#064e3b"/>
+      </linearGradient>
+      <filter id="sg" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b1"/>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b2"/>
+        <feMerge><feMergeNode in="b2"/><feMergeNode in="b1"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+  </svg>
+
+  <div class="grid">
+
+    <!-- V19 VOLCANIC CORE -->
+    <div class="vcard">
+      <div class="vname">VARIANT 19</div>
+      <div class="vdesc">VOLCANIC CORE · morphing molten orb + rising embers</div>
+      <div class="vbox v19">
+        <div class="molten"></div>
+        <span class="ember"></span><span class="ember"></span><span class="ember"></span>
+        <span class="ember"></span><span class="ember"></span><span class="ember"></span>
+        <svg viewBox="0 0 320 320" width="320" height="320" style="position:absolute">
+          <circle class="ring-bg"   cx="160" cy="160" r="130"/>
+          <circle class="ring-fill" cx="160" cy="160" r="130" stroke-dasharray="817" stroke-dashoffset="643" transform="rotate(-90 160 160)"/>
+        </svg>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- V20 GALAXY SPIRAL -->
+    <div class="vcard">
+      <div class="vname">VARIANT 20</div>
+      <div class="vdesc">GALAXY SPIRAL · cosmic arms + twinkling stars</div>
+      <div class="vbox v20">
+        <span class="star"></span><span class="star"></span><span class="star"></span><span class="star"></span>
+        <span class="star"></span><span class="star"></span><span class="star"></span><span class="star"></span>
+        <svg class="arm-svg" viewBox="0 0 360 360">
+          <path class="arm"      d="M 180 90 Q 280 100, 290 180 Q 280 260, 180 270"/>
+          <path class="arm"      d="M 180 270 Q 80 260, 70 180 Q 80 100, 180 90"/>
+          <path class="arm thin" d="M 180 110 Q 250 140, 260 180 Q 250 220, 180 250"/>
+          <path class="arm thin" d="M 180 250 Q 110 220, 100 180 Q 110 140, 180 110"/>
+        </svg>
+        <div class="core-bh"></div>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- V21 LIGHT PILLARS -->
+    <div class="vcard">
+      <div class="vname">VARIANT 21</div>
+      <div class="vdesc">LIGHT PILLARS · 12 radial light beams flashing</div>
+      <div class="vbox v21">
+        {% for i in range(12) %}
+        <div class="pillar" style="transform:rotate({{ i * 30 }}deg) translateY(-90px); animation-delay:{{ (i * 0.15) - 1 }}s"></div>
+        {% endfor %}
+        <svg viewBox="0 0 360 360" width="360" height="360" style="position:absolute">
+          <circle class="ring-fill" cx="180" cy="180" r="148" stroke-dasharray="930" stroke-dashoffset="732" transform="rotate(-90 180 180)"/>
+        </svg>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- V22 WAVE SPECTRUM -->
+    <div class="vcard">
+      <div class="vname">VARIANT 22</div>
+      <div class="vdesc">WAVE SPECTRUM · sine waves wrapping the ring</div>
+      <div class="vbox v22">
+        <svg viewBox="0 0 360 360" width="360" height="360" style="position:absolute">
+          <circle class="ring-bg" cx="180" cy="180" r="148"/>
+          <!-- Three concentric sine waves at slightly different phases -->
+          <path class="wave-path"    d="M 30,180 Q 60,140 90,180 T 150,180 T 210,180 T 270,180 T 330,180">
+            <animate attributeName="d" dur="3s" repeatCount="indefinite"
+              values="M 30,180 Q 60,140 90,180 T 150,180 T 210,180 T 270,180 T 330,180;
+                      M 30,180 Q 60,220 90,180 T 150,180 T 210,180 T 270,180 T 330,180;
+                      M 30,180 Q 60,140 90,180 T 150,180 T 210,180 T 270,180 T 330,180"/>
+          </path>
+          <path class="wave-path w2" d="M 30,180 Q 60,150 90,180 T 150,180 T 210,180 T 270,180 T 330,180">
+            <animate attributeName="d" dur="3.5s" repeatCount="indefinite"
+              values="M 30,180 Q 60,210 90,180 T 150,180 T 210,180 T 270,180 T 330,180;
+                      M 30,180 Q 60,150 90,180 T 150,180 T 210,180 T 270,180 T 330,180;
+                      M 30,180 Q 60,210 90,180 T 150,180 T 210,180 T 270,180 T 330,180"/>
+          </path>
+          <path class="wave-path w3" d="M 30,180 Q 60,160 90,180 T 150,180 T 210,180 T 270,180 T 330,180">
+            <animate attributeName="d" dur="2.5s" repeatCount="indefinite"
+              values="M 30,180 Q 60,200 90,180 T 150,180 T 210,180 T 270,180 T 330,180;
+                      M 30,180 Q 60,160 90,180 T 150,180 T 210,180 T 270,180 T 330,180;
+                      M 30,180 Q 60,200 90,180 T 150,180 T 210,180 T 270,180 T 330,180"/>
+          </path>
+          <circle class="ring-fill" cx="180" cy="180" r="148" style="stroke:url(#g);stroke-width:18;fill:none;stroke-linecap:round;filter:url(#sg)" stroke-dasharray="930" stroke-dashoffset="732" transform="rotate(-90 180 180)"/>
+        </svg>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- V23 WATER RIPPLES -->
+    <div class="vcard">
+      <div class="vname">VARIANT 23</div>
+      <div class="vdesc">WATER RIPPLES · droplets creating intersecting ripples</div>
+      <div class="vbox v23">
+        <span class="drop d1"></span><span class="drop d2"></span><span class="drop d3"></span><span class="drop d4"></span>
+        <span class="ripple r1"></span><span class="ripple r2"></span><span class="ripple r3"></span><span class="ripple r4"></span>
+        <svg viewBox="0 0 360 360" width="360" height="360" style="position:absolute">
+          <circle class="ring-bg" cx="180" cy="180" r="150"/>
+          <circle class="ring-fill" cx="180" cy="180" r="150" stroke-dasharray="942" stroke-dashoffset="741" transform="rotate(-90 180 180)"/>
+        </svg>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- V24 NEON GLASS TUBE -->
+    <div class="vcard">
+      <div class="vname">VARIANT 24</div>
+      <div class="vdesc">NEON GLASS TUBE · realistic gas-discharge tube w/ flicker</div>
+      <div class="vbox v24">
+        <svg viewBox="0 0 360 360" width="360" height="360" style="position:absolute">
+          <circle class="tube-outer" cx="180" cy="180" r="140" stroke-dasharray="880" stroke-dashoffset="693" transform="rotate(-90 180 180)" stroke-linecap="round"/>
+          <circle class="tube-glow"  cx="180" cy="180" r="140" stroke-dasharray="880" stroke-dashoffset="693" transform="rotate(-90 180 180)"/>
+          <circle class="tube-main"  cx="180" cy="180" r="140" stroke-dasharray="880" stroke-dashoffset="693" transform="rotate(-90 180 180)"/>
+          <circle class="tube-inner" cx="180" cy="180" r="140" stroke-dasharray="880" stroke-dashoffset="693" transform="rotate(-90 180 180)"/>
+        </svg>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- V25 PRISM SPECTRUM -->
+    <div class="vcard">
+      <div class="vname">VARIANT 25</div>
+      <div class="vdesc">PRISM SPECTRUM · ring with green-tone refraction spectrum</div>
+      <div class="vbox v25">
+        <div class="light-beam"></div>
+        <span class="spectrum-dot s1"></span>
+        <span class="spectrum-dot s2"></span>
+        <span class="spectrum-dot s3"></span>
+        <svg viewBox="0 0 360 360" width="360" height="360" style="position:absolute">
+          <circle class="prism-ring-bg" cx="180" cy="180" r="140"/>
+          <circle class="prism-ring"    cx="180" cy="180" r="140" stroke-dasharray="880" stroke-dashoffset="693" transform="rotate(-90 180 180)"/>
+        </svg>
+        <div class="vpct"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- V26 MATRIX RAIN -->
+    <div class="vcard">
+      <div class="vname">VARIANT 26</div>
+      <div class="vdesc">MATRIX RAIN · falling digits inside the ring</div>
+      <div class="vbox v26">
+        <div class="rain-mask">
+          <div class="rain-col">01<br>10<br>11<br>00<br>01<br>10<br>11<br>00<br>01<br>10</div>
+          <div class="rain-col">10<br>01<br>00<br>11<br>10<br>01<br>00<br>11<br>10<br>01</div>
+          <div class="rain-col">11<br>00<br>01<br>10<br>11<br>00<br>01<br>10<br>11<br>00</div>
+          <div class="rain-col">00<br>11<br>10<br>01<br>00<br>11<br>10<br>01<br>00<br>11</div>
+          <div class="rain-col">01<br>10<br>11<br>00<br>01<br>10<br>11<br>00<br>01<br>10</div>
+          <div class="rain-col">10<br>01<br>11<br>00<br>10<br>01<br>11<br>00<br>10<br>01</div>
+        </div>
+        <svg viewBox="0 0 360 360" width="360" height="360" style="position:absolute">
+          <circle class="ring-bg"   cx="180" cy="180" r="148"/>
+          <circle class="ring-fill" cx="180" cy="180" r="148" stroke-dasharray="930" stroke-dashoffset="732" transform="rotate(-90 180 180)"/>
+        </svg>
+        <div class="vpct" style="transform:translateZ(60px)"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- V27 TURBINE BLADES -->
+    <div class="vcard">
+      <div class="vname">VARIANT 27</div>
+      <div class="vdesc">TURBINE BLADES · jet-engine rotor spinning fast</div>
+      <div class="vbox v27">
+        <svg viewBox="0 0 360 360" width="360" height="360" style="position:absolute">
+          <circle class="ring-bg"   cx="180" cy="180" r="150"/>
+          <circle class="ring-fill" cx="180" cy="180" r="150" stroke-dasharray="942" stroke-dashoffset="741" transform="rotate(-90 180 180)"/>
+          <g class="turbine" style="transform-origin: 180px 180px">
+            <!-- 8 curved blades -->
+            <path class="blade" d="M 180,180 Q 200,140 230,118 Q 215,160 195,180 Z" transform="rotate(0 180 180)"/>
+            <path class="blade" d="M 180,180 Q 200,140 230,118 Q 215,160 195,180 Z" transform="rotate(45 180 180)"/>
+            <path class="blade" d="M 180,180 Q 200,140 230,118 Q 215,160 195,180 Z" transform="rotate(90 180 180)"/>
+            <path class="blade" d="M 180,180 Q 200,140 230,118 Q 215,160 195,180 Z" transform="rotate(135 180 180)"/>
+            <path class="blade" d="M 180,180 Q 200,140 230,118 Q 215,160 195,180 Z" transform="rotate(180 180 180)"/>
+            <path class="blade" d="M 180,180 Q 200,140 230,118 Q 215,160 195,180 Z" transform="rotate(225 180 180)"/>
+            <path class="blade" d="M 180,180 Q 200,140 230,118 Q 215,160 195,180 Z" transform="rotate(270 180 180)"/>
+            <path class="blade" d="M 180,180 Q 200,140 230,118 Q 215,160 195,180 Z" transform="rotate(315 180 180)"/>
+            <circle class="hub-out" cx="180" cy="180" r="32"/>
+            <circle class="hub-in"  cx="180" cy="180" r="14"/>
+          </g>
+        </svg>
+        <div class="vpct" style="transform:translateZ(60px)"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+    <!-- V28 HOLOGRAM POLYHEDRON -->
+    <div class="vcard">
+      <div class="vname">VARIANT 28</div>
+      <div class="vdesc">HOLOGRAM POLYHEDRON · rotating 3D wireframe shape</div>
+      <div class="vbox v28">
+        <div class="holo-wrap">
+          <div class="face f1"></div>
+          <div class="face f2"></div>
+          <div class="face f3"></div>
+          <div class="face f4"></div>
+          <div class="face f5"></div>
+          <div class="face f6"></div>
+        </div>
+        <svg viewBox="0 0 360 360" width="360" height="360" style="position:absolute">
+          <circle class="ring-fill" cx="180" cy="180" r="150" stroke-dasharray="942" stroke-dashoffset="741" transform="rotate(-90 180 180)"/>
+        </svg>
+        <div class="vpct" style="transform:translateZ(60px)"><div class="vpct-num">21.3%</div><div class="vpct-sub">BAJARILDI</div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="choose">
+    <div style="font-size:16px;letter-spacing:2px">Который дышит и нравится: <b>VARIANT 19 / 20 / 21 / 22 / 23 / 24 / 25 / 26 / 27 / 28</b></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">…я применю к боевому <code>/analytics/monitor</code>. Раунд 1 — на <code>/preview</code>, раунд 2 — на <code>/preview2</code>, раунд 3 — этот <code>/preview3</code>.</div>
+  </div>
+</body>
+</html>

@@ -2044,6 +2044,14 @@ def analytics_monitor_preview2():
     return render_template("analytics/monitor_preview2.html")
 
 
+@app.route("/analytics/monitor/preview3")
+def analytics_monitor_preview3():
+    """Round 3 of preview ideas — 10 brand-new scenes (volcanic, galaxy, pillars,
+    waves, ripples, neon tube, prism, matrix rain, turbine, hologram).
+    Public — no login required."""
+    return render_template("analytics/monitor_preview3.html")
+
+
 @app.route("/health")
 def health():
     return jsonify(
