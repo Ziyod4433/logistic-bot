@@ -918,14 +918,14 @@ body.tv-mode .main {
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) !important;
 }
 
-/* PLAN / FACT / QOLDIQ / TOTAL BL — compact width, big readable text */
+/* PLAN / HOZIRGACHA / QOLDIQ / TOTAL BL — single row of 4 boxes */
 body.tv-mode .pgrid {
-  gap: 14px !important;
-  max-width: 760px;                /* limit horizontal spread of the 4 boxes */
-  margin: 0 auto;
+  grid-template-columns: 1fr 1fr 1fr 1fr !important;   /* 4 in one row, not 2×2 */
+  gap: 12px !important;
+  padding: 0 16px 18px !important;
 }
 body.tv-mode .pbox {
-  padding: 22px 18px !important;
+  padding: 16px 10px !important;
 }
 
 /* Circle: massively scale up — was 370px, now 600px (~62% bigger) */
@@ -969,16 +969,17 @@ body.tv-mode .plan-badge {
   padding: 10px 26px !important;
 }
 
-/* The 4 stat boxes: PLAN / FACT / QOLDIQ / TOTAL BL */
+/* Stat box values — fit "211,86 M³" comfortably in 4-column row */
 body.tv-mode .pv {
-  font-size: 66px !important;
+  font-size: 46px !important;
   line-height: 1.0;
   font-weight: 700;
+  white-space: nowrap;
 }
 body.tv-mode .pl {
-  font-size: 22px !important;
-  letter-spacing: 4px !important;
-  margin-top: 10px;
+  font-size: 16px !important;
+  letter-spacing: 2px !important;
+  margin-top: 8px;
   font-weight: 600;
 }
 
