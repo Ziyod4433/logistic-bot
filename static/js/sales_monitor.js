@@ -91,8 +91,8 @@
     },
   };
 
-  // CIRCLE RADIUS — must match SVG cx/cy/r in monitor.html (r=140)
-  const CIRCLE_RADIUS = 140;
+  // CIRCLE RADIUS — must match SVG cx/cy/r in monitor.html (r=122, stroke-width=28)
+  const CIRCLE_RADIUS = 122;
 
   function escapeHtml(value) {
     return String(value || "")

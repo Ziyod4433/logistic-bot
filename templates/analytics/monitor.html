@@ -10,6 +10,10 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/sales_monitor.css') }}">
 </head>
 <body>
+  <!-- hidden: JS targets these IDs for countdown/clock logic -->
+  <span id="rotation-timer" style="display:none" aria-hidden="true">2:00</span>
+  <span id="clock" style="display:none" aria-hidden="true">--:--:--</span>
+
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
       <linearGradient id="monitor-orange" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -19,15 +23,6 @@
     </defs>
   </svg>
 
-  <header class="header">
-    <div class="logo">BUR<span>AQ</span> <span class="logo-sub">LOGISTICS</span></div>
-    <div class="header-center">SALES MONITOR</div>
-    <div class="hr">
-      <div class="rinfo">Yangilanish <span id="rotation-timer">2:00</span></div>
-      <div class="live">LIVE</div>
-      <div class="clock" id="clock">--:--:--</div>
-    </div>
-  </header>
 
   <section class="controls">
     <div class="control-group">
@@ -66,10 +61,10 @@
         </div>
         <div class="circwrap">
           <div class="circc">
-            <!-- r=140, cx/cy=160, viewBox=0 0 320 320, circumference≈880 -->
+            <!-- r=122, cx/cy=160, viewBox=0 0 320 320, circumference≈767, stroke-width=28 -->
             <svg class="circsvg" width="320" height="320" viewBox="0 0 320 320" aria-hidden="true">
-              <circle class="circbg" cx="160" cy="160" r="140"></circle>
-              <circle class="circfill" id="progress-arc" cx="160" cy="160" r="140"></circle>
+              <circle class="circbg" cx="160" cy="160" r="122"></circle>
+              <circle class="circfill" id="progress-arc" cx="160" cy="160" r="122"></circle>
             </svg>
             <div class="circcenter">
               <div class="circpct" id="progress-percent">0%</div>
