@@ -5661,14 +5661,11 @@ function switchSMTab(tab) {
   document.querySelectorAll("#sm-tabs .analytics-tab-btn").forEach(function(btn) {
     btn.classList.toggle("active", btn.dataset.smTab === tab);
   });
-  // Show/hide panels — use explicit IDs to be 100% reliable
-  var SM_PANELS = ["monitor", "sync"];
-  SM_PANELS.forEach(function(name) {
-    var el = document.getElementById("sm-panel-" + name);
-    if (el) el.style.cssText = (name === tab)
-      ? "display:block!important"
-      : "display:none!important";
-  });
+  // Show/hide panels via el.style.display (no !important needed — no competing CSS rules)
+  var panelMonitor = document.getElementById("sm-panel-monitor");
+  var panelSync    = document.getElementById("sm-panel-sync");
+  if (panelMonitor) panelMonitor.style.display = (tab === "monitor") ? "block" : "none";
+  if (panelSync)    panelSync.style.display    = (tab === "sync")    ? "block" : "none";
   ANALYTICS_STATE.tab = tab;
   // Load sync data when switching to sync tab
   if (tab === "sync" && typeof window.loadAnalyticsSync === "function") window.loadAnalyticsSync();
@@ -5752,7 +5749,7 @@ if ((INITIAL_VIEW || "dashboard") === "analytics") {
   const __crumbSub = document.getElementById("crumb-sub");
   if (__crumbSub) __crumbSub.textContent = "";
   switchSMTab(INITIAL_ANALYTICS_TAB || "monitor");
-  loadAnalyticsPage(INITIAL_ANALYTICS_TAB || "monitor");
+  // loadAnalyticsPage is defined by analytics.js which loads after this inline script — it runs its own init
 } else {
   goto(INITIAL_VIEW || "dashboard");
 }
