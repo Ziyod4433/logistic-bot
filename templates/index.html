@@ -689,6 +689,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 }
 .analytics-section { display:none; }
 .analytics-section.active { display:block; }
+/* SM panel toggle — class-based, overrides anything */
+.sm-hidden { display:none !important; }
 .analytics-kpi-grid {
   display:grid;
   grid-template-columns:repeat(5, minmax(0, 1fr));
@@ -1328,7 +1330,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         </div>
 
         <!-- PANEL: Import / Sync -->
-        <div id="sm-panel-sync" class="sm-panel" style="display:none">
+        <div id="sm-panel-sync" class="sm-panel sm-hidden">
           <div class="analytics-sync-grid">
             <div class="card">
               <div class="card-h"><span class="card-title">Sync / Sozlamalar</span></div>
@@ -5661,11 +5663,11 @@ function switchSMTab(tab) {
   document.querySelectorAll("#sm-tabs .analytics-tab-btn").forEach(function(btn) {
     btn.classList.toggle("active", btn.dataset.smTab === tab);
   });
-  // Show/hide panels via el.style.display (no !important needed — no competing CSS rules)
+  // Show/hide panels via classList — CSS .sm-hidden{display:none!important} handles it
   var panelMonitor = document.getElementById("sm-panel-monitor");
   var panelSync    = document.getElementById("sm-panel-sync");
-  if (panelMonitor) panelMonitor.style.display = (tab === "monitor") ? "block" : "none";
-  if (panelSync)    panelSync.style.display    = (tab === "sync")    ? "block" : "none";
+  if (panelMonitor) panelMonitor.classList.toggle("sm-hidden", tab !== "monitor");
+  if (panelSync)    panelSync.classList.toggle("sm-hidden",    tab !== "sync");
   ANALYTICS_STATE.tab = tab;
   // Load sync data when switching to sync tab
   if (tab === "sync" && typeof window.loadAnalyticsSync === "function") window.loadAnalyticsSync();
