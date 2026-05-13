@@ -407,7 +407,9 @@
   function scheduleRefresh() {
     clearInterval(state.refreshHandle);
     state.refreshHandle = window.setInterval(() => {
-      fetchMonitor(true, false).catch((error) => renderEmpty(error.message));
+      // force=true: bypass 2-min cache so auto-refresh actually pulls fresh
+      // data from Google Sheets when the rotation timer hits zero
+      fetchMonitor(true, true).catch((error) => renderEmpty(error.message));
     }, REFRESH_SECONDS * 1000);
   }
 

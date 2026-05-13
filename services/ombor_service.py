@@ -5,13 +5,14 @@ import io
 import re
 import threading
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone, timedelta
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 CACHE_TTL_SECONDS = 120  # 2 minutes
 RETENTION_SELLER = "Retention"
+TASHKENT_TZ = timezone(timedelta(hours=5))  # Toshkent UTC+5
 
 _lock = threading.Lock()
 _cache: dict[str, dict[str, Any]] = {}
@@ -174,7 +175,7 @@ def fetch_ombor_data(
         "total_bl": total_bl,
         "sellers": seller_list,
         "monthly": monthly_list,
-        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "fetched_at": datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S"),
         "diagnostics": diag,
     }
 
