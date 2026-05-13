@@ -11,6 +11,7 @@
     countdownHandle: null,
     clockHandle: null,
     refreshHandle: null,
+    deptRotationHandle: null,         // авто-ротация между SAVDO ↔ LOGISTIKA
     currentDepartment: "logists",
     latestPayload: null,
   };
@@ -77,17 +78,17 @@
   const DEPARTMENT_META = {
     logists: {
       key: "logists",
-      title: "SOTUVCHILAR",
+      title: "SAVDO BO'LIMI",            // ранее SOTUVCHILAR — переименовано по запросу
       tone: "blue",
       accentClass: "ca-b",
-      note: "Keyingi yangilanish 2 daqiqada",
+      note: "Live · Ombor sheet",
     },
     sales: {
       key: "sales",
-      title: "SAVDO BO'LIMI",
+      title: "LOGISTIKA BO'LIMI",        // ранее SAVDO BO'LIMI — теперь это «логистика»
       tone: "purple",
       accentClass: "ca-p",
-      note: "Keyingi yangilanish 2 daqiqada",
+      note: "Live · Ombor sheet",
     },
   };
 
@@ -204,8 +205,13 @@
     const circumference = 2 * Math.PI * CIRCLE_RADIUS;
     const normalized = Math.max(0, Math.min(100, Number(percent || 0)));
     const offset = circumference - (normalized / 100) * circumference;
-    els.progressArc.style.strokeDasharray = String(circumference);
-    els.progressArc.style.strokeDashoffset = String(offset);
+    // V24 NEON GLASS TUBE — sync all 3 progress layers (halo glow, main neon, inner white filament)
+    ["progress-arc", "progress-glow", "progress-inner"].forEach((id) => {
+      const node = document.getElementById(id);
+      if (!node) return;
+      node.style.strokeDasharray = String(circumference);
+      node.style.strokeDashoffset = String(offset);
+    });
   }
 
   function renderMonthly(rows, metric, label) {
@@ -275,14 +281,28 @@
 
   function renderDepartment(key, payload) {
     const isOmborLive = payload.data_source === "ombor_live";
-    // In ombor_live mode always show logists (sellers), ignore sales tab
-    const effectiveKey = isOmborLive ? "logists" : key;
-    const meta = {
-      ...DEPARTMENT_META[effectiveKey] || DEPARTMENT_META.logists,
-      title: isOmborLive ? "SOTUVCHILAR" : (DEPARTMENT_META[effectiveKey] || DEPARTMENT_META.logists).title,
-      note: isOmborLive ? "Live · Ombor sheet" : (DEPARTMENT_META[effectiveKey] || DEPARTMENT_META.logists).note,
-    };
-    const department = payload.departments?.[effectiveKey] || {};
+    // Live режим: «SAVDO BO'LIMI» (logists key) — рейтинг по CBM,
+    //             «LOGISTIKA BO'LIMI» (sales key)  — те же продавцы, рейтинг по BL count.
+    const meta = DEPARTMENT_META[key] || DEPARTMENT_META.logists;
+
+    // Базовая выборка (логисты в payload содержат данные с листа)
+    const sourceDept = payload.departments?.logists || {};
+    const baseLeaders = Array.isArray(sourceDept.leaders) ? sourceDept.leaders : [];
+
+    let leaders = baseLeaders;
+    if (isOmborLive && key === "sales") {
+      // Для LOGISTIKA BO'LIMI — сортируем тех же продавцов по числу BL,
+      // пересчитываем share_percent от общего BL.
+      const totalBl = baseLeaders.reduce((sum, l) => sum + Number(l.bl_count || 0), 0) || 1;
+      leaders = [...baseLeaders]
+        .sort((a, b) => Number(b.bl_count || 0) - Number(a.bl_count || 0))
+        .map((l) => ({ ...l, share_percent: (Number(l.bl_count || 0) / totalBl) * 100 }));
+    } else if (!isOmborLive) {
+      // DB-режим — берём оригинальные данные нужного отдела
+      leaders = (payload.departments?.[key] || {}).leaders || [];
+    }
+
+    const department = isOmborLive ? sourceDept : (payload.departments?.[key] || {});
     const plan = payload.plan || {};
     const metric = plan.metric || state.metric;
     const metricLabel = plan.metric_label || METRIC_LABELS[metric] || "m³";
@@ -293,7 +313,7 @@
     els.deptTotal.textContent = formatMetricValue(department.closed_value || 0, metric, metricLabel);
     els.deptShare.textContent = `${Number(department.plan_share_percent || 0).toFixed(1)}%`;
     els.deptBl.textContent = formatNumber(department.bl_count || 0);
-    renderLeaders(els.deptBoard, department.leaders || [], meta.tone);
+    renderLeaders(els.deptBoard, leaders, meta.tone);
   }
 
   function animateDepartmentChange(nextKey) {
@@ -310,8 +330,8 @@
   }
 
   function toggleDepartment(animated = true) {
-    // In ombor_live mode don't toggle
-    if (state.latestPayload?.data_source === "ombor_live") return;
+    // Rotate between SAVDO BO'LIMI ↔ LOGISTIKA BO'LIMI (both rendered from same Ombor live data,
+    // ranked by different metrics — see renderDepartment).
     const nextKey = state.currentDepartment === "logists" ? "sales" : "logists";
     if (animated) {
       animateDepartmentChange(nextKey);
@@ -411,6 +431,16 @@
       // data from Google Sheets when the rotation timer hits zero
       fetchMonitor(true, true).catch((error) => renderEmpty(error.message));
     }, REFRESH_SECONDS * 1000);
+  }
+
+  // Auto-rotate dept panel between SAVDO BO'LIMI ↔ LOGISTIKA BO'LIMI every 15 seconds
+  // (independent from the 2-minute data-refresh interval).
+  const DEPT_ROTATION_SECONDS = 15;
+  function startDeptRotation() {
+    clearInterval(state.deptRotationHandle);
+    state.deptRotationHandle = window.setInterval(() => {
+      if (state.latestPayload) toggleDepartment(true);
+    }, DEPT_ROTATION_SECONDS * 1000);
   }
 
   function onPlanChange() {
@@ -529,6 +559,7 @@
     renderCountdown();
     fetchMonitor(true, false).catch((error) => renderEmpty(error.message));
     scheduleRefresh();
+    startDeptRotation();      // auto-flip SAVDO ↔ LOGISTIKA every 15 s with book-turn animation
   }
 
   document.addEventListener("DOMContentLoaded", init);

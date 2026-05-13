@@ -17,9 +17,15 @@
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
       <linearGradient id="monitor-orange" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#f5a623"></stop>
-        <stop offset="100%" stop-color="#ff7c1e"></stop>
+        <stop offset="0%" stop-color="#34d399"></stop>
+        <stop offset="100%" stop-color="#6ee7b7"></stop>
       </linearGradient>
+      <!-- V24 NEON GLASS TUBE — soft Gaussian glow for the main green stroke -->
+      <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b1"/>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b2"/>
+        <feMerge><feMergeNode in="b2"/><feMergeNode in="b1"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
     </defs>
   </svg>
 
@@ -65,10 +71,12 @@
         </div>
         <div class="circwrap">
           <div class="circc">
-            <!-- r=136, cx/cy=160, viewBox=0 0 320 320, circumference≈855, stroke-width=28 -->
+            <!-- V24 NEON GLASS TUBE: 4 layers (dark casing, soft halo, neon green, white filament) -->
             <svg class="circsvg" width="320" height="320" viewBox="0 0 320 320" aria-hidden="true">
-              <circle class="circbg" cx="160" cy="160" r="136"></circle>
-              <circle class="circfill" id="progress-arc" cx="160" cy="160" r="136"></circle>
+              <circle class="circbg"   cx="160" cy="160" r="136"></circle>
+              <circle class="tube-glow" id="progress-glow"  cx="160" cy="160" r="136"></circle>
+              <circle class="circfill" id="progress-arc"   cx="160" cy="160" r="136"></circle>
+              <circle class="tube-inner" id="progress-inner" cx="160" cy="160" r="136"></circle>
             </svg>
             <div class="circcenter">
               <div class="circpct" id="progress-percent">0%</div>
