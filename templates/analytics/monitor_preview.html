@@ -83,9 +83,23 @@
     align-items: center;
     justify-content: center;
     transform-style: preserve-3d;
-    transition: transform .14s ease-out;
     will-change: transform;
+    animation: alive 11s ease-in-out infinite;
   }
+  /* "Живое дыхание" — постоянный микро-наклон в 3D + масштаб.
+     Перебивает синхронность вариантов через nth-child задержки ниже. */
+  @keyframes alive {
+    0%,  100% { transform: rotateX( 2.5deg) rotateY(-3deg)   scale(1);     }
+    25%       { transform: rotateX(-2deg)   rotateY( 2.5deg) scale(1.005); }
+    50%       { transform: rotateX( 3deg)   rotateY( 2deg)   scale(.998);  }
+    75%       { transform: rotateX(-2.5deg) rotateY(-2.5deg) scale(1.003); }
+  }
+  /* Slight stagger so the 10 cards don't all breathe in sync */
+  .grid .vcard:nth-child(2n)   .vbox { animation-delay: -1.5s; animation-duration: 12s; }
+  .grid .vcard:nth-child(3n)   .vbox { animation-delay: -3s;   animation-duration: 13s; }
+  .grid .vcard:nth-child(5n)   .vbox { animation-delay: -5s;   animation-duration: 10s; }
+  .grid .vcard:nth-child(7n+1) .vbox { animation-delay: -2.5s; animation-duration: 14s; }
+
   .vbox > svg.main-svg { position: absolute; inset: 20px; transform: translateZ(0); }
 
   /* Percent text — always on top, with depth */
@@ -640,8 +654,8 @@
 </head>
 <body>
   <h1>SALES MONITOR — CINEMATIC 3D</h1>
-  <div class="subtitle">5 fully-loaded scenes · green theme · parallax tilt · multi-layered animations</div>
-  <div class="hint">🖱  Hover any card — the whole scene tilts in 3D toward your cursor</div>
+  <div class="subtitle">10 living scenes · green theme · continuous 3D breathing · multi-layered depth</div>
+  <div class="hint">⌁  Every card breathes on its own — slow 3D tilt + subtle scale loop (no mouse / touch needed, designed for TV)</div>
 
   <!-- ─── Shared SVG defs ─── -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -984,29 +998,11 @@
     <div style="font-size:12px;color:var(--muted);margin-top:8px">…я применю к боевому <code>/analytics/monitor</code> (TV + админка).</div>
   </div>
 
+<!-- Mouse-parallax removed: monitor is TV-only, no cursor.
+     Continuous "alive breathing" animation handled in CSS (.vbox @keyframes alive). -->
 <script>
-  // Mouse-parallax 3D tilt
-  document.querySelectorAll('[data-tilt]').forEach(function (box) {
-    var MAX = 14;
-    box.addEventListener('mousemove', function (e) {
-      var rect = box.getBoundingClientRect();
-      var x = (e.clientX - rect.left) / rect.width  - 0.5;
-      var y = (e.clientY - rect.top)  / rect.height - 0.5;
-      box.style.transform = 'rotateX(' + (-y * MAX * 2).toFixed(2) + 'deg) rotateY(' + (x * MAX * 2).toFixed(2) + 'deg)';
-    });
-    box.addEventListener('mouseleave', function () { box.style.transform = 'rotateX(0) rotateY(0)'; });
-  });
-  // Device orientation (mobile)
-  if (window.DeviceOrientationEvent && 'ontouchstart' in window) {
-    window.addEventListener('deviceorientation', function (e) {
-      if (e.beta == null || e.gamma == null) return;
-      var rx = Math.max(-15, Math.min(15, -e.beta / 4));
-      var ry = Math.max(-15, Math.min(15,  e.gamma / 4));
-      document.querySelectorAll('[data-tilt]').forEach(function (b) {
-        b.style.transform = 'rotateX(' + rx + 'deg) rotateY(' + ry + 'deg)';
-      });
-    });
-  }
+  // No JS needed for animations — pure CSS.
+  // (Hint banner about hover removed below since hover does nothing now.)
 </script>
 </body>
 </html>
