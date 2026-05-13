@@ -1282,7 +1282,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       </div>
 
       <!-- ═══════════════════════════════════════════════════ -->
-      <!-- PAGE: DATA ANALYTICS -->
+      <!-- PAGE: SALES MONITOR -->
       <!-- ═══════════════════════════════════════════════════ -->
       <div class="page" id="page-analytics">
         <div class="analytics-head">
@@ -1291,121 +1291,134 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
         </div>
 
-        <div class="card" style="display:none">
-          <div class="card-h">
-            <span class="card-title">Filtrlar</span>
-            <span class="analytics-table-note">Sukut bo‘yicha joriy oy ko‘rsatiladi.</span>
+        <!-- Hidden filter inputs required by analytics.js buildQuery() -->
+        <div style="display:none" aria-hidden="true">
+          <select id="analytics-period"><option value="month" selected>Month</option></select>
+          <input type="date" id="analytics-date-from">
+          <input type="date" id="analytics-date-to">
+          <select id="analytics-sales-plan"><option value="">Aktiv plan</option></select>
+          <select id="analytics-manager"></select>
+          <select id="analytics-logist"></select>
+          <select id="analytics-client"></select>
+          <select id="analytics-bl-code"></select>
+          <select id="analytics-reys-number"></select>
+          <select id="analytics-fura"></select>
+          <select id="analytics-status"></select>
+          <select id="analytics-currency"></select>
+          <select id="analytics-bank-or-cash"></select>
+          <select id="analytics-category"></select>
+          <select id="analytics-warehouse"></select>
+        </div>
+
+        <!-- Tab buttons — simple independent switcher, no analytics.js dependency -->
+        <div class="analytics-tabs" id="sm-tabs">
+          <button type="button" class="analytics-tab-btn active" data-sm-tab="monitor" onclick="switchSMTab(‘monitor’)">Sales Monitor</button>
+          <button type="button" class="analytics-tab-btn" data-sm-tab="sync" onclick="switchSMTab(‘sync’)">Import / Sync</button>
+        </div>
+
+        <!-- PANEL: Sales Monitor (iframe embed) -->
+        <div id="sm-panel-monitor" class="sm-panel">
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('monitor-frame').src='/analytics/monitor?r='+Date.now()">↺ Yangilash</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="window.open('/analytics/monitor','_blank')">⛶ Full-screen</button>
           </div>
-          <div class="card-body">
-            <div class="analytics-filter-grid">
-              <div class="form-g">
-                <label>Sana oralig‘i</label>
-                <select class="inp" id="analytics-period">
-                  <option value="today">Today</option>
-                  <option value="week">Week</option>
-                  <option value="month" selected>Month</option>
-                  <option value="year">Year</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </div>
-              <div class="form-g">
-                <label>С даты</label>
-                <input class="inp" type="date" id="analytics-date-from">
-              </div>
-              <div class="form-g">
-                <label>По дату</label>
-                <input class="inp" type="date" id="analytics-date-to">
-              </div>
-              <div class="form-g">
-                <label>Sales plan</label>
-                <select class="inp" id="analytics-sales-plan"><option value="">Aktiv plan</option></select>
-              </div>
-              <div class="form-g">
-                <label>Menejer</label>
-                <select class="inp" id="analytics-manager"><option value="">Barchasi</option></select>
-              </div>
-              <div class="form-g">
-                <label>Logist</label>
-                <select class="inp" id="analytics-logist"><option value="">Barchasi</option></select>
-              </div>
-              <div class="form-g">
-                <label>Mijoz</label>
-                <select class="inp" id="analytics-client"><option value="">Barchasi</option></select>
-              </div>
-              <div class="form-g">
-                <label>BL kodi</label>
-                <select class="inp" id="analytics-bl-code"><option value="">Barchasi</option></select>
-              </div>
-              <div class="form-g">
-                <label>Reys nomeri</label>
-                <select class="inp" id="analytics-reys-number"><option value="">Barchasi</option></select>
-              </div>
-              <div class="form-g">
-                <label>Fura</label>
-                <select class="inp" id="analytics-fura"><option value="">Barchasi</option></select>
-              </div>
-              <div class="form-g">
-                <label>Status</label>
-                <select class="inp" id="analytics-status"><option value="">Barchasi</option></select>
-              </div>
-              <div class="form-g">
-                <label>Valyuta</label>
-                <select class="inp" id="analytics-currency"><option value="">Barchasi</option></select>
-              </div>
-              <div class="form-g">
-                <label>Kassa / Bank</label>
-                <select class="inp" id="analytics-bank-or-cash"><option value="">Barchasi</option></select>
-              </div>
-              <div class="form-g">
-                <label>Kategoriya</label>
-                <select class="inp" id="analytics-category"><option value="">Barchasi</option></select>
-              </div>
-              <div class="form-g">
-                <label>Sklad</label>
-                <select class="inp" id="analytics-warehouse"><option value="">Barchasi</option></select>
-              </div>
-            </div>
-            <div class="analytics-filter-actions">
-              <button class="btn btn-ghost btn-sm" onclick="resetAnalyticsFilters()">Сбросить</button>
-              <button class="btn btn-amber btn-sm" onclick="refreshAnalyticsActiveTab()">Yangilash</button>
-            </div>
+          <div style="border-radius:16px;overflow:hidden;height:calc(100vh - 185px);min-height:520px">
+            <iframe id="monitor-frame" src="/analytics/monitor" style="width:100%;height:100%;border:none;display:block" title="Sales Monitor"></iframe>
           </div>
         </div>
 
-        <div class="analytics-tabs">
-          <button class="analytics-tab-btn active" data-analytics-tab="monitor" onclick="showAnalyticsTab(‘monitor’)">Sales Monitor</button>
-          <button class="analytics-tab-btn" data-analytics-tab="sync" onclick="showAnalyticsTab(‘sync’)">Import / Sync</button>
-        </div>
-
-        <div class="analytics-section" id="analytics-section-overview">
-          <div class="analytics-kpi-grid" id="analytics-overview-kpis"></div>
-          <div class="analytics-split" style="margin-top:18px">
+        <!-- PANEL: Import / Sync -->
+        <div id="sm-panel-sync" class="sm-panel" style="display:none">
+          <div class="analytics-sync-grid">
             <div class="card">
-              <div class="card-h"><span class="card-title">Avtomatik xulosalar / Smart insights</span></div>
+              <div class="card-h"><span class="card-title">Sync / Sozlamalar</span></div>
               <div class="card-body">
-                <div class="analytics-insights" id="analytics-insights"></div>
+                <div class="form-g">
+                  <label>Google Sheet ID yoki to’liq havola</label>
+                  <input class="inp" id="analytics-sheet-id" placeholder="https://docs.google.com/spreadsheets/d/... yoki Sheet ID">
+                </div>
+                <div class="analytics-status-box" id="analytics-connection-status" style="margin-top:14px"></div>
+                <div class="analytics-filter-actions" style="justify-content:flex-start;margin-top:14px">
+                  <button type="button" class="btn btn-ghost btn-sm editor-only" onclick="saveAnalyticsSheetConfig()">Saqlash</button>
+                  <button type="button" class="btn btn-amber btn-sm editor-only" onclick="syncAnalyticsGoogle()">Google Sheets yangilash</button>
+                  <button type="button" class="btn btn-ghost btn-sm editor-only" onclick="document.getElementById(‘analytics-upload-input’).click()">CSV/XLSX import</button>
+                  <input type="file" id="analytics-upload-input" style="display:none" accept=".csv,.xlsx,.xlsm" onchange="uploadAnalyticsFile()">
+                </div>
+                <div class="analytics-table-note" style="margin-top:10px">
+                  Credentials bo’lmasa ham public havola orqali sync ishlaydi. Google Sheets link bo’yicha ochiq bo’lishi kerak.
+                </div>
               </div>
             </div>
             <div class="card">
-              <div class="card-h"><span class="card-title">Tizim holati</span></div>
-              <div class="card-body" id="analytics-overview-meta"></div>
+              <div class="card-h"><span class="card-title">Oxirgi sync</span></div>
+              <div class="card-body" id="analytics-sync-summary"></div>
             </div>
+          </div>
+
+          <div class="card" style="margin-top:18px">
+            <div class="card-h"><span class="card-title">Sales planlar</span></div>
+            <div class="card-body">
+              <div class="analytics-filter-grid">
+                <div class="form-g">
+                  <label>Plan nomi</label>
+                  <input class="inp" id="analytics-plan-name" placeholder="Aprel 2026 savdo plani">
+                </div>
+                <div class="form-g">
+                  <label>Boshlanish sana</label>
+                  <input class="inp" type="date" id="analytics-plan-start">
+                </div>
+                <div class="form-g">
+                  <label>Tugash sana</label>
+                  <input class="inp" type="date" id="analytics-plan-end">
+                </div>
+                <div class="form-g">
+                  <label>Metric</label>
+                  <select class="inp" id="analytics-plan-metric">
+                    <option value="amount_usd">USD</option>
+                    <option value="cbm">CBM (m³)</option>
+                    <option value="bl_count">BL count</option>
+                  </select>
+                </div>
+                <div class="form-g">
+                  <label>Target</label>
+                  <input class="inp" id="analytics-plan-target" type="number" step="0.01" placeholder="300000">
+                </div>
+              </div>
+              <div class="analytics-filter-actions" style="justify-content:flex-start;margin-top:12px">
+                <button type="button" class="btn btn-amber btn-sm editor-only" onclick="saveAnalyticsPlan()">Plan saqlash</button>
+              </div>
+              <table class="tbl" style="margin-top:16px">
+                <thead><tr><th>Plan</th><th>Davr</th><th>Metric</th><th>Target</th><th>Holat</th><th>Amallar</th></tr></thead>
+                <tbody id="analytics-plans-table"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:18px">
+            <div class="card-h"><span class="card-title">Import loglari</span></div>
+            <table class="tbl analytics-log-table">
+              <thead><tr><th>Boshlangan</th><th>Tugagan</th><th>Status</th><th>Import</th><th>Skip</th><th>Xato</th><th>Detal</th></tr></thead>
+              <tbody id="analytics-sync-logs"></tbody>
+            </table>
           </div>
         </div>
 
-        <div class="analytics-section" id="analytics-section-sales-growth">
-          <div class="analytics-subgrid-3">
-            <div class="analytics-kpi-card"><div class="analytics-kpi-value" id="analytics-sales-current">—</div><div class="analytics-kpi-label">Joriy oy</div></div>
-            <div class="analytics-kpi-card"><div class="analytics-kpi-value" id="analytics-sales-previous">—</div><div class="analytics-kpi-label">O‘tgan oy</div></div>
-            <div class="analytics-kpi-card"><div class="analytics-kpi-value" id="analytics-sales-delta">—</div><div class="analytics-kpi-label">Farq / O‘sish</div></div>
+        <!-- Legacy section stubs: analytics.js finds these by ID; content is hidden -->
+        <div style="display:none" aria-hidden="true">
+          <div id="analytics-section-overview" class="analytics-section">
+            <div id="analytics-overview-kpis"></div>
+            <div id="analytics-insights"></div>
+            <div id="analytics-overview-meta"></div>
           </div>
-          <div class="analytics-subgrid-2" style="margin-top:18px">
-            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Savdo по месяцам</span></div><div class="card-body"><canvas id="analytics-sales-chart"></canvas></div></div>
-            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Kirim по месяцам</span></div><div class="card-body"><canvas id="analytics-income-chart"></canvas></div></div>
-            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">Sof foyda по месяцам</span></div><div class="card-body"><canvas id="analytics-profit-chart"></canvas></div></div>
-            <div class="card analytics-chart-card"><div class="card-h"><span class="card-title">O‘sish % по месяцам</span></div><div class="card-body"><canvas id="analytics-growth-chart"></canvas></div></div>
+          <div id="analytics-section-sales-growth" class="analytics-section">
+            <span id="analytics-sales-current"></span>
+            <span id="analytics-sales-previous"></span>
+            <span id="analytics-sales-delta"></span>
+            <canvas id="analytics-sales-chart"></canvas>
+            <canvas id="analytics-income-chart"></canvas>
+            <canvas id="analytics-profit-chart"></canvas>
+            <canvas id="analytics-growth-chart"></canvas>
           </div>
-        </div>
 
         <div class="analytics-section" id="analytics-section-cashflow">
           <div class="analytics-subgrid-3" id="analytics-cashflow-kpis"></div>
@@ -1541,88 +1554,10 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
         </div>
 
-        <div class="analytics-section active" id="analytics-section-monitor">
-          <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
-            <button class="btn btn-ghost btn-sm" onclick="openSalesMonitor()">⛶ Full-screen</button>
+          <div id="analytics-section-monitor" class="analytics-section">
+            <div id="analytics-monitor-summary"></div>
           </div>
-          <div style="border-radius:16px;overflow:hidden;height:calc(100vh - 200px);min-height:520px;background:var(--bg2,#0d0d0d)">
-            <iframe id="monitor-frame" src="/analytics/monitor" style="width:100%;height:100%;border:none;display:block" title="Sales Monitor" allowfullscreen></iframe>
-          </div>
-        </div>
-
-        <div class="analytics-section" id="analytics-section-sync">
-          <div class="analytics-sync-grid">
-            <div class="card">
-              <div class="card-h"><span class="card-title">Sync / Sozlamalar</span></div>
-              <div class="card-body">
-                  <div class="form-g">
-                    <label>Google Sheet ID yoki to'liq havola</label>
-                    <input class="inp" id="analytics-sheet-id" placeholder="1idVBaJ0xInTRne5cyzbUIXqaG1r4jdhRbunGTinO8jQ yoki https://docs.google.com/spreadsheets/d/...">
-                  </div>
-                <div class="analytics-status-box" id="analytics-connection-status" style="margin-top:14px"></div>
-                <div class="analytics-filter-actions" style="justify-content:flex-start">
-                  <button class="btn btn-ghost btn-sm editor-only" onclick="saveAnalyticsSheetConfig()">Сохранить</button>
-                    <button class="btn btn-amber btn-sm editor-only" onclick="syncAnalyticsGoogle()">Google Sheets’dan yangilash</button>
-                    <button class="btn btn-ghost btn-sm editor-only" onclick="document.getElementById('analytics-upload-input').click()">CSV/XLSX import</button>
-                    <input type="file" id="analytics-upload-input" style="display:none" accept=".csv,.xlsx,.xlsm" onchange="uploadAnalyticsFile()">
-                  </div>
-                  <div class="analytics-table-note" style="margin-top:10px">
-                    Credentials bo'lmasa ham public havola orqali sync ishlaydi. Buning uchun Google Sheets link bo'yicha ochiq bo'lishi kerak.
-                  </div>
-                </div>
-              </div>
-            <div class="card">
-              <div class="card-h"><span class="card-title">Oxirgi sync</span></div>
-              <div class="card-body" id="analytics-sync-summary"></div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-top:18px">
-            <div class="card-h"><span class="card-title">Sales planlar</span></div>
-            <div class="card-body">
-              <div class="analytics-filter-grid">
-                <div class="form-g">
-                  <label>Plan nomi</label>
-                  <input class="inp" id="analytics-plan-name" placeholder="Aprel 2026 savdo plani">
-                </div>
-                <div class="form-g">
-                  <label>Boshlanish sana</label>
-                  <input class="inp" type="date" id="analytics-plan-start">
-                </div>
-                <div class="form-g">
-                  <label>Tugash sana</label>
-                  <input class="inp" type="date" id="analytics-plan-end">
-                </div>
-                <div class="form-g">
-                  <label>Metric</label>
-                  <select class="inp" id="analytics-plan-metric">
-                    <option value="amount_usd">USD</option>
-                    <option value="cbm">CBM</option>
-                    <option value="bl_count">BL count</option>
-                  </select>
-                </div>
-                <div class="form-g">
-                  <label>Target</label>
-                  <input class="inp" id="analytics-plan-target" type="number" step="0.01" placeholder="300000">
-                </div>
-              </div>
-              <div class="analytics-filter-actions" style="justify-content:flex-start">
-                <button class="btn btn-amber btn-sm editor-only" onclick="saveAnalyticsPlan()">Plan saqlash</button>
-              </div>
-              <table class="tbl" style="margin-top:16px">
-                <thead><tr><th>Plan</th><th>Davr</th><th>Metric</th><th>Target</th><th>Holat</th><th>Amallar</th></tr></thead>
-                <tbody id="analytics-plans-table"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="card" style="margin-top:18px">
-            <div class="card-h"><span class="card-title">Import loglari</span></div>
-            <table class="tbl analytics-log-table">
-              <thead><tr><th>Boshlangan</th><th>Tugagan</th><th>Status</th><th>Import</th><th>Skip</th><th>Xato</th><th>Detal</th></tr></thead>
-              <tbody id="analytics-sync-logs"></tbody>
-            </table>
-          </div>
+          <div id="analytics-section-sync" class="analytics-section"></div>
         </div>
       </div>
 
@@ -2751,7 +2686,7 @@ function goto(page) {
   document.getElementById("breadcrumb").innerHTML = labels[page] || page;
 
   if (page==="dashboard")  loadDashboard();
-  if (page==="analytics")  loadAnalyticsPage();
+  if (page==="analytics")  { switchSMTab(ANALYTICS_STATE.tab || "monitor"); loadAnalyticsPage(); }
   if (page==="batches")    { showBatchList(); loadBatches(); }
   if (page==="clients")    loadClientsPage();
   if (page==="chats")      loadChatsPage();
@@ -5637,6 +5572,20 @@ function downloadAnalyticsReport(report, format) {
   window.open(`/analytics/api/export?${query}`, "_blank");
 }
 
+// ── Sales Monitor simple tab switcher (independent of analytics.js) ──
+function switchSMTab(tab) {
+  // Mark active tab button
+  document.querySelectorAll("#sm-tabs .analytics-tab-btn").forEach(function(btn) {
+    btn.classList.toggle("active", btn.dataset.smTab === tab);
+  });
+  // Show/hide panels
+  document.querySelectorAll(".sm-panel").forEach(function(panel) {
+    panel.style.display = (panel.id === "sm-panel-" + tab) ? "" : "none";
+  });
+  // Load sync data when switching to sync tab
+  if (tab === "sync" && typeof loadAnalyticsSync === "function") loadAnalyticsSync();
+}
+
 function showAnalyticsTab(tab, shouldLoad = true) {
   ANALYTICS_STATE.tab = tab;
   document.querySelectorAll(".analytics-tab-btn").forEach(btn => {
@@ -5714,7 +5663,7 @@ if ((INITIAL_VIEW || "dashboard") === "analytics") {
   if (__crumb) __crumb.innerHTML = "Sales Monitor";
   const __crumbSub = document.getElementById("crumb-sub");
   if (__crumbSub) __crumbSub.textContent = "";
-  showAnalyticsTab(INITIAL_ANALYTICS_TAB || "monitor", false);
+  switchSMTab(INITIAL_ANALYTICS_TAB || "monitor");
   loadAnalyticsPage(INITIAL_ANALYTICS_TAB || "monitor");
 } else {
   goto(INITIAL_VIEW || "dashboard");

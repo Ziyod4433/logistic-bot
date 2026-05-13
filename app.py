@@ -1915,7 +1915,7 @@ def index():
     return render_template(
         "index.html",
         initial_view=(request.args.get("view") or "dashboard").strip() or "dashboard",
-        initial_analytics_tab=(request.args.get("tab") or "overview").strip() or "overview",
+        initial_analytics_tab=(request.args.get("tab") or "monitor").strip() or "monitor",
     )
 
 
@@ -1926,7 +1926,7 @@ def _render_analytics_page(tab: str):
 @app.route("/analytics")
 @login_required
 def analytics_index():
-    return _render_analytics_page("overview")
+    return _render_analytics_page("monitor")
 
 
 @app.route("/analytics/sales-growth")
