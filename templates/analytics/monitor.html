@@ -9,7 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/sales_monitor.css') }}">
 </head>
-<body>
+<body{% if is_kiosk %} class="tv-mode"{% endif %}>
   <!-- hidden: JS targets these IDs for countdown/clock logic -->
   <span id="rotation-timer" style="display:none" aria-hidden="true">2:00</span>
   <span id="clock" style="display:none" aria-hidden="true">--:--:--</span>
@@ -24,7 +24,7 @@
   </svg>
 
 
-  <section class="controls">
+  <section class="controls"{% if is_kiosk %} hidden{% endif %}>
     <div class="control-group">
       <label class="cl" for="plan-select">SALES PLAN</label>
       <div style="display:flex;align-items:center;gap:6px">
@@ -137,10 +137,12 @@
   <div class="tbar"><div class="tf" id="rotation-line"></div></div>
 
   <!-- Sheet diagnostics box (small, only visible when there's a sync issue) -->
+  {% if not is_kiosk %}
   <div id="diag-box" style="margin:14px 22px;padding:12px 16px;border:1px solid rgba(245,166,35,.25);border-radius:10px;background:rgba(245,166,35,.04);font-family:'JetBrains Mono',monospace;font-size:11px;color:#a0a8be;display:none">
     <div style="font-weight:600;color:#f5a623;margin-bottom:6px">📊 SHEET DIAGNOSTIKA</div>
     <div id="diag-content"></div>
   </div>
+  {% endif %}
 
   <!-- Config modal -->
   <div class="cfg-overlay" id="cfg-overlay" hidden>

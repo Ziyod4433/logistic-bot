@@ -60,6 +60,12 @@ TRACK_KEYBOARD_ANCHORS_LOCK = threading.Lock()
 
 ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
+ROLE_KIOSK  = "kiosk"  # TV display profile — sees only Sales Monitor
+
+# TV-display kiosk credentials (used for 50-inch monitor display in the office).
+# These are intentionally hard-coded so the TV always has a working login.
+KIOSK_LOGIN    = os.getenv("KIOSK_LOGIN", "sales")
+KIOSK_PASSWORD = os.getenv("KIOSK_PASSWORD", "sales123")
 
 ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "xlsm", "doc", "docx", "zip"}
 
@@ -846,6 +852,8 @@ def get_auth_users():
     add_user(ADMIN1_LOGIN, ADMIN1_PASSWORD, ROLE_EDITOR)
     for guest_login in guest_logins:
         add_user(guest_login, GUEST_PASSWORD, ROLE_VIEWER)
+    # TV kiosk user — sees only the Sales Monitor full-screen view
+    add_user(KIOSK_LOGIN, KIOSK_PASSWORD, ROLE_KIOSK)
 
     return users
 
@@ -1917,6 +1925,9 @@ def login():
                 ip_address=get_request_ip(),
                 user_agent=request.headers.get("User-Agent", ""),
             )
+            # Kiosk users go straight to the full-screen Sales Monitor for TV display
+            if role == ROLE_KIOSK:
+                return redirect(url_for("analytics_monitor_page"))
             return redirect(url_for("index"))
         db.record_login_history(
             username=username,
@@ -1938,6 +1949,9 @@ def logout():
 @app.route("/")
 @login_required
 def index():
+    # Kiosk profile (TV display) is restricted to the Sales Monitor only
+    if session.get("role") == ROLE_KIOSK:
+        return redirect(url_for("analytics_monitor_page"))
     return render_template(
         "index.html",
         initial_view=(request.args.get("view") or "dashboard").strip() or "dashboard",
@@ -2012,6 +2026,7 @@ def analytics_monitor_page():
         "analytics/monitor.html",
         sales_plans=plans,
         active_plan_id=(active_plan or {}).get("id"),
+        is_kiosk=(session.get("role") == ROLE_KIOSK),
     )
 
 

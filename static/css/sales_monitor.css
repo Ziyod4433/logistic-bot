@@ -885,3 +885,129 @@ body.monitor-fullscreen .dept-monitor {
     flex-direction: column;
   }
 }
+
+/* ════════════════════════════════════════════════════════════
+   TV-MODE — kiosk profile on 50-inch monitor (login: sales)
+   Bigger fonts, hidden controls, single fullscreen card view
+   ════════════════════════════════════════════════════════════ */
+body.tv-mode .controls { display: none !important; }
+
+body.tv-mode {
+  padding: 0;
+  overflow: hidden;
+  cursor: none;                  /* hide mouse cursor on TV */
+  user-select: none;             /* no accidental text selection */
+  -webkit-user-select: none;
+}
+
+/* Live indicator bar (countdown) — keep at bottom, but thinner */
+body.tv-mode .tbar {
+  height: 4px !important;
+  bottom: 0;
+}
+
+/* Auto-fullscreen layout — no scrolling, fills viewport */
+body.tv-mode .main {
+  min-height: 100vh;
+  padding: 20px 28px 12px 28px;
+  gap: 24px;
+}
+
+/* Circle: massively scale up — was 370px, now 600px (~62% bigger) */
+body.tv-mode .circc,
+body.tv-mode .circsvg {
+  width: 600px !important;
+  height: 600px !important;
+}
+body.tv-mode .circbg,
+body.tv-mode .circfill {
+  stroke-width: 42 !important;
+}
+body.tv-mode .circpct {
+  font-size: 170px !important;
+  line-height: 1;
+}
+body.tv-mode .circsub {
+  font-size: 26px !important;
+  letter-spacing: 6px !important;
+  margin-top: 12px;
+}
+
+/* "UMUMIY PLAN" / "SOTUVCHILAR" titles */
+body.tv-mode .ct {
+  font-size: 38px !important;
+  letter-spacing: 3px !important;
+}
+
+/* Plan info (name, period, last sync) */
+body.tv-mode .csi {
+  font-size: 18px !important;
+}
+body.tv-mode .csi b {
+  font-size: 19px !important;
+}
+
+/* Plan badge ("Plan bajarilish jarayonida") */
+body.tv-mode .plan-badge {
+  font-size: 22px !important;
+  padding: 10px 26px !important;
+}
+
+/* The 4 stat boxes: PLAN / FACT / QOLDIQ / TOTAL BL */
+body.tv-mode .pgrid { gap: 18px; }
+body.tv-mode .pv {
+  font-size: 52px !important;
+  line-height: 1.1;
+}
+body.tv-mode .pl {
+  font-size: 16px !important;
+  letter-spacing: 3px !important;
+  margin-top: 6px;
+}
+
+/* OYLIK DINAMIKA bar values */
+body.tv-mode .bar-v { font-size: 22px !important; }
+body.tv-mode .bar-l { font-size: 14px !important; }
+
+/* SOTUVCHILAR leaderboard — biggest visual ROI on TV */
+body.tv-mode .lb-row {
+  padding: 14px 14px !important;
+}
+body.tv-mode .lb-rank {
+  font-size: 38px !important;
+  width: 56px;
+}
+body.tv-mode .lb-avatar {
+  width: 56px !important;
+  height: 56px !important;
+  font-size: 20px !important;
+}
+body.tv-mode .lb-name {
+  font-size: 26px !important;
+  line-height: 1.2;
+}
+body.tv-mode .lb-bl {
+  font-size: 15px !important;
+}
+body.tv-mode .lb-val {
+  font-size: 30px !important;
+}
+body.tv-mode .lb-share {
+  font-size: 15px !important;
+}
+
+/* Bottom share bar */
+body.tv-mode .share-title { font-size: 22px !important; }
+body.tv-mode .share-subtitle { font-size: 14px !important; }
+body.tv-mode .sl { font-size: 18px !important; }
+body.tv-mode .sp { font-size: 22px !important; }
+
+/* Card headers */
+body.tv-mode .ch { padding: 22px 26px !important; }
+body.tv-mode .bottom { padding: 18px 28px !important; gap: 22px; }
+body.tv-mode .sc { padding: 14px 18px !important; }
+
+/* Cards: thicker borders / glow for TV visibility */
+body.tv-mode .card-accent {
+  border-width: 2px !important;
+}
