@@ -2686,7 +2686,7 @@ function goto(page) {
   document.getElementById("breadcrumb").innerHTML = labels[page] || page;
 
   if (page==="dashboard")  loadDashboard();
-  if (page==="analytics")  { switchSMTab(ANALYTICS_STATE.tab || "monitor"); loadAnalyticsPage(); }
+  if (page==="analytics")  { switchSMTab(ANALYTICS_STATE.tab || "monitor"); if (typeof window.loadAnalyticsPage === "function") window.loadAnalyticsPage(); }
   if (page==="batches")    { showBatchList(); loadBatches(); }
   if (page==="clients")    loadClientsPage();
   if (page==="chats")      loadChatsPage();
@@ -5661,12 +5661,17 @@ function switchSMTab(tab) {
   document.querySelectorAll("#sm-tabs .analytics-tab-btn").forEach(function(btn) {
     btn.classList.toggle("active", btn.dataset.smTab === tab);
   });
-  // Show/hide panels
-  document.querySelectorAll(".sm-panel").forEach(function(panel) {
-    panel.style.display = (panel.id === "sm-panel-" + tab) ? "" : "none";
+  // Show/hide panels — use explicit IDs to be 100% reliable
+  var SM_PANELS = ["monitor", "sync"];
+  SM_PANELS.forEach(function(name) {
+    var el = document.getElementById("sm-panel-" + name);
+    if (el) el.style.cssText = (name === tab)
+      ? "display:block!important"
+      : "display:none!important";
   });
+  ANALYTICS_STATE.tab = tab;
   // Load sync data when switching to sync tab
-  if (tab === "sync" && typeof loadAnalyticsSync === "function") loadAnalyticsSync();
+  if (tab === "sync" && typeof window.loadAnalyticsSync === "function") window.loadAnalyticsSync();
 }
 
 function showAnalyticsTab(tab, shouldLoad = true) {
