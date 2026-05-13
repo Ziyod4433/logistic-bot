@@ -27,7 +27,10 @@
   <section class="controls">
     <div class="control-group">
       <label class="cl" for="plan-select">SALES PLAN</label>
-      <select id="plan-select" class="ci"></select>
+      <div style="display:flex;align-items:center;gap:8px">
+        <select id="plan-select" class="ci"></select>
+        <button class="cb cb-create" id="create-plan-btn" type="button" title="Yangi sales plan yaratish">+ Plan</button>
+      </div>
     </div>
     <div class="control-group">
       <label class="cl" for="metric-select">METRIC</label>
@@ -173,6 +176,48 @@
     </div>
   </div>
 
+  <!-- Create Sales Plan modal -->
+  <div class="cfg-overlay" id="cp-overlay" hidden>
+    <div class="cfg-modal" style="max-width:460px">
+      <div class="cfg-title">+ YANGI SALES PLAN</div>
+      <div class="cfg-grid">
+        <div class="cfg-field full">
+          <label class="cfg-label" for="cp-name">Plan nomi</label>
+          <input class="cfg-input" id="cp-name" type="text" placeholder="May oyi uchun plan">
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cp-start">Boshlanish sanasi</label>
+          <input class="cfg-input" id="cp-start" type="date">
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cp-end">Tugash sanasi</label>
+          <input class="cfg-input" id="cp-end" type="date">
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cp-metric">Metrika</label>
+          <select class="cfg-input" id="cp-metric">
+            <option value="cbm">m³ (kubometr)</option>
+            <option value="amount_usd">USD</option>
+            <option value="bl_count">BL soni</option>
+          </select>
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cp-target">Maqsad (target)</label>
+          <input class="cfg-input" id="cp-target" type="number" min="0" step="any" placeholder="1000">
+        </div>
+        <div class="cfg-field full" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="cp-activate" checked style="width:16px;height:16px;accent-color:#f5a623">
+          <label class="cfg-label" for="cp-activate" style="margin:0;cursor:pointer">Yaratilgandan so'ng avtomatik faollashtirish</label>
+        </div>
+      </div>
+      <div class="cfg-status" id="cp-status" style="min-height:20px;margin-top:8px"></div>
+      <div class="cfg-actions">
+        <button class="cb cb-ghost" id="cp-cancel-btn" type="button">Bekor qilish</button>
+        <button class="cb" id="cp-save-btn" type="button">Yaratish</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     window.SALES_MONITOR_BOOTSTRAP = {
       activePlanId: {{ active_plan_id|tojson }},
@@ -180,5 +225,78 @@
     };
   </script>
   <script src="{{ url_for('static', filename='js/sales_monitor.js') }}"></script>
+  <script>
+  // ── Create sales plan modal ──────────────────────────────
+  (function () {
+    var overlay   = document.getElementById('cp-overlay');
+    var openBtn   = document.getElementById('create-plan-btn');
+    var saveBtn   = document.getElementById('cp-save-btn');
+    var cancelBtn = document.getElementById('cp-cancel-btn');
+    var status    = document.getElementById('cp-status');
+
+    function openModal() {
+      // Pre-fill dates to current month
+      var now   = new Date();
+      var y     = now.getFullYear(), m = now.getMonth();
+      var first = new Date(y, m, 1);
+      var last  = new Date(y, m + 1, 0);
+      function fmt(d) { return d.toISOString().split('T')[0]; }
+      document.getElementById('cp-start').value = fmt(first);
+      document.getElementById('cp-end').value   = fmt(last);
+      document.getElementById('cp-name').value  = '';
+      document.getElementById('cp-target').value = '';
+      status.style.color = '';
+      status.textContent = '';
+      overlay.hidden = false;
+      document.getElementById('cp-name').focus();
+    }
+
+    function closeModal() { overlay.hidden = true; }
+
+    openBtn.addEventListener('click', openModal);
+    cancelBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeModal(); });
+
+    saveBtn.addEventListener('click', async function () {
+      var name   = (document.getElementById('cp-name').value || '').trim();
+      var start  = document.getElementById('cp-start').value;
+      var end    = document.getElementById('cp-end').value;
+      var metric = document.getElementById('cp-metric').value;
+      var target = Number(document.getElementById('cp-target').value) || 0;
+      var doActivate = document.getElementById('cp-activate').checked;
+
+      if (!name)         { status.style.color='#f43f5e'; status.textContent='⚠ Plan nomini kiriting'; return; }
+      if (!start||!end)  { status.style.color='#f43f5e'; status.textContent='⚠ Sanalarni belgilang'; return; }
+      if (target <= 0)   { status.style.color='#f43f5e'; status.textContent='⚠ Maqsad qiymatini kiriting'; return; }
+
+      saveBtn.disabled = true;
+      status.style.color = '';
+      status.textContent = 'Saqlanmoqda…';
+
+      try {
+        var res = await fetch('/analytics/api/plans', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, period_start: start, period_end: end, target_metric: metric, target_value: target })
+        });
+        var data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || ('Server xatosi: ' + res.status));
+
+        var planId = data.id || data.plan_id;
+        if (doActivate && planId) {
+          await fetch('/analytics/api/plans/' + planId + '/activate', { method: 'POST' });
+        }
+
+        status.style.color = '#10b981';
+        status.textContent = '✓ Plan yaratildi! Monitor yangilanmoqda…';
+        setTimeout(function () { closeModal(); window.location.reload(); }, 1100);
+      } catch (err) {
+        status.style.color = '#f43f5e';
+        status.textContent = '✗ ' + err.message;
+        saveBtn.disabled = false;
+      }
+    });
+  })();
+  </script>
 </body>
 </html>

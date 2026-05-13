@@ -1312,102 +1312,25 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           <select id="analytics-warehouse"></select>
         </div>
 
-        <!-- Tab buttons — simple independent switcher, no analytics.js dependency -->
-        <div class="analytics-tabs" id="sm-tabs" style="display:flex;align-items:center;gap:8px">
-          <button type="button" class="analytics-tab-btn active" data-sm-tab="monitor" onclick="switchSMTab(‘monitor’)">Sales Monitor</button>
-          <button type="button" class="analytics-tab-btn" data-sm-tab="sync" onclick="switchSMTab(‘sync’)">Import / Sync</button>
-          <span id="sm-tab-indicator" style="font-size:10px;opacity:.4;margin-left:auto">tab: monitor</span>
+        <!-- Sales Monitor iframe — always visible (tabs removed) -->
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById(‘monitor-frame’).src=’/analytics/monitor?r=’+Date.now()">↺ Yangilash</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="window.open(‘/analytics/monitor’,’_blank’)">⛶ Full-screen</button>
+        </div>
+        <div style="border-radius:16px;overflow:hidden;height:calc(100vh - 160px);min-height:520px">
+          <iframe id="monitor-frame" src="/analytics/monitor" style="width:100%;height:100%;border:none;display:block" title="Sales Monitor"></iframe>
         </div>
 
-        <!-- PANEL: Sales Monitor (iframe embed) -->
-        <div id="sm-panel-monitor" class="sm-panel">
-          <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">
-            <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('monitor-frame').src='/analytics/monitor?r='+Date.now()">↺ Yangilash</button>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="window.open('/analytics/monitor','_blank')">⛶ Full-screen</button>
-          </div>
-          <div style="border-radius:16px;overflow:hidden;height:calc(100vh - 185px);min-height:520px">
-            <iframe id="monitor-frame" src="/analytics/monitor" style="width:100%;height:100%;border:none;display:block" title="Sales Monitor"></iframe>
-          </div>
-        </div>
-
-        <!-- PANEL: Import / Sync -->
-        <div id="sm-panel-sync" class="sm-panel sm-hidden">
-          <div class="analytics-sync-grid">
-            <div class="card">
-              <div class="card-h"><span class="card-title">Sync / Sozlamalar</span></div>
-              <div class="card-body">
-                <div class="form-g">
-                  <label>Google Sheet ID yoki to’liq havola</label>
-                  <input class="inp" id="analytics-sheet-id" placeholder="https://docs.google.com/spreadsheets/d/... yoki Sheet ID">
-                </div>
-                <div class="analytics-status-box" id="analytics-connection-status" style="margin-top:14px"></div>
-                <div class="analytics-filter-actions" style="justify-content:flex-start;margin-top:14px">
-                  <button type="button" class="btn btn-ghost btn-sm editor-only" onclick="saveAnalyticsSheetConfig()">Saqlash</button>
-                  <button type="button" class="btn btn-amber btn-sm editor-only" onclick="syncAnalyticsGoogle()">Google Sheets yangilash</button>
-                  <button type="button" class="btn btn-ghost btn-sm editor-only" onclick="document.getElementById(‘analytics-upload-input’).click()">CSV/XLSX import</button>
-                  <input type="file" id="analytics-upload-input" style="display:none" accept=".csv,.xlsx,.xlsm" onchange="uploadAnalyticsFile()">
-                </div>
-                <div class="analytics-table-note" style="margin-top:10px">
-                  Credentials bo’lmasa ham public havola orqali sync ishlaydi. Google Sheets link bo’yicha ochiq bo’lishi kerak.
-                </div>
-              </div>
-            </div>
-            <div class="card">
-              <div class="card-h"><span class="card-title">Oxirgi sync</span></div>
-              <div class="card-body" id="analytics-sync-summary"></div>
-            </div>
-          </div>
-
-          <div class="card" style="margin-top:18px">
-            <div class="card-h"><span class="card-title">Sales planlar</span></div>
-            <div class="card-body">
-              <div class="analytics-filter-grid">
-                <div class="form-g">
-                  <label>Plan nomi</label>
-                  <input class="inp" id="analytics-plan-name" placeholder="Aprel 2026 savdo plani">
-                </div>
-                <div class="form-g">
-                  <label>Boshlanish sana</label>
-                  <input class="inp" type="date" id="analytics-plan-start">
-                </div>
-                <div class="form-g">
-                  <label>Tugash sana</label>
-                  <input class="inp" type="date" id="analytics-plan-end">
-                </div>
-                <div class="form-g">
-                  <label>Metric</label>
-                  <select class="inp" id="analytics-plan-metric">
-                    <option value="amount_usd">USD</option>
-                    <option value="cbm">CBM (m³)</option>
-                    <option value="bl_count">BL count</option>
-                  </select>
-                </div>
-                <div class="form-g">
-                  <label>Target</label>
-                  <input class="inp" id="analytics-plan-target" type="number" step="0.01" placeholder="300000">
-                </div>
-              </div>
-              <div class="analytics-filter-actions" style="justify-content:flex-start;margin-top:12px">
-                <button type="button" class="btn btn-amber btn-sm editor-only" onclick="saveAnalyticsPlan()">Plan saqlash</button>
-              </div>
-              <table class="tbl" style="margin-top:16px">
-                <thead><tr><th>Plan</th><th>Davr</th><th>Metric</th><th>Target</th><th>Holat</th><th>Amallar</th></tr></thead>
-                <tbody id="analytics-plans-table"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="card" style="margin-top:18px">
-            <div class="card-h"><span class="card-title">Import loglari</span></div>
-            <table class="tbl analytics-log-table">
-              <thead><tr><th>Boshlangan</th><th>Tugagan</th><th>Status</th><th>Import</th><th>Skip</th><th>Xato</th><th>Detal</th></tr></thead>
-              <tbody id="analytics-sync-logs"></tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Legacy section stubs: analytics.js finds these by ID; content is hidden -->
+        <!-- Legacy stubs: analytics.js/inline-JS reference these IDs; must exist in DOM -->
         <div style="display:none" aria-hidden="true">
+          <input id="analytics-sheet-id">
+          <div id="analytics-connection-status"></div>
+          <div id="analytics-sync-summary"></div>
+          <input id="analytics-plan-name"><input id="analytics-plan-start" type="date">
+          <input id="analytics-plan-end" type="date"><select id="analytics-plan-metric"></select>
+          <input id="analytics-plan-target" type="number">
+          <tbody id="analytics-plans-table"></tbody>
+          <tbody id="analytics-sync-logs"></tbody>
           <div id="analytics-section-overview" class="analytics-section">
             <div id="analytics-overview-kpis"></div>
             <div id="analytics-insights"></div>
