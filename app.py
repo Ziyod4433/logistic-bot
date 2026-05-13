@@ -126,6 +126,31 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 db.init_db()
 
 
+def _migrate_ombor_column_defaults() -> None:
+    """One-time fix: plans created before the column-letter correction
+    have the old defaults W/AA/AH stored. Real BURAQ sheet uses V/Z/AG.
+    Update only rows that exactly match the old defaults (do not touch
+    plans where user explicitly chose other columns)."""
+    try:
+        conn = db.get_conn()
+        try:
+            conn.execute(
+                "UPDATE analytics_sales_plans "
+                "SET ombor_cbm_col='V', ombor_date_col='Z', ombor_seller_col='AG' "
+                "WHERE UPPER(COALESCE(ombor_cbm_col,''))='W' "
+                "  AND UPPER(COALESCE(ombor_date_col,''))='AA' "
+                "  AND UPPER(COALESCE(ombor_seller_col,''))='AH'"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        app.logger.warning(f"_migrate_ombor_column_defaults skipped: {exc}")
+
+
+_migrate_ombor_column_defaults()
+
+
 def _normalize_sheet_cell(value: str | None) -> str:
     text = str(value or "").strip().lower()
     text = text.replace("\u00a0", " ")

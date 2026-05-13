@@ -90,7 +90,7 @@ def fetch_ombor_data(
     Results cached for CACHE_TTL_SECONDS (2 minutes).
     Empty SOTUVCHI cells are assigned to RETENTION_SELLER.
     """
-    cache_key = f"{sheet_id}|{sheet_name}|{date_from}|{date_to}"
+    cache_key = f"{sheet_id}|{sheet_name}|{cbm_col}|{date_col}|{seller_col}|{header_rows}|{date_from}|{date_to}"
     now = time.monotonic()
 
     if not force:
@@ -99,9 +99,9 @@ def fetch_ombor_data(
             if cached and cached["expires_at"] > now:
                 return cached["data"]
 
-    cbm_idx = _col_to_index(cbm_col or "W")
-    date_idx = _col_to_index(date_col or "AA")
-    seller_idx = _col_to_index(seller_col or "AH")
+    cbm_idx = _col_to_index(cbm_col or "V")
+    date_idx = _col_to_index(date_col or "Z")
+    seller_idx = _col_to_index(seller_col or "AG")
 
     rows = _fetch_csv(sheet_id, sheet_name)
     data_rows = rows[max(0, int(header_rows)):]

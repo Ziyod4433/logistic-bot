@@ -1584,12 +1584,12 @@ def save_sales_plan(payload: dict[str, Any]) -> dict[str, Any]:
         target_metric = "amount_usd"
     target_value = _to_float(payload.get("target_value"))
     is_active = 1 if payload.get("is_active") else 0
-    # Ombor sheet config
+    # Ombor sheet config — defaults match the real BURAQ Ombor sheet layout
     ombor_sheet_id = _clean_text(payload.get("ombor_sheet_id") or "")
     ombor_sheet_name = _clean_text(payload.get("ombor_sheet_name") or "Ombor")
-    ombor_cbm_col = _clean_text(payload.get("ombor_cbm_col") or "W").upper()
-    ombor_date_col = _clean_text(payload.get("ombor_date_col") or "AA").upper()
-    ombor_seller_col = _clean_text(payload.get("ombor_seller_col") or "AH").upper()
+    ombor_cbm_col = _clean_text(payload.get("ombor_cbm_col") or "V").upper()
+    ombor_date_col = _clean_text(payload.get("ombor_date_col") or "Z").upper()
+    ombor_seller_col = _clean_text(payload.get("ombor_seller_col") or "AG").upper()
     ombor_header_rows = max(0, _to_int(payload.get("ombor_header_rows") if payload.get("ombor_header_rows") is not None else 2))
     if not name:
         raise ValueError("Plan nomi kiritilmagan")
@@ -1916,12 +1916,20 @@ def get_monitor(args: Any) -> dict[str, Any]:
     if ombor_sheet_id:
         force = bool(args.get("force"))
         try:
+            # Auto-correct: plans saved before the column-letter fix used the old
+            # (wrong-by-one) defaults W/AA/AH. Map those to the real V/Z/AG.
+            cbm_col_stored    = _clean_text(selected_plan.get("ombor_cbm_col") or "")
+            date_col_stored   = _clean_text(selected_plan.get("ombor_date_col") or "")
+            seller_col_stored = _clean_text(selected_plan.get("ombor_seller_col") or "")
+            if cbm_col_stored.upper() == "W" and date_col_stored.upper() == "AA" and seller_col_stored.upper() == "AH":
+                cbm_col_stored, date_col_stored, seller_col_stored = "V", "Z", "AG"
+
             ombor = ombor_service.fetch_ombor_data(
                 sheet_id=ombor_sheet_id,
                 sheet_name=_clean_text(selected_plan.get("ombor_sheet_name") or "Ombor"),
-                cbm_col=_clean_text(selected_plan.get("ombor_cbm_col") or "W"),
-                date_col=_clean_text(selected_plan.get("ombor_date_col") or "AA"),
-                seller_col=_clean_text(selected_plan.get("ombor_seller_col") or "AH"),
+                cbm_col=cbm_col_stored or "V",
+                date_col=date_col_stored or "Z",
+                seller_col=seller_col_stored or "AG",
                 header_rows=max(0, _to_int(selected_plan.get("ombor_header_rows") if selected_plan.get("ombor_header_rows") is not None else 2)),
                 date_from=plan_filters.date_from,
                 date_to=plan_filters.date_to,
