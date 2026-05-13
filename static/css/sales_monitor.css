@@ -935,16 +935,17 @@ body.tv-mode .circsub {
 
 /* "UMUMIY PLAN" / "SOTUVCHILAR" titles */
 body.tv-mode .ct {
-  font-size: 38px !important;
-  letter-spacing: 3px !important;
+  font-size: 56px !important;
+  letter-spacing: 4px !important;
+  font-weight: 700;
 }
 
-/* Plan info (name, period, last sync) */
+/* Plan info (name, period, last sync) + Jami/Plan ulushi/BL */
 body.tv-mode .csi {
-  font-size: 18px !important;
+  font-size: 24px !important;
 }
 body.tv-mode .csi b {
-  font-size: 19px !important;
+  font-size: 26px !important;
 }
 
 /* Plan badge ("Plan bajarilish jarayonida") */
@@ -970,30 +971,37 @@ body.tv-mode .bar-v { font-size: 22px !important; }
 body.tv-mode .bar-l { font-size: 14px !important; }
 
 /* SOTUVCHILAR leaderboard — biggest visual ROI on TV */
+body.tv-mode .lb { gap: 14px !important; }
 body.tv-mode .lb-row {
-  padding: 14px 14px !important;
+  padding: 22px 22px !important;
+  gap: 20px !important;
 }
 body.tv-mode .lb-rank {
-  font-size: 38px !important;
-  width: 56px;
+  font-size: 58px !important;
+  width: 70px;
+  min-width: 70px;
 }
 body.tv-mode .lb-avatar {
-  width: 56px !important;
-  height: 56px !important;
-  font-size: 20px !important;
+  width: 80px !important;
+  height: 80px !important;
+  font-size: 28px !important;
+  flex-shrink: 0;
 }
 body.tv-mode .lb-name {
-  font-size: 26px !important;
-  line-height: 1.2;
+  font-size: 36px !important;
+  line-height: 1.15;
+  font-weight: 600;
 }
 body.tv-mode .lb-bl {
-  font-size: 15px !important;
+  font-size: 22px !important;
+  margin-top: 6px;
 }
 body.tv-mode .lb-val {
-  font-size: 30px !important;
+  font-size: 48px !important;
+  font-weight: 700;
 }
 body.tv-mode .lb-share {
-  font-size: 15px !important;
+  font-size: 22px !important;
 }
 
 /* Bottom share bar */
