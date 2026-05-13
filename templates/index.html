@@ -1542,24 +1542,11 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         </div>
 
         <div class="analytics-section active" id="analytics-section-monitor">
-          <div class="analytics-subgrid-2">
-            <div class="card">
-              <div class="card-h"><span class="card-title">Sales Monitor</span></div>
-              <div class="card-body">
-                <div class="analytics-insights" id="analytics-monitor-summary"></div>
-                <div class="analytics-filter-actions" style="justify-content:flex-start;margin-top:14px">
-                  <button class="btn btn-amber btn-sm" onclick="openSalesMonitor()">Full-screen ochish</button>
-                </div>
-              </div>
-            </div>
-            <div class="card">
-              <div class="card-h"><span class="card-title">Monitor eslatma</span></div>
-              <div class="card-body">
-                <div class="analytics-card-muted">
-                  Bu sahifa katta ofis monitori uchun mo‘ljallangan. Umumiy plan chap tomonda, Logistlar va Savdo bo‘limi esa o‘ng tomonda alohida ko‘rinadi. Fakt ko‘rsatkichlar 5 daqiqada bir yangilanadi, plan esa tanlangan holda qoladi.
-                </div>
-              </div>
-            </div>
+          <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+            <button class="btn btn-ghost btn-sm" onclick="openSalesMonitor()">⛶ Full-screen</button>
+          </div>
+          <div style="border-radius:16px;overflow:hidden;height:calc(100vh - 200px);min-height:520px;background:var(--bg2,#0d0d0d)">
+            <iframe id="monitor-frame" src="/analytics/monitor" style="width:100%;height:100%;border:none;display:block" title="Sales Monitor" allowfullscreen></iframe>
           </div>
         </div>
 
