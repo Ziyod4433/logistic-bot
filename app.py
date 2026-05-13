@@ -2032,9 +2032,16 @@ def analytics_monitor_page():
 
 @app.route("/analytics/monitor/preview")
 def analytics_monitor_preview():
-    """Side-by-side preview of 5 candidate 3D circle styles for the Sales Monitor.
+    """Side-by-side preview of 10 candidate 3D circle styles for the Sales Monitor.
     Public — no login required (pure CSS demo, no real data)."""
     return render_template("analytics/monitor_preview.html")
+
+
+@app.route("/analytics/monitor/preview2")
+def analytics_monitor_preview2():
+    """Round 2 of preview ideas — 8 fresh scenes with enhanced breathing.
+    Public — no login required."""
+    return render_template("analytics/monitor_preview2.html")
 
 
 @app.route("/health")
