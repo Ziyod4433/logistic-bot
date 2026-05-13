@@ -2001,6 +2001,14 @@ def get_monitor(args: Any) -> dict[str, Any]:
             },
             "last_updated": ombor["fetched_at"],
             "source_name": "Google Sheets - " + str(selected_plan.get("ombor_sheet_name") or "Ombor"),
+            "diagnostics": ombor.get("diagnostics"),
+            "ombor_config": {
+                "cbm_col": cbm_col_stored or "V",
+                "date_col": date_col_stored or "Z",
+                "seller_col": seller_col_stored or "AG",
+                "sheet_name": _clean_text(selected_plan.get("ombor_sheet_name") or "Ombor"),
+                "header_rows": max(0, _to_int(selected_plan.get("ombor_header_rows") if selected_plan.get("ombor_header_rows") is not None else 2)),
+            },
         }
 
     # --- Fallback: existing analytics DB ---

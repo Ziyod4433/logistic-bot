@@ -110,6 +110,15 @@ def fetch_ombor_data(
     monthly: dict[str, dict[str, Any]] = {}
     total_cbm = 0.0
     total_bl = 0
+    # Diagnostics: help users debug why their data shows 0%
+    diag = {
+        "rows_total": len(data_rows),
+        "rows_used": 0,
+        "rows_no_cbm": 0,           # CBM empty or 0
+        "rows_bad_date": 0,         # date unparseable
+        "rows_outside_period": 0,   # date OK but outside plan period
+        "sample_dates": [],          # up to 5 sample raw dates from data rows
+    }
 
     def safe_cell(row: list[str], idx: int) -> str:
         return row[idx].strip() if idx < len(row) else ""
@@ -117,12 +126,18 @@ def fetch_ombor_data(
     for row in data_rows:
         cbm = _parse_float(safe_cell(row, cbm_idx))
         if cbm <= 0:
+            diag["rows_no_cbm"] += 1
             continue
 
-        row_date = _parse_date(safe_cell(row, date_idx))
-        if date_from and (row_date is None or row_date < date_from):
+        raw_date_cell = safe_cell(row, date_idx)
+        if len(diag["sample_dates"]) < 5 and raw_date_cell:
+            diag["sample_dates"].append(raw_date_cell)
+        row_date = _parse_date(raw_date_cell)
+        if row_date is None:
+            diag["rows_bad_date"] += 1
             continue
-        if date_to and (row_date is None or row_date > date_to):
+        if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+            diag["rows_outside_period"] += 1
             continue
 
         seller = safe_cell(row, seller_idx) or RETENTION_SELLER
@@ -142,6 +157,8 @@ def fetch_ombor_data(
         total_cbm += cbm
         total_bl += 1
 
+    diag["rows_used"] = total_bl
+
     seller_list = sorted(sellers.values(), key=lambda x: x["cbm"], reverse=True)
     for s in seller_list:
         s["cbm"] = round(s["cbm"], 2)
@@ -158,6 +175,7 @@ def fetch_ombor_data(
         "sellers": seller_list,
         "monthly": monthly_list,
         "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "diagnostics": diag,
     }
 
     with _lock:

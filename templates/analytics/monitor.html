@@ -136,6 +136,12 @@
   <div class="monitor-empty" id="monitor-empty" hidden></div>
   <div class="tbar"><div class="tf" id="rotation-line"></div></div>
 
+  <!-- Sheet diagnostics box (small, only visible when there's a sync issue) -->
+  <div id="diag-box" style="margin:14px 22px;padding:12px 16px;border:1px solid rgba(245,166,35,.25);border-radius:10px;background:rgba(245,166,35,.04);font-family:'JetBrains Mono',monospace;font-size:11px;color:#a0a8be;display:none">
+    <div style="font-weight:600;color:#f5a623;margin-bottom:6px">📊 SHEET DIAGNOSTIKA</div>
+    <div id="diag-content"></div>
+  </div>
+
   <!-- Config modal -->
   <div class="cfg-overlay" id="cfg-overlay" hidden>
     <div class="cfg-modal">
@@ -420,6 +426,46 @@
     mpOpenBtn.addEventListener('click', function () { mpOverlay.hidden = false; loadPlansAndRender(); });
     mpCloseBtn.addEventListener('click', function () { mpOverlay.hidden = true; });
     mpOverlay.addEventListener('click', function (e) { if (e.target === mpOverlay) mpOverlay.hidden = true; });
+  })();
+
+  // ── Sheet diagnostics box ───────────────────────────────────────────
+  (function () {
+    var diagBox     = document.getElementById('diag-box');
+    var diagContent = document.getElementById('diag-content');
+    if (!diagBox || !diagContent) return;
+
+    async function refreshDiag() {
+      try {
+        var params = new URLSearchParams(window.location.search);
+        var url = '/analytics/api/monitor' + (params.toString() ? ('?' + params.toString()) : '');
+        var res = await fetch(url, { credentials: 'same-origin' });
+        var data = await res.json();
+        if (!data || data.empty || !data.diagnostics) { diagBox.style.display = 'none'; return; }
+
+        var d   = data.diagnostics;
+        var cfg = data.ombor_config || {};
+        var samples = (d.sample_dates || []).slice(0, 5).join(', ') || '(bo‘sh)';
+
+        // Show diagnostic ALWAYS when there are read rows but used = 0 (clear problem)
+        // OR if rows_used > 0 (success indicator)
+        diagBox.style.display = 'block';
+        diagContent.innerHTML = ''
+          + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 24px">'
+          + '<div>📥 O‘qilgan qatorlar: <b style="color:#dde3f0">' + d.rows_total + '</b></div>'
+          + '<div>✅ Hisobga olingan: <b style="color:#10b981">' + d.rows_used + '</b></div>'
+          + '<div>⊘ CBM bo‘sh/0: <b style="color:#6b7a9e">' + d.rows_no_cbm + '</b></div>'
+          + '<div>⊘ Sana o‘qilmagan: <b style="color:' + (d.rows_bad_date > 0 ? '#f43f5e' : '#6b7a9e') + '">' + d.rows_bad_date + '</b></div>'
+          + '<div>⊘ Davrdan tashqari: <b style="color:#f5a623">' + d.rows_outside_period + '</b></div>'
+          + '<div>⚙ Ustunlar: <b style="color:#dde3f0">CBM=' + cfg.cbm_col + ' DATE=' + cfg.date_col + ' SELLER=' + cfg.seller_col + '</b> · header=' + cfg.header_rows + '</div>'
+          + '</div>'
+          + '<div style="margin-top:8px;color:#6b7a9e">📅 Sana namunalari (' + cfg.date_col + ' ustun): <span style="color:#dde3f0">' + samples + '</span></div>';
+      } catch (e) {
+        // Silent fail — diagnostics is optional
+      }
+    }
+    // Refresh on load + every 30s
+    refreshDiag();
+    setInterval(refreshDiag, 30000);
   })();
   </script>
 </body>
