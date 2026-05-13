@@ -5516,6 +5516,89 @@ async function loadAnalyticsSync() {
     const data = await api("/analytics/api/sync/status");
     ANALYTICS_STATE.syncStatus = data;
     renderAnalyticsSyncStatus(data);
+    await loadAnalyticsPlans();
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function loadAnalyticsPlans() {
+  try {
+    const data = await api("/analytics/api/plans");
+    renderAnalyticsPlansTable(data.plans || []);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+function renderAnalyticsPlansTable(plans) {
+  const tbody = analyticsEl("analytics-plans-table");
+  if (!tbody) return;
+  if (!plans || !plans.length) {
+    tbody.innerHTML = analyticsTableEmpty(6, "Planlar hali yo'q");
+    return;
+  }
+  tbody.innerHTML = plans.map(p => `
+    <tr>
+      <td>${esc(p.name || "—")}</td>
+      <td>${esc(p.period_start || "—")} → ${esc(p.period_end || "—")}</td>
+      <td>${esc(p.target_metric || "—")}</td>
+      <td>${esc(String(p.target_value || 0))}</td>
+      <td>${p.is_active
+        ? '<span class="badge badge-success">✓ Aktiv</span>'
+        : '<span class="badge badge-muted">Passiv</span>'}</td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">
+        ${!p.is_active
+          ? `<button class="btn btn-amber btn-sm" onclick="activateAnalyticsPlan(${p.id})">Faollashtirish</button>`
+          : ""}
+        <button class="btn btn-danger btn-sm" onclick="deleteAnalyticsPlan(${p.id})">O'chirish</button>
+      </td>
+    </tr>`).join("");
+}
+
+async function saveAnalyticsPlan() {
+  if (!ensureEditor()) return;
+  const name   = (analyticsEl("analytics-plan-name")?.value || "").trim();
+  const start  = analyticsEl("analytics-plan-start")?.value || "";
+  const end    = analyticsEl("analytics-plan-end")?.value || "";
+  const metric = analyticsEl("analytics-plan-metric")?.value || "cbm";
+  const target = parseFloat(analyticsEl("analytics-plan-target")?.value || "0") || 0;
+  if (!name)  { toast("Plan nomi kiritilmagan", "err"); return; }
+  if (!start) { toast("Boshlanish sanasi kiritilmagan", "err"); return; }
+  if (!end)   { toast("Tugash sanasi kiritilmagan", "err"); return; }
+  if (!target){ toast("Target qiymat kiritilmagan", "err"); return; }
+  try {
+    const res = await api("/analytics/api/plans", "POST", {
+      name, period_start: start, period_end: end, target_metric: metric, target_value: target
+    });
+    if (res.error) throw new Error(res.error);
+    toast("Plan saqlandi", "ok");
+    ["analytics-plan-name","analytics-plan-start","analytics-plan-end","analytics-plan-target"].forEach(id => {
+      const el = analyticsEl(id);
+      if (el) el.value = "";
+    });
+    await loadAnalyticsPlans();
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function activateAnalyticsPlan(id) {
+  try {
+    await api(`/analytics/api/plans/${id}/activate`, "POST");
+    toast("Plan faollashtirildi", "ok");
+    await loadAnalyticsPlans();
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function deleteAnalyticsPlan(id) {
+  if (!confirm("Ushbu planni o'chirishni tasdiqlaysizmi?")) return;
+  try {
+    await api(`/analytics/api/plans/${id}`, "DELETE");
+    toast("Plan o'chirildi", "ok");
+    await loadAnalyticsPlans();
   } catch (e) {
     toast(e.message, "err");
   }
