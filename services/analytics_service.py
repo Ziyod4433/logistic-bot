@@ -1941,6 +1941,72 @@ def get_monitor(args: Any) -> dict[str, Any]:
 
         closed_value = ombor["total_cbm"]
         total_bl = ombor["total_bl"]
+
+        # ─────────────────────────────────────────────────────────────────
+        # FTL (full-truckload) sales — fetched from a SEPARATE sheet.
+        # Only sellers that ALSO appear in the Ombor SOTUVCHI column count
+        # toward SAVDO BO'LIMI (user requirement: cross-reference whitelist).
+        # Each truck = N m³ (default 10) and is added to the seller's CBM
+        # and to the overall monthly plan progress.
+        # ─────────────────────────────────────────────────────────────────
+        ftl_diag = None
+        ftl_sheet_id = _clean_text(selected_plan.get("ftl_sheet_id") or "1Ud46UlcezyxnO-PHbx60K0wzLgxGPVleOmPBDQdV9-I")
+        ftl_gid      = _clean_text(selected_plan.get("ftl_sheet_gid") or "619267330")
+        ftl_cbm_per_truck = _to_float(selected_plan.get("ftl_cbm_per_truck")) or 10.0
+
+        if ftl_sheet_id:
+            try:
+                ftl = ombor_service.fetch_ftl_data(
+                    sheet_id=ftl_sheet_id,
+                    gid=ftl_gid,
+                    type_col=_clean_text(selected_plan.get("ftl_type_col")   or "J"),
+                    date_col=_clean_text(selected_plan.get("ftl_date_col")   or "L"),
+                    seller_col=_clean_text(selected_plan.get("ftl_seller_col") or "AB"),
+                    header_rows=max(0, _to_int(selected_plan.get("ftl_header_rows") if selected_plan.get("ftl_header_rows") is not None else 1)),
+                    date_from=plan_filters.date_from,
+                    date_to=plan_filters.date_to,
+                    force=force,
+                )
+                ftl_diag = ftl.get("diagnostics")
+
+                # SAVDO whitelist = sellers found in the Ombor sheet (casefold for match)
+                savdo_set = {s["name"].strip().casefold() for s in ombor.get("sellers", [])}
+                # Index Ombor sellers by normalized name for in-place update
+                seller_dict = {s["name"].strip().casefold(): s for s in ombor.get("sellers", [])}
+
+                added_cbm = 0.0
+                added_bl = 0
+                matched_sellers: list[str] = []
+                for ftl_name, ftl_info in ftl.get("by_seller", {}).items():
+                    norm = ftl_name.strip().casefold()
+                    if norm not in savdo_set:
+                        continue  # FTL row not from a SAVDO seller — skip
+                    extra_cbm = float(ftl_info["trucks"]) * ftl_cbm_per_truck
+                    seller_dict[norm]["cbm"] = float(seller_dict[norm]["cbm"]) + extra_cbm
+                    seller_dict[norm]["bl_count"] = int(seller_dict[norm]["bl_count"]) + int(ftl_info["bl"])
+                    added_cbm += extra_cbm
+                    added_bl  += int(ftl_info["bl"])
+                    matched_sellers.append(seller_dict[norm]["name"])
+
+                if added_cbm > 0 or added_bl > 0:
+                    closed_value += added_cbm
+                    total_bl     += added_bl
+                    # Re-sort and recompute share_percent in the modified seller list
+                    new_sellers = sorted(seller_dict.values(), key=lambda x: float(x["cbm"]), reverse=True)
+                    new_total = sum(float(s["cbm"]) for s in new_sellers) or 1.0
+                    for s in new_sellers:
+                        s["cbm"] = round(float(s["cbm"]), 2)
+                        s["share_percent"] = round(float(s["cbm"]) / new_total * 100, 1)
+                    ombor["sellers"] = new_sellers
+
+                if ftl_diag is not None:
+                    ftl_diag["added_cbm"] = round(added_cbm, 2)
+                    ftl_diag["added_bl"]  = added_bl
+                    ftl_diag["matched_sellers"] = matched_sellers
+            except Exception as exc:
+                # Graceful: FTL is optional, fall back to Ombor-only data
+                ftl_diag = {"error": str(exc)}
+
         remaining_value = max(target_value - closed_value, 0.0)
         progress_percent = _round((closed_value / target_value) * 100 if target_value else 0.0, 2)
 
@@ -2009,6 +2075,7 @@ def get_monitor(args: Any) -> dict[str, Any]:
             "last_updated": ombor["fetched_at"],
             "source_name": "Google Sheets - " + str(selected_plan.get("ombor_sheet_name") or "Ombor"),
             "diagnostics": ombor.get("diagnostics"),
+            "ftl_diagnostics": ftl_diag,
             "ombor_config": {
                 "cbm_col": cbm_col_stored or "V",
                 "date_col": date_col_stored or "Z",

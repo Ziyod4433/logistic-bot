@@ -64,15 +64,128 @@ def _fetch_csv(sheet_id: str, sheet_name: str) -> list[list[str]]:
         f"https://docs.google.com/spreadsheets/d/{sheet_id}"
         f"/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     )
+    return _fetch_csv_url(url, label="Google Sheets")
+
+
+def _fetch_csv_by_gid(sheet_id: str, gid: str) -> list[list[str]]:
+    url = (
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+        f"/gviz/tq?tqx=out:csv&gid={gid}"
+    )
+    return _fetch_csv_url(url, label="FTL Sheets")
+
+
+def _fetch_csv_url(url: str, label: str = "Google Sheets") -> list[list[str]]:
     req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
         with urlopen(req, timeout=30) as response:
             raw = response.read().decode("utf-8-sig", errors="replace")
     except HTTPError as exc:
-        raise RuntimeError(f"Google Sheets: HTTP {exc.code}") from exc
+        raise RuntimeError(f"{label}: HTTP {exc.code}") from exc
     except URLError as exc:
-        raise RuntimeError(f"Google Sheets: {exc.reason}") from exc
+        raise RuntimeError(f"{label}: {exc.reason}") from exc
     return list(csv.reader(io.StringIO(raw)))
+
+
+def _truck_count(type_str: str) -> float:
+    """Business rule for FTL counting:
+       - 20GP, 20HQ → 0.5 truck (two 20s = 1 full truck)
+       - 40HQ, 40GP, 45HQ, 96M3, 130M3, etc → 1 full truck each
+    """
+    t = (type_str or "").upper().replace(" ", "")
+    if not t:
+        return 0.0
+    if t in {"20GP", "20HQ"}:
+        return 0.5
+    return 1.0
+
+
+def fetch_ftl_data(
+    sheet_id: str,
+    gid: str,
+    type_col: str = "J",
+    date_col: str = "L",
+    seller_col: str = "AB",
+    header_rows: int = 1,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """
+    Fetch FTL (full-truckload) sales sheet. For each row:
+      - Parse container type from `type_col` (J)        → truck count (0.5 or 1)
+      - Parse date from `date_col` (L)                  → filter by plan period
+      - Group by seller name from `seller_col` (AB)
+    Returns: { "by_seller": { name: { trucks: float, bl: int } }, "diagnostics": {...} }
+    """
+    cache_key = f"FTL|{sheet_id}|{gid}|{type_col}|{date_col}|{seller_col}|{header_rows}|{date_from}|{date_to}"
+    now = time.monotonic()
+
+    if not force:
+        with _lock:
+            cached = _cache.get(cache_key)
+            if cached and cached["expires_at"] > now:
+                return cached["data"]
+
+    type_idx   = _col_to_index(type_col   or "J")
+    date_idx   = _col_to_index(date_col   or "L")
+    seller_idx = _col_to_index(seller_col or "AB")
+
+    rows = _fetch_csv_by_gid(sheet_id, gid)
+    data_rows = rows[max(0, int(header_rows)):]
+
+    by_seller: dict[str, dict[str, Any]] = {}
+    diag = {
+        "rows_total": len(data_rows),
+        "rows_used": 0,
+        "rows_no_type": 0,
+        "rows_bad_date": 0,
+        "rows_outside_period": 0,
+        "rows_no_seller": 0,
+        "trucks_total": 0.0,
+        "sample_types": [],
+    }
+
+    def safe_cell(row: list[str], idx: int) -> str:
+        return row[idx].strip() if idx < len(row) else ""
+
+    for row in data_rows:
+        type_str = safe_cell(row, type_idx)
+        trucks = _truck_count(type_str)
+        if len(diag["sample_types"]) < 5 and type_str:
+            diag["sample_types"].append(type_str)
+        if trucks <= 0:
+            diag["rows_no_type"] += 1
+            continue
+
+        row_date = _parse_date(safe_cell(row, date_idx))
+        if row_date is None:
+            diag["rows_bad_date"] += 1
+            continue
+        if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+            diag["rows_outside_period"] += 1
+            continue
+
+        seller = safe_cell(row, seller_idx)
+        if not seller:
+            diag["rows_no_seller"] += 1
+            continue
+
+        key = seller.strip()
+        if key not in by_seller:
+            by_seller[key] = {"name": key, "trucks": 0.0, "bl": 0}
+        by_seller[key]["trucks"] += trucks
+        by_seller[key]["bl"] += 1
+        diag["rows_used"] += 1
+        diag["trucks_total"] += trucks
+
+    diag["trucks_total"] = round(diag["trucks_total"], 2)
+    result: dict[str, Any] = {"by_seller": by_seller, "diagnostics": diag}
+
+    with _lock:
+        _cache[cache_key] = {"data": result, "expires_at": now + CACHE_TTL_SECONDS}
+
+    return result
 
 
 def fetch_ombor_data(
