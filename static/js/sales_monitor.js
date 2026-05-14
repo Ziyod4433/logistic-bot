@@ -51,6 +51,7 @@
     deptBoard: byId("dept-board"),
     deptBody: byId("dept-body"),
     deptModeBadge: byId("dept-mode-badge"),
+    deptShareRow: byId("dept-share-row"),
     shareTitle: byId("share-title"),
     logistsShareBar: byId("logists-share-bar"),
     logistsShareValue: byId("logists-share-value"),
@@ -250,6 +251,8 @@
   function leaderboardRow(item, index, tone) {
     const rankClass = index === 0 ? "r1" : index === 1 ? "r2" : index === 2 ? "r3" : "rn";
     const width = Math.max(6, Math.min(100, Number(item.share_percent || 0)));
+    const valueText = escapeHtml(formatNumber(item.value || 0));
+    const unitText = item.unit ? ` <span class="lscv-unit">${escapeHtml(item.unit)}</span>` : "";
     return `
       <div class="lr">
         <div class="lrank ${rankClass}">${index + 1}</div>
@@ -259,7 +262,7 @@
           <div class="lsub">${escapeHtml(String(item.bl_count || 0))} BL</div>
         </div>
         <div class="lsc">
-          <div class="lscv">${escapeHtml(formatNumber(item.value || 0))}</div>
+          <div class="lscv">${valueText}${unitText}</div>
           <div class="lscs">${escapeHtml((Number(item.share_percent || 0)).toFixed(1))}%</div>
         </div>
         <div class="lbar"><div class="lbf ${tone}" style="width:${width}%"></div></div>
@@ -292,10 +295,8 @@
 
   function renderDepartment(key, payload) {
     // Backend provides:
-    //   departments.logists  → SAVDO BO'LIMI    (leaders = LTL m³, .ftl = truck totals)
-    //   departments.sales    → LOGISTIKA BO'LIMI (logists from col AH)
-    // Per user: leaderboard NEVER swaps — only the top numbers + LTL/FTL badges
-    // alternate every 5 sec inside SAVDO.
+    //   departments.logists  → SAVDO BO'LIMI    (leaders = LTL m³, .ftl = SAVDO trucks)
+    //   departments.sales    → LOGISTIKA BO'LIMI (display_mode="ftl_only", trucks only)
     const meta = DEPARTMENT_META[key] || DEPARTMENT_META.logists;
     const department = payload.departments?.[key] || {};
     const plan = payload.plan || {};
@@ -307,21 +308,30 @@
     els.deptRotateNote.textContent = meta.note;
 
     const isSavdo = key === "logists";
+    const isLogist = key === "sales";
     const showFtlNumbers = isSavdo && state.savdoView === "ftl" && department.ftl;
+    const isFtlOnly = isLogist && department.display_mode === "ftl_only";
 
-    if (showFtlNumbers) {
-      // FTL numbers in the top header (leaderboard below stays unchanged — LTL)
+    if (isFtlOnly) {
+      // LOGISTIKA BO'LIMI — trucks only, no plan share
+      els.deptTotal.textContent = `${formatNumber(department.total_trucks || 0)} fura`;
+      els.deptBl.textContent = formatNumber(department.total_bl || 0);
+      if (els.deptShareRow) els.deptShareRow.hidden = true;       // hide "Plan ulushi: ..." row
+    } else if (showFtlNumbers) {
+      // SAVDO FTL sub-view — trucks in the header (leaderboard stays LTL)
       const ftl = department.ftl || {};
       const target = Number(plan.target_value || 0);
       const ftlSharePct = target ? (Number(ftl.total_cbm || 0) / target * 100) : 0;
       els.deptTotal.textContent = `${formatNumber(ftl.total_trucks || 0)} fura`;
       els.deptShare.textContent = `${ftlSharePct.toFixed(1)}%`;
       els.deptBl.textContent = formatNumber(ftl.total_bl || 0);
+      if (els.deptShareRow) els.deptShareRow.hidden = false;
     } else {
-      // LTL (or LOGISTIKA) — standard m³ + Ombor BL count
+      // SAVDO LTL view — standard m³
       els.deptTotal.textContent = formatMetricValue(department.closed_value || 0, metric, metricLabel);
       els.deptShare.textContent = `${Number(department.plan_share_percent || 0).toFixed(1)}%`;
       els.deptBl.textContent = formatNumber(department.bl_count || 0);
+      if (els.deptShareRow) els.deptShareRow.hidden = false;
     }
 
     // LTL/FTL pill at the end of the Jami row — only for SAVDO
@@ -336,7 +346,6 @@
       }
     }
 
-    // Leaderboard ALWAYS shows the LTL list (SAVDO sellers OR LOGISTIKA logists)
     const leaders = Array.isArray(department.leaders) ? department.leaders : [];
     renderLeaders(els.deptBoard, leaders, meta.tone);
   }

@@ -1956,18 +1956,38 @@ def get_monitor(args: Any) -> dict[str, Any]:
         total_bl = ombor["total_bl"]
 
         # ─────────────────────────────────────────────────────────────────
-        # FTL (full-truckload) sales — fetched from a SEPARATE sheet.
-        # KEPT SEPARATE from Ombor (LTL = consolidated cargo in m³) so the
-        # SAVDO BO'LIMI panel can alternate two views:
-        #   • LTL view → per-seller m³ from Ombor (current behavior)
-        #   • FTL view → per-seller truck COUNT from FTL sheet
-        # Overall plan progress (closed_value) STILL includes FTL m³.
+        # FTL (full-truckload) sales — second Google Sheet.
+        # Classification rule:
+        #   • If the seller-column name matches one of LOGIST_NAMES (set below)
+        #     → LOGISTIKA BO'LIMI panel  (display in truck COUNT only,
+        #                                  does NOT contribute to plan progress)
+        #   • Otherwise → SAVDO BO'LIMI FTL sub-view
+        #     (truck count displayed; trucks × m³/truck DOES contribute to plan)
         # ─────────────────────────────────────────────────────────────────
+        LOGIST_NAMES = (
+            "SAYFULLAYEV ABDULLOH ORIFJON O'G'LI",
+            "O'KTAMOV MAQSUDXO'JA MAXAMAT O'G'LI",
+            "ABDULLAYEV IBROHIM ABDUSATTOR O'G'LI",
+        )
+        def _norm_person(name: str) -> str:
+            """Fuzzy match: lowercase, strip all apostrophe variants, collapse whitespace."""
+            if not name:
+                return ""
+            n = name.casefold()
+            for ch in ("ʻ", "ʼ", "'", "`", "‘", "’"):
+                n = n.replace(ch, "")
+            return " ".join(n.split()).strip()
+        LOGIST_SET = {_norm_person(n) for n in LOGIST_NAMES}
+
         ftl_diag = None
-        ftl_savdo_leaders: list[dict[str, Any]] = []
-        ftl_total_trucks = 0.0
-        ftl_total_bl = 0
-        ftl_total_cbm = 0.0
+        ftl_savdo_leaders: list[dict[str, Any]] = []   # SAVDO FTL sub-view
+        ftl_logist_leaders: list[dict[str, Any]] = []  # LOGISTIKA panel
+        ftl_savdo_total_trucks = 0.0
+        ftl_savdo_total_bl = 0
+        ftl_savdo_total_cbm = 0.0
+        ftl_logist_total_trucks = 0.0
+        ftl_logist_total_bl = 0
+
         ftl_sheet_id = _clean_text(selected_plan.get("ftl_sheet_id") or "1Ud46UlcezyxnO-PHbx60K0wzLgxGPVleOmPBDQdV9-I")
         ftl_gid      = _clean_text(selected_plan.get("ftl_sheet_gid") or "619267330")
         ftl_cbm_per_truck = _to_float(selected_plan.get("ftl_cbm_per_truck")) or 10.0
@@ -1987,48 +2007,54 @@ def get_monitor(args: Any) -> dict[str, Any]:
                 )
                 ftl_diag = ftl.get("diagnostics")
 
-                # SAVDO whitelist — name → canonical-case from Ombor sheet
-                savdo_canon = {s["name"].strip().casefold(): s["name"] for s in ombor.get("sellers", [])}
-
-                # Build SAVDO-only FTL list (cross-reference filter)
-                matched_rows = []
+                seller_rows = []
+                logist_rows = []
                 for ftl_name, ftl_info in ftl.get("by_seller", {}).items():
-                    norm = ftl_name.strip().casefold()
-                    if norm not in savdo_canon:
-                        continue
+                    norm = _norm_person(ftl_name)
                     trucks = float(ftl_info["trucks"])
                     bl = int(ftl_info["bl"])
-                    matched_rows.append({
-                        "name": savdo_canon[norm],
-                        "trucks": trucks,
-                        "bl": bl,
-                    })
-                    ftl_total_trucks += trucks
-                    ftl_total_bl += bl
+                    row = {"name": ftl_name, "trucks": trucks, "bl": bl}
+                    if norm in LOGIST_SET:
+                        logist_rows.append(row)
+                        ftl_logist_total_trucks += trucks
+                        ftl_logist_total_bl += bl
+                    else:
+                        seller_rows.append(row)
+                        ftl_savdo_total_trucks += trucks
+                        ftl_savdo_total_bl += bl
 
-                matched_rows.sort(key=lambda x: x["trucks"], reverse=True)
-                for f in matched_rows:
-                    share = (f["trucks"] / ftl_total_trucks * 100) if ftl_total_trucks else 0
-                    name = f["name"]
-                    ftl_savdo_leaders.append({
-                        "name": name,
-                        "initials": "".join(p[0].upper() for p in name.split()[:2] if p) or "?",
-                        "value": round(f["trucks"], 2),
-                        "bl_count": f["bl"],
-                        "share_percent": round(share, 1),
-                        "unit": "fura",                        # frontend appends unit after value
-                    })
+                seller_rows.sort(key=lambda x: x["trucks"], reverse=True)
+                logist_rows.sort(key=lambda x: x["trucks"], reverse=True)
 
-                # Plan progress STILL gets FTL contribution (trucks × m³/truck)
-                ftl_total_cbm = ftl_total_trucks * ftl_cbm_per_truck
-                closed_value += ftl_total_cbm
-                # NOTE: total_bl is left as Ombor only — FTL has its own bl_count for the FTL view
+                def _build_ftl_leaders(rows: list[dict[str, Any]], total_trucks: float) -> list[dict[str, Any]]:
+                    out: list[dict[str, Any]] = []
+                    for r in rows:
+                        share = (r["trucks"] / total_trucks * 100) if total_trucks else 0
+                        name = r["name"]
+                        out.append({
+                            "name": name,
+                            "initials": "".join(p[0].upper() for p in name.split()[:2] if p) or "?",
+                            "value": round(r["trucks"], 2),
+                            "bl_count": r["bl"],
+                            "share_percent": round(share, 1),
+                            "unit": "fura",
+                        })
+                    return out
+
+                ftl_savdo_leaders  = _build_ftl_leaders(seller_rows,  ftl_savdo_total_trucks)
+                ftl_logist_leaders = _build_ftl_leaders(logist_rows, ftl_logist_total_trucks)
+
+                # Plan progress: ONLY SAVDO FTL m³ adds. Logist FTL is shown but doesn't count.
+                ftl_savdo_total_cbm = ftl_savdo_total_trucks * ftl_cbm_per_truck
+                closed_value += ftl_savdo_total_cbm
 
                 if ftl_diag is not None:
-                    ftl_diag["added_cbm"] = round(ftl_total_cbm, 2)
-                    ftl_diag["matched_total_trucks"] = round(ftl_total_trucks, 2)
-                    ftl_diag["matched_total_bl"] = ftl_total_bl
-                    ftl_diag["matched_sellers"] = [m["name"] for m in matched_rows]
+                    ftl_diag["savdo_trucks"]  = round(ftl_savdo_total_trucks, 2)
+                    ftl_diag["savdo_bl"]      = ftl_savdo_total_bl
+                    ftl_diag["savdo_cbm_added"] = round(ftl_savdo_total_cbm, 2)
+                    ftl_diag["logist_trucks"] = round(ftl_logist_total_trucks, 2)
+                    ftl_diag["logist_bl"]     = ftl_logist_total_bl
+                    ftl_diag["logist_names_recognized"] = [r["name"] for r in logist_rows]
             except Exception as exc:
                 # Graceful: FTL is optional, fall back to Ombor-only data
                 ftl_diag = {"error": str(exc)}
@@ -2081,10 +2107,11 @@ def get_monitor(args: Any) -> dict[str, Any]:
             },
             "monthly": monthly,
             # Two panels rotate on the monitor:
-            #   "logists" key  → SAVDO BO'LIMI    (sellers from SOTUVCHI col AG)
+            #   "logists" key  → SAVDO BO'LIMI    (Ombor sellers + FTL non-logist names)
             #     · leaders         = LTL view (Ombor m³)
-            #     · ftl.leaders     = FTL view (truck count from FTL sheet)
-            #   "sales"   key  → LOGISTIKA BO'LIMI (logists from LOGIST PLANI col AH)
+            #     · ftl.leaders     = FTL view (truck count, sellers only)
+            #   "sales"   key  → LOGISTIKA BO'LIMI (the 3 hardcoded logist names from FTL.AB)
+            #                    DOES NOT contribute to plan progress. Display in truck count only.
             "departments": {
                 "logists": {
                     "closed_value": _round(ombor["total_cbm"]),       # LTL total (pure Ombor m³)
@@ -2092,17 +2119,21 @@ def get_monitor(args: Any) -> dict[str, Any]:
                     "bl_count": ombor["total_bl"],
                     "leaders": seller_leaders,
                     "ftl": {
-                        "total_trucks": _round(ftl_total_trucks),
-                        "total_bl": ftl_total_bl,
-                        "total_cbm": _round(ftl_total_cbm),
+                        "total_trucks": _round(ftl_savdo_total_trucks),
+                        "total_bl": ftl_savdo_total_bl,
+                        "total_cbm": _round(ftl_savdo_total_cbm),
                         "leaders": ftl_savdo_leaders,
                     },
                 },
                 "sales": {
-                    "closed_value": _round(closed_value),
-                    "plan_share_percent": progress_percent,
-                    "bl_count": total_bl,
-                    "leaders": logist_leaders,
+                    "display_mode": "ftl_only",                 # frontend signal: render trucks not m³
+                    "total_trucks": _round(ftl_logist_total_trucks),
+                    "total_bl": ftl_logist_total_bl,
+                    "leaders": ftl_logist_leaders,
+                    # Legacy fields kept for compat (will be ignored in ftl_only mode)
+                    "closed_value": 0,
+                    "plan_share_percent": 0,
+                    "bl_count": ftl_logist_total_bl,
                 },
             },
             "last_updated": ombor["fetched_at"],
