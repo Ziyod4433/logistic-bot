@@ -1,13 +1,16 @@
 (function () {
   const bootstrap = window.SALES_MONITOR_BOOTSTRAP || {};
   const query = new URLSearchParams(window.location.search);
-  const REFRESH_SECONDS = 120; // 2 minutes
+  const REFRESH_SECONDS = 120;            // 2-min data refresh (background, silent)
+  const DEPT_ROTATION_SECONDS = 20;       // panel swap cycle (visible book-turn)
+  // ↑ Bottom progress bar tracks DEPT_ROTATION_SECONDS so it visually matches
+  //   the actual rotation event (book-page turn between SAVDO ↔ LOGISTIKA).
 
   const state = {
     plans: Array.isArray(bootstrap.salesPlans) ? bootstrap.salesPlans : [],
     planId: query.get("sales_plan_id") || bootstrap.activePlanId || "",
     metric: query.get("metric") || "cbm",
-    countdownSeconds: REFRESH_SECONDS,
+    countdownSeconds: DEPT_ROTATION_SECONDS,
     countdownHandle: null,
     clockHandle: null,
     refreshHandle: null,
@@ -162,18 +165,19 @@
     const minutes = Math.floor(state.countdownSeconds / 60);
     const seconds = state.countdownSeconds % 60;
     els.rotationTimer.textContent = `${minutes}:${String(seconds).padStart(2, "0")}`;
-    els.rotationLine.style.width = `${Math.max(0, Math.min(100, (state.countdownSeconds / REFRESH_SECONDS) * 100))}%`;
+    // Bar width = remaining fraction of the dept-rotation cycle (20 s)
+    els.rotationLine.style.width = `${Math.max(0, Math.min(100, (state.countdownSeconds / DEPT_ROTATION_SECONDS) * 100))}%`;
   }
 
   function restartCountdown() {
-    state.countdownSeconds = REFRESH_SECONDS;
+    state.countdownSeconds = DEPT_ROTATION_SECONDS;
     renderCountdown();
     clearInterval(state.countdownHandle);
     state.countdownHandle = window.setInterval(() => {
       state.countdownSeconds = Math.max(0, state.countdownSeconds - 1);
       renderCountdown();
       if (state.countdownSeconds <= 0) {
-        state.countdownSeconds = REFRESH_SECONDS;
+        state.countdownSeconds = DEPT_ROTATION_SECONDS;
       }
     }, 1000);
   }
@@ -379,6 +383,8 @@
     if (els.deptBoard)     els.deptBoard.classList.remove("is-fading");
     // Reset SAVDO 5-sec view-rotation timer so it doesn't fire mid-book-turn
     if (typeof startSavdoViewRotation === "function") startSavdoViewRotation();
+    // Reset bottom countdown bar so it visually starts a fresh 20-s cycle
+    restartCountdown();
 
     if (animated) {
       animateDepartmentChange(nextKey);
@@ -474,14 +480,14 @@
   function scheduleRefresh() {
     clearInterval(state.refreshHandle);
     state.refreshHandle = window.setInterval(() => {
-      // force=true: bypass 2-min cache so auto-refresh actually pulls fresh
-      // data from Google Sheets when the rotation timer hits zero
-      fetchMonitor(true, true).catch((error) => renderEmpty(error.message));
+      // force=true: bypass 2-min cache. Silent data refresh — do NOT reset the
+      // visual countdown bar (that's owned by the 20-s dept-rotation cycle).
+      fetchMonitor(false, true).catch((error) => renderEmpty(error.message));
     }, REFRESH_SECONDS * 1000);
   }
 
   // Auto-rotate dept panel between SAVDO BO'LIMI ↔ LOGISTIKA BO'LIMI every 20 seconds.
-  const DEPT_ROTATION_SECONDS = 20;
+  // (DEPT_ROTATION_SECONDS defined at top of IIFE for use in countdown rendering.)
   function startDeptRotation() {
     clearInterval(state.deptRotationHandle);
     state.deptRotationHandle = window.setInterval(() => {
