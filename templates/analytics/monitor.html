@@ -184,6 +184,50 @@
           <input class="cfg-input" id="cfg-seller-col" type="text" placeholder="AH" maxlength="3">
           <div class="cfg-hint">Bo'sh kataklar "Retention" sifatida hisoblanadi</div>
         </div>
+
+        <!-- ─────────────────────────────────────────────────────────
+             FTL SHEET — second source, full-truckload sales.
+             SAVDO BO'LIMI gets bonus CBM from this sheet when the
+             seller name matches an Ombor SOTUVCHI.
+             ───────────────────────────────────────────────────────── -->
+        <div class="cfg-field full" style="border-top:1px solid rgba(110,231,183,.18);padding-top:14px;margin-top:6px">
+          <div class="cfg-label" style="color:#34d399;font-size:13px;letter-spacing:2px">🚛 FTL SHEET (CELY GRUZ)</div>
+          <div class="cfg-hint" style="color:#6b7a9e">
+            Ikkinchi gugl shits — to'liq fura sotuvlari uchun. 20GP/20HQ = 0.5 fura, qolganlari (40HQ, 40GP, 45HQ, 96M3, 130M3 va h.k.) = 1 fura. Har bir fura = N m³ (pastdagi sozlama).
+          </div>
+        </div>
+
+        <div class="cfg-field full">
+          <label class="cfg-label" for="cfg-ftl-sheet-id">FTL Sheet URL yoki ID</label>
+          <input class="cfg-input" id="cfg-ftl-sheet-id" type="text" placeholder="https://docs.google.com/spreadsheets/d/…  (bo'sh qoldirsangiz FTL hisobga olinmaydi)">
+          <div class="cfg-hint">URL'dan ID avtomatik olinadi.</div>
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cfg-ftl-gid">Varaq GID</label>
+          <input class="cfg-input" id="cfg-ftl-gid" type="text" placeholder="619267330">
+          <div class="cfg-hint">URL'dagi <code>gid=</code> raqami</div>
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cfg-ftl-header-rows">Sarlavha qatorlari</label>
+          <input class="cfg-input" id="cfg-ftl-header-rows" type="number" min="0" max="10" placeholder="1">
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cfg-ftl-type-col">Konteyner turi ustun</label>
+          <input class="cfg-input" id="cfg-ftl-type-col" type="text" placeholder="J" maxlength="3">
+          <div class="cfg-hint">20GP / 40HQ / 45HQ / 96M3 …</div>
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cfg-ftl-date-col">Sana ustun</label>
+          <input class="cfg-input" id="cfg-ftl-date-col" type="text" placeholder="L" maxlength="3">
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cfg-ftl-seller-col">Sotuvchi ustun</label>
+          <input class="cfg-input" id="cfg-ftl-seller-col" type="text" placeholder="AB" maxlength="3">
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label" for="cfg-ftl-cbm-per-truck">1 fura = … m³</label>
+          <input class="cfg-input" id="cfg-ftl-cbm-per-truck" type="number" min="0" step="0.1" placeholder="10">
+        </div>
       </div>
       <div class="cfg-status" id="cfg-status"></div>
       <div class="cfg-actions">

@@ -1591,6 +1591,14 @@ def save_sales_plan(payload: dict[str, Any]) -> dict[str, Any]:
     ombor_date_col = _clean_text(payload.get("ombor_date_col") or "Z").upper()
     ombor_seller_col = _clean_text(payload.get("ombor_seller_col") or "AG").upper()
     ombor_header_rows = max(0, _to_int(payload.get("ombor_header_rows") if payload.get("ombor_header_rows") is not None else 2))
+    # FTL (full-truckload) second sheet config
+    ftl_sheet_id     = _clean_text(payload.get("ftl_sheet_id") or "")
+    ftl_sheet_gid    = _clean_text(payload.get("ftl_sheet_gid") or "")
+    ftl_type_col     = _clean_text(payload.get("ftl_type_col")   or "J").upper()
+    ftl_date_col     = _clean_text(payload.get("ftl_date_col")   or "L").upper()
+    ftl_seller_col   = _clean_text(payload.get("ftl_seller_col") or "AB").upper()
+    ftl_header_rows  = max(0, _to_int(payload.get("ftl_header_rows") if payload.get("ftl_header_rows") is not None else 1))
+    ftl_cbm_per_truck = _to_float(payload.get("ftl_cbm_per_truck")) or 10.0
     if not name:
         raise ValueError("Plan nomi kiritilmagan")
     if not period_start or not period_end:
@@ -1606,6 +1614,8 @@ def save_sales_plan(payload: dict[str, Any]) -> dict[str, Any]:
                 UPDATE analytics_sales_plans
                 SET name = ?, period_start = ?, period_end = ?, target_amount_usd = ?, target_metric = ?, target_value = ?, is_active = ?,
                     ombor_sheet_id = ?, ombor_sheet_name = ?, ombor_cbm_col = ?, ombor_date_col = ?, ombor_seller_col = ?, ombor_header_rows = ?,
+                    ftl_sheet_id = ?, ftl_sheet_gid = ?, ftl_type_col = ?, ftl_date_col = ?, ftl_seller_col = ?,
+                    ftl_header_rows = ?, ftl_cbm_per_truck = ?,
                     updated_at = datetime('now','localtime')
                 WHERE id = ?
                 """,
@@ -1614,6 +1624,7 @@ def save_sales_plan(payload: dict[str, Any]) -> dict[str, Any]:
                     target_value if target_metric == "amount_usd" else 0,
                     target_metric, target_value, is_active,
                     ombor_sheet_id, ombor_sheet_name, ombor_cbm_col, ombor_date_col, ombor_seller_col, ombor_header_rows,
+                    ftl_sheet_id, ftl_sheet_gid, ftl_type_col, ftl_date_col, ftl_seller_col, ftl_header_rows, ftl_cbm_per_truck,
                     plan_id,
                 ),
             )
@@ -1623,15 +1634,17 @@ def save_sales_plan(payload: dict[str, Any]) -> dict[str, Any]:
                 INSERT INTO analytics_sales_plans(
                     name, period_start, period_end, target_amount_usd, target_metric, target_value, is_active,
                     ombor_sheet_id, ombor_sheet_name, ombor_cbm_col, ombor_date_col, ombor_seller_col, ombor_header_rows,
+                    ftl_sheet_id, ftl_sheet_gid, ftl_type_col, ftl_date_col, ftl_seller_col, ftl_header_rows, ftl_cbm_per_truck,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'))
                 """,
                 (
                     name, period_start, period_end,
                     target_value if target_metric == "amount_usd" else 0,
                     target_metric, target_value, is_active,
                     ombor_sheet_id, ombor_sheet_name, ombor_cbm_col, ombor_date_col, ombor_seller_col, ombor_header_rows,
+                    ftl_sheet_id, ftl_sheet_gid, ftl_type_col, ftl_date_col, ftl_seller_col, ftl_header_rows, ftl_cbm_per_truck,
                 ),
             )
         conn.commit()

@@ -56,7 +56,7 @@
     main: document.querySelector(".main"),
     bottom: document.querySelector(".bottom"),
     empty: byId("monitor-empty"),
-    // config modal
+    // config modal — Ombor
     cfgOverlay: byId("cfg-overlay"),
     cfgSheetId: byId("cfg-sheet-id"),
     cfgSheetName: byId("cfg-sheet-name"),
@@ -67,6 +67,14 @@
     cfgSaveBtn: byId("cfg-save-btn"),
     cfgCancelBtn: byId("cfg-cancel-btn"),
     cfgStatus: byId("cfg-status"),
+    // config modal — FTL
+    cfgFtlSheetId: byId("cfg-ftl-sheet-id"),
+    cfgFtlGid: byId("cfg-ftl-gid"),
+    cfgFtlTypeCol: byId("cfg-ftl-type-col"),
+    cfgFtlDateCol: byId("cfg-ftl-date-col"),
+    cfgFtlSellerCol: byId("cfg-ftl-seller-col"),
+    cfgFtlHeaderRows: byId("cfg-ftl-header-rows"),
+    cfgFtlCbmPerTruck: byId("cfg-ftl-cbm-per-truck"),
   };
 
   const METRIC_LABELS = {
@@ -454,12 +462,21 @@
   function openConfigModal() {
     const plan = currentPlan();
     if (!plan) return;
+    // Ombor settings
     if (els.cfgSheetId) els.cfgSheetId.value = plan.ombor_sheet_id || "";
     if (els.cfgSheetName) els.cfgSheetName.value = plan.ombor_sheet_name || "Ombor";
-    if (els.cfgCbmCol) els.cfgCbmCol.value = plan.ombor_cbm_col || "W";
-    if (els.cfgDateCol) els.cfgDateCol.value = plan.ombor_date_col || "AA";
-    if (els.cfgSellerCol) els.cfgSellerCol.value = plan.ombor_seller_col || "AH";
+    if (els.cfgCbmCol) els.cfgCbmCol.value = plan.ombor_cbm_col || "V";
+    if (els.cfgDateCol) els.cfgDateCol.value = plan.ombor_date_col || "Z";
+    if (els.cfgSellerCol) els.cfgSellerCol.value = plan.ombor_seller_col || "AG";
     if (els.cfgHeaderRows) els.cfgHeaderRows.value = plan.ombor_header_rows != null ? plan.ombor_header_rows : 2;
+    // FTL settings (second sheet, full-truck sales)
+    if (els.cfgFtlSheetId) els.cfgFtlSheetId.value = plan.ftl_sheet_id || "";
+    if (els.cfgFtlGid) els.cfgFtlGid.value = plan.ftl_sheet_gid || "";
+    if (els.cfgFtlTypeCol) els.cfgFtlTypeCol.value = plan.ftl_type_col || "J";
+    if (els.cfgFtlDateCol) els.cfgFtlDateCol.value = plan.ftl_date_col || "L";
+    if (els.cfgFtlSellerCol) els.cfgFtlSellerCol.value = plan.ftl_seller_col || "AB";
+    if (els.cfgFtlHeaderRows) els.cfgFtlHeaderRows.value = plan.ftl_header_rows != null ? plan.ftl_header_rows : 1;
+    if (els.cfgFtlCbmPerTruck) els.cfgFtlCbmPerTruck.value = plan.ftl_cbm_per_truck != null ? plan.ftl_cbm_per_truck : 10;
     if (els.cfgStatus) { els.cfgStatus.textContent = ""; els.cfgStatus.className = "cfg-status"; }
     if (els.cfgOverlay) els.cfgOverlay.hidden = false;
   }
@@ -476,13 +493,32 @@
     const sheetIdMatch = sheetIdRaw.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
     const sheetId = sheetIdMatch ? sheetIdMatch[1] : sheetIdRaw;
 
+    // Extract FTL Sheet ID from URL or use raw
+    const ftlRaw = (els.cfgFtlSheetId?.value || "").trim();
+    const ftlMatch = ftlRaw.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    const ftlId = ftlMatch ? ftlMatch[1] : ftlRaw;
+    // Extract gid from URL if user pasted full URL into the ID box
+    let ftlGid = (els.cfgFtlGid?.value || "").trim();
+    if (!ftlGid) {
+      const gidMatch = ftlRaw.match(/[?#&]gid=(\d+)/);
+      if (gidMatch) ftlGid = gidMatch[1];
+    }
+
     const body = {
       ombor_sheet_id: sheetId,
       ombor_sheet_name: (els.cfgSheetName?.value || "Ombor").trim(),
-      ombor_cbm_col: (els.cfgCbmCol?.value || "W").trim().toUpperCase(),
-      ombor_date_col: (els.cfgDateCol?.value || "AA").trim().toUpperCase(),
-      ombor_seller_col: (els.cfgSellerCol?.value || "AH").trim().toUpperCase(),
+      ombor_cbm_col: (els.cfgCbmCol?.value || "V").trim().toUpperCase(),
+      ombor_date_col: (els.cfgDateCol?.value || "Z").trim().toUpperCase(),
+      ombor_seller_col: (els.cfgSellerCol?.value || "AG").trim().toUpperCase(),
       ombor_header_rows: parseInt(els.cfgHeaderRows?.value || "2", 10),
+      // FTL — second sheet (full-truckload sales)
+      ftl_sheet_id: ftlId,
+      ftl_sheet_gid: ftlGid,
+      ftl_type_col: (els.cfgFtlTypeCol?.value || "J").trim().toUpperCase(),
+      ftl_date_col: (els.cfgFtlDateCol?.value || "L").trim().toUpperCase(),
+      ftl_seller_col: (els.cfgFtlSellerCol?.value || "AB").trim().toUpperCase(),
+      ftl_header_rows: parseInt(els.cfgFtlHeaderRows?.value || "1", 10),
+      ftl_cbm_per_truck: parseFloat(els.cfgFtlCbmPerTruck?.value || "10"),
     };
 
     if (els.cfgStatus) { els.cfgStatus.textContent = "Saqlanmoqda…"; els.cfgStatus.className = "cfg-status"; }

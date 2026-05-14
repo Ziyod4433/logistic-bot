@@ -1290,6 +1290,15 @@ def init_db():
         "ombor_date_col TEXT NOT NULL DEFAULT 'AA'",
         "ombor_seller_col TEXT NOT NULL DEFAULT 'AH'",
         "ombor_header_rows INTEGER NOT NULL DEFAULT 2",
+        "ombor_logist_col TEXT NOT NULL DEFAULT 'AH'",          # NEW: logist names (Ombor col AH)
+        # FTL (full-truckload) second sheet config per plan
+        "ftl_sheet_id TEXT NOT NULL DEFAULT ''",
+        "ftl_sheet_gid TEXT NOT NULL DEFAULT ''",
+        "ftl_type_col TEXT NOT NULL DEFAULT 'J'",
+        "ftl_date_col TEXT NOT NULL DEFAULT 'L'",
+        "ftl_seller_col TEXT NOT NULL DEFAULT 'AB'",
+        "ftl_header_rows INTEGER NOT NULL DEFAULT 1",
+        "ftl_cbm_per_truck REAL NOT NULL DEFAULT 10",
     ]:
         try:
             conn.execute(f"ALTER TABLE analytics_sales_plans ADD COLUMN {_col_def}")
