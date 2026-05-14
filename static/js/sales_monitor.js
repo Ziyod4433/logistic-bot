@@ -50,9 +50,7 @@
     deptBl: byId("dept-bl"),
     deptBoard: byId("dept-board"),
     deptBody: byId("dept-body"),
-    deptModeBanner: byId("dept-mode-banner"),
-    deptModeBannerLabel: document.querySelector("#dept-mode-banner .dmb-label"),
-    deptModeBannerHint: document.querySelector("#dept-mode-banner .dmb-hint"),
+    deptModeBadge: byId("dept-mode-badge"),
     shareTitle: byId("share-title"),
     logistsShareBar: byId("logists-share-bar"),
     logistsShareValue: byId("logists-share-value"),
@@ -326,17 +324,15 @@
       els.deptBl.textContent = formatNumber(department.bl_count || 0);
     }
 
-    // LTL/FTL banner above the leaderboard — only for SAVDO
-    if (els.deptModeBanner) {
+    // LTL/FTL pill at the end of the Jami row — only for SAVDO
+    if (els.deptModeBadge) {
       if (isSavdo) {
         const mode = showFtlNumbers ? "FTL" : "LTL";
-        const hint = showFtlNumbers ? "Cely gruz · Fura soni" : "Sborniy gruz · m³";
-        els.deptModeBanner.hidden = false;
-        els.deptModeBanner.setAttribute("data-mode", mode);
-        if (els.deptModeBannerLabel) els.deptModeBannerLabel.textContent = mode;
-        if (els.deptModeBannerHint)  els.deptModeBannerHint.textContent  = hint;
+        els.deptModeBadge.hidden = false;
+        els.deptModeBadge.textContent = mode;
+        els.deptModeBadge.setAttribute("data-mode", mode);
       } else {
-        els.deptModeBanner.hidden = true;
+        els.deptModeBadge.hidden = true;
       }
     }
 
@@ -481,11 +477,11 @@
       if (state.currentDepartment !== "logists") return;
       if (!state.latestPayload) return;
       state.savdoView = state.savdoView === "ltl" ? "ftl" : "ltl";
-      // Quick fade on the banner — leaderboard untouched
-      if (els.deptModeBanner) els.deptModeBanner.classList.add("is-flip");
+      // Quick 3D flip on the pill — leaderboard untouched
+      if (els.deptModeBadge) els.deptModeBadge.classList.add("is-flip");
       window.setTimeout(() => {
         renderDepartment("logists", state.latestPayload);
-        if (els.deptModeBanner) els.deptModeBanner.classList.remove("is-flip");
+        if (els.deptModeBadge) els.deptModeBadge.classList.remove("is-flip");
       }, 240);
     }, SAVDO_VIEW_ROTATION_SECONDS * 1000);
   }

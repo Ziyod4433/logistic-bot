@@ -654,68 +654,39 @@ body::before {
   backface-visibility: hidden;
 }
 
-/* LTL / FTL badge — sits at the END of the Jami / Plan ulushi / BL row */
+/* LTL / FTL pill — sits at the END of the Jami / Plan ulushi / BL row */
 .dept-mode-badge {
   font-family: "Bebas Neue", sans-serif;
-  font-size: 14px;
-  letter-spacing: 2.2px;
-  padding: 4px 12px;
-  border-radius: 8px;
-  background: rgba(110, 231, 183, 0.14);
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: 4px;
+  padding: 8px 18px;
+  border-radius: 10px;
+  background: rgba(110, 231, 183, 0.16);
   color: var(--green2, #34d399);
-  border: 1px solid rgba(110, 231, 183, 0.45);
+  border: 1.5px solid rgba(110, 231, 183, 0.55);
   margin-left: auto;
   align-self: center;
-  transition: opacity 0.25s ease, transform 0.25s ease, background 0.25s ease;
+  text-shadow: 0 0 12px rgba(16,185,129,.5);
+  box-shadow: 0 0 18px rgba(16,185,129,.18);
+  transition: opacity 0.24s ease, transform 0.24s ease, background 0.24s ease, color 0.24s ease, border-color 0.24s ease;
 }
 .dept-mode-badge[data-mode="FTL"] {
-  background: rgba(248, 165, 35, 0.16);
+  background: rgba(251, 191, 36, 0.16);
   color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.5);
+  border-color: rgba(251, 191, 36, 0.55);
+  text-shadow: 0 0 12px rgba(251,191,36,.55);
+  box-shadow: 0 0 18px rgba(251,191,36,.2);
 }
 .dept-mode-badge.is-flip { transform: rotateY(85deg); opacity: 0; }
 
-/* LTL / FTL banner — between the Jami row and the leaderboard */
-.dept-mode-banner {
-  display: flex;
-  align-items: baseline;
-  gap: 16px;
-  padding: 16px 22px;
-  border-bottom: 1px solid var(--border);
-  background: linear-gradient(90deg, rgba(16,185,129,.09), transparent);
-  transition: opacity 0.25s ease, background 0.25s ease;
-}
-.dept-mode-banner[data-mode="FTL"] {
-  background: linear-gradient(90deg, rgba(251,191,36,.11), transparent);
-}
-.dmb-label {
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 36px;
-  line-height: 1;
+/* TV mode — bump pill larger for 50" readability */
+body.tv-mode .dept-mode-badge {
+  font-size: 32px;
   letter-spacing: 6px;
-  color: var(--green2, #34d399);
-  text-shadow:
-    0 0 16px rgba(16,185,129,.6),
-    0 0 36px rgba(16,185,129,.25);
+  padding: 12px 26px;
+  border-radius: 14px;
 }
-.dept-mode-banner[data-mode="FTL"] .dmb-label {
-  color: #fbbf24;
-  text-shadow:
-    0 0 16px rgba(251,191,36,.55),
-    0 0 36px rgba(251,191,36,.25);
-}
-.dmb-hint {
-  font-size: 14px;
-  letter-spacing: 2px;
-  color: var(--muted);
-  text-transform: uppercase;
-}
-.dept-mode-banner.is-flip { opacity: 0; }
-
-/* TV mode — bump banner further for 50" readability */
-body.tv-mode .dept-mode-banner { padding: 22px 28px; gap: 24px; }
-body.tv-mode .dmb-label { font-size: 52px; letter-spacing: 8px; }
-body.tv-mode .dmb-hint  { font-size: 18px; letter-spacing: 3px; }
 [hidden] { display: none !important; }
 
 /* Book-page-turn: страница уходит вправо (rotateY вокруг правого края),
