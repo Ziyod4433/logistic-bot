@@ -336,3 +336,155 @@ def fetch_ombor_data(
 def invalidate_cache() -> None:
     with _lock:
         _cache.clear()
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Multi-stage LTL pipeline:
+#   Stage 1 — Ombor             (newly recorded, awaiting load)
+#   Stage 2 — Ortilgan furalar  (loaded on trucks)
+#   Stage 3 — Yetib keldi       (delivered/arrived)
+#
+# Each tab has DIFFERENT column letters. The schema below maps them all.
+# Aggregation is by seller name (case-fold + apostrophe-strip) across stages.
+# ──────────────────────────────────────────────────────────────────────────
+LTL_PIPELINE_STAGES = (
+    # Stage 1 — Ombor (Stage 1 columns CAN be overridden per-plan; the user's
+    # ⚙ Sozlash dialog still controls THIS stage. The other two stages always
+    # use the hard-coded layout below — they're not currently configurable.)
+    {"sheet_name": "Ortilgan furalar", "cbm_col": "U", "date_col": "Y",  "seller_col": "AF", "logist_col": "AG", "header_rows": 1},
+    {"sheet_name": "Yetib keldi",      "cbm_col": "T", "date_col": "AI", "seller_col": "AE", "logist_col": "AF", "header_rows": 1},
+)
+
+
+def fetch_combined_ltl_data(
+    sheet_id: str,
+    primary_sheet_name: str,
+    primary_cbm_col: str,
+    primary_date_col: str,
+    primary_seller_col: str,
+    primary_logist_col: str,
+    primary_header_rows: int,
+    date_from: date | None,
+    date_to: date | None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Read Stage-1 (Ombor) + Stage-2 (Ortilgan furalar) + Stage-3 (Yetib keldi)
+    from the SAME spreadsheet and merge their seller/logist aggregations.
+
+    Each stage uses fetch_ombor_data internally — its caching, diagnostics,
+    and date filtering all work per-stage. We then sum CBM and BL counts
+    by seller-name across stages.
+    """
+    stages_to_fetch = [
+        {
+            "sheet_name": primary_sheet_name,
+            "cbm_col":    primary_cbm_col,
+            "date_col":   primary_date_col,
+            "seller_col": primary_seller_col,
+            "logist_col": primary_logist_col,
+            "header_rows": primary_header_rows,
+        },
+        *LTL_PIPELINE_STAGES,
+    ]
+
+    per_stage: list[tuple[str, dict[str, Any] | None, str | None]] = []
+    for cfg in stages_to_fetch:
+        try:
+            r = fetch_ombor_data(
+                sheet_id=sheet_id,
+                sheet_name=cfg["sheet_name"],
+                cbm_col=cfg["cbm_col"],
+                date_col=cfg["date_col"],
+                seller_col=cfg["seller_col"],
+                logist_col=cfg["logist_col"],
+                header_rows=cfg["header_rows"],
+                date_from=date_from,
+                date_to=date_to,
+                force=force,
+            )
+            per_stage.append((cfg["sheet_name"], r, None))
+        except Exception as exc:
+            per_stage.append((cfg["sheet_name"], None, str(exc)))
+
+    # ─── Merge by seller/logist name (case-fold + apostrophe-strip) ───
+    def _norm(name: str) -> str:
+        n = (name or "").casefold()
+        for ch in ("ʻ", "ʼ", "'", "`", "‘", "’"):
+            n = n.replace(ch, "")
+        return " ".join(n.split()).strip()
+
+    sellers_acc: dict[str, dict[str, Any]] = {}
+    logists_acc: dict[str, dict[str, Any]] = {}
+    monthly_acc: dict[str, dict[str, Any]] = {}
+    total_cbm = 0.0
+    total_bl = 0
+
+    for _sheet_name, r, _err in per_stage:
+        if not r:
+            continue
+        for s in r.get("sellers", []):
+            k = _norm(s["name"])
+            if not k:
+                continue
+            if k not in sellers_acc:
+                sellers_acc[k] = {"name": s["name"], "cbm": 0.0, "bl_count": 0}
+            sellers_acc[k]["cbm"]      += float(s.get("cbm") or 0)
+            sellers_acc[k]["bl_count"] += int(s.get("bl_count") or 0)
+        for l in r.get("logists", []):
+            k = _norm(l["name"])
+            if not k:
+                continue
+            if k not in logists_acc:
+                logists_acc[k] = {"name": l["name"], "cbm": 0.0, "bl_count": 0}
+            logists_acc[k]["cbm"]      += float(l.get("cbm") or 0)
+            logists_acc[k]["bl_count"] += int(l.get("bl_count") or 0)
+        for m in r.get("monthly", []):
+            key = m["month"]
+            if key not in monthly_acc:
+                monthly_acc[key] = {"month": key, "label": m.get("label") or key, "cbm": 0.0, "bl_count": 0}
+            monthly_acc[key]["cbm"]      += float(m.get("cbm") or 0)
+            monthly_acc[key]["bl_count"] += int(m.get("bl_count") or 0)
+        total_cbm += float(r.get("total_cbm") or 0)
+        total_bl  += int(r.get("total_bl") or 0)
+
+    seller_list = sorted(sellers_acc.values(), key=lambda x: x["cbm"], reverse=True)
+    for s in seller_list:
+        s["share_percent"] = round(s["cbm"] / total_cbm * 100, 1) if total_cbm else 0
+        s["cbm"] = round(s["cbm"], 2)
+
+    logist_list = sorted(logists_acc.values(), key=lambda x: x["cbm"], reverse=True)
+    for l in logist_list:
+        l["share_percent"] = round(l["cbm"] / total_cbm * 100, 1) if total_cbm else 0
+        l["cbm"] = round(l["cbm"], 2)
+
+    monthly_list = sorted(monthly_acc.values(), key=lambda x: x["month"])
+    for m in monthly_list:
+        m["cbm"] = round(m["cbm"], 2)
+
+    # Per-stage diagnostics so the user can see what each tab contributed
+    per_stage_diag: dict[str, Any] = {}
+    for sheet_name, r, err in per_stage:
+        if err:
+            per_stage_diag[sheet_name] = {"error": err}
+        elif r:
+            per_stage_diag[sheet_name] = {
+                "total_cbm": round(r.get("total_cbm") or 0, 2),
+                "total_bl":  r.get("total_bl") or 0,
+                "rows_used": (r.get("diagnostics") or {}).get("rows_used"),
+                "rows_total": (r.get("diagnostics") or {}).get("rows_total"),
+            }
+
+    return {
+        "ok": True,
+        "total_cbm": round(total_cbm, 2),
+        "total_bl": total_bl,
+        "sellers": seller_list,
+        "logists": logist_list,
+        "monthly": monthly_list,
+        "fetched_at": datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        "diagnostics": {
+            "stages_fetched": len([r for _, r, _ in per_stage if r]),
+            "stages_failed":  len([e for _, _, e in per_stage if e]),
+            "per_stage": per_stage_diag,
+        },
+    }

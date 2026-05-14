@@ -1937,14 +1937,17 @@ def get_monitor(args: Any) -> dict[str, Any]:
             if cbm_col_stored.upper() == "W" and date_col_stored.upper() == "AA" and seller_col_stored.upper() == "AH":
                 cbm_col_stored, date_col_stored, seller_col_stored = "V", "Z", "AG"
 
-            ombor = ombor_service.fetch_ombor_data(
+            # Read all 3 LTL pipeline stages (Ombor → Ortilgan furalar → Yetib keldi)
+            # and merge by seller name. Stage-1 (Ombor) columns come from the plan
+            # config; the other two stages use a hard-coded layout (see LTL_PIPELINE_STAGES).
+            ombor = ombor_service.fetch_combined_ltl_data(
                 sheet_id=ombor_sheet_id,
-                sheet_name=_clean_text(selected_plan.get("ombor_sheet_name") or "Ombor"),
-                cbm_col=cbm_col_stored or "V",
-                date_col=date_col_stored or "Z",
-                seller_col=seller_col_stored or "AG",
-                logist_col=_clean_text(selected_plan.get("ombor_logist_col") or "AH"),
-                header_rows=max(0, _to_int(selected_plan.get("ombor_header_rows") if selected_plan.get("ombor_header_rows") is not None else 2)),
+                primary_sheet_name=_clean_text(selected_plan.get("ombor_sheet_name") or "Ombor"),
+                primary_cbm_col=cbm_col_stored or "V",
+                primary_date_col=date_col_stored or "Z",
+                primary_seller_col=seller_col_stored or "AG",
+                primary_logist_col=_clean_text(selected_plan.get("ombor_logist_col") or "AH"),
+                primary_header_rows=max(0, _to_int(selected_plan.get("ombor_header_rows") if selected_plan.get("ombor_header_rows") is not None else 2)),
                 date_from=plan_filters.date_from,
                 date_to=plan_filters.date_to,
                 force=force,
