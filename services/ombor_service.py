@@ -100,13 +100,19 @@ def _fetch_csv_url(url: str, label: str = "Google Sheets") -> list[list[str]]:
 def _truck_count(type_str: str) -> float:
     """Business rule for FTL counting:
        - 20GP, 20HQ → 0.5 truck (two 20s = 1 full truck)
-       - 40HQ, 40GP, 45HQ, 96M3, 130M3, etc → 1 full truck each
+       - 40HQ, 40GP, 45HQ, 96M3, 130M3, 120M3, 145M3, REF FURA, etc → 1 full truck each
+       - Anything else (e.g. header text like "Container type", "Container №") → 0
     """
     t = (type_str or "").upper().replace(" ", "")
     if not t:
         return 0.0
     if t in {"20GP", "20HQ"}:
         return 0.5
+    # Real container labels always contain a digit (40HQ, 96M3, 130M3, …)
+    # or are the special REF FURA marker. Header/junk text returns 0.
+    has_digit = any(c.isdigit() for c in t)
+    if not has_digit and "FURA" not in t:
+        return 0.0
     return 1.0
 
 
