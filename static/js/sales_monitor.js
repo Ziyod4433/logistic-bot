@@ -50,7 +50,6 @@
     deptBl: byId("dept-bl"),
     deptBoard: byId("dept-board"),
     deptBody: byId("dept-body"),
-    deptModeBadge: byId("dept-mode-badge"),
     deptModeBanner: byId("dept-mode-banner"),
     deptModeBannerLabel: document.querySelector("#dept-mode-banner .dmb-label"),
     deptModeBannerHint: document.querySelector("#dept-mode-banner .dmb-hint"),
@@ -327,17 +326,7 @@
       els.deptBl.textContent = formatNumber(department.bl_count || 0);
     }
 
-    // LTL/FTL badges (Jami row + banner above leaderboard) — only for SAVDO
-    if (els.deptModeBadge) {
-      if (isSavdo) {
-        const mode = showFtlNumbers ? "FTL" : "LTL";
-        els.deptModeBadge.hidden = false;
-        els.deptModeBadge.textContent = mode;
-        els.deptModeBadge.setAttribute("data-mode", mode);
-      } else {
-        els.deptModeBadge.hidden = true;
-      }
-    }
+    // LTL/FTL banner above the leaderboard — only for SAVDO
     if (els.deptModeBanner) {
       if (isSavdo) {
         const mode = showFtlNumbers ? "FTL" : "LTL";
@@ -492,12 +481,10 @@
       if (state.currentDepartment !== "logists") return;
       if (!state.latestPayload) return;
       state.savdoView = state.savdoView === "ltl" ? "ftl" : "ltl";
-      // Quick flip animation on the badge — leaderboard untouched
-      if (els.deptModeBadge) els.deptModeBadge.classList.add("is-flip");
+      // Quick fade on the banner — leaderboard untouched
       if (els.deptModeBanner) els.deptModeBanner.classList.add("is-flip");
       window.setTimeout(() => {
         renderDepartment("logists", state.latestPayload);
-        if (els.deptModeBadge) els.deptModeBadge.classList.remove("is-flip");
         if (els.deptModeBanner) els.deptModeBanner.classList.remove("is-flip");
       }, 240);
     }, SAVDO_VIEW_ROTATION_SECONDS * 1000);

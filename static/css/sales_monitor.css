@@ -679,33 +679,43 @@ body::before {
 .dept-mode-banner {
   display: flex;
   align-items: baseline;
-  gap: 12px;
-  padding: 10px 20px;
+  gap: 16px;
+  padding: 16px 22px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(90deg, rgba(16,185,129,.06), transparent);
+  background: linear-gradient(90deg, rgba(16,185,129,.09), transparent);
   transition: opacity 0.25s ease, background 0.25s ease;
 }
 .dept-mode-banner[data-mode="FTL"] {
-  background: linear-gradient(90deg, rgba(251,191,36,.07), transparent);
+  background: linear-gradient(90deg, rgba(251,191,36,.11), transparent);
 }
 .dmb-label {
   font-family: "Bebas Neue", sans-serif;
-  font-size: 22px;
-  letter-spacing: 4px;
+  font-size: 36px;
+  line-height: 1;
+  letter-spacing: 6px;
   color: var(--green2, #34d399);
-  text-shadow: 0 0 12px rgba(16,185,129,.35);
+  text-shadow:
+    0 0 16px rgba(16,185,129,.6),
+    0 0 36px rgba(16,185,129,.25);
 }
 .dept-mode-banner[data-mode="FTL"] .dmb-label {
   color: #fbbf24;
-  text-shadow: 0 0 12px rgba(251,191,36,.35);
+  text-shadow:
+    0 0 16px rgba(251,191,36,.55),
+    0 0 36px rgba(251,191,36,.25);
 }
 .dmb-hint {
-  font-size: 11px;
-  letter-spacing: 1.4px;
+  font-size: 14px;
+  letter-spacing: 2px;
   color: var(--muted);
   text-transform: uppercase;
 }
 .dept-mode-banner.is-flip { opacity: 0; }
+
+/* TV mode — bump banner further for 50" readability */
+body.tv-mode .dept-mode-banner { padding: 22px 28px; gap: 24px; }
+body.tv-mode .dmb-label { font-size: 52px; letter-spacing: 8px; }
+body.tv-mode .dmb-hint  { font-size: 18px; letter-spacing: 3px; }
 [hidden] { display: none !important; }
 
 /* Book-page-turn: страница уходит вправо (rotateY вокруг правого края),
