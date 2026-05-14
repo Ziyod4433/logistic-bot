@@ -833,6 +833,9 @@ body.monitor-fullscreen .dept-monitor {
 .cfg-modal {
   width: 480px;
   max-width: 95vw;
+  max-height: calc(100vh - 48px);   /* fits viewport with 24px margin top/bottom */
+  overflow-y: auto;                 /* scroll if content taller than viewport */
+  overscroll-behavior: contain;
   border: 1px solid var(--border);
   border-radius: 18px;
   background: var(--bg2);
@@ -840,6 +843,15 @@ body.monitor-fullscreen .dept-monitor {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  /* slim scrollbar inside the modal */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(110,231,183,.35) transparent;
+}
+.cfg-modal::-webkit-scrollbar { width: 6px; }
+.cfg-modal::-webkit-scrollbar-track { background: transparent; }
+.cfg-modal::-webkit-scrollbar-thumb {
+  background: rgba(110,231,183,.35);
+  border-radius: 3px;
 }
 
 .cfg-title {
