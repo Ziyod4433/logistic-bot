@@ -603,6 +603,10 @@ body::before {
   letter-spacing: 1px;
 }
 
+/* When SAVDO sub-view flips LTL↔FTL: fade leaderboard cells, panel layout stays */
+.lb { transition: opacity .22s ease; }
+.lb.is-fading { opacity: .35; }
+
 .lscs {
   font-family: "JetBrains Mono", monospace;
   font-size: 9px;

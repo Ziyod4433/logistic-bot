@@ -312,13 +312,17 @@
     const showFtlNumbers = isSavdo && state.savdoView === "ftl" && department.ftl;
     const isFtlOnly = isLogist && department.display_mode === "ftl_only";
 
+    // Pick header values + leaders source based on view
+    let leadersToShow;
+
     if (isFtlOnly) {
       // LOGISTIKA BO'LIMI — trucks only, no plan share
       els.deptTotal.textContent = `${formatNumber(department.total_trucks || 0)} fura`;
       els.deptBl.textContent = formatNumber(department.total_bl || 0);
-      if (els.deptShareRow) els.deptShareRow.hidden = true;       // hide "Plan ulushi: ..." row
+      if (els.deptShareRow) els.deptShareRow.hidden = true;
+      leadersToShow = department.leaders || [];
     } else if (showFtlNumbers) {
-      // SAVDO FTL sub-view — trucks in the header (leaderboard stays LTL)
+      // SAVDO FTL sub-view — header AND leaderboard from FTL sheet
       const ftl = department.ftl || {};
       const target = Number(plan.target_value || 0);
       const ftlSharePct = target ? (Number(ftl.total_cbm || 0) / target * 100) : 0;
@@ -326,12 +330,14 @@
       els.deptShare.textContent = `${ftlSharePct.toFixed(1)}%`;
       els.deptBl.textContent = formatNumber(ftl.total_bl || 0);
       if (els.deptShareRow) els.deptShareRow.hidden = false;
+      leadersToShow = ftl.leaders || [];          // ← FTL rows from FTL sheet
     } else {
-      // SAVDO LTL view — standard m³
+      // SAVDO LTL view — header AND leaderboard from Ombor sheet
       els.deptTotal.textContent = formatMetricValue(department.closed_value || 0, metric, metricLabel);
       els.deptShare.textContent = `${Number(department.plan_share_percent || 0).toFixed(1)}%`;
       els.deptBl.textContent = formatNumber(department.bl_count || 0);
       if (els.deptShareRow) els.deptShareRow.hidden = false;
+      leadersToShow = department.leaders || [];   // ← LTL rows from Ombor
     }
 
     // LTL/FTL pill at the end of the Jami row — only for SAVDO
@@ -346,8 +352,7 @@
       }
     }
 
-    const leaders = Array.isArray(department.leaders) ? department.leaders : [];
-    renderLeaders(els.deptBoard, leaders, meta.tone);
+    renderLeaders(els.deptBoard, leadersToShow, meta.tone);
   }
 
   function animateDepartmentChange(nextKey) {
@@ -486,11 +491,13 @@
       if (state.currentDepartment !== "logists") return;
       if (!state.latestPayload) return;
       state.savdoView = state.savdoView === "ltl" ? "ftl" : "ltl";
-      // Quick 3D flip on the pill — leaderboard untouched
+      // 3D flip on the pill + soft fade of the leaderboard cells (values change source)
       if (els.deptModeBadge) els.deptModeBadge.classList.add("is-flip");
+      if (els.deptBoard) els.deptBoard.classList.add("is-fading");
       window.setTimeout(() => {
         renderDepartment("logists", state.latestPayload);
         if (els.deptModeBadge) els.deptModeBadge.classList.remove("is-flip");
+        if (els.deptBoard) els.deptBoard.classList.remove("is-fading");
       }, 240);
     }, SAVDO_VIEW_ROTATION_SECONDS * 1000);
   }
