@@ -85,13 +85,17 @@ def fetch_ombor_data(
     date_from: date | None,
     date_to: date | None,
     force: bool = False,
+    logist_col: str = "AH",
 ) -> dict[str, Any]:
     """
-    Fetch Ombor sheet data, filter by date range, return aggregated CBM by seller.
+    Fetch Ombor sheet data, filter by date range, return aggregated CBM by
+    seller (SOTUVCHI) AND by logist (LOGIST PLANI READY FOR LOAD).
+    Each row contributes to both groupings independently (same CBM counted
+    once for seller, once for logist — totals are identical).
     Results cached for CACHE_TTL_SECONDS (2 minutes).
-    Empty SOTUVCHI cells are assigned to RETENTION_SELLER.
+    Empty cells in either column → "Retention".
     """
-    cache_key = f"{sheet_id}|{sheet_name}|{cbm_col}|{date_col}|{seller_col}|{header_rows}|{date_from}|{date_to}"
+    cache_key = f"{sheet_id}|{sheet_name}|{cbm_col}|{date_col}|{seller_col}|{logist_col}|{header_rows}|{date_from}|{date_to}"
     now = time.monotonic()
 
     if not force:
@@ -103,11 +107,13 @@ def fetch_ombor_data(
     cbm_idx = _col_to_index(cbm_col or "V")
     date_idx = _col_to_index(date_col or "Z")
     seller_idx = _col_to_index(seller_col or "AG")
+    logist_idx = _col_to_index(logist_col or "AH")
 
     rows = _fetch_csv(sheet_id, sheet_name)
     data_rows = rows[max(0, int(header_rows)):]
 
     sellers: dict[str, dict[str, Any]] = {}
+    logists: dict[str, dict[str, Any]] = {}        # NEW: aggregation by logist (col AH)
     monthly: dict[str, dict[str, Any]] = {}
     total_cbm = 0.0
     total_bl = 0
@@ -148,6 +154,13 @@ def fetch_ombor_data(
         sellers[seller]["cbm"] += cbm
         sellers[seller]["bl_count"] += 1
 
+        # Aggregate the same row also by logist (column AH)
+        logist = safe_cell(row, logist_idx) or RETENTION_SELLER
+        if logist not in logists:
+            logists[logist] = {"name": logist, "cbm": 0.0, "bl_count": 0}
+        logists[logist]["cbm"] += cbm
+        logists[logist]["bl_count"] += 1
+
         if row_date:
             ym = row_date.strftime("%Y-%m")
             if ym not in monthly:
@@ -165,6 +178,11 @@ def fetch_ombor_data(
         s["cbm"] = round(s["cbm"], 2)
         s["share_percent"] = round(s["cbm"] / total_cbm * 100 if total_cbm else 0, 1)
 
+    logist_list = sorted(logists.values(), key=lambda x: x["cbm"], reverse=True)
+    for l in logist_list:
+        l["cbm"] = round(l["cbm"], 2)
+        l["share_percent"] = round(l["cbm"] / total_cbm * 100 if total_cbm else 0, 1)
+
     monthly_list = sorted(monthly.values(), key=lambda x: x["month"])
     for m in monthly_list:
         m["cbm"] = round(m["cbm"], 2)
@@ -174,6 +192,7 @@ def fetch_ombor_data(
         "total_cbm": round(total_cbm, 2),
         "total_bl": total_bl,
         "sellers": seller_list,
+        "logists": logist_list,                 # NEW: aggregation by logist (col AH)
         "monthly": monthly_list,
         "fetched_at": datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S"),
         "diagnostics": diag,

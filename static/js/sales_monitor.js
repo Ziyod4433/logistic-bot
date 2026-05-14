@@ -280,29 +280,13 @@
   }
 
   function renderDepartment(key, payload) {
-    const isOmborLive = payload.data_source === "ombor_live";
-    // Live режим: «SAVDO BO'LIMI» (logists key) — рейтинг по CBM,
-    //             «LOGISTIKA BO'LIMI» (sales key)  — те же продавцы, рейтинг по BL count.
+    // Backend now provides REAL data for both panels:
+    //   departments.logists  → SAVDO BO'LIMI    (sellers from col AG)
+    //   departments.sales    → LOGISTIKA BO'LIMI (logists from col AH)
     const meta = DEPARTMENT_META[key] || DEPARTMENT_META.logists;
+    const department = payload.departments?.[key] || {};
+    const leaders = Array.isArray(department.leaders) ? department.leaders : [];
 
-    // Базовая выборка (логисты в payload содержат данные с листа)
-    const sourceDept = payload.departments?.logists || {};
-    const baseLeaders = Array.isArray(sourceDept.leaders) ? sourceDept.leaders : [];
-
-    let leaders = baseLeaders;
-    if (isOmborLive && key === "sales") {
-      // Для LOGISTIKA BO'LIMI — сортируем тех же продавцов по числу BL,
-      // пересчитываем share_percent от общего BL.
-      const totalBl = baseLeaders.reduce((sum, l) => sum + Number(l.bl_count || 0), 0) || 1;
-      leaders = [...baseLeaders]
-        .sort((a, b) => Number(b.bl_count || 0) - Number(a.bl_count || 0))
-        .map((l) => ({ ...l, share_percent: (Number(l.bl_count || 0) / totalBl) * 100 }));
-    } else if (!isOmborLive) {
-      // DB-режим — берём оригинальные данные нужного отдела
-      leaders = (payload.departments?.[key] || {}).leaders || [];
-    }
-
-    const department = isOmborLive ? sourceDept : (payload.departments?.[key] || {});
     const plan = payload.plan || {};
     const metric = plan.metric || state.metric;
     const metricLabel = plan.metric_label || METRIC_LABELS[metric] || "m³";

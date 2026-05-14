@@ -1930,6 +1930,7 @@ def get_monitor(args: Any) -> dict[str, Any]:
                 cbm_col=cbm_col_stored or "V",
                 date_col=date_col_stored or "Z",
                 seller_col=seller_col_stored or "AG",
+                logist_col=_clean_text(selected_plan.get("ombor_logist_col") or "AH"),
                 header_rows=max(0, _to_int(selected_plan.get("ombor_header_rows") if selected_plan.get("ombor_header_rows") is not None else 2)),
                 date_from=plan_filters.date_from,
                 date_to=plan_filters.date_to,
@@ -1943,16 +1944,18 @@ def get_monitor(args: Any) -> dict[str, Any]:
         remaining_value = max(target_value - closed_value, 0.0)
         progress_percent = _round((closed_value / target_value) * 100 if target_value else 0.0, 2)
 
-        leaders: list[dict[str, Any]] = []
-        for s in ombor.get("sellers", []):
-            name = _clean_text(s["name"])
-            leaders.append({
+        def _to_leader(person: dict[str, Any]) -> dict[str, Any]:
+            name = _clean_text(person["name"])
+            return {
                 "name": name,
                 "initials": "".join(p[0].upper() for p in name.split()[:2] if p) or "?",
-                "value": _round(s["cbm"]),
-                "bl_count": _to_int(s["bl_count"]),
-                "share_percent": _round(s["share_percent"]),
-            })
+                "value": _round(person["cbm"]),
+                "bl_count": _to_int(person["bl_count"]),
+                "share_percent": _round(person["share_percent"]),
+            }
+
+        seller_leaders = [_to_leader(s) for s in ombor.get("sellers", [])]
+        logist_leaders = [_to_leader(l) for l in ombor.get("logists", [])]
 
         monthly = [
             {
@@ -1985,18 +1988,22 @@ def get_monitor(args: Any) -> dict[str, Any]:
                 "overshoot_value": _round(max(closed_value - target_value, 0.0)),
             },
             "monthly": monthly,
+            # Two panels rotate on the monitor:
+            #   "logists" key  → SAVDO BO'LIMI    (sellers from SOTUVCHI col AG)
+            #   "sales"   key  → LOGISTIKA BO'LIMI (logists from LOGIST PLANI col AH)
+            # Both aggregate the same rows → identical totals, different leaderboards.
             "departments": {
                 "logists": {
                     "closed_value": _round(closed_value),
                     "plan_share_percent": progress_percent,
                     "bl_count": total_bl,
-                    "leaders": leaders,
+                    "leaders": seller_leaders,
                 },
                 "sales": {
-                    "closed_value": 0.0,
-                    "plan_share_percent": 0.0,
-                    "bl_count": 0,
-                    "leaders": [],
+                    "closed_value": _round(closed_value),
+                    "plan_share_percent": progress_percent,
+                    "bl_count": total_bl,
+                    "leaders": logist_leaders,
                 },
             },
             "last_updated": ombor["fetched_at"],
