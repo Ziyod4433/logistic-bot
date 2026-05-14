@@ -373,6 +373,13 @@
     // On entering SAVDO, always start from LTL (so first impression = current m³ values).
     const nextKey = state.currentDepartment === "logists" ? "sales" : "logists";
     if (nextKey === "logists") state.savdoView = "ltl";
+
+    // Cancel any pending SAVDO sub-view animation classes (race-condition safety)
+    if (els.deptModeBadge) els.deptModeBadge.classList.remove("is-flip");
+    if (els.deptBoard)     els.deptBoard.classList.remove("is-fading");
+    // Reset SAVDO 5-sec view-rotation timer so it doesn't fire mid-book-turn
+    if (typeof startSavdoViewRotation === "function") startSavdoViewRotation();
+
     if (animated) {
       animateDepartmentChange(nextKey);
     } else {
@@ -482,8 +489,8 @@
     }, DEPT_ROTATION_SECONDS * 1000);
   }
 
-  // Inside SAVDO BO'LIMI: top numbers + LTL/FTL badges alternate every 5 seconds.
-  // The leaderboard below stays static (always LTL — SAVDO sellers by m³).
+  // Inside SAVDO BO'LIMI: LTL ↔ FTL alternates every 5 seconds (header + leaderboard).
+  // Important: must NOT overwrite the LOGISTIKA panel during dept-rotation race conditions.
   const SAVDO_VIEW_ROTATION_SECONDS = 5;
   function startSavdoViewRotation() {
     clearInterval(state.savdoViewHandle);
@@ -495,7 +502,12 @@
       if (els.deptModeBadge) els.deptModeBadge.classList.add("is-flip");
       if (els.deptBoard) els.deptBoard.classList.add("is-fading");
       window.setTimeout(() => {
-        renderDepartment("logists", state.latestPayload);
+        // ⚠ Re-check inside the timeout — dept-rotation may have flipped us to
+        // LOGISTIKA in the 240ms gap. Without this, we overwrite the LOGISTIKA
+        // panel content with SAVDO and the user sees "no data" for LOGISTIKA.
+        if (state.currentDepartment === "logists" && state.latestPayload) {
+          renderDepartment("logists", state.latestPayload);
+        }
         if (els.deptModeBadge) els.deptModeBadge.classList.remove("is-flip");
         if (els.deptBoard) els.deptBoard.classList.remove("is-fading");
       }, 240);
