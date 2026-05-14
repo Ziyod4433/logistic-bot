@@ -67,11 +67,21 @@ def _fetch_csv(sheet_id: str, sheet_name: str) -> list[list[str]]:
     return _fetch_csv_url(url, label="Google Sheets")
 
 
-def _fetch_csv_by_gid(sheet_id: str, gid: str) -> list[list[str]]:
-    url = (
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-        f"/gviz/tq?tqx=out:csv&gid={gid}"
-    )
+def _fetch_csv_by_gid(sheet_id: str, gid_or_name: str) -> list[list[str]]:
+    """Fetch a sheet CSV by either a numeric gid (619267330) or a sheet tab
+    name ("Seliy"). Numeric values use ?gid=…, strings use ?sheet=…."""
+    from urllib.parse import quote
+    val = (gid_or_name or "").strip()
+    if val.isdigit():
+        url = (
+            f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+            f"/gviz/tq?tqx=out:csv&gid={val}"
+        )
+    else:
+        url = (
+            f"https://docs.google.com/spreadsheets/d/{sheet_id}"
+            f"/gviz/tq?tqx=out:csv&sheet={quote(val)}"
+        )
     return _fetch_csv_url(url, label="FTL Sheets")
 
 
