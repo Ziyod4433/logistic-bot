@@ -654,6 +654,60 @@ body::before {
   backface-visibility: hidden;
 }
 
+/* LTL / FTL badge — sits at the END of the Jami / Plan ulushi / BL row */
+.dept-mode-badge {
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 14px;
+  letter-spacing: 2.2px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  background: rgba(110, 231, 183, 0.14);
+  color: var(--green2, #34d399);
+  border: 1px solid rgba(110, 231, 183, 0.45);
+  margin-left: auto;
+  align-self: center;
+  transition: opacity 0.25s ease, transform 0.25s ease, background 0.25s ease;
+}
+.dept-mode-badge[data-mode="FTL"] {
+  background: rgba(248, 165, 35, 0.16);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.5);
+}
+.dept-mode-badge.is-flip { transform: rotateY(85deg); opacity: 0; }
+
+/* LTL / FTL banner — between the Jami row and the leaderboard */
+.dept-mode-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(90deg, rgba(16,185,129,.06), transparent);
+  transition: opacity 0.25s ease, background 0.25s ease;
+}
+.dept-mode-banner[data-mode="FTL"] {
+  background: linear-gradient(90deg, rgba(251,191,36,.07), transparent);
+}
+.dmb-label {
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 22px;
+  letter-spacing: 4px;
+  color: var(--green2, #34d399);
+  text-shadow: 0 0 12px rgba(16,185,129,.35);
+}
+.dept-mode-banner[data-mode="FTL"] .dmb-label {
+  color: #fbbf24;
+  text-shadow: 0 0 12px rgba(251,191,36,.35);
+}
+.dmb-hint {
+  font-size: 11px;
+  letter-spacing: 1.4px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.dept-mode-banner.is-flip { opacity: 0; }
+[hidden] { display: none !important; }
+
 /* Book-page-turn: страница уходит вправо (rotateY вокруг правого края),
    контент меняется в середине, затем «новая страница» открывается оттуда же. */
 .dept-body.is-animating {

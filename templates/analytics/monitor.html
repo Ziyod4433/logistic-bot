@@ -116,7 +116,14 @@
           <div class="csi">Jami: <b class="b" id="dept-total">0 m³</b></div>
           <div class="csi">Plan ulushi: <b class="b" id="dept-share">0%</b></div>
           <div class="csi">BL: <b class="b" id="dept-bl">0</b></div>
+          <!-- LTL/FTL badge at end of Jami row — only visible for SAVDO panel -->
+          <span class="dept-mode-badge" id="dept-mode-badge" hidden>LTL</span>
         </div>
+      </div>
+      <!-- LTL/FTL banner right above the results — visible only for SAVDO -->
+      <div class="dept-mode-banner" id="dept-mode-banner" hidden>
+        <span class="dmb-label">LTL</span>
+        <span class="dmb-hint">Sborniy gruz · m³</span>
       </div>
       <div class="dept-body" id="dept-body">
         <div class="lb" id="dept-board"></div>

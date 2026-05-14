@@ -50,6 +50,10 @@
     deptBl: byId("dept-bl"),
     deptBoard: byId("dept-board"),
     deptBody: byId("dept-body"),
+    deptModeBadge: byId("dept-mode-badge"),
+    deptModeBanner: byId("dept-mode-banner"),
+    deptModeBannerLabel: document.querySelector("#dept-mode-banner .dmb-label"),
+    deptModeBannerHint: document.querySelector("#dept-mode-banner .dmb-hint"),
     shareTitle: byId("share-title"),
     logistsShareBar: byId("logists-share-bar"),
     logistsShareValue: byId("logists-share-value"),
@@ -291,8 +295,10 @@
 
   function renderDepartment(key, payload) {
     // Backend provides:
-    //   departments.logists  → SAVDO BO'LIMI    (LTL m³ + .ftl sub-block for truck counts)
+    //   departments.logists  → SAVDO BO'LIMI    (leaders = LTL m³, .ftl = truck totals)
     //   departments.sales    → LOGISTIKA BO'LIMI (logists from col AH)
+    // Per user: leaderboard NEVER swaps — only the top numbers + LTL/FTL badges
+    // alternate every 5 sec inside SAVDO.
     const meta = DEPARTMENT_META[key] || DEPARTMENT_META.logists;
     const department = payload.departments?.[key] || {};
     const plan = payload.plan || {};
@@ -300,33 +306,53 @@
     const metricLabel = plan.metric_label || METRIC_LABELS[metric] || "m³";
 
     setDepartmentAccent(meta);
+    els.deptTitle.textContent = meta.title;
+    els.deptRotateNote.textContent = meta.note;
 
-    // ── SAVDO with FTL sub-view ───────────────────────────────────────
-    const isFtlView = key === "logists" && state.savdoView === "ftl" && department.ftl;
-    if (isFtlView) {
+    const isSavdo = key === "logists";
+    const showFtlNumbers = isSavdo && state.savdoView === "ftl" && department.ftl;
+
+    if (showFtlNumbers) {
+      // FTL numbers in the top header (leaderboard below stays unchanged — LTL)
       const ftl = department.ftl || {};
-      els.deptTitle.textContent = meta.title + " · FTL";
-      els.deptRotateNote.textContent = "Cely gruz · Fura soni";
-      els.deptTotal.textContent = `${formatNumber(ftl.total_trucks || 0)} fura`;
-      // Plan share for FTL — based on FTL m³ contribution to plan target
       const target = Number(plan.target_value || 0);
       const ftlSharePct = target ? (Number(ftl.total_cbm || 0) / target * 100) : 0;
+      els.deptTotal.textContent = `${formatNumber(ftl.total_trucks || 0)} fura`;
       els.deptShare.textContent = `${ftlSharePct.toFixed(1)}%`;
       els.deptBl.textContent = formatNumber(ftl.total_bl || 0);
-      renderLeaders(els.deptBoard, ftl.leaders || [], meta.tone);
-      return;
+    } else {
+      // LTL (or LOGISTIKA) — standard m³ + Ombor BL count
+      els.deptTotal.textContent = formatMetricValue(department.closed_value || 0, metric, metricLabel);
+      els.deptShare.textContent = `${Number(department.plan_share_percent || 0).toFixed(1)}%`;
+      els.deptBl.textContent = formatNumber(department.bl_count || 0);
     }
 
-    // ── Default LTL view for SAVDO, or LOGISTIKA panel ────────────────
+    // LTL/FTL badges (Jami row + banner above leaderboard) — only for SAVDO
+    if (els.deptModeBadge) {
+      if (isSavdo) {
+        const mode = showFtlNumbers ? "FTL" : "LTL";
+        els.deptModeBadge.hidden = false;
+        els.deptModeBadge.textContent = mode;
+        els.deptModeBadge.setAttribute("data-mode", mode);
+      } else {
+        els.deptModeBadge.hidden = true;
+      }
+    }
+    if (els.deptModeBanner) {
+      if (isSavdo) {
+        const mode = showFtlNumbers ? "FTL" : "LTL";
+        const hint = showFtlNumbers ? "Cely gruz · Fura soni" : "Sborniy gruz · m³";
+        els.deptModeBanner.hidden = false;
+        els.deptModeBanner.setAttribute("data-mode", mode);
+        if (els.deptModeBannerLabel) els.deptModeBannerLabel.textContent = mode;
+        if (els.deptModeBannerHint)  els.deptModeBannerHint.textContent  = hint;
+      } else {
+        els.deptModeBanner.hidden = true;
+      }
+    }
+
+    // Leaderboard ALWAYS shows the LTL list (SAVDO sellers OR LOGISTIKA logists)
     const leaders = Array.isArray(department.leaders) ? department.leaders : [];
-    const ltlSuffix = (key === "logists") ? " · LTL" : "";
-    els.deptTitle.textContent = meta.title + ltlSuffix;
-    els.deptRotateNote.textContent = key === "logists"
-      ? "Sborniy gruz · m³"
-      : meta.note;
-    els.deptTotal.textContent = formatMetricValue(department.closed_value || 0, metric, metricLabel);
-    els.deptShare.textContent = `${Number(department.plan_share_percent || 0).toFixed(1)}%`;
-    els.deptBl.textContent = formatNumber(department.bl_count || 0);
     renderLeaders(els.deptBoard, leaders, meta.tone);
   }
 
@@ -457,8 +483,8 @@
     }, DEPT_ROTATION_SECONDS * 1000);
   }
 
-  // Inside SAVDO BO'LIMI: alternate LTL (m³) ↔ FTL (fura count) every 5 seconds.
-  // Only active when the visible panel is SAVDO ("logists" key).
+  // Inside SAVDO BO'LIMI: top numbers + LTL/FTL badges alternate every 5 seconds.
+  // The leaderboard below stays static (always LTL — SAVDO sellers by m³).
   const SAVDO_VIEW_ROTATION_SECONDS = 5;
   function startSavdoViewRotation() {
     clearInterval(state.savdoViewHandle);
@@ -466,13 +492,14 @@
       if (state.currentDepartment !== "logists") return;
       if (!state.latestPayload) return;
       state.savdoView = state.savdoView === "ltl" ? "ftl" : "ltl";
-      // Soft fade for sub-view switch (no book-turn — that's only for dept swap)
-      els.deptBody.style.transition = "opacity .25s ease";
-      els.deptBody.style.opacity = "0";
+      // Quick flip animation on the badge — leaderboard untouched
+      if (els.deptModeBadge) els.deptModeBadge.classList.add("is-flip");
+      if (els.deptModeBanner) els.deptModeBanner.classList.add("is-flip");
       window.setTimeout(() => {
         renderDepartment("logists", state.latestPayload);
-        els.deptBody.style.opacity = "1";
-      }, 220);
+        if (els.deptModeBadge) els.deptModeBadge.classList.remove("is-flip");
+        if (els.deptModeBanner) els.deptModeBanner.classList.remove("is-flip");
+      }, 240);
     }, SAVDO_VIEW_ROTATION_SECONDS * 1000);
   }
 
