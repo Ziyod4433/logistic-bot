@@ -1957,12 +1957,17 @@ def get_monitor(args: Any) -> dict[str, Any]:
 
         # ─────────────────────────────────────────────────────────────────
         # FTL (full-truckload) sales — fetched from a SEPARATE sheet.
-        # Only sellers that ALSO appear in the Ombor SOTUVCHI column count
-        # toward SAVDO BO'LIMI (user requirement: cross-reference whitelist).
-        # Each truck = N m³ (default 10) and is added to the seller's CBM
-        # and to the overall monthly plan progress.
+        # KEPT SEPARATE from Ombor (LTL = consolidated cargo in m³) so the
+        # SAVDO BO'LIMI panel can alternate two views:
+        #   • LTL view → per-seller m³ from Ombor (current behavior)
+        #   • FTL view → per-seller truck COUNT from FTL sheet
+        # Overall plan progress (closed_value) STILL includes FTL m³.
         # ─────────────────────────────────────────────────────────────────
         ftl_diag = None
+        ftl_savdo_leaders: list[dict[str, Any]] = []
+        ftl_total_trucks = 0.0
+        ftl_total_bl = 0
+        ftl_total_cbm = 0.0
         ftl_sheet_id = _clean_text(selected_plan.get("ftl_sheet_id") or "1Ud46UlcezyxnO-PHbx60K0wzLgxGPVleOmPBDQdV9-I")
         ftl_gid      = _clean_text(selected_plan.get("ftl_sheet_gid") or "619267330")
         ftl_cbm_per_truck = _to_float(selected_plan.get("ftl_cbm_per_truck")) or 10.0
@@ -1982,40 +1987,48 @@ def get_monitor(args: Any) -> dict[str, Any]:
                 )
                 ftl_diag = ftl.get("diagnostics")
 
-                # SAVDO whitelist = sellers found in the Ombor sheet (casefold for match)
-                savdo_set = {s["name"].strip().casefold() for s in ombor.get("sellers", [])}
-                # Index Ombor sellers by normalized name for in-place update
-                seller_dict = {s["name"].strip().casefold(): s for s in ombor.get("sellers", [])}
+                # SAVDO whitelist — name → canonical-case from Ombor sheet
+                savdo_canon = {s["name"].strip().casefold(): s["name"] for s in ombor.get("sellers", [])}
 
-                added_cbm = 0.0
-                added_bl = 0
-                matched_sellers: list[str] = []
+                # Build SAVDO-only FTL list (cross-reference filter)
+                matched_rows = []
                 for ftl_name, ftl_info in ftl.get("by_seller", {}).items():
                     norm = ftl_name.strip().casefold()
-                    if norm not in savdo_set:
-                        continue  # FTL row not from a SAVDO seller — skip
-                    extra_cbm = float(ftl_info["trucks"]) * ftl_cbm_per_truck
-                    seller_dict[norm]["cbm"] = float(seller_dict[norm]["cbm"]) + extra_cbm
-                    seller_dict[norm]["bl_count"] = int(seller_dict[norm]["bl_count"]) + int(ftl_info["bl"])
-                    added_cbm += extra_cbm
-                    added_bl  += int(ftl_info["bl"])
-                    matched_sellers.append(seller_dict[norm]["name"])
+                    if norm not in savdo_canon:
+                        continue
+                    trucks = float(ftl_info["trucks"])
+                    bl = int(ftl_info["bl"])
+                    matched_rows.append({
+                        "name": savdo_canon[norm],
+                        "trucks": trucks,
+                        "bl": bl,
+                    })
+                    ftl_total_trucks += trucks
+                    ftl_total_bl += bl
 
-                if added_cbm > 0 or added_bl > 0:
-                    closed_value += added_cbm
-                    total_bl     += added_bl
-                    # Re-sort and recompute share_percent in the modified seller list
-                    new_sellers = sorted(seller_dict.values(), key=lambda x: float(x["cbm"]), reverse=True)
-                    new_total = sum(float(s["cbm"]) for s in new_sellers) or 1.0
-                    for s in new_sellers:
-                        s["cbm"] = round(float(s["cbm"]), 2)
-                        s["share_percent"] = round(float(s["cbm"]) / new_total * 100, 1)
-                    ombor["sellers"] = new_sellers
+                matched_rows.sort(key=lambda x: x["trucks"], reverse=True)
+                for f in matched_rows:
+                    share = (f["trucks"] / ftl_total_trucks * 100) if ftl_total_trucks else 0
+                    name = f["name"]
+                    ftl_savdo_leaders.append({
+                        "name": name,
+                        "initials": "".join(p[0].upper() for p in name.split()[:2] if p) or "?",
+                        "value": round(f["trucks"], 2),
+                        "bl_count": f["bl"],
+                        "share_percent": round(share, 1),
+                        "unit": "fura",                        # frontend appends unit after value
+                    })
+
+                # Plan progress STILL gets FTL contribution (trucks × m³/truck)
+                ftl_total_cbm = ftl_total_trucks * ftl_cbm_per_truck
+                closed_value += ftl_total_cbm
+                # NOTE: total_bl is left as Ombor only — FTL has its own bl_count for the FTL view
 
                 if ftl_diag is not None:
-                    ftl_diag["added_cbm"] = round(added_cbm, 2)
-                    ftl_diag["added_bl"]  = added_bl
-                    ftl_diag["matched_sellers"] = matched_sellers
+                    ftl_diag["added_cbm"] = round(ftl_total_cbm, 2)
+                    ftl_diag["matched_total_trucks"] = round(ftl_total_trucks, 2)
+                    ftl_diag["matched_total_bl"] = ftl_total_bl
+                    ftl_diag["matched_sellers"] = [m["name"] for m in matched_rows]
             except Exception as exc:
                 # Graceful: FTL is optional, fall back to Ombor-only data
                 ftl_diag = {"error": str(exc)}
@@ -2069,14 +2082,21 @@ def get_monitor(args: Any) -> dict[str, Any]:
             "monthly": monthly,
             # Two panels rotate on the monitor:
             #   "logists" key  → SAVDO BO'LIMI    (sellers from SOTUVCHI col AG)
+            #     · leaders         = LTL view (Ombor m³)
+            #     · ftl.leaders     = FTL view (truck count from FTL sheet)
             #   "sales"   key  → LOGISTIKA BO'LIMI (logists from LOGIST PLANI col AH)
-            # Both aggregate the same rows → identical totals, different leaderboards.
             "departments": {
                 "logists": {
-                    "closed_value": _round(closed_value),
-                    "plan_share_percent": progress_percent,
-                    "bl_count": total_bl,
+                    "closed_value": _round(ombor["total_cbm"]),       # LTL total (pure Ombor m³)
+                    "plan_share_percent": _round((ombor["total_cbm"] / target_value * 100) if target_value else 0, 2),
+                    "bl_count": ombor["total_bl"],
                     "leaders": seller_leaders,
+                    "ftl": {
+                        "total_trucks": _round(ftl_total_trucks),
+                        "total_bl": ftl_total_bl,
+                        "total_cbm": _round(ftl_total_cbm),
+                        "leaders": ftl_savdo_leaders,
+                    },
                 },
                 "sales": {
                     "closed_value": _round(closed_value),

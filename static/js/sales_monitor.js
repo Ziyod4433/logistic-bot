@@ -11,8 +11,10 @@
     countdownHandle: null,
     clockHandle: null,
     refreshHandle: null,
-    deptRotationHandle: null,         // авто-ротация между SAVDO ↔ LOGISTIKA
+    deptRotationHandle: null,         // SAVDO ↔ LOGISTIKA — каждые 20 сек
+    savdoViewHandle: null,            // LTL ↔ FTL внутри SAVDO — каждые 5 сек
     currentDepartment: "logists",
+    savdoView: "ltl",                 // "ltl" (Ombor m³) | "ftl" (truck count)
     latestPayload: null,
   };
 
@@ -288,20 +290,40 @@
   }
 
   function renderDepartment(key, payload) {
-    // Backend now provides REAL data for both panels:
-    //   departments.logists  → SAVDO BO'LIMI    (sellers from col AG)
+    // Backend provides:
+    //   departments.logists  → SAVDO BO'LIMI    (LTL m³ + .ftl sub-block for truck counts)
     //   departments.sales    → LOGISTIKA BO'LIMI (logists from col AH)
     const meta = DEPARTMENT_META[key] || DEPARTMENT_META.logists;
     const department = payload.departments?.[key] || {};
-    const leaders = Array.isArray(department.leaders) ? department.leaders : [];
-
     const plan = payload.plan || {};
     const metric = plan.metric || state.metric;
     const metricLabel = plan.metric_label || METRIC_LABELS[metric] || "m³";
 
     setDepartmentAccent(meta);
-    els.deptTitle.textContent = meta.title;
-    els.deptRotateNote.textContent = meta.note;
+
+    // ── SAVDO with FTL sub-view ───────────────────────────────────────
+    const isFtlView = key === "logists" && state.savdoView === "ftl" && department.ftl;
+    if (isFtlView) {
+      const ftl = department.ftl || {};
+      els.deptTitle.textContent = meta.title + " · FTL";
+      els.deptRotateNote.textContent = "Cely gruz · Fura soni";
+      els.deptTotal.textContent = `${formatNumber(ftl.total_trucks || 0)} fura`;
+      // Plan share for FTL — based on FTL m³ contribution to plan target
+      const target = Number(plan.target_value || 0);
+      const ftlSharePct = target ? (Number(ftl.total_cbm || 0) / target * 100) : 0;
+      els.deptShare.textContent = `${ftlSharePct.toFixed(1)}%`;
+      els.deptBl.textContent = formatNumber(ftl.total_bl || 0);
+      renderLeaders(els.deptBoard, ftl.leaders || [], meta.tone);
+      return;
+    }
+
+    // ── Default LTL view for SAVDO, or LOGISTIKA panel ────────────────
+    const leaders = Array.isArray(department.leaders) ? department.leaders : [];
+    const ltlSuffix = (key === "logists") ? " · LTL" : "";
+    els.deptTitle.textContent = meta.title + ltlSuffix;
+    els.deptRotateNote.textContent = key === "logists"
+      ? "Sborniy gruz · m³"
+      : meta.note;
     els.deptTotal.textContent = formatMetricValue(department.closed_value || 0, metric, metricLabel);
     els.deptShare.textContent = `${Number(department.plan_share_percent || 0).toFixed(1)}%`;
     els.deptBl.textContent = formatNumber(department.bl_count || 0);
@@ -322,9 +344,10 @@
   }
 
   function toggleDepartment(animated = true) {
-    // Rotate between SAVDO BO'LIMI ↔ LOGISTIKA BO'LIMI (both rendered from same Ombor live data,
-    // ranked by different metrics — see renderDepartment).
+    // Rotate between SAVDO BO'LIMI ↔ LOGISTIKA BO'LIMI.
+    // On entering SAVDO, always start from LTL (so first impression = current m³ values).
     const nextKey = state.currentDepartment === "logists" ? "sales" : "logists";
+    if (nextKey === "logists") state.savdoView = "ltl";
     if (animated) {
       animateDepartmentChange(nextKey);
     } else {
@@ -425,14 +448,32 @@
     }, REFRESH_SECONDS * 1000);
   }
 
-  // Auto-rotate dept panel between SAVDO BO'LIMI ↔ LOGISTIKA BO'LIMI every 15 seconds
-  // (independent from the 2-minute data-refresh interval).
-  const DEPT_ROTATION_SECONDS = 15;
+  // Auto-rotate dept panel between SAVDO BO'LIMI ↔ LOGISTIKA BO'LIMI every 20 seconds.
+  const DEPT_ROTATION_SECONDS = 20;
   function startDeptRotation() {
     clearInterval(state.deptRotationHandle);
     state.deptRotationHandle = window.setInterval(() => {
       if (state.latestPayload) toggleDepartment(true);
     }, DEPT_ROTATION_SECONDS * 1000);
+  }
+
+  // Inside SAVDO BO'LIMI: alternate LTL (m³) ↔ FTL (fura count) every 5 seconds.
+  // Only active when the visible panel is SAVDO ("logists" key).
+  const SAVDO_VIEW_ROTATION_SECONDS = 5;
+  function startSavdoViewRotation() {
+    clearInterval(state.savdoViewHandle);
+    state.savdoViewHandle = window.setInterval(() => {
+      if (state.currentDepartment !== "logists") return;
+      if (!state.latestPayload) return;
+      state.savdoView = state.savdoView === "ltl" ? "ftl" : "ltl";
+      // Soft fade for sub-view switch (no book-turn — that's only for dept swap)
+      els.deptBody.style.transition = "opacity .25s ease";
+      els.deptBody.style.opacity = "0";
+      window.setTimeout(() => {
+        renderDepartment("logists", state.latestPayload);
+        els.deptBody.style.opacity = "1";
+      }, 220);
+    }, SAVDO_VIEW_ROTATION_SECONDS * 1000);
   }
 
   function onPlanChange() {
@@ -579,7 +620,8 @@
     renderCountdown();
     fetchMonitor(true, false).catch((error) => renderEmpty(error.message));
     scheduleRefresh();
-    startDeptRotation();      // auto-flip SAVDO ↔ LOGISTIKA every 15 s with book-turn animation
+    startDeptRotation();        // SAVDO ↔ LOGISTIKA every 20 s with book-turn animation
+    startSavdoViewRotation();   // LTL ↔ FTL inside SAVDO every 5 s with soft fade
   }
 
   document.addEventListener("DOMContentLoaded", init);
