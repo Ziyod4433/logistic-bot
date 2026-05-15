@@ -1947,6 +1947,7 @@ def get_monitor(args: Any) -> dict[str, Any]:
                 primary_date_col=date_col_stored or "Z",
                 primary_seller_col=seller_col_stored or "AG",
                 primary_logist_col=_clean_text(selected_plan.get("ombor_logist_col") or "AH"),
+                primary_bl_col=_clean_text(selected_plan.get("ombor_bl_col") or "E"),
                 primary_header_rows=max(0, _to_int(selected_plan.get("ombor_header_rows") if selected_plan.get("ombor_header_rows") is not None else 2)),
                 date_from=plan_filters.date_from,
                 date_to=plan_filters.date_to,

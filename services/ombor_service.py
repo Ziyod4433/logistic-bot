@@ -217,16 +217,19 @@ def fetch_ombor_data(
     date_to: date | None,
     force: bool = False,
     logist_col: str = "AH",
+    bl_col: str = "",
 ) -> dict[str, Any]:
     """
     Fetch Ombor sheet data, filter by date range, return aggregated CBM by
     seller (SOTUVCHI) AND by logist (LOGIST PLANI READY FOR LOAD).
     Each row contributes to both groupings independently (same CBM counted
     once for seller, once for logist — totals are identical).
+    If bl_col is provided, each row's BL count increments only when that cell
+    (BRAND NAME) is non-empty; otherwise every valid row counts as 1 BL.
     Results cached for CACHE_TTL_SECONDS (2 minutes).
     Empty cells in either column → "Retention".
     """
-    cache_key = f"{sheet_id}|{sheet_name}|{cbm_col}|{date_col}|{seller_col}|{logist_col}|{header_rows}|{date_from}|{date_to}"
+    cache_key = f"{sheet_id}|{sheet_name}|{cbm_col}|{date_col}|{seller_col}|{logist_col}|{bl_col}|{header_rows}|{date_from}|{date_to}"
     now = time.monotonic()
 
     if not force:
@@ -239,6 +242,7 @@ def fetch_ombor_data(
     date_idx = _col_to_index(date_col or "Z")
     seller_idx = _col_to_index(seller_col or "AG")
     logist_idx = _col_to_index(logist_col or "AH")
+    bl_idx = _col_to_index(bl_col) if bl_col else None
 
     rows = _fetch_csv(sheet_id, sheet_name)
     data_rows = rows[max(0, int(header_rows)):]
@@ -255,6 +259,7 @@ def fetch_ombor_data(
         "rows_no_cbm": 0,           # CBM empty or 0
         "rows_bad_date": 0,         # date unparseable
         "rows_outside_period": 0,   # date OK but outside plan period
+        "rows_no_bl": 0,             # BRAND NAME (bl_col) empty — counts CBM but not BL
         "sample_dates": [],          # up to 5 sample raw dates from data rows
     }
 
@@ -278,29 +283,41 @@ def fetch_ombor_data(
             diag["rows_outside_period"] += 1
             continue
 
+        # BL contribution: only counted when BRAND NAME (bl_col) cell is non-empty.
+        # If bl_col was not supplied, every valid row counts as 1 BL (legacy behaviour).
+        if bl_idx is None:
+            bl_increment = 1
+        else:
+            brand_value = safe_cell(row, bl_idx)
+            if brand_value:
+                bl_increment = 1
+            else:
+                bl_increment = 0
+                diag["rows_no_bl"] += 1
+
         seller = safe_cell(row, seller_idx) or RETENTION_SELLER
 
         if seller not in sellers:
             sellers[seller] = {"name": seller, "cbm": 0.0, "bl_count": 0}
         sellers[seller]["cbm"] += cbm
-        sellers[seller]["bl_count"] += 1
+        sellers[seller]["bl_count"] += bl_increment
 
         # Aggregate the same row also by logist (column AH)
         logist = safe_cell(row, logist_idx) or RETENTION_SELLER
         if logist not in logists:
             logists[logist] = {"name": logist, "cbm": 0.0, "bl_count": 0}
         logists[logist]["cbm"] += cbm
-        logists[logist]["bl_count"] += 1
+        logists[logist]["bl_count"] += bl_increment
 
         if row_date:
             ym = row_date.strftime("%Y-%m")
             if ym not in monthly:
                 monthly[ym] = {"month": ym, "label": _month_label(ym), "cbm": 0.0, "bl_count": 0}
             monthly[ym]["cbm"] += cbm
-            monthly[ym]["bl_count"] += 1
+            monthly[ym]["bl_count"] += bl_increment
 
         total_cbm += cbm
-        total_bl += 1
+        total_bl += bl_increment
 
     diag["rows_used"] = total_bl
 
@@ -350,14 +367,13 @@ def invalidate_cache() -> None:
 # Aggregation is by seller name (case-fold + apostrophe-strip) across stages.
 # ──────────────────────────────────────────────────────────────────────────
 LTL_PIPELINE_STAGES = (
-    # Stage 1 — Ombor (Stage 1 columns CAN be overridden per-plan; the user's
-    # ⚙ Sozlash dialog still controls THIS stage. The other two stages always
-    # use the hard-coded layout below — they're not currently configurable.)
-    # NOTE: For Stage 3 (Yetib keldi) we use column X = "SOTUV XARAJATLARI DATE OF ARRIVE"
-    # (the planned arrive date) — NOT AI which is "Yetib kelgan sana" (actual arrival).
-    # This keeps the date semantics consistent across all 3 pipeline stages.
-    {"sheet_name": "Ortilgan furalar", "cbm_col": "U", "date_col": "Y", "seller_col": "AF", "logist_col": "AG", "header_rows": 1},
-    {"sheet_name": "Yetib keldi",      "cbm_col": "T", "date_col": "X", "seller_col": "AE", "logist_col": "AF", "header_rows": 1},
+    # Stage 1 — Ombor (columns CAN be overridden per-plan via ⚙ Sozlash).
+    # Stages 2 & 3 are fixed: same business meaning, different column letters per tab.
+    # BL = BRAND NAME column (user-confirmed):  Ombor E · Ortilgan D · Yetib C
+    # DATE: same business meaning across all 3 — "DATE OF ARRIVE"
+    #       (NOT AI "Yetib kelgan sana" which is actual arrival; we use planned X.)
+    {"sheet_name": "Ortilgan furalar", "cbm_col": "U", "date_col": "Y", "seller_col": "AF", "logist_col": "AG", "bl_col": "D", "header_rows": 1},
+    {"sheet_name": "Yetib keldi",      "cbm_col": "T", "date_col": "X", "seller_col": "AE", "logist_col": "AF", "bl_col": "C", "header_rows": 1},
 )
 
 
@@ -372,13 +388,15 @@ def fetch_combined_ltl_data(
     date_from: date | None,
     date_to: date | None,
     force: bool = False,
+    primary_bl_col: str = "E",
 ) -> dict[str, Any]:
     """Read Stage-1 (Ombor) + Stage-2 (Ortilgan furalar) + Stage-3 (Yetib keldi)
     from the SAME spreadsheet and merge their seller/logist aggregations.
 
     Each stage uses fetch_ombor_data internally — its caching, diagnostics,
     and date filtering all work per-stage. We then sum CBM and BL counts
-    by seller-name across stages.
+    by seller-name across stages. BL count = rows with non-empty BRAND NAME
+    in the configured bl_col (Ombor E · Ortilgan D · Yetib C).
     """
     stages_to_fetch = [
         {
@@ -387,6 +405,7 @@ def fetch_combined_ltl_data(
             "date_col":   primary_date_col,
             "seller_col": primary_seller_col,
             "logist_col": primary_logist_col,
+            "bl_col":     primary_bl_col,
             "header_rows": primary_header_rows,
         },
         *LTL_PIPELINE_STAGES,
@@ -402,6 +421,7 @@ def fetch_combined_ltl_data(
                 date_col=cfg["date_col"],
                 seller_col=cfg["seller_col"],
                 logist_col=cfg["logist_col"],
+                bl_col=cfg.get("bl_col", ""),
                 header_rows=cfg["header_rows"],
                 date_from=date_from,
                 date_to=date_to,
