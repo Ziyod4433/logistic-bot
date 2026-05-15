@@ -251,7 +251,14 @@ def fetch_ombor_data(
     logists: dict[str, dict[str, Any]] = {}        # NEW: aggregation by logist (col AH)
     monthly: dict[str, dict[str, Any]] = {}
     total_cbm = 0.0
-    total_bl = 0
+    rows_used = 0
+    # BL = UNIQUE BRAND NAME values within the date period.
+    # Same BL (same BRAND NAME string) appearing in multiple rows counts ONCE.
+    # Tracked globally and per-seller / per-logist / per-month.
+    total_bl_set: set[str] = set()
+    seller_bl_sets: dict[str, set[str]] = {}
+    logist_bl_sets: dict[str, set[str]] = {}
+    monthly_bl_sets: dict[str, set[str]] = {}
     # Diagnostics: help users debug why their data shows 0%
     diag = {
         "rows_total": len(data_rows),
@@ -283,43 +290,59 @@ def fetch_ombor_data(
             diag["rows_outside_period"] += 1
             continue
 
-        # BL contribution: only counted when BRAND NAME (bl_col) cell is non-empty.
-        # If bl_col was not supplied, every valid row counts as 1 BL (legacy behaviour).
+        # BL identifier — BRAND NAME cell. Empty → this row contributes CBM
+        # but no BL (it's a "draft" entry). If bl_col is not configured, every
+        # valid row gets a synthetic unique BL id so legacy behaviour is preserved.
         if bl_idx is None:
-            bl_increment = 1
+            bl_id = f"__row_{rows_used}__"          # synthetic unique per row
         else:
-            brand_value = safe_cell(row, bl_idx)
-            if brand_value:
-                bl_increment = 1
-            else:
-                bl_increment = 0
+            bl_id = safe_cell(row, bl_idx)
+            if not bl_id:
                 diag["rows_no_bl"] += 1
+
+        rows_used += 1
 
         seller = safe_cell(row, seller_idx) or RETENTION_SELLER
 
         if seller not in sellers:
             sellers[seller] = {"name": seller, "cbm": 0.0, "bl_count": 0}
+            seller_bl_sets[seller] = set()
         sellers[seller]["cbm"] += cbm
-        sellers[seller]["bl_count"] += bl_increment
+        if bl_id:
+            seller_bl_sets[seller].add(bl_id)
 
         # Aggregate the same row also by logist (column AH)
         logist = safe_cell(row, logist_idx) or RETENTION_SELLER
         if logist not in logists:
             logists[logist] = {"name": logist, "cbm": 0.0, "bl_count": 0}
+            logist_bl_sets[logist] = set()
         logists[logist]["cbm"] += cbm
-        logists[logist]["bl_count"] += bl_increment
+        if bl_id:
+            logist_bl_sets[logist].add(bl_id)
 
         if row_date:
             ym = row_date.strftime("%Y-%m")
             if ym not in monthly:
                 monthly[ym] = {"month": ym, "label": _month_label(ym), "cbm": 0.0, "bl_count": 0}
+                monthly_bl_sets[ym] = set()
             monthly[ym]["cbm"] += cbm
-            monthly[ym]["bl_count"] += bl_increment
+            if bl_id:
+                monthly_bl_sets[ym].add(bl_id)
+
+        if bl_id:
+            total_bl_set.add(bl_id)
 
         total_cbm += cbm
-        total_bl += bl_increment
 
-    diag["rows_used"] = total_bl
+    # Convert per-entity BL sets to counts
+    for k, v in sellers.items():
+        v["bl_count"] = len(seller_bl_sets.get(k, set()))
+    for k, v in logists.items():
+        v["bl_count"] = len(logist_bl_sets.get(k, set()))
+    for k, v in monthly.items():
+        v["bl_count"] = len(monthly_bl_sets.get(k, set()))
+    total_bl = len(total_bl_set)
+    diag["rows_used"] = rows_used
 
     seller_list = sorted(sellers.values(), key=lambda x: x["cbm"], reverse=True)
     for s in seller_list:
