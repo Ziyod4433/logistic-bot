@@ -60,9 +60,11 @@ def _month_label(ym: str) -> str:
 
 
 def _fetch_csv(sheet_id: str, sheet_name: str) -> list[list[str]]:
+    from urllib.parse import quote
+    # URL-encode the sheet name so tabs with spaces ("Ortilgan furalar") work
     url = (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-        f"/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+        f"/gviz/tq?tqx=out:csv&sheet={quote(sheet_name or '')}"
     )
     return _fetch_csv_url(url, label="Google Sheets")
 
