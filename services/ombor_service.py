@@ -353,8 +353,11 @@ LTL_PIPELINE_STAGES = (
     # Stage 1 — Ombor (Stage 1 columns CAN be overridden per-plan; the user's
     # ⚙ Sozlash dialog still controls THIS stage. The other two stages always
     # use the hard-coded layout below — they're not currently configurable.)
-    {"sheet_name": "Ortilgan furalar", "cbm_col": "U", "date_col": "Y",  "seller_col": "AF", "logist_col": "AG", "header_rows": 1},
-    {"sheet_name": "Yetib keldi",      "cbm_col": "T", "date_col": "AI", "seller_col": "AE", "logist_col": "AF", "header_rows": 1},
+    # NOTE: For Stage 3 (Yetib keldi) we use column X = "SOTUV XARAJATLARI DATE OF ARRIVE"
+    # (the planned arrive date) — NOT AI which is "Yetib kelgan sana" (actual arrival).
+    # This keeps the date semantics consistent across all 3 pipeline stages.
+    {"sheet_name": "Ortilgan furalar", "cbm_col": "U", "date_col": "Y", "seller_col": "AF", "logist_col": "AG", "header_rows": 1},
+    {"sheet_name": "Yetib keldi",      "cbm_col": "T", "date_col": "X", "seller_col": "AE", "logist_col": "AF", "header_rows": 1},
 )
 
 
