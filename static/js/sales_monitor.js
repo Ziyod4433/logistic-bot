@@ -2,20 +2,27 @@
   const bootstrap = window.SALES_MONITOR_BOOTSTRAP || {};
   const query = new URLSearchParams(window.location.search);
   const REFRESH_SECONDS = 120;            // 2-min data refresh (background, silent)
-  const DEPT_ROTATION_SECONDS = 20;       // panel swap cycle (visible book-turn)
-  // ↑ Bottom progress bar tracks DEPT_ROTATION_SECONDS so it visually matches
-  //   the actual rotation event (book-page turn between SAVDO ↔ LOGISTIKA).
+
+  // ── Rotation segments (one full cycle = 50 sec) ──────────────────
+  // The bottom progress bar tracks the CURRENT segment's duration so it
+  // visually fills/empties in sync with each transition (LTL→FTL, FTL→LOGISTIKA, LOGISTIKA→LTL).
+  const SEGMENTS = [
+    { id: "savdo_ltl", dept: "logists", view: "ltl", seconds: 25 },
+    { id: "savdo_ftl", dept: "logists", view: "ftl", seconds: 10 },
+    { id: "logistika", dept: "sales",   view: null, seconds: 15 },
+  ];
 
   const state = {
     plans: Array.isArray(bootstrap.salesPlans) ? bootstrap.salesPlans : [],
     planId: query.get("sales_plan_id") || bootstrap.activePlanId || "",
     metric: query.get("metric") || "cbm",
-    countdownSeconds: DEPT_ROTATION_SECONDS,
+    segmentIndex: 0,                       // pointer into SEGMENTS
+    segmentDurationSeconds: SEGMENTS[0].seconds,   // denominator for countdown bar
+    countdownSeconds: SEGMENTS[0].seconds,
     countdownHandle: null,
     clockHandle: null,
     refreshHandle: null,
-    deptRotationHandle: null,         // SAVDO ↔ LOGISTIKA — каждые 20 сек
-    savdoViewHandle: null,            // LTL ↔ FTL внутри SAVDO — каждые 5 сек
+    segmentTimerId: null,             // setTimeout for next segment transition
     currentDepartment: "logists",
     savdoView: "ltl",                 // "ltl" (Ombor m³) | "ftl" (truck count)
     latestPayload: null,
@@ -165,20 +172,20 @@
     const minutes = Math.floor(state.countdownSeconds / 60);
     const seconds = state.countdownSeconds % 60;
     els.rotationTimer.textContent = `${minutes}:${String(seconds).padStart(2, "0")}`;
-    // Bar width = remaining fraction of the dept-rotation cycle (20 s)
-    els.rotationLine.style.width = `${Math.max(0, Math.min(100, (state.countdownSeconds / DEPT_ROTATION_SECONDS) * 100))}%`;
+    // Bar width = remaining fraction of the CURRENT segment's duration
+    const denom = state.segmentDurationSeconds || 1;
+    els.rotationLine.style.width = `${Math.max(0, Math.min(100, (state.countdownSeconds / denom) * 100))}%`;
   }
 
-  function restartCountdown() {
-    state.countdownSeconds = DEPT_ROTATION_SECONDS;
+  function restartCountdown(seconds) {
+    const total = Number(seconds) > 0 ? Number(seconds) : (state.segmentDurationSeconds || 20);
+    state.segmentDurationSeconds = total;
+    state.countdownSeconds = total;
     renderCountdown();
     clearInterval(state.countdownHandle);
     state.countdownHandle = window.setInterval(() => {
       state.countdownSeconds = Math.max(0, state.countdownSeconds - 1);
       renderCountdown();
-      if (state.countdownSeconds <= 0) {
-        state.countdownSeconds = DEPT_ROTATION_SECONDS;
-      }
     }, 1000);
   }
 
@@ -372,28 +379,56 @@
     }, 520);
   }
 
-  function toggleDepartment(animated = true) {
-    // Rotate between SAVDO BO'LIMI ↔ LOGISTIKA BO'LIMI.
-    // On entering SAVDO, always start from LTL (so first impression = current m³ values).
-    const nextKey = state.currentDepartment === "logists" ? "sales" : "logists";
-    if (nextKey === "logists") state.savdoView = "ltl";
+  // Apply the segment at given index — animates the transition then arms the next.
+  // SAVDO_LTL (25s) → SAVDO_FTL (10s) → LOGISTIKA (15s) → loop.
+  function applySegment(idx) {
+    const prev = SEGMENTS[state.segmentIndex];
+    const seg  = SEGMENTS[idx];
+    state.segmentIndex = idx;
 
-    // Cancel any pending SAVDO sub-view animation classes (race-condition safety)
+    const needsDeptSwap = prev.dept !== seg.dept;
+
+    // Clear any pending sub-view animation classes from a previous tick
     if (els.deptModeBadge) els.deptModeBadge.classList.remove("is-flip");
     if (els.deptBoard)     els.deptBoard.classList.remove("is-fading");
-    // Reset SAVDO 5-sec view-rotation timer so it doesn't fire mid-book-turn
-    if (typeof startSavdoViewRotation === "function") startSavdoViewRotation();
-    // Reset bottom countdown bar so it visually starts a fresh 20-s cycle
-    restartCountdown();
 
-    if (animated) {
-      animateDepartmentChange(nextKey);
+    if (needsDeptSwap) {
+      // Cross-panel switch: book-page-turn animation
+      state.savdoView = seg.view || state.savdoView;
+      animateDepartmentChange(seg.dept);
     } else {
-      state.currentDepartment = nextKey;
-      if (state.latestPayload) {
-        renderDepartment(nextKey, state.latestPayload);
-      }
+      // Same panel, different sub-view (LTL ↔ FTL) — soft flip + fade
+      state.savdoView = seg.view || state.savdoView;
+      if (els.deptModeBadge) els.deptModeBadge.classList.add("is-flip");
+      if (els.deptBoard)     els.deptBoard.classList.add("is-fading");
+      window.setTimeout(() => {
+        if (state.latestPayload) renderDepartment(seg.dept, state.latestPayload);
+        if (els.deptModeBadge) els.deptModeBadge.classList.remove("is-flip");
+        if (els.deptBoard)     els.deptBoard.classList.remove("is-fading");
+      }, 240);
     }
+
+    // Reset countdown bar with this segment's own duration
+    restartCountdown(seg.seconds);
+
+    // Arm the next transition (with the time of THIS segment)
+    clearTimeout(state.segmentTimerId);
+    state.segmentTimerId = window.setTimeout(() => {
+      applySegment((idx + 1) % SEGMENTS.length);
+    }, seg.seconds * 1000);
+  }
+
+  function startSegmentRotation() {
+    clearTimeout(state.segmentTimerId);
+    // Start fresh from segment 0 (SAVDO LTL)
+    state.segmentIndex = 0;
+    state.currentDepartment = SEGMENTS[0].dept;
+    state.savdoView = SEGMENTS[0].view;
+    restartCountdown(SEGMENTS[0].seconds);
+    if (state.latestPayload) renderDepartment(SEGMENTS[0].dept, state.latestPayload);
+    state.segmentTimerId = window.setTimeout(() => {
+      applySegment(1);
+    }, SEGMENTS[0].seconds * 1000);
   }
 
   function renderPayload(payload) {
@@ -486,39 +521,8 @@
     }, REFRESH_SECONDS * 1000);
   }
 
-  // Auto-rotate dept panel between SAVDO BO'LIMI ↔ LOGISTIKA BO'LIMI every 20 seconds.
-  // (DEPT_ROTATION_SECONDS defined at top of IIFE for use in countdown rendering.)
-  function startDeptRotation() {
-    clearInterval(state.deptRotationHandle);
-    state.deptRotationHandle = window.setInterval(() => {
-      if (state.latestPayload) toggleDepartment(true);
-    }, DEPT_ROTATION_SECONDS * 1000);
-  }
-
-  // Inside SAVDO BO'LIMI: LTL ↔ FTL alternates every 5 seconds (header + leaderboard).
-  // Important: must NOT overwrite the LOGISTIKA panel during dept-rotation race conditions.
-  const SAVDO_VIEW_ROTATION_SECONDS = 5;
-  function startSavdoViewRotation() {
-    clearInterval(state.savdoViewHandle);
-    state.savdoViewHandle = window.setInterval(() => {
-      if (state.currentDepartment !== "logists") return;
-      if (!state.latestPayload) return;
-      state.savdoView = state.savdoView === "ltl" ? "ftl" : "ltl";
-      // 3D flip on the pill + soft fade of the leaderboard cells (values change source)
-      if (els.deptModeBadge) els.deptModeBadge.classList.add("is-flip");
-      if (els.deptBoard) els.deptBoard.classList.add("is-fading");
-      window.setTimeout(() => {
-        // ⚠ Re-check inside the timeout — dept-rotation may have flipped us to
-        // LOGISTIKA in the 240ms gap. Without this, we overwrite the LOGISTIKA
-        // panel content with SAVDO and the user sees "no data" for LOGISTIKA.
-        if (state.currentDepartment === "logists" && state.latestPayload) {
-          renderDepartment("logists", state.latestPayload);
-        }
-        if (els.deptModeBadge) els.deptModeBadge.classList.remove("is-flip");
-        if (els.deptBoard) els.deptBoard.classList.remove("is-fading");
-      }, 240);
-    }, SAVDO_VIEW_ROTATION_SECONDS * 1000);
-  }
+  // ↑ Old startDeptRotation + startSavdoViewRotation replaced by the unified
+  //   segment scheduler (applySegment / startSegmentRotation) above.
 
   function onPlanChange() {
     state.planId = els.planSelect.value;
@@ -664,8 +668,7 @@
     renderCountdown();
     fetchMonitor(true, false).catch((error) => renderEmpty(error.message));
     scheduleRefresh();
-    startDeptRotation();        // SAVDO ↔ LOGISTIKA every 20 s with book-turn animation
-    startSavdoViewRotation();   // LTL ↔ FTL inside SAVDO every 5 s with soft fade
+    startSegmentRotation();     // SAVDO_LTL 25 s → SAVDO_FTL 10 s → LOGISTIKA 15 s → loop
   }
 
   document.addEventListener("DOMContentLoaded", init);
