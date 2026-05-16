@@ -308,9 +308,29 @@ STUCK_DAYS = 5
 def get_conn():
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute("PRAGMA busy_timeout=30000")
+    except sqlite3.OperationalError as exc:
+        # Disk I/O at this point usually means the underlying volume isn't
+        # ready yet (e.g. Railway volume mount glitching). Surface it once
+        # but don't crash — let the caller see a clearer error downstream.
+        print(f"[get_conn] busy_timeout PRAGMA failed: {exc}", flush=True)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError as exc:
+        # WAL requires writable disk. If the volume is in a half-mounted
+        # state (Railway sometimes ships disk I/O errors during boot) fall
+        # back to DELETE journal so the app at least boots and can serve
+        # read-only traffic while ops investigates.
+        print(f"[get_conn] WAL PRAGMA failed ({exc}); falling back to DELETE journal", flush=True)
+        try:
+            conn.execute("PRAGMA journal_mode=DELETE")
+        except sqlite3.OperationalError as exc2:
+            print(f"[get_conn] DELETE journal PRAGMA also failed: {exc2}", flush=True)
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+    except sqlite3.OperationalError as exc:
+        print(f"[get_conn] foreign_keys PRAGMA failed: {exc}", flush=True)
     return conn
 
 
