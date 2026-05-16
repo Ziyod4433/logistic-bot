@@ -4020,7 +4020,24 @@ function renderPackingListBulkTable() {
   if (doneOk) parts.push(`✅ ${doneOk}`);
   if (doneErr) parts.push(`❌ ${doneErr}`);
   summary.textContent = parts.join(" · ");
-  document.getElementById("packing-list-bulk-upload-btn").disabled = (matched + manual) === 0;
+
+  // Button state:
+  //   - Disabled and labeled "✅ Все прикреплены" when nothing left to send.
+  //   - Disabled when there are no matched/manual rows yet to upload.
+  //   - Active when at least one row is queued for the next upload pass.
+  const btn = document.getElementById("packing-list-bulk-upload-btn");
+  const pending = matched + manual;        // rows ready to upload (not yet ok)
+  const hasFilesAttempted = packingListBulkFiles.length > 0;
+  if (pending === 0 && doneOk > 0 && doneErr === 0) {
+    btn.disabled = true;
+    btn.innerHTML = "✅ Все прикреплены";
+  } else if (pending === 0 && hasFilesAttempted && doneErr > 0) {
+    btn.disabled = true;
+    btn.innerHTML = "📤 Прикрепить совпавшие";
+  } else {
+    btn.disabled = pending === 0;
+    btn.innerHTML = "📤 Прикрепить совпавшие";
+  }
 }
 
 function resetPackingListUploadResult(idx) {
@@ -4037,13 +4054,25 @@ async function uploadPackingListBulk() {
 
   // Collect indexes of rows that are ready to be uploaded
   const queue = [];
+  let alreadyUploaded = 0;
+  let attached = 0;
   packingListBulkFiles.forEach((row, idx) => {
-    if ((row.status === "matched" || row.status === "manual") && row.blId && !row.uploadResult) {
+    const isAttached = (row.status === "matched" || row.status === "manual") && row.blId;
+    if (isAttached) attached++;
+    if (isAttached && !row.uploadResult) {
       queue.push(idx);
+    } else if (isAttached && row.uploadResult === "ok") {
+      alreadyUploaded++;
     }
   });
   if (!queue.length) {
-    toast("Нет привязанных файлов для загрузки", "err");
+    if (alreadyUploaded > 0 && attached === alreadyUploaded) {
+      toast(`✅ Все ${alreadyUploaded} файл(ов) уже прикреплены`, "ok");
+    } else if (attached === 0) {
+      toast("Нет привязанных файлов — выбери BL для нужных файлов в списке", "err");
+    } else {
+      toast("Нет файлов для повторной загрузки", "err");
+    }
     return;
   }
 
