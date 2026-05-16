@@ -1244,9 +1244,17 @@ def send_with_track_keyboard(
     parse_mode: str | None = "HTML",
 ):
     if is_group_chat_id(chat_id):
+        # In groups, suppress the "Yuk holati" reply keyboard (those only
+        # belong to private chats), but keep inline keyboards (e.g. file
+        # buttons under the tracking message) — those work in groups and
+        # are how clients pull packing-list files into the group chat.
+        inline_only = None
+        if isinstance(reply_markup, dict) and reply_markup.get("inline_keyboard"):
+            inline_only = {"inline_keyboard": reply_markup["inline_keyboard"]}
         telegram_send_message(
             chat_id,
             text,
+            reply_markup=inline_only,
             parse_mode=parse_mode,
         )
         return
