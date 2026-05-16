@@ -1385,6 +1385,79 @@ def send_announcement_broadcast(chat_id, text: str, attachment: dict | None = No
     telegram_send_message(chat_id, text, parse_mode=None)
 
 
+# Telegram Bot API hard cap for sendDocument multipart uploads.
+# Files larger than this can't be sent via plain bot endpoints — we fall
+# back to a public download link served by /public/file/<token>.
+TELEGRAM_BOT_DOCUMENT_LIMIT_BYTES = 50 * 1024 * 1024
+
+# Cooldown so rapid duplicate taps on the same file button in the same
+# chat don't spawn N parallel uploads / N error messages.
+_FILE_DELIVERY_COOLDOWN_SECONDS = 4.0
+_FILE_DELIVERY_LOCK = threading.Lock()
+_FILE_DELIVERY_RECENT: dict[tuple[str, int], float] = {}
+
+
+def _file_delivery_should_skip(chat_id, file_id) -> bool:
+    """True if the same (chat, file) was already dispatched a moment ago."""
+    if not file_id:
+        return False
+    key = (str(chat_id), int(file_id))
+    now = time.time()
+    with _FILE_DELIVERY_LOCK:
+        last = _FILE_DELIVERY_RECENT.get(key, 0.0)
+        if now - last < _FILE_DELIVERY_COOLDOWN_SECONDS:
+            return True
+        _FILE_DELIVERY_RECENT[key] = now
+        # Periodically prune stale entries so the dict stays small.
+        if len(_FILE_DELIVERY_RECENT) > 256:
+            cutoff = now - 60.0
+            for k, ts in list(_FILE_DELIVERY_RECENT.items()):
+                if ts < cutoff:
+                    _FILE_DELIVERY_RECENT.pop(k, None)
+    return False
+
+
+def _public_file_link(file_info: dict) -> str:
+    token = (file_info.get("public_token") or "").strip()
+    base = (WEBHOOK_BASE_URL or "").rstrip("/")
+    if not token or not base:
+        return ""
+    return f"{base}/public/file/{token}"
+
+
+def _send_public_link_fallback(chat_id, file_info: dict, reason: str) -> None:
+    """Send a clickable download link when Telegram can't carry the file."""
+    filename = (file_info.get("filename") or "").strip() or "fayl"
+    link = _public_file_link(file_info)
+    pretty_reason = html.escape(reason) if reason else "слишком большой"
+    if link:
+        body = (
+            f"📎 <b>{html.escape(filename)}</b>\n"
+            f"⚠️ Файл нельзя отправить через Telegram ({pretty_reason}).\n"
+            f"Скачать по ссылке: <a href=\"{html.escape(link)}\">{html.escape(link)}</a>"
+        )
+    else:
+        body = (
+            f"📎 <b>{html.escape(filename)}</b>\n"
+            f"❌ Файл нельзя отправить через Telegram ({pretty_reason}).\n"
+            "Свяжитесь с менеджером — пришлём другим способом."
+        )
+    try:
+        telegram_send_message(chat_id, body)
+    except Exception:
+        app.logger.exception("Failed to send public-link fallback message")
+
+
+def _is_too_large_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return (
+        "request entity too large" in msg
+        or "413" in msg
+        or "file is too big" in msg
+        or "too large" in msg
+    )
+
+
 def _deliver_file_async(chat_id, file_info: dict) -> None:
     """Background-thread file delivery for the BL file inline-button.
 
@@ -1393,13 +1466,21 @@ def _deliver_file_async(chat_id, file_info: dict) -> None:
          disk read, no upload, near-instant delivery from Telegram's CDN.
       2. If cached id fails (Telegram dropped it), wipe the cache and fall
          back to a fresh upload from disk, then save the new file_id.
-      3. On any error, message the chat so the user knows something went
-         wrong instead of seeing only the cleared button spinner.
+      3. If the file is larger than Telegram's 50 MB bot limit (or upload
+         returns 413), skip the upload entirely and send a clickable
+         public download link instead.
+      4. On any other error, message the chat with a human-readable
+         description so the user knows what happened.
     """
     file_id = file_info.get("id")
     file_path = file_info.get("file_path") or ""
     filename = file_info.get("filename") or ""
     cached_tg_id = (file_info.get("tg_file_id") or "").strip()
+
+    # De-dupe rapid taps on the same button so we don't spawn 4 parallel
+    # uploads / 4 identical error messages.
+    if _file_delivery_should_skip(chat_id, file_id):
+        return
 
     # Fast path: previously uploaded — reuse Telegram's CDN copy.
     if cached_tg_id:
@@ -1418,14 +1499,29 @@ def _deliver_file_async(chat_id, file_info: dict) -> None:
                     pass
             # Fall through to fresh upload below.
 
+    if not file_path or not os.path.exists(file_path):
+        telegram_send_message(
+            chat_id,
+            "❌ Файл недоступен на сервере. Свяжитесь с менеджером.",
+        )
+        return
+
+    # Pre-flight size check: don't even start a doomed multipart upload.
+    try:
+        file_size = os.path.getsize(file_path)
+    except OSError:
+        file_size = 0
+    if file_size and file_size > TELEGRAM_BOT_DOCUMENT_LIMIT_BYTES:
+        size_mb = file_size / (1024 * 1024)
+        _send_public_link_fallback(
+            chat_id,
+            file_info,
+            f"размер {size_mb:.1f} MB, лимит Telegram 50 MB",
+        )
+        return
+
     # Slow path: upload from disk and cache the new file_id.
     try:
-        if not file_path or not os.path.exists(file_path):
-            telegram_send_message(
-                chat_id,
-                "❌ Файл недоступен на сервере. Свяжитесь с менеджером.",
-            )
-            return
         payload = telegram_send_document(chat_id, file_path, filename)
         new_id = _extract_tg_file_id_from_send_response(payload)
         if new_id and file_id:
@@ -1435,6 +1531,9 @@ def _deliver_file_async(chat_id, file_info: dict) -> None:
                 app.logger.warning("failed to cache tg_file_id: %s", exc)
     except Exception as exc:
         app.logger.exception("file delivery failed (file_id=%s)", file_id)
+        if _is_too_large_error(exc):
+            _send_public_link_fallback(chat_id, file_info, "слишком большой для Telegram")
+            return
         try:
             telegram_send_message(
                 chat_id,
