@@ -2951,18 +2951,93 @@ def _normalize_for_fuzzy(text: str) -> str:
     return _NON_ALNUM_RE.sub("", str(text or "").casefold())
 
 
-# Common boilerplate words that appear in chat titles and shouldn't be
-# used as a fuzzy-match signal (otherwise every file would match every
-# client because every chat title ends in "BURAQ LOGISTICS").
-_FUZZY_STOPWORDS = {
-    _normalize_for_fuzzy(word) for word in (
-        "buraq",
-        "logistics",
-        "logistic",
-        "буракс",
-        "buraqlogistics",
-    )
+# Words that occur in nearly every chat title / filename and would otherwise
+# match everything ("BURAQ LOGISTICS", "PACKING LIST", "MESTA" etc.).
+_TOKEN_STOPWORDS = {
+    "buraq", "logistic", "logistics", "buraqlogistics",
+    "буракс", "логистик", "логистикс",
+    "packing", "list", "lists",
+    "mesta", "places", "joy",
+    "tovar", "yuk", "fayl", "file", "files",
+    "товар", "груз", "файл",
+    "company", "llc", "ltd", "inc", "company", "group", "trade", "trading",
+    "ооо", "оао", "ао", "ип",
+    "xlsx", "xls", "pdf", "doc", "docx", "zip", "png", "jpg", "jpeg",
 }
+
+# Token regex: pulls Latin and Cyrillic word-runs separately so numbers
+# and punctuation never bleed into tokens.
+_TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁё]+", re.UNICODE)
+
+
+def _tokenize_name(text: str) -> set[str]:
+    """Extract distinctive lowercase tokens for matching.
+
+    Drops BL-NNN codes, stopwords, and tokens shorter than 3 chars.
+    """
+    if not text:
+        return set()
+    cleaned = re.sub(r"\bBL[-_ ]?\d+[A-Z0-9]*\b", " ", str(text), flags=re.IGNORECASE)
+    tokens: set[str] = set()
+    for word in _TOKEN_RE.findall(cleaned):
+        norm = word.lower()
+        if len(norm) < 3:
+            continue
+        if norm in _TOKEN_STOPWORDS:
+            continue
+        tokens.add(norm)
+    return tokens
+
+
+def _bl_salient_tokens(row: dict, chat_titles: dict[str, str]) -> set[str]:
+    """Every word we'd consider 'a name of this BL' for matching purposes."""
+    tokens: set[str] = set()
+    tokens.update(_tokenize_name(row.get("code") or ""))
+    tokens.update(_tokenize_name(row.get("merged_codes") or ""))
+    tokens.update(_tokenize_name(row.get("client_name") or ""))
+    chat_id = str(row.get("chat_id") or "").strip()
+    if chat_id:
+        tokens.update(_tokenize_name(chat_titles.get(chat_id, "")))
+    return tokens
+
+
+def _score_tokens(filename_tokens: set[str], bl_tokens: set[str]) -> tuple[int, list[str]]:
+    """Score a (filename, BL) pair and report which tokens drove the match.
+
+    Scoring:
+    - Exact token match: len(token) * 2
+    - Prefix-match (≥4 chars on both sides, e.g. "light" / "lighting"):
+      min(len(a), len(b))
+    Returns (score, matched_tokens_for_display).
+    """
+    if not filename_tokens or not bl_tokens:
+        return 0, []
+    score = 0
+    matched: list[str] = []
+    for ft in filename_tokens:
+        best_bt = ""
+        best_local = 0
+        for bt in bl_tokens:
+            if ft == bt:
+                local = len(ft) * 2
+            elif len(ft) >= 4 and len(bt) >= 4 and (ft.startswith(bt) or bt.startswith(ft)):
+                local = min(len(ft), len(bt))
+            else:
+                continue
+            if local > best_local:
+                best_local = local
+                best_bt = bt
+        if best_local:
+            score += best_local
+            matched.append(best_bt or ft)
+    return score, matched
+
+
+# Minimum score to accept a fuzzy name match. With the scoring above this
+# corresponds to roughly "one 3+ char exact match" or "one 4-char prefix
+# overlap" — empirically the right cut-off that catches EURO LIGHT /
+# WIZERA / etc. without false-matching every shipment to every client.
+_TOKEN_MATCH_MIN_SCORE = 6
 
 
 def _build_batch_bl_code_index(batch_id: int) -> dict:
@@ -3006,29 +3081,6 @@ def _build_chat_title_lookup(batch_rows: list[dict]) -> dict[str, str]:
     }
 
 
-def _bl_alt_names(row: dict, chat_titles: dict[str, str]) -> list[tuple[str, str]]:
-    """Build (label, value) pairs of plausible "what to match against" for a BL.
-
-    Includes client_name and the BL's chat title (with any embedded "BL-xxx"
-    code stripped, since that's already used by the code path).
-    """
-    names: list[tuple[str, str]] = []
-    client = str(row.get("client_name") or "").strip()
-    if client:
-        names.append(("client_name", client))
-    chat_id = str(row.get("chat_id") or "").strip()
-    title = chat_titles.get(chat_id, "")
-    if title:
-        # "HI-TECH (BL-146) & BURAQ LOGISTICS" → "HI-TECH"
-        cleaned = re.sub(r"\bBL[-_ ]?\d+[A-Z0-9]*\b", "", title, flags=re.IGNORECASE)
-        cleaned = re.sub(r"[\(\)\[\]]", " ", cleaned)
-        cleaned = cleaned.replace("&", " ")
-        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -—")
-        if cleaned:
-            names.append(("chat_title", cleaned))
-    return names
-
-
 def _resolve_filename_to_bl(
     filename: str,
     code_index: dict,
@@ -3050,25 +3102,34 @@ def _resolve_filename_to_bl(
         if row:
             return {"row": row, "method": "code", "matched_on": code_match.group(0)}
 
-    # 2. Fuzzy-name match against client_name + chat title — pick the
-    #    longest candidate that appears in the normalized filename. Sorted
-    #    by length descending so "HI-TECH" wins over "HI" when both exist.
-    fuzzy_name = _normalize_for_fuzzy(no_ext)
-    if fuzzy_name:
-        candidates: list[tuple[int, dict, str, str]] = []
+    # 2. Token-based name match. Build the set of "name tokens" for the
+    #    filename and score it against each BL's combined name tokens
+    #    (code + merged_codes + client_name + chat title). Best score wins.
+    #    Catches:
+    #      - "EURO LIGHT 6 MESTA.xlsx" → BL with code "EURO LIGHTING"
+    #        (prefix overlap on "light"/"lighting")
+    #      - "WIZERA 240 MESTA ALYUMIN.xlsx" → BL with code "WIZERA"
+    #        (exact token match)
+    #      - "HI-TECH cargo.xlsx" → BL whose chat title is
+    #        "HI-TECH (BL-146) & BURAQ LOGISTICS"
+    filename_tokens = _tokenize_name(no_ext)
+    if filename_tokens:
+        best_row: dict | None = None
+        best_score = 0
+        best_matched: list[str] = []
         for row in batch_rows:
-            for label, value in _bl_alt_names(row, chat_titles):
-                norm_value = _normalize_for_fuzzy(value)
-                if len(norm_value) < 3:
-                    continue
-                if norm_value in _FUZZY_STOPWORDS:
-                    continue
-                if norm_value in fuzzy_name:
-                    candidates.append((len(norm_value), row, value, label))
-        if candidates:
-            candidates.sort(key=lambda x: x[0], reverse=True)
-            _, row, matched_value, label = candidates[0]
-            return {"row": row, "method": label, "matched_on": matched_value}
+            bl_tokens = _bl_salient_tokens(row, chat_titles)
+            score, matched = _score_tokens(filename_tokens, bl_tokens)
+            if score > best_score:
+                best_score = score
+                best_row = row
+                best_matched = matched
+        if best_row and best_score >= _TOKEN_MATCH_MIN_SCORE:
+            return {
+                "row": best_row,
+                "method": "name",
+                "matched_on": ", ".join(sorted(set(best_matched))) or "имя",
+            }
 
     return None
 

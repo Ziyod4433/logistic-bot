@@ -3960,7 +3960,9 @@ function renderPackingListBulkTable() {
                <button class="btn btn-ghost btn-xs" onclick="resetPackingListUploadResult(${idx})" style="margin-left:6px">↻ повторить</button>`;
     } else if (row.status === "matched") {
       matched++;
-      const method = row.matchMethod === "client_name" ? "по имени клиента" : "по BL коду";
+      const method = row.matchMethod === "name" ? "по имени клиента"
+                   : row.matchMethod === "code" ? "по BL коду"
+                   : "автоматически";
       const matchedOn = row.matchedOn ? ` (${esc(row.matchedOn)})` : "";
       badge = `<span class="badge badge-green">Совпало ${method}${matchedOn}</span>`;
     } else if (row.status === "manual") {
