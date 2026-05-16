@@ -114,12 +114,43 @@ DEFAULT_TEMPLATE = """👋Assalomu alaykum hurmatli mijoz!
 📄 Yuk haqida ma'lumotlar:
 {cargo_info}
 ━━━━━━━━━━━━━━━
-📲Aloqa uchun:
-📞 -95-975-66-11
-📩 @Ziyodilla_Tracking_Manager
-━━━━━━━━━━━━━━━
 🖇Tovar bo'yicha packing list⤵️
 {packing_list}"""
+
+# The previous default template kept a Telegram contact block ("📲 Aloqa
+# uchun:" / phone / @username) between the cargo info and the packing
+# list footer. We dropped it on user request — files now arrive right
+# after the message, so an embedded support contact is redundant. The
+# regex below also strips an equivalent block from custom templates that
+# were stored in message_template before this change.
+_CONTACT_BLOCK_REGEX = re.compile(
+    r"\n*"                                  # leading blank lines
+    r"━+\n"                                # divider before
+    r"📲[^\n]*Aloqa uchun[^\n]*\n"        # uz_latn header (still appears in russian / cyrillic forms after localization)
+    r"[^\n]*-?\s*95[-\s]975[-\s]66[-\s]11[^\n]*\n"
+    r"[^\n]*@Ziyodilla_Tracking_Manager[^\n]*\n"
+    r"━+\n",                              # divider after
+)
+_CONTACT_BLOCK_REGEX_LOCALIZED = re.compile(
+    r"\n*"
+    r"━+\n"
+    r"📲[^\n]*(?:Aloqa uchun|Алоқа учун|Для связи|Contact)[^\n]*\n"
+    r"[^\n]*\d[\d\-\s]+\d[^\n]*\n"
+    r"[^\n]*@\w+[^\n]*\n"
+    r"━+\n",
+)
+
+
+def _strip_contact_block(text: str) -> str:
+    """Remove the legacy 'Aloqa uchun' contact block from any tracking text."""
+    if not text:
+        return text
+    cleaned = _CONTACT_BLOCK_REGEX.sub("\n", text)
+    cleaned = _CONTACT_BLOCK_REGEX_LOCALIZED.sub("\n", cleaned)
+    # Collapse any runs of empty lines this leaves behind so the layout
+    # doesn't get a gaping hole between cargo info and packing-list block.
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned
 
 DEFAULT_COMMUNICATION_RATE_TEMPLATE = """Assalomu alaykum hurmatli mijoz!
 
@@ -1277,6 +1308,20 @@ def init_db():
                 """,
                 (DEFAULT_TEMPLATE,),
             )
+        else:
+            # Strip the legacy contact block from any saved template (the
+            # admin may have customized other parts of the template, so we
+            # can't just overwrite it).
+            stripped = _strip_contact_block(current_template).strip()
+            if stripped and stripped != current_template:
+                cursor.execute(
+                    """
+                    UPDATE message_template
+                    SET content = ?, updated_at = datetime('now','localtime')
+                    WHERE id = 1
+                    """,
+                    (stripped,),
+                )
 
     row = cursor.execute("SELECT id FROM communication_rate_template WHERE id = 1").fetchone()
     if not row:
@@ -3857,6 +3902,10 @@ def _render_single_message(bl: dict, batch_name: str) -> str:
         status_detail="",
     )
     rendered = template.format_map(context)
+    # Belt-and-suspenders: even if a customized template still has the
+    # contact block, strip it at render time so messages on the wire
+    # don't show it.
+    rendered = _strip_contact_block(rendered)
     rendered = re.sub(
         r"🇺🇿\s*Yetib kelish vaqti\s*:",
         f"⏳ {arrival_eta_label}:",
