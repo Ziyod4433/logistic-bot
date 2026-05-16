@@ -1558,6 +1558,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
                 <input class="search" placeholder="🔍 Поиск BL..." id="bl-search" oninput="filterBL()">
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openEditBatchModal()">⚙️ Параметры партии</button>
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openSheetImportModal()">📥 Импорт Sheets</button>
+                <button class="btn btn-ghost btn-sm editor-only" onclick="openPackingListBulkModal()">📦 Packing lists</button>
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openAddBLModal()">+ Добавить BL</button>
                 <button class="btn btn-amber btn-sm editor-only" id="send-batch-btn" onclick="openSendBatchModal()">📤 Отправить партию</button>
               </div>
@@ -2230,6 +2231,52 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   </div>
 </div>
 
+<!-- Bulk Packing Lists upload -->
+<div class="overlay" id="packing-list-bulk-modal">
+  <div class="modal" style="width:780px;max-width:95vw;max-height:calc(100vh - 48px);overflow-y:auto">
+    <div class="modal-title">Массовая загрузка <em>Packing lists</em></div>
+    <div class="form-g">
+      <label>Папка или файлы Packing list</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input type="file" id="packing-list-folder-input" style="display:none"
+               webkitdirectory directory multiple
+               accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.xlsm,.doc,.docx,.zip"
+               onchange="onPackingListBulkSelected(event,'folder')">
+        <input type="file" id="packing-list-files-input" style="display:none" multiple
+               accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.xlsm,.doc,.docx,.zip"
+               onchange="onPackingListBulkSelected(event,'files')">
+        <button class="btn btn-amber btn-sm editor-only"
+                onclick="document.getElementById('packing-list-folder-input').click()">📁 Выбрать папку</button>
+        <button class="btn btn-ghost btn-sm editor-only"
+                onclick="document.getElementById('packing-list-files-input').click()">📄 Выбрать файлы</button>
+        <span id="packing-list-bulk-count" style="font-size:12px;color:var(--muted2)"></span>
+      </div>
+      <div style="font-size:11px;color:var(--muted2);margin-top:6px">
+        Каждый файл будет автоматически прикреплён к BL по совпадению <b>BL кода в имени файла</b>
+        (поиск только в этой партии, с учётом merged_codes). Поддерживается PDF, DOC, DOCX, XLS, XLSX, XLSM, PNG, JPG, ZIP.
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-h">
+        <span class="card-title">Предпросмотр сопоставления</span>
+        <span id="packing-list-bulk-summary" style="font-size:12px;color:var(--muted2)"></span>
+      </div>
+      <table class="tbl">
+        <thead><tr>
+          <th>Файл</th><th>BL код</th><th>Клиент</th><th>Статус</th>
+        </tr></thead>
+        <tbody id="packing-list-bulk-table">
+          <tr><td colspan="4"><div class="empty"><div class="empty-icon">📦</div><p>Выбери папку или файлы, чтобы увидеть сопоставление с BL.</p></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('packing-list-bulk-modal')">Отмена</button>
+      <button class="btn btn-amber editor-only" id="packing-list-bulk-upload-btn" onclick="uploadPackingListBulk()" disabled>📤 Прикрепить совпавшие</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edit BL -->
 <div class="overlay" id="edit-bl-modal">
   <div class="modal">
@@ -2295,9 +2342,9 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     <div class="form-g">
       <label>Файлы (документы клиента)</label>
       <div id="edit-bl-files" style="margin-bottom:10px"></div>
-      <input type="file" id="edit-bl-file-input" style="display:none" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.xlsm,.doc,.docx,.zip" onchange="uploadFile()">
-      <button class="btn btn-ghost btn-sm editor-only" onclick="document.getElementById('edit-bl-file-input').click()">📎 Добавить файл</button>
-      <span style="font-size:11px;color:var(--muted2);margin-left:8px">PDF, DOC, DOCX, XLS, XLSX, XLSM, PNG, JPG, ZIP</span>
+      <span style="font-size:11px;color:var(--muted2)">
+        📎 Файлы прикрепляются массово через кнопку <b>«📦 Packing lists»</b> в карточке партии — по совпадению имени файла с BL кодом.
+      </span>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('edit-bl-modal')">Отмена</button>
@@ -3541,9 +3588,8 @@ async function openEditBL(blId) {
   setBLLanguage("edit-bl", bl.message_language || "uz_latn");
   document.getElementById("edit-bl-chat").value = bl.chat_id||"";
   populateChatSelect("edit-bl-chat-select", bl.chat_id||"");
-  document.getElementById("edit-bl-file-input").dataset.blId = blId;
-
-  // Load files
+  // Per-BL file input was removed — files are now attached via the bulk
+  // "Packing lists" button in the batch toolbar. Just refresh the list.
   await loadBLFiles(blId);
   openModal("edit-bl-modal");
 }
@@ -3699,6 +3745,142 @@ async function importSelectedSheetRows() {
 function batchNameById(batchId) {
   const batch = allBatches.find(item => Number(item.id) === Number(batchId));
   return batch ? batch.name : `Партия #${batchId}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Bulk Packing Lists upload
+// ─────────────────────────────────────────────────────────────────────────
+let packingListBulkFiles = [];   // [{file, blCode, blId, client, status}]
+
+function openPackingListBulkModal() {
+  if (!ensureEditor()) return;
+  if (!currentBatchId) { toast("Сначала открой партию", "err"); return; }
+  packingListBulkFiles = [];
+  document.getElementById("packing-list-folder-input").value = "";
+  document.getElementById("packing-list-files-input").value = "";
+  document.getElementById("packing-list-bulk-count").textContent = "";
+  document.getElementById("packing-list-bulk-summary").textContent = "";
+  document.getElementById("packing-list-bulk-upload-btn").disabled = true;
+  document.getElementById("packing-list-bulk-table").innerHTML =
+    `<tr><td colspan="4"><div class="empty"><div class="empty-icon">📦</div><p>Выбери папку или файлы, чтобы увидеть сопоставление с BL.</p></div></td></tr>`;
+  openModal("packing-list-bulk-modal");
+}
+
+function extractBLCodeFromFilename(name) {
+  // Take only the basename without extension
+  const base = String(name || "").replace(/\\/g, "/").split("/").pop() || "";
+  const noExt = base.replace(/\.[^.]+$/, "");
+  // Find first BL-like token (BL + digits, optionally followed by letters/separators).
+  // Examples matched: BL171, BL-171, BL_171A, bl171
+  const upper = noExt.toUpperCase();
+  const m = upper.match(/BL[-_ ]?\d+[A-Z0-9]*/);
+  return m ? m[0].replace(/[-_ ]/g, "") : "";
+}
+
+async function onPackingListBulkSelected(event, mode) {
+  const fileList = Array.from(event.target.files || []);
+  // Reset the *other* input so a second selection starts clean
+  if (mode === "folder") document.getElementById("packing-list-files-input").value = "";
+  else document.getElementById("packing-list-folder-input").value = "";
+
+  if (!fileList.length) {
+    packingListBulkFiles = [];
+    document.getElementById("packing-list-bulk-count").textContent = "";
+    document.getElementById("packing-list-bulk-summary").textContent = "";
+    document.getElementById("packing-list-bulk-upload-btn").disabled = true;
+    document.getElementById("packing-list-bulk-table").innerHTML =
+      `<tr><td colspan="4"><div class="empty"><div class="empty-icon">📦</div><p>Файлы не выбраны.</p></div></td></tr>`;
+    return;
+  }
+
+  document.getElementById("packing-list-bulk-count").textContent = `Файлов выбрано: ${fileList.length}`;
+
+  // Build a lookup of all unique BL codes from filenames
+  const candidates = fileList.map(file => {
+    const rawName = file.webkitRelativePath || file.name || "";
+    return { file, blCode: extractBLCodeFromFilename(rawName), rawName };
+  });
+
+  const uniqueCodes = Array.from(new Set(candidates.map(c => c.blCode).filter(Boolean)));
+  let resolution = {};
+  try {
+    if (uniqueCodes.length) {
+      const r = await api(`/api/batches/${currentBatchId}/packing-lists/resolve`, "POST", { codes: uniqueCodes });
+      resolution = r.resolved || {};
+    }
+  } catch (e) {
+    toast(e.message, "err");
+  }
+
+  packingListBulkFiles = candidates.map(c => {
+    const resolved = c.blCode ? resolution[c.blCode] : null;
+    let status, blId = null, client = "";
+    if (!c.blCode) {
+      status = "no_code";
+    } else if (resolved && resolved.bl_id) {
+      status = "matched";
+      blId = resolved.bl_id;
+      client = resolved.client_name || "";
+    } else {
+      status = "not_found";
+    }
+    return { file: c.file, blCode: c.blCode, blId, client, rawName: c.rawName, status };
+  });
+
+  renderPackingListBulkTable();
+}
+
+function renderPackingListBulkTable() {
+  const tbody = document.getElementById("packing-list-bulk-table");
+  if (!packingListBulkFiles.length) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="empty"><div class="empty-icon">📦</div><p>Файлы не выбраны.</p></div></td></tr>`;
+    document.getElementById("packing-list-bulk-upload-btn").disabled = true;
+    return;
+  }
+  let matched = 0, missed = 0, noCode = 0;
+  tbody.innerHTML = packingListBulkFiles.map(row => {
+    let badge = "";
+    if (row.status === "matched") { matched++; badge = `<span class="badge badge-green">Совпало</span>`; }
+    else if (row.status === "not_found") { missed++; badge = `<span class="badge badge-red">BL ${esc(row.blCode)} не найден в партии</span>`; }
+    else { noCode++; badge = `<span class="badge badge-amber">Код в имени не найден</span>`; }
+    return `<tr>
+      <td class="mono" style="font-size:12px">${esc(row.rawName)}</td>
+      <td class="mono">${row.blCode ? esc(row.blCode) : "—"}</td>
+      <td>${esc(row.client || "—")}</td>
+      <td>${badge}</td>
+    </tr>`;
+  }).join("");
+  document.getElementById("packing-list-bulk-summary").textContent =
+    `Совпало: ${matched} · Не найдено: ${missed} · Без кода: ${noCode}`;
+  document.getElementById("packing-list-bulk-upload-btn").disabled = matched === 0;
+}
+
+async function uploadPackingListBulk() {
+  if (!ensureEditor()) return;
+  if (!currentBatchId) { toast("Сначала открой партию", "err"); return; }
+  const toSend = packingListBulkFiles.filter(r => r.status === "matched" && r.blId);
+  if (!toSend.length) {
+    toast("Нет совпавших файлов для загрузки", "err");
+    return;
+  }
+  const fd = new FormData();
+  toSend.forEach(row => {
+    fd.append("files", row.file, row.file.name);
+    fd.append("bl_ids", String(row.blId));
+  });
+  try {
+    const r = await fetch(`/api/batches/${currentBatchId}/packing-lists/bulk`, {
+      method: "POST",
+      body: fd,
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "Ошибка загрузки");
+    toast(`✅ Загружено: ${data.uploaded || 0}, ошибок: ${data.failed || 0}`, "ok");
+    closeModal("packing-list-bulk-modal");
+    await loadBatchDetail(currentBatchId);
+  } catch (e) {
+    toast(e.message, "err");
+  }
 }
 
 async function loadBLFiles(blId) {

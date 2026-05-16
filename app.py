@@ -1868,41 +1868,92 @@ def handle_my_chat_member_update(chat_update: dict):
         return
 
 
-def send_bl_package(bl: dict, batch_name: str, include_related_batches: bool = True):
-    if not bl["chat_id"]:
+def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
+    """Render and send tracking for a single BL (no merging with other batches)."""
+    chat_id = bl.get("chat_id")
+    if not chat_id:
         return False, "Нет chat_id"
 
+    language = normalize_message_language(bl.get("message_language"))
+    reply_markup = None if is_group_chat_id(chat_id) else bl_file_markup(bl["id"])
+    rendered_message = db.render_message(bl, batch_name, include_related_batches=False)
+
     try:
-        language = normalize_message_language(bl.get("message_language"))
-        reply_markup = None if is_group_chat_id(bl["chat_id"]) else bl_file_markup(bl["id"])
-        rendered_message = db.render_message(
-            bl,
-            batch_name,
-            include_related_batches=include_related_batches,
-        )
         send_with_track_keyboard(
-            bl["chat_id"],
+            chat_id,
             rendered_message,
             language=language,
             reply_markup=reply_markup,
         )
-        db.record_tracking_delivery(bl, include_related_batches=include_related_batches)
+        db.record_tracking_delivery(bl, include_related_batches=False)
+        return True, ""
     except Exception as exc:
         try:
             fallback_message = _plain_text_message(rendered_message)
             send_with_track_keyboard(
-                bl["chat_id"],
+                chat_id,
                 fallback_message,
                 language=language,
                 reply_markup=reply_markup,
                 parse_mode=None,
             )
-            db.record_tracking_delivery(bl, include_related_batches=include_related_batches)
+            db.record_tracking_delivery(bl, include_related_batches=False)
             return True, ""
         except Exception as fallback_exc:
             return False, str(fallback_exc or exc)
 
-    return True, ""
+
+def send_bl_package(bl: dict, batch_name: str, include_related_batches: bool = True):
+    """Send tracking messages.
+
+    Even when `include_related_batches=True`, each BL/batch is sent as its own
+    separate Telegram message (the "send together" trigger still discovers all
+    related batches for this client, but they are no longer merged into one).
+    """
+    if not bl["chat_id"]:
+        return False, "Нет chat_id"
+
+    # Build the full bundle (primary + related batches if requested)
+    bundle = db.get_tracking_bundle_bls(bl, include_related_batches=include_related_batches)
+    if not bundle:
+        bundle = [bl]
+
+    # Resolve batch name per item (related items may belong to other batches)
+    batch_name_cache: dict[int, str] = {}
+    if bl.get("batch_id"):
+        batch_name_cache[int(bl["batch_id"])] = batch_name or ""
+
+    last_error = ""
+    success_any = False
+    for index, item in enumerate(bundle):
+        item_batch_id = item.get("batch_id")
+        item_batch_name = ""
+        if item_batch_id:
+            cached = batch_name_cache.get(int(item_batch_id))
+            if cached is None:
+                related_batch = db.get_batch(int(item_batch_id)) or {}
+                cached = related_batch.get("name") or ""
+                batch_name_cache[int(item_batch_id)] = cached
+            item_batch_name = cached
+        if not item_batch_name:
+            item_batch_name = batch_name or ""
+
+        ok, err = _send_single_bl_message(item, item_batch_name)
+        if ok:
+            success_any = True
+        else:
+            last_error = err
+        # Small pause between messages helps Telegram avoid flood limits and
+        # keeps the per-batch messages visually separated in the chat.
+        if index < len(bundle) - 1:
+            try:
+                time.sleep(0.4)
+            except Exception:
+                pass
+
+    if not success_any:
+        return False, last_error or "Не удалось отправить сообщения"
+    return True, last_error
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -2430,6 +2481,123 @@ def api_upload(bl_id):
 def api_delete_file(file_id):
     db.delete_file(file_id)
     return jsonify({"ok": True})
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Bulk Packing Lists upload: extract BL code from filename and auto-attach
+# ─────────────────────────────────────────────────────────────────────────
+_BL_CODE_RE = re.compile(r"BL[-_ ]?\d+[A-Z0-9]*")
+
+
+def _extract_bl_code_from_filename(name: str) -> str:
+    base = os.path.basename(str(name or "").replace("\\", "/"))
+    no_ext = base.rsplit(".", 1)[0] if "." in base else base
+    m = _BL_CODE_RE.search(no_ext.upper())
+    if not m:
+        return ""
+    return m.group(0).replace("-", "").replace("_", "").replace(" ", "")
+
+
+def _build_batch_bl_code_index(batch_id: int) -> dict:
+    """Map every BL code (primary and merged) within a batch to its row."""
+    index: dict[str, dict] = {}
+    for row in db.get_bl_by_batch(batch_id) or []:
+        primary = str(row.get("code") or "").strip().upper()
+        if primary:
+            index.setdefault(primary, row)
+        merged_raw = str(row.get("merged_codes") or "")
+        for part in re.split(r"[,;\s]+", merged_raw):
+            piece = part.strip().upper()
+            if piece:
+                index.setdefault(piece, row)
+    return index
+
+
+@app.route("/api/batches/<int:batch_id>/packing-lists/resolve", methods=["POST"])
+@editor_required
+def api_resolve_packing_list_codes(batch_id):
+    batch = db.get_batch(batch_id)
+    if not batch:
+        abort(404)
+    data = request.json or {}
+    codes_raw = data.get("codes") or []
+    if not isinstance(codes_raw, list):
+        codes_raw = []
+
+    index = _build_batch_bl_code_index(batch_id)
+    resolved: dict[str, dict] = {}
+    for raw_code in codes_raw:
+        code = str(raw_code or "").strip().upper().replace("-", "").replace("_", "").replace(" ", "")
+        if not code:
+            continue
+        row = index.get(code)
+        if not row:
+            continue
+        resolved[raw_code] = {
+            "bl_id": row.get("id"),
+            "code": row.get("code"),
+            "client_name": row.get("client_name") or "",
+        }
+    return jsonify({"ok": True, "resolved": resolved})
+
+
+@app.route("/api/batches/<int:batch_id>/packing-lists/bulk", methods=["POST"])
+@editor_required
+def api_bulk_packing_lists(batch_id):
+    batch = db.get_batch(batch_id)
+    if not batch:
+        abort(404)
+
+    files = request.files.getlist("files")
+    bl_ids = request.form.getlist("bl_ids")
+    if not files or not bl_ids or len(files) != len(bl_ids):
+        return jsonify({"error": "Не переданы файлы или BL не сопоставлены"}), 400
+
+    # Build a whitelist of BL ids belonging to this batch
+    batch_bls = db.get_bl_by_batch(batch_id) or []
+    allowed_ids = {int(row["id"]) for row in batch_bls if row.get("id")}
+
+    uploaded = 0
+    failed = 0
+    results = []
+    for uploaded_file, bl_id_raw in zip(files, bl_ids):
+        if not uploaded_file or not uploaded_file.filename:
+            failed += 1
+            results.append({"filename": "", "ok": False, "error": "Пустой файл"})
+            continue
+        try:
+            bl_id = int(bl_id_raw)
+        except (TypeError, ValueError):
+            failed += 1
+            results.append({"filename": uploaded_file.filename, "ok": False, "error": "Неверный BL"})
+            continue
+        if bl_id not in allowed_ids:
+            failed += 1
+            results.append({"filename": uploaded_file.filename, "ok": False, "error": "BL не из этой партии"})
+            continue
+
+        original_filename = (uploaded_file.filename or "").strip()
+        ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
+        if ext not in ALLOWED_EXT:
+            failed += 1
+            results.append({"filename": original_filename, "ok": False, "error": f"Тип .{ext} не разрешён"})
+            continue
+        try:
+            # Strip subdirectory components from the relative path (folder upload)
+            clean_base = os.path.basename(original_filename.replace("\\", "/"))
+            storage_name = secure_filename(clean_base) or f"file_{secrets.token_hex(4)}.{ext}"
+            filename = clean_base or storage_name
+            unique = f"bl{bl_id}_{secrets.token_hex(4)}_{storage_name}"
+            file_path = os.path.join(UPLOAD_FOLDER, unique)
+            uploaded_file.save(file_path)
+            db.add_file(bl_id, filename, file_path)
+            uploaded += 1
+            results.append({"filename": filename, "ok": True, "bl_id": bl_id})
+        except Exception as exc:
+            failed += 1
+            results.append({"filename": original_filename, "ok": False, "error": str(exc)})
+
+    return jsonify({"ok": True, "uploaded": uploaded, "failed": failed, "results": results})
 
 
 @app.route("/public/file/<public_token>")
