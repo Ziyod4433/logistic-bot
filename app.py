@@ -110,6 +110,23 @@ CANCEL_BUTTON = "❌ Отмена"
 STATE_WAITING_BL = "waiting_bl"
 COMM_RATE_PREFIX = "comm_rate"
 FILE_PREFIX = "file"
+FILE_ALL_PREFIX = "fileall"  # callback_data = "fileall:<bl_id>"
+
+# Localized label for the single "send all packing lists" button.
+PACKING_LIST_DOWNLOAD_BUTTON_LABELS = {
+    "uz_latn": "📦 Packing listlarni yuklab olish",
+    "uz_cyrl": "📦 Пакинг лиcтларни юклаб олиш",
+    "ru": "📦 Скачать packing lists",
+    "en": "📦 Download packing lists",
+}
+
+
+def packing_list_download_label(language: str | None) -> str:
+    normalized = normalize_message_language(language) if language else "uz_latn"
+    return PACKING_LIST_DOWNLOAD_BUTTON_LABELS.get(
+        normalized,
+        PACKING_LIST_DOWNLOAD_BUTTON_LABELS["uz_latn"],
+    )
 
 CANCEL_REPLY_MARKUP = {
     "keyboard": [[{"text": CANCEL_BUTTON}]],
@@ -1141,23 +1158,25 @@ def communication_rating_markup(dispatch_id: int):
     }
 
 
-def bl_file_markup(bl_id: int):
-    files = db.get_files(bl_id)
-    buttons = []
-    row = []
-    for file_info in files:
-        token = (file_info.get("public_token") or "").strip()
-        label = db.prettify_file_name(file_info.get("filename") or "")
-        if not token or not label:
-            continue
-        short_label = label if len(label) <= 28 else f"{label[:25]}..."
-        row.append({"text": f"📄 {short_label}", "callback_data": f"{FILE_PREFIX}:{token}"})
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    return {"inline_keyboard": buttons} if buttons else None
+def bl_file_markup(bl_id: int, language: str | None = None):
+    """One button that delivers every attached packing list in a single tap.
+
+    Previously we rendered one button per file, which got noisy for BLs
+    with many packing lists and forced the client to tap each one. Now
+    we expose a single localized button ("Packing listlarni yuklab
+    olish") whose callback triggers bulk delivery of all attached files.
+    """
+    files = db.get_files(bl_id) or []
+    has_any = any((file_info.get("public_token") or "").strip() for file_info in files)
+    if not has_any:
+        return None
+    label = packing_list_download_label(language)
+    return {
+        "inline_keyboard": [[{
+            "text": label,
+            "callback_data": f"{FILE_ALL_PREFIX}:{bl_id}",
+        }]],
+    }
 
 
 def clear_group_reply_keyboard(chat_id):
@@ -1543,6 +1562,51 @@ def _deliver_file_async(chat_id, file_info: dict) -> None:
             pass
 
 
+def _deliver_all_files_async(chat_id, bl_id: int) -> None:
+    """Send every file attached to a BL in one go.
+
+    Uses the same cache + size-limit logic as single-file delivery, just
+    in a loop. A tiny pause between sends keeps message ordering stable
+    in Telegram clients without hitting flood limits.
+    """
+    try:
+        files = db.get_files(bl_id) or []
+    except Exception:
+        app.logger.exception("Failed to load files for bl_id=%s", bl_id)
+        files = []
+
+    deliverable = [f for f in files if (f.get("public_token") or "").strip()]
+    if not deliverable:
+        try:
+            telegram_send_message(chat_id, "❌ К этому BL не прикреплено ни одного файла.")
+        except Exception:
+            pass
+        return
+
+    sent = 0
+    failed = 0
+    for index, file_info in enumerate(deliverable):
+        try:
+            _deliver_file_async(chat_id, dict(file_info))
+            sent += 1
+        except Exception:
+            failed += 1
+            app.logger.exception("Bulk file delivery failed for file_id=%s", file_info.get("id"))
+        # Telegram throttles bots at ~30 msg/sec into a single chat; even
+        # for many files this tiny gap keeps us safely under and preserves
+        # order on the client side.
+        if index < len(deliverable) - 1:
+            try:
+                time.sleep(0.25)
+            except Exception:
+                pass
+
+    app.logger.info(
+        "Bulk file delivery bl_id=%s chat=%s sent=%s failed=%s total=%s",
+        bl_id, chat_id, sent, failed, len(deliverable),
+    )
+
+
 def handle_callback_query(callback_query: dict):
     callback_id = callback_query.get("id")
     data = (callback_query.get("data") or "").strip()
@@ -1555,17 +1619,34 @@ def handle_callback_query(callback_query: dict):
     if not callback_id or not data or not chat_id:
         return
 
+    if data.startswith(f"{FILE_ALL_PREFIX}:"):
+        # New bulk button: deliver every packing list attached to the BL.
+        try:
+            bl_id = int(data.split(":", 1)[1].strip())
+        except (TypeError, ValueError):
+            telegram_answer_callback_query(callback_id, "Неверный BL")
+            return
+        # Acknowledge immediately so the spinner disappears.
+        try:
+            telegram_answer_callback_query(callback_id, "📦 Отправляю packing list...")
+        except Exception:
+            pass
+        threading.Thread(
+            target=_deliver_all_files_async,
+            args=(chat_id, bl_id),
+            daemon=True,
+        ).start()
+        return
+
     if data.startswith(f"{FILE_PREFIX}:"):
+        # Legacy single-file button (kept for backward-compat with messages
+        # sent before the bulk button was introduced).
         token = data.split(":", 1)[1].strip()
         file_info = db.get_file_by_public_token(token)
         if not file_info:
             telegram_answer_callback_query(callback_id, "Файл не найден")
             return
 
-        # Answer the callback IMMEDIATELY so Telegram dismisses the spinning
-        # loader on the button. The actual sendDocument runs in a background
-        # thread so the webhook returns within ~200ms (Telegram's webhook
-        # retry timer never fires) and a tap feels instant.
         try:
             telegram_answer_callback_query(callback_id, "📤 Файл отправляется...")
         except Exception:
@@ -1907,9 +1988,10 @@ def _send_single_bl_status(chat_id, bl: dict, batch_name: str):
     batch = db.get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
     show_packing_list = not db.is_customer_delivery_eta((batch or {}).get("eta_destination") or "")
     language = normalize_message_language(bl.get("message_language"))
-    # Always attach the file inline-keyboard so the user can tap a file name
-    # and have the bot send the actual file into the chat/group.
-    reply_markup = bl_file_markup(bl["id"]) if show_packing_list else None
+    # Always attach the file inline-keyboard so the user can tap the
+    # "Packing listlarni yuklab olish" button and have the bot send all
+    # attached files into the chat/group in one shot.
+    reply_markup = bl_file_markup(bl["id"], language=language) if show_packing_list else None
     try:
         send_with_track_keyboard(chat_id, text, language=language, reply_markup=reply_markup)
     except Exception:
@@ -2149,7 +2231,7 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     language = normalize_message_language(bl.get("message_language"))
     # Always attach the file inline-keyboard so clients/группы can pull the
     # attached packing list straight from the tracking message.
-    reply_markup = bl_file_markup(bl["id"])
+    reply_markup = bl_file_markup(bl["id"], language=language)
     rendered_message = db.render_message(bl, batch_name, include_related_batches=False)
 
     try:
