@@ -1556,6 +1556,44 @@ def _deliver_file_async(chat_id, file_info: dict) -> None:
             pass
 
 
+def _send_attached_files_for_bl(chat_id, bl_id) -> None:
+    """Synchronously send every packing list attached to a BL, in order.
+
+    Used as the auto-follow-up step right after a tracking message so the
+    client sees: info(batch A) → files(batch A) → info(batch B) →
+    files(batch B). Reuses _deliver_file_async (which is the per-file
+    cached/size-safe sender) — runs it in-thread, not in a new thread,
+    so the calling loop stays in order.
+    """
+    if not bl_id:
+        return
+    try:
+        files = db.get_files(int(bl_id)) or []
+    except Exception:
+        app.logger.exception("Failed to load files for bl_id=%s", bl_id)
+        return
+
+    deliverable = [f for f in files if (f.get("public_token") or "").strip()]
+    if not deliverable:
+        return
+
+    for index, file_info in enumerate(deliverable):
+        try:
+            _deliver_file_async(chat_id, dict(file_info))
+        except Exception:
+            app.logger.exception(
+                "Auto file delivery failed (bl_id=%s file_id=%s)",
+                bl_id, file_info.get("id"),
+            )
+        # Tiny gap between sends keeps message ordering stable in Telegram
+        # clients and stays well under bot flood limits (~30 msg/sec).
+        if index < len(deliverable) - 1:
+            try:
+                time.sleep(0.25)
+            except Exception:
+                pass
+
+
 def _deliver_all_files_async(chat_id, bl_id: int) -> None:
     """Send every file attached to a BL in one go.
 
@@ -1840,7 +1878,14 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
                 detected_intent,
                 bl_code,
             )
-            send_bl_status(chat_id, bl)
+            # Threaded for the same reason as the Yuk holati handler:
+            # file delivery is now part of send_bl_status and can take
+            # several seconds.
+            threading.Thread(
+                target=send_bl_status,
+                args=(chat_id, bl),
+                daemon=True,
+            ).start()
             try:
                 sender = message.get("from") or {}
                 db.record_ai_log(
@@ -1977,25 +2022,30 @@ def run_ai_test(chat_id, chat: dict, raw_text: str):
 
 
 def _send_single_bl_status(chat_id, bl: dict, batch_name: str):
-    """Send tracking for one specific BL (no merging with related batches)."""
+    """Send tracking for one specific BL, then drop its packing-list files.
+
+    Order on the wire: tracking message for this BL → all of this BL's
+    attached files → return so the caller can move on to the next BL.
+    """
     text = db.render_message(bl, batch_name, include_related_batches=False)
     batch = db.get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
     show_packing_list = not db.is_customer_delivery_eta((batch or {}).get("eta_destination") or "")
     language = normalize_message_language(bl.get("message_language"))
-    # Always attach the file inline-keyboard so the user can tap the
-    # "Packing listlarni yuklab olish" button and have the bot send all
-    # attached files into the chat/group in one shot.
-    reply_markup = bl_file_markup(bl["id"], language=language) if show_packing_list else None
     try:
-        send_with_track_keyboard(chat_id, text, language=language, reply_markup=reply_markup)
+        send_with_track_keyboard(chat_id, text, language=language)
     except Exception:
         send_with_track_keyboard(
             chat_id,
             _plain_text_message(text),
             language=language,
-            reply_markup=reply_markup,
             parse_mode=None,
         )
+
+    if show_packing_list:
+        try:
+            _send_attached_files_for_bl(chat_id, bl.get("id"))
+        except Exception:
+            app.logger.exception("Auto file delivery failed for bl_id=%s", bl.get("id"))
 
 
 def send_bl_status(chat_id, bl: dict):
@@ -2075,7 +2125,12 @@ def handle_bl_lookup(chat_id, raw_code: str):
         return
 
     db.clear_chat_state(chat_id)
-    send_bl_status(chat_id, bl)
+    # Threaded so the webhook returns immediately while files are sent.
+    threading.Thread(
+        target=send_bl_status,
+        args=(chat_id, bl),
+        daemon=True,
+    ).start()
 
 
 def handle_telegram_message(message: dict):
@@ -2164,7 +2219,15 @@ def handle_telegram_message(message: dict):
         latest_active_bl = db.find_latest_active_bl_by_chat(chat_id)
         if latest_active_bl:
             db.clear_chat_state(chat_id)
-            send_bl_status(chat_id, latest_active_bl)
+            # send_bl_status now also dispatches every attached file after
+            # each BL message in sequence, which can take several seconds
+            # per file. Run it on a daemon thread so the Telegram webhook
+            # returns immediately and Telegram doesn't retry the request.
+            threading.Thread(
+                target=send_bl_status,
+                args=(chat_id, latest_active_bl),
+                daemon=True,
+            ).start()
             return
         latest_bl = db.find_latest_bl_by_chat(chat_id)
         if latest_bl:
@@ -2217,40 +2280,55 @@ def handle_my_chat_member_update(chat_update: dict):
 
 
 def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
-    """Render and send tracking for a single BL (no merging with other batches)."""
+    """Render and send tracking for a single BL (no merging with other batches).
+
+    Right after the message goes out we also deliver every packing list
+    attached to this BL so the client receives "info → files → info →
+    files" in strict batch order instead of all infos first and then a
+    bucket of files at the end.
+    """
     chat_id = bl.get("chat_id")
     if not chat_id:
         return False, "Нет chat_id"
 
     language = normalize_message_language(bl.get("message_language"))
-    # Always attach the file inline-keyboard so clients/группы can pull the
-    # attached packing list straight from the tracking message.
-    reply_markup = bl_file_markup(bl["id"], language=language)
     rendered_message = db.render_message(bl, batch_name, include_related_batches=False)
 
+    delivered = False
+    last_error = ""
     try:
         send_with_track_keyboard(
             chat_id,
             rendered_message,
             language=language,
-            reply_markup=reply_markup,
         )
         db.record_tracking_delivery(bl, include_related_batches=False)
-        return True, ""
+        delivered = True
     except Exception as exc:
+        last_error = str(exc)
         try:
             fallback_message = _plain_text_message(rendered_message)
             send_with_track_keyboard(
                 chat_id,
                 fallback_message,
                 language=language,
-                reply_markup=reply_markup,
                 parse_mode=None,
             )
             db.record_tracking_delivery(bl, include_related_batches=False)
-            return True, ""
+            delivered = True
+            last_error = ""
         except Exception as fallback_exc:
             return False, str(fallback_exc or exc)
+
+    # Auto-attach packing lists right after the message, before moving on
+    # to the next batch in the bundle.
+    if delivered:
+        try:
+            _send_attached_files_for_bl(chat_id, bl.get("id"))
+        except Exception:
+            app.logger.exception("Auto file delivery failed for bl_id=%s", bl.get("id"))
+
+    return True, last_error
 
 
 def send_bl_package(bl: dict, batch_name: str, include_related_batches: bool = True):
