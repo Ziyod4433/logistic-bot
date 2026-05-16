@@ -2487,6 +2487,9 @@ def api_delete_file(file_id):
 # Bulk Packing Lists upload: extract BL code from filename and auto-attach
 # ─────────────────────────────────────────────────────────────────────────
 _BL_CODE_RE = re.compile(r"BL[-_ ]?\d+[A-Z0-9]*")
+# Strip everything that is not a letter/digit (any script) — used for fuzzy
+# client-name matching: drops spaces, punctuation, parentheses, dashes, etc.
+_NON_ALNUM_RE = re.compile(r"[^\w]+", re.UNICODE)
 
 
 def _extract_bl_code_from_filename(name: str) -> str:
@@ -2496,6 +2499,11 @@ def _extract_bl_code_from_filename(name: str) -> str:
     if not m:
         return ""
     return m.group(0).replace("-", "").replace("_", "").replace(" ", "")
+
+
+def _normalize_for_fuzzy(text: str) -> str:
+    """Lowercase + drop all non-alphanumeric chars (handles spaces, dashes, parens, etc.)."""
+    return _NON_ALNUM_RE.sub("", str(text or "").casefold())
 
 
 def _build_batch_bl_code_index(batch_id: int) -> dict:
@@ -2513,6 +2521,44 @@ def _build_batch_bl_code_index(batch_id: int) -> dict:
     return index
 
 
+def _resolve_filename_to_bl(filename: str, code_index: dict, batch_rows: list[dict]) -> dict | None:
+    """Try multiple matching strategies, return the BL row that wins or None."""
+    if not filename:
+        return None
+    base = os.path.basename(str(filename).replace("\\", "/"))
+    no_ext = base.rsplit(".", 1)[0] if "." in base else base
+
+    # 1. BL code match (BL171, BL-171, bl_171a)
+    code_match = _BL_CODE_RE.search(no_ext.upper())
+    if code_match:
+        normalized_code = code_match.group(0).replace("-", "").replace("_", "").replace(" ", "")
+        row = code_index.get(normalized_code)
+        if row:
+            return {"row": row, "method": "code", "matched_on": code_match.group(0)}
+
+    # 2. Client-name match — pick the longest client name whose normalized form
+    #    appears in the normalized filename. We sort by length descending so
+    #    e.g. "ABC TRADE LLC" wins over "ABC" when both exist in the batch.
+    fuzzy_name = _normalize_for_fuzzy(no_ext)
+    if fuzzy_name:
+        candidates = []
+        for row in batch_rows:
+            client = str(row.get("client_name") or "").strip()
+            if not client:
+                continue
+            norm_client = _normalize_for_fuzzy(client)
+            if len(norm_client) < 3:  # avoid noise from 1-2 char "names"
+                continue
+            if norm_client in fuzzy_name:
+                candidates.append((len(norm_client), row, client))
+        if candidates:
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            _, row, matched_client = candidates[0]
+            return {"row": row, "method": "client_name", "matched_on": matched_client}
+
+    return None
+
+
 @app.route("/api/batches/<int:batch_id>/packing-lists/resolve", methods=["POST"])
 @editor_required
 def api_resolve_packing_list_codes(batch_id):
@@ -2520,25 +2566,66 @@ def api_resolve_packing_list_codes(batch_id):
     if not batch:
         abort(404)
     data = request.json or {}
-    codes_raw = data.get("codes") or []
+    filenames_raw = data.get("filenames") or []
+    codes_raw = data.get("codes") or []  # legacy fallback
+    if not isinstance(filenames_raw, list):
+        filenames_raw = []
     if not isinstance(codes_raw, list):
         codes_raw = []
 
-    index = _build_batch_bl_code_index(batch_id)
-    resolved: dict[str, dict] = {}
+    code_index = _build_batch_bl_code_index(batch_id)
+    batch_rows = db.get_bl_by_batch(batch_id) or []
+
+    # Full list of BLs to power manual-pick dropdown on the client side
+    bl_options = [
+        {
+            "id": row.get("id"),
+            "code": row.get("code") or "",
+            "display_code": row.get("display_code") or row.get("code") or "",
+            "client_name": row.get("client_name") or "",
+        }
+        for row in batch_rows
+    ]
+
+    # New API: resolve by filename (preferred)
+    resolved_by_filename: dict[str, dict] = {}
+    for raw_name in filenames_raw:
+        name = str(raw_name or "").strip()
+        if not name:
+            continue
+        hit = _resolve_filename_to_bl(name, code_index, batch_rows)
+        if not hit:
+            continue
+        row = hit["row"]
+        resolved_by_filename[raw_name] = {
+            "bl_id": row.get("id"),
+            "code": row.get("code"),
+            "client_name": row.get("client_name") or "",
+            "method": hit["method"],
+            "matched_on": hit["matched_on"],
+        }
+
+    # Legacy API: resolve by extracted code (kept for back-compat with older clients)
+    resolved_by_code: dict[str, dict] = {}
     for raw_code in codes_raw:
         code = str(raw_code or "").strip().upper().replace("-", "").replace("_", "").replace(" ", "")
         if not code:
             continue
-        row = index.get(code)
+        row = code_index.get(code)
         if not row:
             continue
-        resolved[raw_code] = {
+        resolved_by_code[raw_code] = {
             "bl_id": row.get("id"),
             "code": row.get("code"),
             "client_name": row.get("client_name") or "",
         }
-    return jsonify({"ok": True, "resolved": resolved})
+
+    return jsonify({
+        "ok": True,
+        "resolved": resolved_by_code,             # legacy
+        "resolved_by_filename": resolved_by_filename,
+        "bl_options": bl_options,
+    })
 
 
 @app.route("/api/batches/<int:batch_id>/packing-lists/bulk", methods=["POST"])

@@ -2231,6 +2231,23 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   </div>
 </div>
 
+<!-- BL Files Manager (inline delete from BL list) -->
+<div class="overlay" id="bl-files-manager-modal">
+  <div class="modal" style="width:560px;max-width:95vw">
+    <div class="modal-title">Файлы <em id="bl-files-manager-title">BL</em></div>
+    <input type="hidden" id="bl-files-manager-bl-id">
+    <div id="bl-files-manager-list" style="min-height:60px;display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+      <span style="color:var(--muted);font-size:12px">Загрузка...</span>
+    </div>
+    <div style="font-size:11px;color:var(--muted2);margin-top:6px">
+      Чтобы добавить новые файлы — используй кнопку <b>«📦 Packing lists»</b> в карточке партии.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('bl-files-manager-modal')">Закрыть</button>
+    </div>
+  </div>
+</div>
+
 <!-- Bulk Packing Lists upload -->
 <div class="overlay" id="packing-list-bulk-modal">
   <div class="modal" style="width:780px;max-width:95vw;max-height:calc(100vh - 48px);overflow-y:auto">
@@ -3053,7 +3070,7 @@ function renderBL(list, batchName) {
         <td class="bl-chat-cell">${renderChatCell(b.chat_id)}</td>
         <td class="bl-files-cell">
           ${b.file_count > 0
-            ? `<span class="badge badge-blue">📎 ${b.file_count}</span>`
+            ? `<button class="badge badge-blue" style="border:none;cursor:pointer" onclick="openBLFilesManagerModal(${b.id}, '${esc(b.display_code || b.code)}')" title="Управлять файлами BL">📎 ${b.file_count}</button>`
             : `<span style="color:var(--muted);font-size:11px">нет</span>`}
         ${b.problem_count > 0
           ? `<span class="badge badge-red" style="margin-left:6px">⚠ ${b.problem_count}</span>`
@@ -3748,14 +3765,69 @@ function batchNameById(batchId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// BL Files Manager (open from "📎 N" badge in BL list — view + delete)
+// ─────────────────────────────────────────────────────────────────────────
+async function openBLFilesManagerModal(blId, displayCode) {
+  document.getElementById("bl-files-manager-title").textContent = displayCode || "BL";
+  document.getElementById("bl-files-manager-bl-id").value = String(blId);
+  document.getElementById("bl-files-manager-list").innerHTML =
+    `<span style="color:var(--muted);font-size:12px">Загрузка...</span>`;
+  openModal("bl-files-manager-modal");
+  await refreshBLFilesManagerList(blId);
+}
+
+async function refreshBLFilesManagerList(blId) {
+  const wrap = document.getElementById("bl-files-manager-list");
+  try {
+    const files = await api("/api/bl/" + blId + "/files");
+    if (!files || !files.length) {
+      wrap.innerHTML = `<span style="color:var(--muted);font-size:12px">Нет прикреплённых файлов.</span>`;
+      return;
+    }
+    wrap.innerHTML = files.map(f => `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:1px solid rgba(255,255,255,.06);border-radius:8px;background:rgba(255,255,255,.02)">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          <span style="font-size:14px">📄</span>
+          <span style="font-size:12px;word-break:break-all">${esc(f.filename || "")}</span>
+        </div>
+        <button class="btn btn-red btn-xs editor-only"
+                onclick="deleteFileFromManager(${f.id}, ${blId})"
+                title="Удалить файл">✕ Удалить</button>
+      </div>
+    `).join("");
+  } catch (e) {
+    wrap.innerHTML = `<span style="color:var(--red);font-size:12px">${esc(e.message)}</span>`;
+  }
+}
+
+async function deleteFileFromManager(fileId, blId) {
+  if (!ensureEditor()) return;
+  if (!confirm("Удалить этот файл? Действие нельзя отменить.")) return;
+  try {
+    await api("/api/files/" + fileId, "DELETE");
+    toast("Файл удалён", "ok");
+    await refreshBLFilesManagerList(blId);
+    // Refresh BL list so the file count badge updates
+    if (currentBatchId) loadBatchDetail(currentBatchId);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Bulk Packing Lists upload
 // ─────────────────────────────────────────────────────────────────────────
-let packingListBulkFiles = [];   // [{file, blCode, blId, client, status}]
+// packingListBulkFiles row schema:
+//   { file, rawName, blCode, blId, client, matchMethod, matchedOn, status, manual }
+// status: "matched" (auto), "manual" (user picked), "unmatched" (needs picker)
+let packingListBulkFiles = [];
+let packingListBlOptions = [];   // [{id, code, display_code, client_name}]
 
 function openPackingListBulkModal() {
   if (!ensureEditor()) return;
   if (!currentBatchId) { toast("Сначала открой партию", "err"); return; }
   packingListBulkFiles = [];
+  packingListBlOptions = [];
   document.getElementById("packing-list-folder-input").value = "";
   document.getElementById("packing-list-files-input").value = "";
   document.getElementById("packing-list-bulk-count").textContent = "";
@@ -3764,17 +3836,6 @@ function openPackingListBulkModal() {
   document.getElementById("packing-list-bulk-table").innerHTML =
     `<tr><td colspan="4"><div class="empty"><div class="empty-icon">📦</div><p>Выбери папку или файлы, чтобы увидеть сопоставление с BL.</p></div></td></tr>`;
   openModal("packing-list-bulk-modal");
-}
-
-function extractBLCodeFromFilename(name) {
-  // Take only the basename without extension
-  const base = String(name || "").replace(/\\/g, "/").split("/").pop() || "";
-  const noExt = base.replace(/\.[^.]+$/, "");
-  // Find first BL-like token (BL + digits, optionally followed by letters/separators).
-  // Examples matched: BL171, BL-171, BL_171A, bl171
-  const upper = noExt.toUpperCase();
-  const m = upper.match(/BL[-_ ]?\d+[A-Z0-9]*/);
-  return m ? m[0].replace(/[-_ ]/g, "") : "";
 }
 
 async function onPackingListBulkSelected(event, mode) {
@@ -3795,38 +3856,82 @@ async function onPackingListBulkSelected(event, mode) {
 
   document.getElementById("packing-list-bulk-count").textContent = `Файлов выбрано: ${fileList.length}`;
 
-  // Build a lookup of all unique BL codes from filenames
-  const candidates = fileList.map(file => {
-    const rawName = file.webkitRelativePath || file.name || "";
-    return { file, blCode: extractBLCodeFromFilename(rawName), rawName };
-  });
+  const candidates = fileList.map(file => ({
+    file,
+    rawName: file.webkitRelativePath || file.name || "",
+  }));
+  const filenames = candidates.map(c => c.rawName);
 
-  const uniqueCodes = Array.from(new Set(candidates.map(c => c.blCode).filter(Boolean)));
-  let resolution = {};
+  let resolvedByFilename = {};
   try {
-    if (uniqueCodes.length) {
-      const r = await api(`/api/batches/${currentBatchId}/packing-lists/resolve`, "POST", { codes: uniqueCodes });
-      resolution = r.resolved || {};
-    }
+    const r = await api(`/api/batches/${currentBatchId}/packing-lists/resolve`, "POST", { filenames });
+    resolvedByFilename = r.resolved_by_filename || {};
+    packingListBlOptions = Array.isArray(r.bl_options) ? r.bl_options : [];
   } catch (e) {
     toast(e.message, "err");
+    packingListBlOptions = [];
   }
 
   packingListBulkFiles = candidates.map(c => {
-    const resolved = c.blCode ? resolution[c.blCode] : null;
-    let status, blId = null, client = "";
-    if (!c.blCode) {
-      status = "no_code";
-    } else if (resolved && resolved.bl_id) {
-      status = "matched";
-      blId = resolved.bl_id;
-      client = resolved.client_name || "";
-    } else {
-      status = "not_found";
+    const resolved = resolvedByFilename[c.rawName];
+    if (resolved && resolved.bl_id) {
+      return {
+        file: c.file,
+        rawName: c.rawName,
+        blId: resolved.bl_id,
+        blCode: resolved.code || "",
+        client: resolved.client_name || "",
+        matchMethod: resolved.method || "",
+        matchedOn: resolved.matched_on || "",
+        status: "matched",
+        manual: false,
+      };
     }
-    return { file: c.file, blCode: c.blCode, blId, client, rawName: c.rawName, status };
+    return {
+      file: c.file,
+      rawName: c.rawName,
+      blId: null,
+      blCode: "",
+      client: "",
+      matchMethod: "",
+      matchedOn: "",
+      status: "unmatched",
+      manual: false,
+    };
   });
 
+  renderPackingListBulkTable();
+}
+
+function packingListBlOptionsHTML(selectedId) {
+  const opts = packingListBlOptions.map(opt => {
+    const sel = String(opt.id) === String(selectedId) ? " selected" : "";
+    const label = `${opt.display_code || opt.code}${opt.client_name ? " — " + opt.client_name : ""}`;
+    return `<option value="${opt.id}"${sel}>${esc(label)}</option>`;
+  }).join("");
+  return `<option value="">— выбрать BL вручную —</option>${opts}`;
+}
+
+function onPackingListManualPick(index, blIdRaw) {
+  const row = packingListBulkFiles[index];
+  if (!row) return;
+  const blId = parseInt(blIdRaw, 10);
+  if (!blId) {
+    row.blId = null;
+    row.blCode = "";
+    row.client = "";
+    row.status = "unmatched";
+    row.manual = false;
+  } else {
+    const opt = packingListBlOptions.find(o => Number(o.id) === blId);
+    row.blId = blId;
+    row.blCode = opt ? (opt.code || "") : "";
+    row.client = opt ? (opt.client_name || "") : "";
+    row.status = "manual";
+    row.manual = true;
+    row.matchMethod = "manual";
+    row.matchedOn = "";
+  }
   renderPackingListBulkTable();
 }
 
@@ -3837,30 +3942,49 @@ function renderPackingListBulkTable() {
     document.getElementById("packing-list-bulk-upload-btn").disabled = true;
     return;
   }
-  let matched = 0, missed = 0, noCode = 0;
-  tbody.innerHTML = packingListBulkFiles.map(row => {
+  let matched = 0, manual = 0, missed = 0;
+  tbody.innerHTML = packingListBulkFiles.map((row, idx) => {
     let badge = "";
-    if (row.status === "matched") { matched++; badge = `<span class="badge badge-green">Совпало</span>`; }
-    else if (row.status === "not_found") { missed++; badge = `<span class="badge badge-red">BL ${esc(row.blCode)} не найден в партии</span>`; }
-    else { noCode++; badge = `<span class="badge badge-amber">Код в имени не найден</span>`; }
+    let blCodeCell = row.blCode ? `<span class="mono">${esc(row.blCode)}</span>` : "—";
+    let clientCell = esc(row.client || "—");
+
+    if (row.status === "matched") {
+      matched++;
+      const method = row.matchMethod === "client_name" ? "по имени клиента" : "по BL коду";
+      const matchedOn = row.matchedOn ? ` (${esc(row.matchedOn)})` : "";
+      badge = `<span class="badge badge-green">Совпало ${method}${matchedOn}</span>`;
+    } else if (row.status === "manual") {
+      manual++;
+      badge = `<span class="badge badge-blue">Привязано вручную</span>
+               <button class="btn btn-ghost btn-xs" onclick="onPackingListManualPick(${idx}, '')" style="margin-left:6px">✕ сбросить</button>`;
+    } else {
+      missed++;
+      badge = `<span class="badge badge-red">Не найдено — выбери BL:</span>
+               <select class="inp" style="min-width:240px;margin-top:4px"
+                       onchange="onPackingListManualPick(${idx}, this.value)">
+                 ${packingListBlOptionsHTML("")}
+               </select>`;
+      blCodeCell = "—";
+      clientCell = "—";
+    }
     return `<tr>
-      <td class="mono" style="font-size:12px">${esc(row.rawName)}</td>
-      <td class="mono">${row.blCode ? esc(row.blCode) : "—"}</td>
-      <td>${esc(row.client || "—")}</td>
+      <td class="mono" style="font-size:12px;max-width:280px;word-break:break-all">${esc(row.rawName)}</td>
+      <td>${blCodeCell}</td>
+      <td>${clientCell}</td>
       <td>${badge}</td>
     </tr>`;
   }).join("");
   document.getElementById("packing-list-bulk-summary").textContent =
-    `Совпало: ${matched} · Не найдено: ${missed} · Без кода: ${noCode}`;
-  document.getElementById("packing-list-bulk-upload-btn").disabled = matched === 0;
+    `Авто: ${matched} · Вручную: ${manual} · Без привязки: ${missed}`;
+  document.getElementById("packing-list-bulk-upload-btn").disabled = (matched + manual) === 0;
 }
 
 async function uploadPackingListBulk() {
   if (!ensureEditor()) return;
   if (!currentBatchId) { toast("Сначала открой партию", "err"); return; }
-  const toSend = packingListBulkFiles.filter(r => r.status === "matched" && r.blId);
+  const toSend = packingListBulkFiles.filter(r => (r.status === "matched" || r.status === "manual") && r.blId);
   if (!toSend.length) {
-    toast("Нет совпавших файлов для загрузки", "err");
+    toast("Нет привязанных файлов для загрузки", "err");
     return;
   }
   const fd = new FormData();
