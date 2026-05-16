@@ -4,6 +4,7 @@ import secrets
 import re
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 import io
 from datetime import datetime
@@ -936,6 +937,16 @@ def telegram_send_message(
     return telegram_api("sendMessage", json=payload)
 
 
+# Network errors we treat as "retry-worthy" — usually a transient
+# Railway↔Telegram connectivity blip. requests raises slightly different
+# exception classes depending on what stage failed, so we catch them all.
+_RETRIABLE_NETWORK_ERRORS = (
+    req.exceptions.Timeout,
+    req.exceptions.ConnectionError,
+    req.exceptions.ChunkedEncodingError,
+)
+
+
 def telegram_send_document(
     chat_id,
     file_path: str,
@@ -957,21 +968,41 @@ def telegram_send_document(
         data["caption"] = caption
     if parse_mode:
         data["parse_mode"] = parse_mode
-    with open(file_path, "rb") as file_handle:
-        response = req.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
-            data=data,
-            files={"document": (safe_filename, file_handle, mime_type)},
-            timeout=120,
-        )
-    if not response.ok:
+
+    last_exc: Exception | None = None
+    # Three attempts with growing backoff. Catches transient TimeoutError
+    # / ConnectionError from Railway → Telegram during peak times. The
+    # file handle is opened fresh each attempt so the upload restarts
+    # cleanly from byte 0.
+    for attempt in range(3):
         try:
-            payload = response.json()
-            description = payload.get("description") or response.text
-        except ValueError:
-            description = response.text
-        raise RuntimeError(description)
-    return response.json()
+            with open(file_path, "rb") as file_handle:
+                response = req.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+                    data=data,
+                    files={"document": (safe_filename, file_handle, mime_type)},
+                    timeout=120,
+                )
+            if not response.ok:
+                try:
+                    payload = response.json()
+                    description = payload.get("description") or response.text
+                except ValueError:
+                    description = response.text
+                raise RuntimeError(description)
+            return response.json()
+        except _RETRIABLE_NETWORK_ERRORS as exc:
+            last_exc = exc
+            app.logger.warning(
+                "telegram_send_document network error (attempt %s/3): %s",
+                attempt + 1, exc,
+            )
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+    if last_exc:
+        raise last_exc
 
 
 def telegram_send_document_by_file_id(
@@ -995,19 +1026,37 @@ def telegram_send_document_by_file_id(
         data["caption"] = caption
     if parse_mode:
         data["parse_mode"] = parse_mode
-    response = req.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
-        data=data,
-        timeout=15,
-    )
-    if not response.ok:
+
+    last_exc: Exception | None = None
+    # CDN resend is fast (~500ms), so we keep timeout tight but still
+    # retry the rare transient timeout. Total worst case ~2×15s + sleep.
+    for attempt in range(2):
         try:
-            payload = response.json()
-            description = payload.get("description") or response.text
-        except ValueError:
-            description = response.text
-        raise RuntimeError(description)
-    return response.json()
+            response = req.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+                data=data,
+                timeout=15,
+            )
+            if not response.ok:
+                try:
+                    payload = response.json()
+                    description = payload.get("description") or response.text
+                except ValueError:
+                    description = response.text
+                raise RuntimeError(description)
+            return response.json()
+        except _RETRIABLE_NETWORK_ERRORS as exc:
+            last_exc = exc
+            app.logger.warning(
+                "telegram_send_document_by_file_id network error (attempt %s/2): %s",
+                attempt + 1, exc,
+            )
+            if attempt < 1:
+                time.sleep(1.0)
+                continue
+            raise
+    if last_exc:
+        raise last_exc
 
 
 def _extract_tg_file_id_from_send_response(payload) -> str:
@@ -3409,56 +3458,89 @@ def api_send_batch(batch_id):
     if not bl_rows:
         return jsonify({"error": "Нет выбранных BL для отправки"}), 400
 
-    results = []
-    sent_chats = set()
+    # Split BLs into:
+    #   - skipped_rows: no chat_id or already covered by another BL of the
+    #     same client in this same broadcast (the dedupe rule we had)
+    #   - dispatch_rows: one BL per chat, to be sent in parallel
+    results: list[dict] = []
+    sent_chats: set[str] = set()
+    dispatch_rows: list[dict] = []
     for bl in bl_rows:
         chat_id = str(bl.get("chat_id") or "").strip()
         if not chat_id:
-            results.append(
-                {
-                    "code": bl["code"],
-                    "client": bl["client_name"],
-                    "success": False,
-                    "skipped": True,
-                    "error": "Нет chat_id",
-                }
-            )
-            continue
-        if chat_id in sent_chats:
-            results.append(
-                {
-                    "code": bl["code"],
-                    "client": bl["client_name"],
-                    "success": False,
-                    "skipped": True,
-                    "error": "Уже покрыто сообщением этого клиента в текущей отправке",
-                }
-            )
-            continue
-        sent_chats.add(chat_id)
-        success, error_msg = send_bl_package(
-            bl,
-            batch["name"],
-            include_related_batches=include_related_batches,
-        )
-        db.add_log(
-            bl["id"],
-            bl["code"],
-            batch["name"],
-            bl["chat_id"],
-            bl["status"],
-            success,
-            error_msg,
-        )
-        results.append(
-            {
+            results.append({
                 "code": bl["code"],
                 "client": bl["client_name"],
-                "success": success,
-                "skipped": False,
-                "error": error_msg,
-            }
-        )
+                "success": False,
+                "skipped": True,
+                "error": "Нет chat_id",
+            })
+            continue
+        if chat_id in sent_chats:
+            results.append({
+                "code": bl["code"],
+                "client": bl["client_name"],
+                "success": False,
+                "skipped": True,
+                "error": "Уже покрыто сообщением этого клиента в текущей отправке",
+            })
+            continue
+        sent_chats.add(chat_id)
+        dispatch_rows.append(bl)
+
+    def _dispatch_one(bl):
+        try:
+            success, error_msg = send_bl_package(
+                bl,
+                batch["name"],
+                include_related_batches=include_related_batches,
+            )
+        except Exception as exc:
+            success, error_msg = False, str(exc)
+            app.logger.exception(
+                "Bulk send unexpected failure for bl_id=%s chat_id=%s",
+                bl.get("id"), bl.get("chat_id"),
+            )
+        try:
+            db.add_log(
+                bl["id"], bl["code"], batch["name"],
+                bl["chat_id"], bl["status"], success, error_msg,
+            )
+        except Exception:
+            app.logger.exception("Failed to record send log for bl_id=%s", bl.get("id"))
+        return {
+            "code": bl["code"],
+            "client": bl["client_name"],
+            "success": success,
+            "skipped": False,
+            "error": error_msg,
+        }
+
+    # Parallel fan-out across distinct chats. Within one chat the order
+    # is still strict (send_bl_package iterates the bundle serially), so
+    # tracking message → files cadence is preserved. Across chats we run
+    # up to MAX_PARALLEL in parallel — empirically a good trade-off
+    # between Telegram's per-bot global rate limit (~30 msg/sec) and the
+    # number of typical clients in a broadcast (10–50).
+    MAX_PARALLEL = 8
+    if dispatch_rows:
+        with ThreadPoolExecutor(
+            max_workers=min(MAX_PARALLEL, len(dispatch_rows)),
+            thread_name_prefix="bulk-send",
+        ) as pool:
+            futures = [pool.submit(_dispatch_one, bl) for bl in dispatch_rows]
+            for future in as_completed(futures):
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    app.logger.exception("Bulk send future error: %s", exc)
+                    results.append({
+                        "code": "",
+                        "client": "",
+                        "success": False,
+                        "skipped": False,
+                        "error": str(exc),
+                    })
 
     sent = sum(1 for item in results if item["success"])
     skipped = sum(1 for item in results if item.get("skipped"))
