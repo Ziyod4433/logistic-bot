@@ -115,9 +115,9 @@ FILE_ALL_PREFIX = "fileall"  # callback_data = "fileall:<bl_id>"
 # Localized label for the single "send all packing lists" button.
 PACKING_LIST_DOWNLOAD_BUTTON_LABELS = {
     "uz_latn": "📦 Packing listlarni yuklab olish",
-    "uz_cyrl": "📦 Пакинг лиcтларни юклаб олиш",
-    "ru": "📦 Скачать packing lists",
-    "en": "📦 Download packing lists",
+    "uz_cyrl": "📦 PACKING LIST юклаб олиш",
+    "ru": "📦 Скачать PACKING LIST",
+    "en": "📦 Download PACKING lists",
 }
 
 
@@ -1404,10 +1404,14 @@ def send_announcement_broadcast(chat_id, text: str, attachment: dict | None = No
     telegram_send_message(chat_id, text, parse_mode=None)
 
 
-# Telegram Bot API hard cap for sendDocument multipart uploads.
-# Files larger than this can't be sent via plain bot endpoints — we fall
-# back to a public download link served by /public/file/<token>.
-TELEGRAM_BOT_DOCUMENT_LIMIT_BYTES = 50 * 1024 * 1024
+# Pre-flight ceiling for sendDocument attempts. The public Telegram Bot
+# API enforces a hard 50 MB limit and will return HTTP 413 for anything
+# larger. We still let the upload _attempt_ to fire for files up to 80 MB
+# because (a) some files report a slightly higher size than what Telegram
+# actually measures and (b) if/when we move to a self-hosted Bot API
+# server in the future the practical cap is 2 GB. Anything > 80 MB is
+# rejected up-front with an explicit error message (no link).
+TELEGRAM_BOT_DOCUMENT_LIMIT_BYTES = 80 * 1024 * 1024
 
 # Cooldown so rapid duplicate taps on the same file button in the same
 # chat don't spawn N parallel uploads / N error messages.
@@ -1436,35 +1440,25 @@ def _file_delivery_should_skip(chat_id, file_id) -> bool:
     return False
 
 
-def _public_file_link(file_info: dict) -> str:
-    token = (file_info.get("public_token") or "").strip()
-    base = (WEBHOOK_BASE_URL or "").rstrip("/")
-    if not token or not base:
-        return ""
-    return f"{base}/public/file/{token}"
+def _send_too_large_message(chat_id, file_info: dict, reason: str) -> None:
+    """Notify the chat when Telegram refused to carry the file.
 
-
-def _send_public_link_fallback(chat_id, file_info: dict, reason: str) -> None:
-    """Send a clickable download link when Telegram can't carry the file."""
+    Per product decision we do NOT send a download link here — we surface
+    a clear error so the operator knows the file is too big for Telegram
+    and can resolve it manually (compress / split / send another way).
+    """
     filename = (file_info.get("filename") or "").strip() or "fayl"
-    link = _public_file_link(file_info)
-    pretty_reason = html.escape(reason) if reason else "слишком большой"
-    if link:
-        body = (
-            f"📎 <b>{html.escape(filename)}</b>\n"
-            f"⚠️ Файл нельзя отправить через Telegram ({pretty_reason}).\n"
-            f"Скачать по ссылке: <a href=\"{html.escape(link)}\">{html.escape(link)}</a>"
-        )
-    else:
-        body = (
-            f"📎 <b>{html.escape(filename)}</b>\n"
-            f"❌ Файл нельзя отправить через Telegram ({pretty_reason}).\n"
-            "Свяжитесь с менеджером — пришлём другим способом."
-        )
+    pretty_reason = html.escape(reason) if reason else "слишком большой для Telegram"
+    body = (
+        f"📎 <b>{html.escape(filename)}</b>\n"
+        f"❌ Не удалось отправить файл: {pretty_reason}.\n"
+        "Telegram ограничивает размер документа от бота 50 МБ — "
+        "сожмите файл или пришлите частями."
+    )
     try:
         telegram_send_message(chat_id, body)
     except Exception:
-        app.logger.exception("Failed to send public-link fallback message")
+        app.logger.exception("Failed to send too-large notification")
 
 
 def _is_too_large_error(exc: Exception) -> bool:
@@ -1532,10 +1526,10 @@ def _deliver_file_async(chat_id, file_info: dict) -> None:
         file_size = 0
     if file_size and file_size > TELEGRAM_BOT_DOCUMENT_LIMIT_BYTES:
         size_mb = file_size / (1024 * 1024)
-        _send_public_link_fallback(
+        _send_too_large_message(
             chat_id,
             file_info,
-            f"размер {size_mb:.1f} MB, лимит Telegram 50 MB",
+            f"размер {size_mb:.1f} МБ превышает 80 МБ",
         )
         return
 
@@ -1551,7 +1545,12 @@ def _deliver_file_async(chat_id, file_info: dict) -> None:
     except Exception as exc:
         app.logger.exception("file delivery failed (file_id=%s)", file_id)
         if _is_too_large_error(exc):
-            _send_public_link_fallback(chat_id, file_info, "слишком большой для Telegram")
+            size_label = f"{file_size / (1024 * 1024):.1f} МБ" if file_size else "размер неизвестен"
+            _send_too_large_message(
+                chat_id,
+                file_info,
+                f"Telegram отклонил файл ({size_label})",
+            )
             return
         try:
             telegram_send_message(
