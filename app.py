@@ -3148,52 +3148,111 @@ def api_resolve_packing_list_codes(batch_id):
     if not isinstance(codes_raw, list):
         codes_raw = []
 
-    code_index = _build_batch_bl_code_index(batch_id)
-    batch_rows = db.get_bl_by_batch(batch_id) or []
-    chat_titles = _build_chat_title_lookup(batch_rows)
+    # Build two layers of context:
+    #   1) BLs in the currently-open batch (matched first — these are the
+    #      "expected" home of the upload).
+    #   2) BLs across every other still-active batch (fallback so files
+    #      with codes/names that don't belong to the current batch still
+    #      auto-attach to the right BL elsewhere).
+    current_batch_rows = db.get_bl_by_batch(batch_id) or []
+    all_active_rows = db.get_bls_for_packing_list_picker() or []
+    chat_titles = _build_chat_title_lookup(current_batch_rows + all_active_rows)
 
-    # Full list of BLs to power manual-pick dropdown on the client side.
-    # Falls back to the chat title when client_name is empty so the picker
-    # is actually useful (the column in the admin panel often shows "—").
-    bl_options = []
-    for row in batch_rows:
+    current_code_index = _build_batch_bl_code_index(batch_id)
+    # Cross-batch code index — built from every active BL, keyed identically
+    # so _normalize_bl_code lookups still work.
+    cross_code_index: dict[str, dict] = {}
+    for row in all_active_rows:
+        primary = _normalize_bl_code(row.get("code") or "")
+        if primary:
+            cross_code_index.setdefault(primary, row)
+        for part in re.split(r"[,;\s]+", str(row.get("merged_codes") or "")):
+            piece = _normalize_bl_code(part)
+            if piece:
+                cross_code_index.setdefault(piece, row)
+
+    current_batch_id_int = int(batch_id)
+
+    # Manual-pick dropdown options — current batch first, then everyone
+    # else, each labeled with the batch name so the admin knows where the
+    # file will land.
+    bl_options: list[dict] = []
+    seen_ids: set[int] = set()
+
+    def _push_option(row: dict, is_current: bool, batch_name: str = ""):
+        rid = row.get("id")
+        if not rid or int(rid) in seen_ids:
+            return
+        seen_ids.add(int(rid))
         chat_id = str(row.get("chat_id") or "").strip()
         client_name = (row.get("client_name") or "").strip()
         chat_title = chat_titles.get(chat_id, "") if chat_id else ""
         bl_options.append({
-            "id": row.get("id"),
+            "id": rid,
             "code": row.get("code") or "",
             "display_code": row.get("display_code") or row.get("code") or "",
             "client_name": client_name or chat_title,
+            "batch_id": row.get("batch_id"),
+            "batch_name": batch_name or "",
+            "is_current": bool(is_current),
         })
 
-    # New API: resolve by filename (preferred)
+    for row in current_batch_rows:
+        _push_option(row, is_current=True, batch_name=batch.get("name", ""))
+    for row in all_active_rows:
+        _push_option(
+            row,
+            is_current=(int(row.get("batch_id") or 0) == current_batch_id_int),
+            batch_name=row.get("batch_name") or "",
+        )
+
+    def _enrich(row: dict, hit_method: str, matched_on: str, is_current: bool, batch_name: str) -> dict:
+        row_chat_id = str(row.get("chat_id") or "").strip()
+        return {
+            "bl_id": row.get("id"),
+            "code": row.get("code"),
+            "client_name": (row.get("client_name") or "").strip()
+                            or chat_titles.get(row_chat_id, ""),
+            "method": hit_method,
+            "matched_on": matched_on,
+            "batch_id": row.get("batch_id"),
+            "batch_name": batch_name or "",
+            "is_current": bool(is_current),
+        }
+
+    # New API: resolve by filename (preferred). Try the current batch
+    # first; if nothing fits, fall back to the cross-batch pool.
     resolved_by_filename: dict[str, dict] = {}
     for raw_name in filenames_raw:
         name = str(raw_name or "").strip()
         if not name:
             continue
-        hit = _resolve_filename_to_bl(name, code_index, batch_rows, chat_titles)
-        if not hit:
-            continue
-        row = hit["row"]
-        row_chat_id = str(row.get("chat_id") or "").strip()
-        resolved_by_filename[raw_name] = {
-            "bl_id": row.get("id"),
-            "code": row.get("code"),
-            "client_name": (row.get("client_name") or "").strip()
-                            or chat_titles.get(row_chat_id, ""),
-            "method": hit["method"],
-            "matched_on": hit["matched_on"],
-        }
 
-    # Legacy API: resolve by extracted code (kept for back-compat with older clients)
+        hit = _resolve_filename_to_bl(name, current_code_index, current_batch_rows, chat_titles)
+        if hit:
+            resolved_by_filename[raw_name] = _enrich(
+                hit["row"], hit["method"], hit["matched_on"],
+                is_current=True, batch_name=batch.get("name", ""),
+            )
+            continue
+
+        # Cross-batch fallback
+        cross_hit = _resolve_filename_to_bl(name, cross_code_index, all_active_rows, chat_titles)
+        if cross_hit:
+            row = cross_hit["row"]
+            resolved_by_filename[raw_name] = _enrich(
+                row, cross_hit["method"], cross_hit["matched_on"],
+                is_current=(int(row.get("batch_id") or 0) == current_batch_id_int),
+                batch_name=row.get("batch_name") or "",
+            )
+
+    # Legacy API: resolve by extracted code (current batch only — back-compat).
     resolved_by_code: dict[str, dict] = {}
     for raw_code in codes_raw:
         code = _normalize_bl_code(raw_code)
         if not code:
             continue
-        row = code_index.get(code)
+        row = current_code_index.get(code) or cross_code_index.get(code)
         if not row:
             continue
         resolved_by_code[raw_code] = {
@@ -3229,9 +3288,32 @@ def api_bulk_packing_lists(batch_id):
     except Exception as exc:
         return jsonify({"error": f"Не удалось создать папку загрузки: {exc}"}), 500
 
-    # Build a whitelist of BL ids belonging to this batch
-    batch_bls = db.get_bl_by_batch(batch_id) or []
-    allowed_ids = {int(row["id"]) for row in batch_bls if row.get("id")}
+    # Whitelist = every BL in every still-active batch. The packing-list
+    # picker now spans all active batches (so a file uploaded from the
+    # context of batch A can legitimately land on a BL belonging to
+    # batch B if that's where the BL code lives). We still validate the
+    # BL exists and isn't from a delivered/archived batch.
+    allowed_ids: set[int] = set()
+    try:
+        all_active = db.get_bls_for_packing_list_picker() or []
+    except Exception:
+        all_active = []
+    for row in all_active:
+        rid = row.get("id")
+        if rid is not None:
+            try:
+                allowed_ids.add(int(rid))
+            except (TypeError, ValueError):
+                pass
+    # Always also accept BLs from this batch as a safety net (in case the
+    # picker query is stricter than get_bl_by_batch — e.g. delivered batches).
+    for row in db.get_bl_by_batch(batch_id) or []:
+        rid = row.get("id")
+        if rid is not None:
+            try:
+                allowed_ids.add(int(rid))
+            except (TypeError, ValueError):
+                pass
 
     uploaded = 0
     failed = 0
@@ -3249,7 +3331,7 @@ def api_bulk_packing_lists(batch_id):
             continue
         if bl_id not in allowed_ids:
             failed += 1
-            results.append({"filename": uploaded_file.filename, "ok": False, "error": "BL не из этой партии"})
+            results.append({"filename": uploaded_file.filename, "ok": False, "error": "BL не найден ни в одной активной партии"})
             continue
 
         original_filename = (uploaded_file.filename or "").strip()

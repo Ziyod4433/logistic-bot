@@ -3883,6 +3883,8 @@ async function onPackingListBulkSelected(event, mode) {
         client: resolved.client_name || "",
         matchMethod: resolved.method || "",
         matchedOn: resolved.matched_on || "",
+        batchName: resolved.batch_name || "",
+        isCurrent: resolved.is_current !== false,
         status: "matched",
         manual: false,
       };
@@ -3895,6 +3897,8 @@ async function onPackingListBulkSelected(event, mode) {
       client: "",
       matchMethod: "",
       matchedOn: "",
+      batchName: "",
+      isCurrent: true,
       status: "unmatched",
       manual: false,
     };
@@ -3904,12 +3908,29 @@ async function onPackingListBulkSelected(event, mode) {
 }
 
 function packingListBlOptionsHTML(selectedId) {
-  const opts = packingListBlOptions.map(opt => {
+  // Render BLs from the current batch first as one optgroup, every other
+  // active batch's BLs as a second optgroup labeled "из других партий".
+  const current = [];
+  const other = [];
+  packingListBlOptions.forEach(opt => {
+    (opt.is_current ? current : other).push(opt);
+  });
+  const renderOpt = (opt) => {
     const sel = String(opt.id) === String(selectedId) ? " selected" : "";
-    const label = `${opt.display_code || opt.code}${opt.client_name ? " — " + opt.client_name : ""}`;
+    const parts = [opt.display_code || opt.code];
+    if (opt.client_name) parts.push(opt.client_name);
+    if (!opt.is_current && opt.batch_name) parts.push(`[${opt.batch_name}]`);
+    const label = parts.join(" — ");
     return `<option value="${opt.id}"${sel}>${esc(label)}</option>`;
-  }).join("");
-  return `<option value="">— выбрать BL вручную —</option>${opts}`;
+  };
+  let html = `<option value="">— выбрать BL вручную —</option>`;
+  if (current.length) {
+    html += `<optgroup label="Текущая партия">${current.map(renderOpt).join("")}</optgroup>`;
+  }
+  if (other.length) {
+    html += `<optgroup label="Из других партий">${other.map(renderOpt).join("")}</optgroup>`;
+  }
+  return html;
 }
 
 function onPackingListManualPick(index, blIdRaw) {
@@ -3927,6 +3948,8 @@ function onPackingListManualPick(index, blIdRaw) {
     row.blId = blId;
     row.blCode = opt ? (opt.code || "") : "";
     row.client = opt ? (opt.client_name || "") : "";
+    row.batchName = opt ? (opt.batch_name || "") : "";
+    row.isCurrent = opt ? (opt.is_current !== false) : true;
     row.status = "manual";
     row.manual = true;
     row.matchMethod = "manual";
@@ -3964,10 +3987,16 @@ function renderPackingListBulkTable() {
                    : row.matchMethod === "code" ? "по BL коду"
                    : "автоматически";
       const matchedOn = row.matchedOn ? ` (${esc(row.matchedOn)})` : "";
-      badge = `<span class="badge badge-green">Совпало ${method}${matchedOn}</span>`;
+      const crossBatch = (row.isCurrent === false && row.batchName)
+        ? ` <span class="badge badge-amber" style="margin-left:4px">📂 ${esc(row.batchName)}</span>`
+        : "";
+      badge = `<span class="badge badge-green">Совпало ${method}${matchedOn}</span>${crossBatch}`;
     } else if (row.status === "manual") {
       manual++;
-      badge = `<span class="badge badge-blue">Привязано вручную</span>
+      const crossBatch = (row.isCurrent === false && row.batchName)
+        ? ` <span class="badge badge-amber" style="margin-left:4px">📂 ${esc(row.batchName)}</span>`
+        : "";
+      badge = `<span class="badge badge-blue">Привязано вручную</span>${crossBatch}
                <button class="btn btn-ghost btn-xs" onclick="onPackingListManualPick(${idx}, '')" style="margin-left:6px">✕ сбросить</button>`;
     } else {
       missed++;

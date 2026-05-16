@@ -2432,6 +2432,41 @@ def add_bl(
         conn.close()
 
 
+def get_bls_for_packing_list_picker():
+    """Every BL in still-active (not client-delivered) batches.
+
+    Used by the bulk packing-list resolver so files can auto-attach and
+    be manually pickable across the entire active workload, not just the
+    batch the admin happens to have open. The list is sorted by batch
+    recency so the current batch's BLs surface at the top.
+    """
+    conn = get_conn()
+    rows = conn.execute(
+        """
+        SELECT
+            bl.id,
+            bl.code,
+            bl.merged_codes,
+            bl.client_name,
+            bl.chat_id,
+            bl.batch_id,
+            b.name AS batch_name,
+            b.created_at AS batch_created_at
+        FROM bl_codes bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE COALESCE(b.client_delivery_date, '') = ''
+        ORDER BY b.created_at DESC, bl.created_at DESC
+        """
+    ).fetchall()
+    conn.close()
+    out = []
+    for row in rows:
+        item = dict(row)
+        item["display_code"] = _display_bl_code(item.get("code"), item.get("merged_codes"))
+        out.append(item)
+    return out
+
+
 def get_bl_by_batch(batch_id):
     conn = get_conn()
     try:
