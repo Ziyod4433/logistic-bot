@@ -2920,13 +2920,30 @@ _BL_CODE_RE = re.compile(r"BL[-_ ]?\d+[A-Z0-9]*")
 _NON_ALNUM_RE = re.compile(r"[^\w]+", re.UNICODE)
 
 
+def _normalize_bl_code(value: str) -> str:
+    """Canonicalize a BL code for index lookups.
+
+    Strips dashes, underscores, spaces, dots and uppercases — so all of
+    "BL-190", "bl_190", "BL 190", "BL.190", "bl190" collapse to "BL190".
+    """
+    return (
+        str(value or "")
+        .strip()
+        .upper()
+        .replace("-", "")
+        .replace("_", "")
+        .replace(" ", "")
+        .replace(".", "")
+    )
+
+
 def _extract_bl_code_from_filename(name: str) -> str:
     base = os.path.basename(str(name or "").replace("\\", "/"))
     no_ext = base.rsplit(".", 1)[0] if "." in base else base
     m = _BL_CODE_RE.search(no_ext.upper())
     if not m:
         return ""
-    return m.group(0).replace("-", "").replace("_", "").replace(" ", "")
+    return _normalize_bl_code(m.group(0))
 
 
 def _normalize_for_fuzzy(text: str) -> str:
@@ -2934,55 +2951,124 @@ def _normalize_for_fuzzy(text: str) -> str:
     return _NON_ALNUM_RE.sub("", str(text or "").casefold())
 
 
+# Common boilerplate words that appear in chat titles and shouldn't be
+# used as a fuzzy-match signal (otherwise every file would match every
+# client because every chat title ends in "BURAQ LOGISTICS").
+_FUZZY_STOPWORDS = {
+    _normalize_for_fuzzy(word) for word in (
+        "buraq",
+        "logistics",
+        "logistic",
+        "буракс",
+        "buraqlogistics",
+    )
+}
+
+
 def _build_batch_bl_code_index(batch_id: int) -> dict:
     """Map every BL code (primary and merged) within a batch to its row."""
     index: dict[str, dict] = {}
     for row in db.get_bl_by_batch(batch_id) or []:
-        primary = str(row.get("code") or "").strip().upper()
+        primary = _normalize_bl_code(row.get("code") or "")
         if primary:
             index.setdefault(primary, row)
         merged_raw = str(row.get("merged_codes") or "")
         for part in re.split(r"[,;\s]+", merged_raw):
-            piece = part.strip().upper()
+            piece = _normalize_bl_code(part)
             if piece:
                 index.setdefault(piece, row)
     return index
 
 
-def _resolve_filename_to_bl(filename: str, code_index: dict, batch_rows: list[dict]) -> dict | None:
+def _build_chat_title_lookup(batch_rows: list[dict]) -> dict[str, str]:
+    """chat_id → chat title, for every chat referenced by the batch.
+
+    Used to pull the "client" name out of the Telegram chat title when
+    bl_codes.client_name is empty (which is the common case here — most
+    sheets only store BL code + chat id, and the actual client name only
+    lives in the Telegram group title).
+    """
+    chat_ids = {
+        str(row.get("chat_id") or "").strip()
+        for row in batch_rows
+        if str(row.get("chat_id") or "").strip()
+    }
+    if not chat_ids:
+        return {}
+    try:
+        chats = db.get_telegram_chats(include_inactive=True) or []
+    except Exception:
+        return {}
+    return {
+        str(chat.get("chat_id") or "").strip(): str(chat.get("title") or "").strip()
+        for chat in chats
+        if str(chat.get("chat_id") or "").strip() in chat_ids
+    }
+
+
+def _bl_alt_names(row: dict, chat_titles: dict[str, str]) -> list[tuple[str, str]]:
+    """Build (label, value) pairs of plausible "what to match against" for a BL.
+
+    Includes client_name and the BL's chat title (with any embedded "BL-xxx"
+    code stripped, since that's already used by the code path).
+    """
+    names: list[tuple[str, str]] = []
+    client = str(row.get("client_name") or "").strip()
+    if client:
+        names.append(("client_name", client))
+    chat_id = str(row.get("chat_id") or "").strip()
+    title = chat_titles.get(chat_id, "")
+    if title:
+        # "HI-TECH (BL-146) & BURAQ LOGISTICS" → "HI-TECH"
+        cleaned = re.sub(r"\bBL[-_ ]?\d+[A-Z0-9]*\b", "", title, flags=re.IGNORECASE)
+        cleaned = re.sub(r"[\(\)\[\]]", " ", cleaned)
+        cleaned = cleaned.replace("&", " ")
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -—")
+        if cleaned:
+            names.append(("chat_title", cleaned))
+    return names
+
+
+def _resolve_filename_to_bl(
+    filename: str,
+    code_index: dict,
+    batch_rows: list[dict],
+    chat_titles: dict[str, str] | None = None,
+) -> dict | None:
     """Try multiple matching strategies, return the BL row that wins or None."""
     if not filename:
         return None
+    chat_titles = chat_titles or {}
     base = os.path.basename(str(filename).replace("\\", "/"))
     no_ext = base.rsplit(".", 1)[0] if "." in base else base
 
-    # 1. BL code match (BL171, BL-171, bl_171a)
+    # 1. BL code match (BL171, BL-171, bl_171a) — normalized on both sides.
     code_match = _BL_CODE_RE.search(no_ext.upper())
     if code_match:
-        normalized_code = code_match.group(0).replace("-", "").replace("_", "").replace(" ", "")
+        normalized_code = _normalize_bl_code(code_match.group(0))
         row = code_index.get(normalized_code)
         if row:
             return {"row": row, "method": "code", "matched_on": code_match.group(0)}
 
-    # 2. Client-name match — pick the longest client name whose normalized form
-    #    appears in the normalized filename. We sort by length descending so
-    #    e.g. "ABC TRADE LLC" wins over "ABC" when both exist in the batch.
+    # 2. Fuzzy-name match against client_name + chat title — pick the
+    #    longest candidate that appears in the normalized filename. Sorted
+    #    by length descending so "HI-TECH" wins over "HI" when both exist.
     fuzzy_name = _normalize_for_fuzzy(no_ext)
     if fuzzy_name:
-        candidates = []
+        candidates: list[tuple[int, dict, str, str]] = []
         for row in batch_rows:
-            client = str(row.get("client_name") or "").strip()
-            if not client:
-                continue
-            norm_client = _normalize_for_fuzzy(client)
-            if len(norm_client) < 3:  # avoid noise from 1-2 char "names"
-                continue
-            if norm_client in fuzzy_name:
-                candidates.append((len(norm_client), row, client))
+            for label, value in _bl_alt_names(row, chat_titles):
+                norm_value = _normalize_for_fuzzy(value)
+                if len(norm_value) < 3:
+                    continue
+                if norm_value in _FUZZY_STOPWORDS:
+                    continue
+                if norm_value in fuzzy_name:
+                    candidates.append((len(norm_value), row, value, label))
         if candidates:
             candidates.sort(key=lambda x: x[0], reverse=True)
-            _, row, matched_client = candidates[0]
-            return {"row": row, "method": "client_name", "matched_on": matched_client}
+            _, row, matched_value, label = candidates[0]
+            return {"row": row, "method": label, "matched_on": matched_value}
 
     return None
 
@@ -3003,17 +3089,22 @@ def api_resolve_packing_list_codes(batch_id):
 
     code_index = _build_batch_bl_code_index(batch_id)
     batch_rows = db.get_bl_by_batch(batch_id) or []
+    chat_titles = _build_chat_title_lookup(batch_rows)
 
-    # Full list of BLs to power manual-pick dropdown on the client side
-    bl_options = [
-        {
+    # Full list of BLs to power manual-pick dropdown on the client side.
+    # Falls back to the chat title when client_name is empty so the picker
+    # is actually useful (the column in the admin panel often shows "—").
+    bl_options = []
+    for row in batch_rows:
+        chat_id = str(row.get("chat_id") or "").strip()
+        client_name = (row.get("client_name") or "").strip()
+        chat_title = chat_titles.get(chat_id, "") if chat_id else ""
+        bl_options.append({
             "id": row.get("id"),
             "code": row.get("code") or "",
             "display_code": row.get("display_code") or row.get("code") or "",
-            "client_name": row.get("client_name") or "",
-        }
-        for row in batch_rows
-    ]
+            "client_name": client_name or chat_title,
+        })
 
     # New API: resolve by filename (preferred)
     resolved_by_filename: dict[str, dict] = {}
@@ -3021,14 +3112,16 @@ def api_resolve_packing_list_codes(batch_id):
         name = str(raw_name or "").strip()
         if not name:
             continue
-        hit = _resolve_filename_to_bl(name, code_index, batch_rows)
+        hit = _resolve_filename_to_bl(name, code_index, batch_rows, chat_titles)
         if not hit:
             continue
         row = hit["row"]
+        row_chat_id = str(row.get("chat_id") or "").strip()
         resolved_by_filename[raw_name] = {
             "bl_id": row.get("id"),
             "code": row.get("code"),
-            "client_name": row.get("client_name") or "",
+            "client_name": (row.get("client_name") or "").strip()
+                            or chat_titles.get(row_chat_id, ""),
             "method": hit["method"],
             "matched_on": hit["matched_on"],
         }
@@ -3036,7 +3129,7 @@ def api_resolve_packing_list_codes(batch_id):
     # Legacy API: resolve by extracted code (kept for back-compat with older clients)
     resolved_by_code: dict[str, dict] = {}
     for raw_code in codes_raw:
-        code = str(raw_code or "").strip().upper().replace("-", "").replace("_", "").replace(" ", "")
+        code = _normalize_bl_code(raw_code)
         if not code:
             continue
         row = code_index.get(code)
