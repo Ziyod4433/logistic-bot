@@ -2642,6 +2642,13 @@ def api_bulk_packing_lists(batch_id):
     if not files or not bl_ids or len(files) != len(bl_ids):
         return jsonify({"error": "Не переданы файлы или BL не сопоставлены"}), 400
 
+    # Defensive: make sure the upload folder still exists. On ephemeral
+    # filesystems (e.g. fresh container) the directory can be missing.
+    try:
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    except Exception as exc:
+        return jsonify({"error": f"Не удалось создать папку загрузки: {exc}"}), 500
+
     # Build a whitelist of BL ids belonging to this batch
     batch_bls = db.get_bl_by_batch(batch_id) or []
     allowed_ids = {int(row["id"]) for row in batch_bls if row.get("id")}

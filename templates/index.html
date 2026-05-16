@@ -3942,13 +3942,23 @@ function renderPackingListBulkTable() {
     document.getElementById("packing-list-bulk-upload-btn").disabled = true;
     return;
   }
-  let matched = 0, manual = 0, missed = 0;
+  let matched = 0, manual = 0, missed = 0, doneOk = 0, doneErr = 0;
   tbody.innerHTML = packingListBulkFiles.map((row, idx) => {
     let badge = "";
     let blCodeCell = row.blCode ? `<span class="mono">${esc(row.blCode)}</span>` : "—";
     let clientCell = esc(row.client || "—");
 
-    if (row.status === "matched") {
+    // Upload result takes precedence over the matching status
+    if (row.uploadResult === "ok") {
+      doneOk++;
+      badge = `<span class="badge badge-green">✅ Загружено и прикреплено</span>`;
+    } else if (row.uploadResult === "uploading") {
+      badge = `<span class="badge badge-amber">⏳ Загрузка...</span>`;
+    } else if (row.uploadResult === "error") {
+      doneErr++;
+      badge = `<span class="badge badge-red">❌ Ошибка: ${esc(row.uploadError || "")}</span>
+               <button class="btn btn-ghost btn-xs" onclick="resetPackingListUploadResult(${idx})" style="margin-left:6px">↻ повторить</button>`;
+    } else if (row.status === "matched") {
       matched++;
       const method = row.matchMethod === "client_name" ? "по имени клиента" : "по BL коду";
       const matchedOn = row.matchedOn ? ` (${esc(row.matchedOn)})` : "";
@@ -3974,16 +3984,34 @@ function renderPackingListBulkTable() {
       <td>${badge}</td>
     </tr>`;
   }).join("");
-  document.getElementById("packing-list-bulk-summary").textContent =
-    `Авто: ${matched} · Вручную: ${manual} · Без привязки: ${missed}`;
+  const summary = document.getElementById("packing-list-bulk-summary");
+  const parts = [`Авто: ${matched}`, `Вручную: ${manual}`, `Без привязки: ${missed}`];
+  if (doneOk) parts.push(`✅ ${doneOk}`);
+  if (doneErr) parts.push(`❌ ${doneErr}`);
+  summary.textContent = parts.join(" · ");
   document.getElementById("packing-list-bulk-upload-btn").disabled = (matched + manual) === 0;
+}
+
+function resetPackingListUploadResult(idx) {
+  const row = packingListBulkFiles[idx];
+  if (!row) return;
+  row.uploadResult = "";
+  row.uploadError = "";
+  renderPackingListBulkTable();
 }
 
 async function uploadPackingListBulk() {
   if (!ensureEditor()) return;
   if (!currentBatchId) { toast("Сначала открой партию", "err"); return; }
-  const toSend = packingListBulkFiles.filter(r => (r.status === "matched" || r.status === "manual") && r.blId);
-  if (!toSend.length) {
+
+  // Collect indexes of rows that are ready to be uploaded
+  const queue = [];
+  packingListBulkFiles.forEach((row, idx) => {
+    if ((row.status === "matched" || row.status === "manual") && row.blId && !row.uploadResult) {
+      queue.push(idx);
+    }
+  });
+  if (!queue.length) {
     toast("Нет привязанных файлов для загрузки", "err");
     return;
   }
@@ -3995,71 +4023,89 @@ async function uploadPackingListBulk() {
   const filesBtn = document.querySelector("#packing-list-bulk-modal button[onclick*=\"files-input\"]");
   const originalLabel = btn.innerHTML;
 
-  // Lock UI while uploading
   btn.disabled = true;
   if (cancelBtn) cancelBtn.disabled = true;
   if (folderBtn) folderBtn.disabled = true;
   if (filesBtn) filesBtn.disabled = true;
 
-  // Chunk uploads in small batches so the user sees progress
-  const CHUNK_SIZE = 5;
-  const total = toSend.length;
   let doneOk = 0;
   let doneFail = 0;
-  let chunkErrors = [];
+  let firstError = "";
 
-  try {
-    for (let i = 0; i < total; i += CHUNK_SIZE) {
-      const chunk = toSend.slice(i, i + CHUNK_SIZE);
-      const fd = new FormData();
-      chunk.forEach(row => {
-        fd.append("files", row.file, row.file.name);
-        fd.append("bl_ids", String(row.blId));
+  // Upload one file at a time so each row gets individual feedback. Avoids
+  // multipart edge-cases that can swallow the whole batch on a single bad
+  // file and lets us update the table inline.
+  for (let i = 0; i < queue.length; i++) {
+    const idx = queue[i];
+    const row = packingListBulkFiles[idx];
+    if (!row || !row.file || !row.blId) continue;
+
+    row.uploadResult = "uploading";
+    renderPackingListBulkTable();
+    btn.innerHTML = `⏳ Загрузка ${i + 1}/${queue.length}...`;
+    summary.textContent = `Прогресс: ${i + 1}/${queue.length} · ✅ ${doneOk} · ❌ ${doneFail}`;
+
+    const fd = new FormData();
+    fd.append("files", row.file, row.file.name);
+    fd.append("bl_ids", String(row.blId));
+
+    try {
+      const r = await fetch(`/api/batches/${currentBatchId}/packing-lists/bulk`, {
+        method: "POST",
+        body: fd,
       });
+      let data = {};
+      try { data = await r.json(); } catch (_) { data = {}; }
 
-      const processed = Math.min(i + chunk.length, total);
-      btn.innerHTML = `⏳ Загрузка ${processed}/${total}...`;
-      summary.textContent = `Отправка пакета ${Math.floor(i / CHUNK_SIZE) + 1} из ${Math.ceil(total / CHUNK_SIZE)} · ✅ ${doneOk} · ❌ ${doneFail}`;
-
-      try {
-        const r = await fetch(`/api/batches/${currentBatchId}/packing-lists/bulk`, {
-          method: "POST",
-          body: fd,
-        });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          doneFail += chunk.length;
-          chunkErrors.push(data.error || `HTTP ${r.status}`);
-        } else {
-          doneOk += Number(data.uploaded || 0);
-          doneFail += Number(data.failed || 0);
-        }
-      } catch (e) {
-        doneFail += chunk.length;
-        chunkErrors.push(e.message || "network error");
+      if (!r.ok) {
+        const err = data.error || `HTTP ${r.status}`;
+        console.error("Bulk upload failed:", err, data);
+        row.uploadResult = "error";
+        row.uploadError = err;
+        doneFail++;
+        if (!firstError) firstError = err;
+      } else if (Number(data.uploaded || 0) > 0) {
+        row.uploadResult = "ok";
+        row.uploadError = "";
+        doneOk++;
+      } else {
+        const detail = (data.results && data.results[0] && data.results[0].error) || "Сервер не принял файл";
+        console.error("Bulk upload rejected:", detail, data);
+        row.uploadResult = "error";
+        row.uploadError = detail;
+        doneFail++;
+        if (!firstError) firstError = detail;
       }
-
-      summary.textContent = `Прогресс: ${processed}/${total} · ✅ ${doneOk} · ❌ ${doneFail}`;
+    } catch (e) {
+      const err = (e && e.message) || "Сетевая ошибка";
+      console.error("Bulk upload exception:", e);
+      row.uploadResult = "error";
+      row.uploadError = err;
+      doneFail++;
+      if (!firstError) firstError = err;
     }
 
-    btn.innerHTML = originalLabel;
-    if (doneFail === 0 && doneOk > 0) {
-      toast(`✅ Загружено и прикреплено: ${doneOk} файл(ов)`, "ok");
-      closeModal("packing-list-bulk-modal");
-    } else if (doneOk > 0) {
-      toast(`Готово: ✅ ${doneOk}, ❌ ${doneFail}. ${chunkErrors.slice(0,1).join(' ')}`, "ok");
-      closeModal("packing-list-bulk-modal");
-    } else {
-      toast(`Не удалось загрузить ни одного файла. ${chunkErrors.slice(0,1).join(' ')}`, "err");
-    }
-    await loadBatchDetail(currentBatchId);
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = originalLabel;
-    if (cancelBtn) cancelBtn.disabled = false;
-    if (folderBtn) folderBtn.disabled = false;
-    if (filesBtn) filesBtn.disabled = false;
+    renderPackingListBulkTable();
   }
+
+  btn.innerHTML = originalLabel;
+  summary.textContent = `Готово: ✅ ${doneOk} · ❌ ${doneFail}`;
+  if (doneFail === 0 && doneOk > 0) {
+    toast(`✅ Загружено и прикреплено: ${doneOk} файл(ов)`, "ok");
+  } else if (doneOk > 0) {
+    toast(`Готово: ✅ ${doneOk}, ❌ ${doneFail}. Первая ошибка: ${firstError}`, "err");
+  } else {
+    toast(`Не удалось загрузить файлы. Ошибка: ${firstError}`, "err");
+  }
+
+  btn.disabled = false;
+  if (cancelBtn) cancelBtn.disabled = false;
+  if (folderBtn) folderBtn.disabled = false;
+  if (filesBtn) filesBtn.disabled = false;
+
+  // Refresh the BL list quietly so file counts update. Errors here mustn't
+  // hide the upload results — swallow them.
+  try { await loadBatchDetail(currentBatchId); } catch (e) { console.warn("loadBatchDetail after bulk:", e); }
 }
 
 async function loadBLFiles(blId) {
