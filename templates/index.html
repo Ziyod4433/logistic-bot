@@ -3987,23 +3987,78 @@ async function uploadPackingListBulk() {
     toast("Нет привязанных файлов для загрузки", "err");
     return;
   }
-  const fd = new FormData();
-  toSend.forEach(row => {
-    fd.append("files", row.file, row.file.name);
-    fd.append("bl_ids", String(row.blId));
-  });
+
+  const btn = document.getElementById("packing-list-bulk-upload-btn");
+  const summary = document.getElementById("packing-list-bulk-summary");
+  const cancelBtn = document.querySelector("#packing-list-bulk-modal .modal-actions .btn-ghost");
+  const folderBtn = document.querySelector("#packing-list-bulk-modal button[onclick*=\"folder-input\"]");
+  const filesBtn = document.querySelector("#packing-list-bulk-modal button[onclick*=\"files-input\"]");
+  const originalLabel = btn.innerHTML;
+
+  // Lock UI while uploading
+  btn.disabled = true;
+  if (cancelBtn) cancelBtn.disabled = true;
+  if (folderBtn) folderBtn.disabled = true;
+  if (filesBtn) filesBtn.disabled = true;
+
+  // Chunk uploads in small batches so the user sees progress
+  const CHUNK_SIZE = 5;
+  const total = toSend.length;
+  let doneOk = 0;
+  let doneFail = 0;
+  let chunkErrors = [];
+
   try {
-    const r = await fetch(`/api/batches/${currentBatchId}/packing-lists/bulk`, {
-      method: "POST",
-      body: fd,
-    });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || "Ошибка загрузки");
-    toast(`✅ Загружено: ${data.uploaded || 0}, ошибок: ${data.failed || 0}`, "ok");
-    closeModal("packing-list-bulk-modal");
+    for (let i = 0; i < total; i += CHUNK_SIZE) {
+      const chunk = toSend.slice(i, i + CHUNK_SIZE);
+      const fd = new FormData();
+      chunk.forEach(row => {
+        fd.append("files", row.file, row.file.name);
+        fd.append("bl_ids", String(row.blId));
+      });
+
+      const processed = Math.min(i + chunk.length, total);
+      btn.innerHTML = `⏳ Загрузка ${processed}/${total}...`;
+      summary.textContent = `Отправка пакета ${Math.floor(i / CHUNK_SIZE) + 1} из ${Math.ceil(total / CHUNK_SIZE)} · ✅ ${doneOk} · ❌ ${doneFail}`;
+
+      try {
+        const r = await fetch(`/api/batches/${currentBatchId}/packing-lists/bulk`, {
+          method: "POST",
+          body: fd,
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          doneFail += chunk.length;
+          chunkErrors.push(data.error || `HTTP ${r.status}`);
+        } else {
+          doneOk += Number(data.uploaded || 0);
+          doneFail += Number(data.failed || 0);
+        }
+      } catch (e) {
+        doneFail += chunk.length;
+        chunkErrors.push(e.message || "network error");
+      }
+
+      summary.textContent = `Прогресс: ${processed}/${total} · ✅ ${doneOk} · ❌ ${doneFail}`;
+    }
+
+    btn.innerHTML = originalLabel;
+    if (doneFail === 0 && doneOk > 0) {
+      toast(`✅ Загружено и прикреплено: ${doneOk} файл(ов)`, "ok");
+      closeModal("packing-list-bulk-modal");
+    } else if (doneOk > 0) {
+      toast(`Готово: ✅ ${doneOk}, ❌ ${doneFail}. ${chunkErrors.slice(0,1).join(' ')}`, "ok");
+      closeModal("packing-list-bulk-modal");
+    } else {
+      toast(`Не удалось загрузить ни одного файла. ${chunkErrors.slice(0,1).join(' ')}`, "err");
+    }
     await loadBatchDetail(currentBatchId);
-  } catch (e) {
-    toast(e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalLabel;
+    if (cancelBtn) cancelBtn.disabled = false;
+    if (folderBtn) folderBtn.disabled = false;
+    if (filesBtn) filesBtn.disabled = false;
   }
 }
 

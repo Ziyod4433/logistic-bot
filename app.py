@@ -1875,7 +1875,9 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
         return False, "Нет chat_id"
 
     language = normalize_message_language(bl.get("message_language"))
-    reply_markup = None if is_group_chat_id(chat_id) else bl_file_markup(bl["id"])
+    # Always attach the file inline-keyboard so clients/группы can pull the
+    # attached packing list straight from the tracking message.
+    reply_markup = bl_file_markup(bl["id"])
     rendered_message = db.render_message(bl, batch_name, include_related_batches=False)
 
     try:
