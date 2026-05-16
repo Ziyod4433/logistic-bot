@@ -947,6 +947,32 @@ _RETRIABLE_NETWORK_ERRORS = (
 )
 
 
+def _parse_tg_retry_after(response) -> float:
+    """Extract Telegram's retry_after (seconds) from a 429 response.
+
+    Telegram returns:
+      {"ok":false,"error_code":429,"description":"Too Many Requests: retry after N",
+       "parameters":{"retry_after":N}}
+    """
+    try:
+        payload = response.json()
+    except Exception:
+        return 0.0
+    params = payload.get("parameters") or {}
+    retry_after = params.get("retry_after")
+    if isinstance(retry_after, (int, float)) and retry_after > 0:
+        return float(retry_after)
+    # Fallback — parse "retry after N" from description text
+    desc = str(payload.get("description") or "")
+    match = re.search(r"retry after\s+(\d+)", desc, flags=re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 def telegram_send_document(
     chat_id,
     file_path: str,
@@ -970,9 +996,12 @@ def telegram_send_document(
         data["parse_mode"] = parse_mode
 
     last_exc: Exception | None = None
-    # Three attempts with growing backoff. Catches transient TimeoutError
-    # / ConnectionError from Railway → Telegram during peak times. The
-    # file handle is opened fresh each attempt so the upload restarts
+    # Up to 3 attempts. Catches:
+    #   - Transient TimeoutError / ConnectionError from Railway → Telegram
+    #     (growing backoff: 1.5s, 3s).
+    #   - HTTP 429 Too Many Requests — read retry_after from the Telegram
+    #     response and sleep exactly that long before retrying.
+    # The file handle is reopened on each attempt so the upload restarts
     # cleanly from byte 0.
     for attempt in range(3):
         try:
@@ -983,6 +1012,22 @@ def telegram_send_document(
                     files={"document": (safe_filename, file_handle, mime_type)},
                     timeout=120,
                 )
+            if response.status_code == 429:
+                retry_after = _parse_tg_retry_after(response) or 5.0
+                app.logger.warning(
+                    "telegram_send_document hit 429 — sleeping %.1fs before retry (attempt %s/3)",
+                    retry_after, attempt + 1,
+                )
+                if attempt < 2:
+                    time.sleep(min(retry_after + 0.5, 60.0))
+                    continue
+                # Final attempt — surface the description
+                try:
+                    payload = response.json()
+                    description = payload.get("description") or response.text
+                except ValueError:
+                    description = response.text
+                raise RuntimeError(description)
             if not response.ok:
                 try:
                     payload = response.json()
@@ -1028,15 +1073,30 @@ def telegram_send_document_by_file_id(
         data["parse_mode"] = parse_mode
 
     last_exc: Exception | None = None
-    # CDN resend is fast (~500ms), so we keep timeout tight but still
-    # retry the rare transient timeout. Total worst case ~2×15s + sleep.
-    for attempt in range(2):
+    # CDN resend is fast (~500ms). Retry transient network errors and
+    # respect Telegram's 429 retry_after.
+    for attempt in range(3):
         try:
             response = req.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
                 data=data,
                 timeout=15,
             )
+            if response.status_code == 429:
+                retry_after = _parse_tg_retry_after(response) or 3.0
+                app.logger.warning(
+                    "telegram_send_document_by_file_id hit 429 — sleeping %.1fs (attempt %s/3)",
+                    retry_after, attempt + 1,
+                )
+                if attempt < 2:
+                    time.sleep(min(retry_after + 0.5, 60.0))
+                    continue
+                try:
+                    payload = response.json()
+                    description = payload.get("description") or response.text
+                except ValueError:
+                    description = response.text
+                raise RuntimeError(description)
             if not response.ok:
                 try:
                     payload = response.json()
@@ -1048,11 +1108,11 @@ def telegram_send_document_by_file_id(
         except _RETRIABLE_NETWORK_ERRORS as exc:
             last_exc = exc
             app.logger.warning(
-                "telegram_send_document_by_file_id network error (attempt %s/2): %s",
+                "telegram_send_document_by_file_id network error (attempt %s/3): %s",
                 attempt + 1, exc,
             )
-            if attempt < 1:
-                time.sleep(1.0)
+            if attempt < 2:
+                time.sleep(1.0 * (attempt + 1))
                 continue
             raise
     if last_exc:
@@ -1634,11 +1694,14 @@ def _send_attached_files_for_bl(chat_id, bl_id) -> None:
                 "Auto file delivery failed (bl_id=%s file_id=%s)",
                 bl_id, file_info.get("id"),
             )
-        # Tiny gap between sends keeps message ordering stable in Telegram
-        # clients and stays well under bot flood limits (~30 msg/sec).
+        # Per-chat pacing. Telegram throttles bots at ~1 msg/sec into a
+        # group chat — sending 5 files at 0.25s gaps reliably trips the
+        # 429 rate limit. 1.1s keeps us safely under, and Telegram still
+        # rarely flags it; if it does, sendDocument now reads retry_after
+        # and waits the prescribed time.
         if index < len(deliverable) - 1:
             try:
-                time.sleep(0.25)
+                time.sleep(1.1)
             except Exception:
                 pass
 
