@@ -1679,11 +1679,14 @@ def run_ai_test(chat_id, chat: dict, raw_text: str):
         telegram_send_message(chat_id, "<pre>" + html.escape(f"AI test error: {exc}") + "</pre>")
 
 
-def send_bl_status(chat_id, bl: dict):
-    text = db.render_message(bl, bl["batch_name"])
+def _send_single_bl_status(chat_id, bl: dict, batch_name: str):
+    """Send tracking for one specific BL (no merging with related batches)."""
+    text = db.render_message(bl, batch_name, include_related_batches=False)
     batch = db.get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
     show_packing_list = not db.is_customer_delivery_eta((batch or {}).get("eta_destination") or "")
     language = normalize_message_language(bl.get("message_language"))
+    # Always attach the file inline-keyboard so the user can tap a file name
+    # and have the bot send the actual file into the chat/group.
     reply_markup = bl_file_markup(bl["id"]) if show_packing_list else None
     try:
         send_with_track_keyboard(chat_id, text, language=language, reply_markup=reply_markup)
@@ -1695,6 +1698,49 @@ def send_bl_status(chat_id, bl: dict):
             reply_markup=reply_markup,
             parse_mode=None,
         )
+
+
+def send_bl_status(chat_id, bl: dict):
+    """Handle the "Yuk holati" button: send each active batch as its own message.
+
+    Mirrors the admin-panel logic in send_bl_package — discover related
+    batches for this client and emit one Telegram message per BL so each
+    one carries its own file inline-keyboard.
+    """
+    primary_language = normalize_message_language(bl.get("message_language"))
+    bundle = db.get_tracking_bundle_bls(bl, include_related_batches=True)
+    if not bundle:
+        bundle = [bl]
+
+    batch_name_cache: dict[int, str] = {}
+    if bl.get("batch_id"):
+        batch_name_cache[int(bl["batch_id"])] = bl.get("batch_name") or ""
+
+    for index, item in enumerate(bundle):
+        item_batch_id = item.get("batch_id")
+        item_batch_name = item.get("batch_name") or ""
+        if item_batch_id and not item_batch_name:
+            cached = batch_name_cache.get(int(item_batch_id))
+            if cached is None:
+                related_batch = db.get_batch(int(item_batch_id)) or {}
+                cached = related_batch.get("name") or ""
+                batch_name_cache[int(item_batch_id)] = cached
+            item_batch_name = cached
+
+        # Force the primary language for every message so the client doesn't
+        # get a jarring mix when related batches were saved in another locale.
+        item_with_lang = dict(item)
+        item_with_lang["message_language"] = primary_language
+
+        _send_single_bl_status(chat_id, item_with_lang, item_batch_name)
+
+        # Tiny gap between messages so they appear in order and don't trip
+        # Telegram per-chat flood limits.
+        if index < len(bundle) - 1:
+            try:
+                time.sleep(0.4)
+            except Exception:
+                pass
 
 
 def send_requested_file(chat_id, file_info: dict | None):
