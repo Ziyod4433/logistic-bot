@@ -1404,14 +1404,9 @@ def send_announcement_broadcast(chat_id, text: str, attachment: dict | None = No
     telegram_send_message(chat_id, text, parse_mode=None)
 
 
-# Pre-flight ceiling for sendDocument attempts. The public Telegram Bot
-# API enforces a hard 50 MB limit and will return HTTP 413 for anything
-# larger. We still let the upload _attempt_ to fire for files up to 80 MB
-# because (a) some files report a slightly higher size than what Telegram
-# actually measures and (b) if/when we move to a self-hosted Bot API
-# server in the future the practical cap is 2 GB. Anything > 80 MB is
-# rejected up-front with an explicit error message (no link).
-TELEGRAM_BOT_DOCUMENT_LIMIT_BYTES = 80 * 1024 * 1024
+# Telegram Bot API hard cap for sendDocument multipart uploads.
+# Anything larger is rejected up-front with an explicit error message.
+TELEGRAM_BOT_DOCUMENT_LIMIT_BYTES = 50 * 1024 * 1024
 
 # Cooldown so rapid duplicate taps on the same file button in the same
 # chat don't spawn N parallel uploads / N error messages.
@@ -1529,7 +1524,7 @@ def _deliver_file_async(chat_id, file_info: dict) -> None:
         _send_too_large_message(
             chat_id,
             file_info,
-            f"размер {size_mb:.1f} МБ превышает 80 МБ",
+            f"размер {size_mb:.1f} МБ превышает 50 МБ",
         )
         return
 
