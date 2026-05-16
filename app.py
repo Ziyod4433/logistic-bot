@@ -945,7 +945,7 @@ def telegram_send_document(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
             data=data,
             files={"document": (safe_filename, file_handle, mime_type)},
-            timeout=30,
+            timeout=120,
         )
     if not response.ok:
         try:
@@ -955,6 +955,52 @@ def telegram_send_document(
             description = response.text
         raise RuntimeError(description)
     return response.json()
+
+
+def telegram_send_document_by_file_id(
+    chat_id,
+    tg_file_id: str,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+):
+    """Resend a previously-uploaded document by Telegram's cached file_id.
+
+    No multipart upload — Telegram serves the bytes from its own CDN, so
+    the round-trip is typically <500ms regardless of file size.
+    """
+    data = {
+        "chat_id": chat_id,
+        "document": tg_file_id,
+        "disable_content_type_detection": "true",
+    }
+    if caption:
+        data["caption"] = caption
+    if parse_mode:
+        data["parse_mode"] = parse_mode
+    response = req.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+        data=data,
+        timeout=15,
+    )
+    if not response.ok:
+        try:
+            payload = response.json()
+            description = payload.get("description") or response.text
+        except ValueError:
+            description = response.text
+        raise RuntimeError(description)
+    return response.json()
+
+
+def _extract_tg_file_id_from_send_response(payload) -> str:
+    """Pull the document file_id out of a sendDocument response."""
+    if not isinstance(payload, dict):
+        return ""
+    result = payload.get("result") or {}
+    document = result.get("document") or {}
+    fid = document.get("file_id") or ""
+    return str(fid).strip()
 
 
 def telegram_send_photo(
@@ -1339,6 +1385,65 @@ def send_announcement_broadcast(chat_id, text: str, attachment: dict | None = No
     telegram_send_message(chat_id, text, parse_mode=None)
 
 
+def _deliver_file_async(chat_id, file_info: dict) -> None:
+    """Background-thread file delivery for the BL file inline-button.
+
+    Strategy:
+      1. If we have a cached Telegram file_id for this file, use it — no
+         disk read, no upload, near-instant delivery from Telegram's CDN.
+      2. If cached id fails (Telegram dropped it), wipe the cache and fall
+         back to a fresh upload from disk, then save the new file_id.
+      3. On any error, message the chat so the user knows something went
+         wrong instead of seeing only the cleared button spinner.
+    """
+    file_id = file_info.get("id")
+    file_path = file_info.get("file_path") or ""
+    filename = file_info.get("filename") or ""
+    cached_tg_id = (file_info.get("tg_file_id") or "").strip()
+
+    # Fast path: previously uploaded — reuse Telegram's CDN copy.
+    if cached_tg_id:
+        try:
+            telegram_send_document_by_file_id(chat_id, cached_tg_id)
+            return
+        except Exception as exc:
+            app.logger.warning(
+                "cached tg_file_id failed (file_id=%s, will re-upload): %s",
+                file_id, exc,
+            )
+            if file_id:
+                try:
+                    db.clear_file_tg_file_id(file_id)
+                except Exception:
+                    pass
+            # Fall through to fresh upload below.
+
+    # Slow path: upload from disk and cache the new file_id.
+    try:
+        if not file_path or not os.path.exists(file_path):
+            telegram_send_message(
+                chat_id,
+                "❌ Файл недоступен на сервере. Свяжитесь с менеджером.",
+            )
+            return
+        payload = telegram_send_document(chat_id, file_path, filename)
+        new_id = _extract_tg_file_id_from_send_response(payload)
+        if new_id and file_id:
+            try:
+                db.set_file_tg_file_id(file_id, new_id)
+            except Exception as exc:
+                app.logger.warning("failed to cache tg_file_id: %s", exc)
+    except Exception as exc:
+        app.logger.exception("file delivery failed (file_id=%s)", file_id)
+        try:
+            telegram_send_message(
+                chat_id,
+                f"❌ Не удалось отправить файл: {html.escape(str(exc)[:200])}",
+            )
+        except Exception:
+            pass
+
+
 def handle_callback_query(callback_query: dict):
     callback_id = callback_query.get("id")
     data = (callback_query.get("data") or "").strip()
@@ -1357,11 +1462,21 @@ def handle_callback_query(callback_query: dict):
         if not file_info:
             telegram_answer_callback_query(callback_id, "Файл не найден")
             return
+
+        # Answer the callback IMMEDIATELY so Telegram dismisses the spinning
+        # loader on the button. The actual sendDocument runs in a background
+        # thread so the webhook returns within ~200ms (Telegram's webhook
+        # retry timer never fires) and a tap feels instant.
         try:
-            telegram_send_document(chat_id, file_info["file_path"], file_info["filename"])
-            telegram_answer_callback_query(callback_id, "Файл отправлен")
-        except Exception as exc:
-            telegram_answer_callback_query(callback_id, f"Ошибка: {str(exc)[:120]}")
+            telegram_answer_callback_query(callback_id, "📤 Файл отправляется...")
+        except Exception:
+            pass
+
+        threading.Thread(
+            target=_deliver_file_async,
+            args=(chat_id, dict(file_info)),
+            daemon=True,
+        ).start()
         return
 
     if not data.startswith(f"{COMM_RATE_PREFIX}:"):
@@ -1755,10 +1870,14 @@ def send_requested_file(chat_id, file_info: dict | None):
     if not file_info:
         telegram_send_message(chat_id, "❌ Fayl topilmadi.")
         return
-    try:
-        telegram_send_document(chat_id, file_info["file_path"], file_info["filename"])
-    except Exception as exc:
-        telegram_send_message(chat_id, f"❌ Fayl yuborilmadi: {html.escape(str(exc))}")
+    # Same delivery path as the inline-button callback: prefers cached
+    # tg_file_id, falls back to upload. Runs in a background thread so the
+    # webhook returns immediately and the chat feels responsive.
+    threading.Thread(
+        target=_deliver_file_async,
+        args=(chat_id, dict(file_info)),
+        daemon=True,
+    ).start()
 
 
 def handle_bl_lookup(chat_id, raw_code: str):

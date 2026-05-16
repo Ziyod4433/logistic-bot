@@ -1054,6 +1054,11 @@ def init_db():
     file_columns = [
         ("public_token", "TEXT NOT NULL DEFAULT ''"),
         ("command_alias", "TEXT NOT NULL DEFAULT ''"),
+        # Telegram-side file_id cache: after the first successful sendDocument
+        # we store the returned file_id and reuse it on every subsequent tap
+        # so Telegram serves the file from its own CDN instead of forcing us
+        # to re-upload from disk (10×+ faster, no webhook timeouts).
+        ("tg_file_id", "TEXT NOT NULL DEFAULT ''"),
     ]
     for column_name, column_def in file_columns:
         if not _table_has_column(conn, "files", column_name):
@@ -3138,6 +3143,37 @@ def get_file_by_public_token(public_token):
     ).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def set_file_tg_file_id(file_id: int, tg_file_id: str) -> None:
+    """Remember Telegram's CDN file_id so future taps skip the re-upload."""
+    try:
+        fid = int(file_id)
+    except (TypeError, ValueError):
+        return
+    value = (tg_file_id or "").strip()
+    if not value:
+        return
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE files SET tg_file_id = ? WHERE id = ?", (value, fid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_file_tg_file_id(file_id: int) -> None:
+    """Invalidate a stale Telegram file_id (e.g. Telegram dropped the CDN copy)."""
+    try:
+        fid = int(file_id)
+    except (TypeError, ValueError):
+        return
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE files SET tg_file_id = '' WHERE id = ?", (fid,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_file_by_id(file_id):
