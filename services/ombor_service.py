@@ -10,7 +10,10 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-CACHE_TTL_SECONDS = 120  # 2 minutes
+CACHE_TTL_SECONDS = 30  # 30 sec — only enough to coalesce concurrent
+                        # requests within one render. The real "every 2 min"
+                        # refresh cadence is the frontend poller, which now
+                        # always sends force=true to bypass this cache.
 RETENTION_SELLER = "Retention"
 TASHKENT_TZ = timezone(timedelta(hours=5))  # Toshkent UTC+5
 
@@ -59,12 +62,26 @@ def _month_label(ym: str) -> str:
         return ym
 
 
+def _cache_buster() -> str:
+    """A query-parameter value that changes every second.
+
+    Google Sheets' `gviz/tq` endpoint is fronted by a CDN that ignores
+    most Cache-Control headers and serves stale CSV for tens of minutes.
+    Adding a unique query string is the only reliable way to force the
+    edge to revalidate against the live spreadsheet.
+    """
+    return str(int(time.time() * 1000))
+
+
 def _fetch_csv(sheet_id: str, sheet_name: str) -> list[list[str]]:
     from urllib.parse import quote
-    # URL-encode the sheet name so tabs with spaces ("Ortilgan furalar") work
+    # URL-encode the sheet name so tabs with spaces ("Ortilgan furalar") work.
+    # `_=<unix_ms>` busts Google CDN's CSV cache (otherwise edits in the
+    # spreadsheet can lag the monitor by 10-30+ minutes).
     url = (
         f"https://docs.google.com/spreadsheets/d/{sheet_id}"
         f"/gviz/tq?tqx=out:csv&sheet={quote(sheet_name or '')}"
+        f"&_={_cache_buster()}"
     )
     return _fetch_csv_url(url, label="Google Sheets")
 
@@ -78,17 +95,28 @@ def _fetch_csv_by_gid(sheet_id: str, gid_or_name: str) -> list[list[str]]:
         url = (
             f"https://docs.google.com/spreadsheets/d/{sheet_id}"
             f"/gviz/tq?tqx=out:csv&gid={val}"
+            f"&_={_cache_buster()}"
         )
     else:
         url = (
             f"https://docs.google.com/spreadsheets/d/{sheet_id}"
             f"/gviz/tq?tqx=out:csv&sheet={quote(val)}"
+            f"&_={_cache_buster()}"
         )
     return _fetch_csv_url(url, label="FTL Sheets")
 
 
 def _fetch_csv_url(url: str, label: str = "Google Sheets") -> list[list[str]]:
-    req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    # Belt-and-suspenders no-cache headers. Most CDNs ignore these on GET
+    # without auth, but cost nothing to send and occasionally help.
+    req = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
     try:
         with urlopen(req, timeout=30) as response:
             raw = response.read().decode("utf-8-sig", errors="replace")
@@ -143,7 +171,11 @@ def fetch_ftl_data(
         with _lock:
             cached = _cache.get(cache_key)
             if cached and cached["expires_at"] > now:
-                return cached["data"]
+                data = dict(cached["data"])
+                diag = dict(data.get("diagnostics") or {})
+                diag["served_from_cache"] = True
+                data["diagnostics"] = diag
+                return data
 
     type_idx   = _col_to_index(type_col   or "J")
     date_idx   = _col_to_index(date_col   or "L")
@@ -198,6 +230,7 @@ def fetch_ftl_data(
         diag["trucks_total"] += trucks
 
     diag["trucks_total"] = round(diag["trucks_total"], 2)
+    diag["served_from_cache"] = False
     result: dict[str, Any] = {"by_seller": by_seller, "diagnostics": diag}
 
     with _lock:
@@ -236,7 +269,14 @@ def fetch_ombor_data(
         with _lock:
             cached = _cache.get(cache_key)
             if cached and cached["expires_at"] > now:
-                return cached["data"]
+                data = dict(cached["data"])
+                # Tag the response so the monitor UI can show "served from cache"
+                # vs "fresh from Google" if it wants. Doesn't mutate the cached
+                # entry — just the copy we return.
+                diag = dict(data.get("diagnostics") or {})
+                diag["served_from_cache"] = True
+                data["diagnostics"] = diag
+                return data
 
     cbm_idx = _col_to_index(cbm_col or "V")
     date_idx = _col_to_index(date_col or "Z")
@@ -358,6 +398,9 @@ def fetch_ombor_data(
     for m in monthly_list:
         m["cbm"] = round(m["cbm"], 2)
 
+    # Mark this response as a *fresh* fetch from Google (vs served-from-cache,
+    # which is tagged in the cache-hit branch above).
+    diag["served_from_cache"] = False
     result: dict[str, Any] = {
         "ok": True,
         "total_cbm": round(total_cbm, 2),
@@ -511,16 +554,42 @@ def fetch_combined_ltl_data(
 
     # Per-stage diagnostics so the user can see what each tab contributed
     per_stage_diag: dict[str, Any] = {}
+    any_fresh = False        # did *any* stage actually hit Google this call?
+    all_cached = True        # did *every* successful stage come from cache?
     for sheet_name, r, err in per_stage:
         if err:
             per_stage_diag[sheet_name] = {"error": err}
         elif r:
+            stage_diag = r.get("diagnostics") or {}
+            cached = bool(stage_diag.get("served_from_cache"))
+            if not cached:
+                any_fresh = True
+            else:
+                # we only count cache-misses against "all_cached"; this stage hit cache
+                pass
+            if not cached:
+                all_cached = False
             per_stage_diag[sheet_name] = {
                 "total_cbm": round(r.get("total_cbm") or 0, 2),
                 "total_bl":  r.get("total_bl") or 0,
-                "rows_used": (r.get("diagnostics") or {}).get("rows_used"),
-                "rows_total": (r.get("diagnostics") or {}).get("rows_total"),
+                "rows_used": stage_diag.get("rows_used"),
+                "rows_total": stage_diag.get("rows_total"),
+                "fetched_at": r.get("fetched_at"),
+                "served_from_cache": cached,
             }
+
+    # Use the most-recent stage fetched_at as the combined timestamp so the
+    # monitor's "last_updated" reflects when data was actually pulled from
+    # Google — NOT just `datetime.now()`. Falls back to now() if everything
+    # failed.
+    latest_fetched_at = ""
+    for _sheet_name, r, _err in per_stage:
+        if r:
+            ts = r.get("fetched_at") or ""
+            if ts and ts > latest_fetched_at:
+                latest_fetched_at = ts
+    if not latest_fetched_at:
+        latest_fetched_at = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     return {
         "ok": True,
@@ -529,10 +598,12 @@ def fetch_combined_ltl_data(
         "sellers": seller_list,
         "logists": logist_list,
         "monthly": monthly_list,
-        "fetched_at": datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        "fetched_at": latest_fetched_at,
         "diagnostics": {
             "stages_fetched": len([r for _, r, _ in per_stage if r]),
             "stages_failed":  len([e for _, _, e in per_stage if e]),
+            "any_fresh": any_fresh,           # at least one stage hit Google
+            "all_cached": bool(all_cached and per_stage_diag),  # everything served from cache
             "per_stage": per_stage_diag,
         },
     }

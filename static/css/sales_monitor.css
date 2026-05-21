@@ -986,6 +986,37 @@ body.monitor-fullscreen .dept-monitor {
   50% { opacity: 0.35; }
 }
 
+/* Stale state — fires when the monitor's last successful fetch is older
+   than 2× refresh interval (≈250 sec). Replaces the green LIVE dot with a
+   warning chip so the TV operator can spot a stuck feed at a glance. */
+#source-name[data-stale="1"] {
+  color: var(--amber, #ffb547);
+  position: relative;
+  padding-right: 22px;
+}
+#source-name[data-stale="1"] .source-live {
+  color: var(--amber, #ffb547);
+}
+#source-name[data-stale="1"] .source-live::before {
+  background: var(--amber, #ffb547);
+  box-shadow: 0 0 8px var(--amber, #ffb547);
+}
+#source-name[data-stale="1"]::after {
+  content: "⚠ обновление зависло";
+  position: absolute;
+  right: -8px;
+  top: 50%;
+  transform: translateY(-50%) translateX(100%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 181, 71, 0.18);
+  color: var(--amber, #ffb547);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 @media (max-width: 1280px) {
   .main,
   .bottom {

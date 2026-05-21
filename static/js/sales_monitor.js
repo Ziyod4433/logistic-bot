@@ -26,6 +26,11 @@
     currentDepartment: "logists",
     savdoView: "ltl",                 // "ltl" (Ombor m³) | "ftl" (truck count)
     latestPayload: null,
+    // Refresh-health tracking — used by updateStaleWarning() to flag the
+    // top-of-screen source chip when Google Sheets data stops updating.
+    lastSuccessfulFetchMs: 0,
+    consecutiveFetchErrors: 0,
+    lastFetchError: "",
   };
 
   const byId = (id) => document.getElementById(id);
@@ -175,6 +180,8 @@
     // Bar width = remaining fraction of the CURRENT segment's duration
     const denom = state.segmentDurationSeconds || 1;
     els.rotationLine.style.width = `${Math.max(0, Math.min(100, (state.countdownSeconds / denom) * 100))}%`;
+    // Piggy-back on the per-second tick to refresh stale-state styling.
+    updateStaleWarning();
   }
 
   function restartCountdown(seconds) {
@@ -499,16 +506,28 @@
     if (state.planId) params.set("sales_plan_id", state.planId);
     if (state.metric) params.set("metric", state.metric);
     if (force) params.set("force", "1");
+    // Cache-buster — neutralises any HTTP intermediary that ignores
+    // our Cache-Control header (CDNs, ServiceWorkers, browser stale-
+    // while-revalidate). Without this, /analytics/api/monitor would
+    // sometimes be served from a stale cache layer.
+    params.set("_t", Date.now().toString());
 
     const response = await fetch(`/analytics/api/monitor?${params.toString()}`, {
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+      },
       credentials: "same-origin",
+      cache: "no-store",
     });
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Monitor ma'lumotlarini olishda xatolik.");
     }
     renderPayload(payload);
+    state.lastSuccessfulFetchMs = Date.now();
+    state.consecutiveFetchErrors = 0;
     if (resetCountdown) restartCountdown();
   }
 
@@ -517,8 +536,39 @@
     state.refreshHandle = window.setInterval(() => {
       // force=true: bypass 2-min cache. Silent data refresh — do NOT reset the
       // visual countdown bar (that's owned by the 20-s dept-rotation cycle).
-      fetchMonitor(false, true).catch((error) => renderEmpty(error.message));
+      // On failure, KEEP showing the last good payload (don't blank the screen).
+      // We just bump an error counter so the diagnostic chip can warn the
+      // operator that updates are stuck.
+      fetchMonitor(false, true).catch((error) => {
+        state.consecutiveFetchErrors = (state.consecutiveFetchErrors || 0) + 1;
+        state.lastFetchError = error && error.message ? error.message : String(error);
+        // Only blank the screen if we *never* had successful data AND keep
+        // failing — i.e. fresh page load that never bootstrapped.
+        if (!state.latestPayload) {
+          renderEmpty(state.lastFetchError);
+        }
+        // Otherwise leave the last good numbers visible; updateStaleWarning()
+        // (called on every countdown tick) will flag stale state in the UI.
+      });
     }, REFRESH_SECONDS * 1000);
+  }
+
+  // Called every second from renderCountdown. If the last successful fetch
+  // is more than 2× the refresh interval old, mark the source line as stale
+  // so the TV operator can see something is wrong without having to scroll
+  // the network log.
+  function updateStaleWarning() {
+    if (!els.sourceName) return;
+    if (!state.lastSuccessfulFetchMs) return;
+    const ageSec = Math.floor((Date.now() - state.lastSuccessfulFetchMs) / 1000);
+    const staleThreshold = REFRESH_SECONDS * 2 + 10;  // ~250 sec
+    if (ageSec > staleThreshold) {
+      els.sourceName.dataset.stale = "1";
+      els.sourceName.title = `Последнее обновление: ${ageSec} сек назад. Ошибка: ${state.lastFetchError || "?"}`;
+    } else {
+      delete els.sourceName.dataset.stale;
+      els.sourceName.title = "";
+    }
   }
 
   // ↑ Old startDeptRotation + startSavdoViewRotation replaced by the unified
