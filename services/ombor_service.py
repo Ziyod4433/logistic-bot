@@ -62,6 +62,29 @@ def _month_label(ym: str) -> str:
         return ym
 
 
+# Apostrophe variants that should collapse to the same person key.
+# Uzbek names regularly mix ASCII "'", U+02BB "ʻ", U+02BC "ʼ", U+2018 "'",
+# U+2019 "'" and U+0060 "`" depending on the keyboard / paste source.
+# Treating them as different sellers fragments a single SOTUVCHI into 2-3
+# leaderboard rows, each with a partial CBM total → user sees less than
+# the sheet's manual sum for that name.
+_APOSTROPHE_VARIANTS = ("ʻ", "ʼ", "'", "`", "‘", "’")
+
+
+def _normalize_person_key(name: str) -> str:
+    """Canonical bucket key for SOTUVCHI / LOGIST names.
+
+    Apostrophe-insensitive (treats "o'g'li", "oʻgʻli", "oʼgʼli", "o`g`li"
+    as one identity), case-insensitive, whitespace-collapsing. Used both
+    within a single stage and across stages, so a name never splits into
+    multiple leaderboard rows.
+    """
+    n = (name or "").casefold()
+    for ch in _APOSTROPHE_VARIANTS:
+        n = n.replace(ch, "")
+    return " ".join(n.split()).strip()
+
+
 def _cache_buster() -> str:
     """A query-parameter value that changes every second.
 
@@ -342,23 +365,33 @@ def fetch_ombor_data(
 
         rows_used += 1
 
-        seller = safe_cell(row, seller_idx) or RETENTION_SELLER
-
-        if seller not in sellers:
-            sellers[seller] = {"name": seller, "cbm": 0.0, "bl_count": 0}
-            seller_bl_sets[seller] = set()
-        sellers[seller]["cbm"] += cbm
+        # SELLER bucket — keyed by APOSTROPHE-NORMALIZED form so the same
+        # person spelled "o'g'li" / "oʻgʻli" / "oʼgʼli" collapses into one
+        # row instead of fragmenting CBM across 2-3 buckets.
+        raw_seller = safe_cell(row, seller_idx) or RETENTION_SELLER
+        seller_key = _normalize_person_key(raw_seller) or RETENTION_SELLER.casefold()
+        if seller_key not in sellers:
+            sellers[seller_key] = {"name": raw_seller, "cbm": 0.0, "bl_count": 0}
+            seller_bl_sets[seller_key] = set()
+        elif len(raw_seller) > len(sellers[seller_key]["name"]):
+            # Prefer the longest raw spelling we've seen (typically the
+            # most complete / properly-typeset version with ʻ rather than ').
+            sellers[seller_key]["name"] = raw_seller
+        sellers[seller_key]["cbm"] += cbm
         if bl_id:
-            seller_bl_sets[seller].add(bl_id)
+            seller_bl_sets[seller_key].add(bl_id)
 
-        # Aggregate the same row also by logist (column AH)
-        logist = safe_cell(row, logist_idx) or RETENTION_SELLER
-        if logist not in logists:
-            logists[logist] = {"name": logist, "cbm": 0.0, "bl_count": 0}
-            logist_bl_sets[logist] = set()
-        logists[logist]["cbm"] += cbm
+        # LOGIST bucket — same normalization, same rationale.
+        raw_logist = safe_cell(row, logist_idx) or RETENTION_SELLER
+        logist_key = _normalize_person_key(raw_logist) or RETENTION_SELLER.casefold()
+        if logist_key not in logists:
+            logists[logist_key] = {"name": raw_logist, "cbm": 0.0, "bl_count": 0}
+            logist_bl_sets[logist_key] = set()
+        elif len(raw_logist) > len(logists[logist_key]["name"]):
+            logists[logist_key]["name"] = raw_logist
+        logists[logist_key]["cbm"] += cbm
         if bl_id:
-            logist_bl_sets[logist].add(bl_id)
+            logist_bl_sets[logist_key].add(bl_id)
 
         if row_date:
             ym = row_date.strftime("%Y-%m")
@@ -497,13 +530,9 @@ def fetch_combined_ltl_data(
         except Exception as exc:
             per_stage.append((cfg["sheet_name"], None, str(exc)))
 
-    # ─── Merge by seller/logist name (case-fold + apostrophe-strip) ───
-    def _norm(name: str) -> str:
-        n = (name or "").casefold()
-        for ch in ("ʻ", "ʼ", "'", "`", "‘", "’"):
-            n = n.replace(ch, "")
-        return " ".join(n.split()).strip()
-
+    # Merge by SELLER / LOGIST name across stages — uses the same
+    # apostrophe-collapsing canonicalization as inside a single stage so
+    # the bucket is consistent end-to-end.
     sellers_acc: dict[str, dict[str, Any]] = {}
     logists_acc: dict[str, dict[str, Any]] = {}
     monthly_acc: dict[str, dict[str, Any]] = {}
@@ -514,19 +543,25 @@ def fetch_combined_ltl_data(
         if not r:
             continue
         for s in r.get("sellers", []):
-            k = _norm(s["name"])
+            k = _normalize_person_key(s["name"])
             if not k:
                 continue
             if k not in sellers_acc:
                 sellers_acc[k] = {"name": s["name"], "cbm": 0.0, "bl_count": 0}
+            elif len(s["name"]) > len(sellers_acc[k]["name"]):
+                # Prefer the longest raw spelling across stages, just like
+                # within a stage. Keeps "o'g'li" → "oʻgʻli" upgrade behavior.
+                sellers_acc[k]["name"] = s["name"]
             sellers_acc[k]["cbm"]      += float(s.get("cbm") or 0)
             sellers_acc[k]["bl_count"] += int(s.get("bl_count") or 0)
         for l in r.get("logists", []):
-            k = _norm(l["name"])
+            k = _normalize_person_key(l["name"])
             if not k:
                 continue
             if k not in logists_acc:
                 logists_acc[k] = {"name": l["name"], "cbm": 0.0, "bl_count": 0}
+            elif len(l["name"]) > len(logists_acc[k]["name"]):
+                logists_acc[k]["name"] = l["name"]
             logists_acc[k]["cbm"]      += float(l.get("cbm") or 0)
             logists_acc[k]["bl_count"] += int(l.get("bl_count") or 0)
         for m in r.get("monthly", []):
