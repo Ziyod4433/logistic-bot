@@ -804,6 +804,16 @@ body.monitor-fullscreen .bottom {
   display: none;
 }
 
+/* Kiosk profile (login `sales` / `sales123`) — hide the OYLIK DINAMIKA
+   monthly-dynamics card. Per-request: that block is operationally noisy
+   on the wall TV and not useful for the floor team. Other roles continue
+   to see it. We also collapse the grid so the remaining left-column
+   doesn't leave a gap where the card used to sit. */
+body.role-kiosk .monthly-card { display: none !important; }
+body.role-kiosk .main {
+  grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
+}
+
 body.monitor-fullscreen .main {
   grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
   min-height: calc(100vh - 20px);

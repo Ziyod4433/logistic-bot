@@ -9,7 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/sales_monitor.css') }}">
 </head>
-<body{% if is_kiosk %} class="tv-mode"{% endif %}>
+<body{% if is_kiosk %} class="tv-mode role-kiosk"{% endif %}>
   <!-- hidden: JS targets these IDs for countdown/clock logic -->
   <span id="rotation-timer" style="display:none" aria-hidden="true">2:00</span>
   <span id="clock" style="display:none" aria-hidden="true">--:--:--</span>
