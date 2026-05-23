@@ -3854,12 +3854,38 @@ async function onPackingListBulkSelected(event, mode) {
     return;
   }
 
-  document.getElementById("packing-list-bulk-count").textContent = `Файлов выбрано: ${fileList.length}`;
-
-  const candidates = fileList.map(file => ({
+  // Dedupe within ONE selection. webkitdirectory recursively walks the
+  // folder, so the same packing list living in two subfolders (or the
+  // user accidentally selecting nested duplicates) would otherwise be
+  // uploaded multiple times → triplicate file rows on the BL. We key
+  // on the basename + byte size: identical basename AND identical bytes
+  // is treated as the same packing list, even if the relative paths
+  // differ.
+  const seenKeys = new Set();
+  const rawCandidates = fileList.map(file => ({
     file,
     rawName: file.webkitRelativePath || file.name || "",
   }));
+  const candidates = [];
+  let droppedDuplicates = 0;
+  for (const c of rawCandidates) {
+    const baseName = (c.file.name || c.rawName).trim().toLowerCase();
+    const key = `${baseName}|${c.file.size || 0}`;
+    if (seenKeys.has(key)) {
+      droppedDuplicates++;
+      continue;
+    }
+    seenKeys.add(key);
+    candidates.push(c);
+  }
+
+  const countEl = document.getElementById("packing-list-bulk-count");
+  if (droppedDuplicates > 0) {
+    countEl.textContent = `Файлов выбрано: ${candidates.length} (пропущено дубликатов: ${droppedDuplicates})`;
+  } else {
+    countEl.textContent = `Файлов выбрано: ${candidates.length}`;
+  }
+
   const filenames = candidates.map(c => c.rawName);
 
   let resolvedByFilename = {};

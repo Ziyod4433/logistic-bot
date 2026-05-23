@@ -3427,8 +3427,31 @@ def api_bulk_packing_lists(batch_id):
             except (TypeError, ValueError):
                 pass
 
+    # Pre-load existing filenames per BL so we can suppress duplicates
+    # server-side. Two scenarios this kills:
+    #   1) The user uploaded the same packing list a few minutes ago and
+    #      doesn't realize it (page refresh, fresh selection).
+    #   2) Two concurrent requests in the same multipart batch both try to
+    #      attach the same filename to the same BL (rare race, but cheap
+    #      to defend against).
+    existing_per_bl: dict[int, set[str]] = {}
+
+    def _existing_names(bl_id_int: int) -> set[str]:
+        if bl_id_int not in existing_per_bl:
+            try:
+                existing_files = db.get_files(bl_id_int) or []
+            except Exception:
+                existing_files = []
+            existing_per_bl[bl_id_int] = {
+                str(f.get("filename") or "").strip().lower()
+                for f in existing_files
+                if (f.get("filename") or "").strip()
+            }
+        return existing_per_bl[bl_id_int]
+
     uploaded = 0
     failed = 0
+    skipped_duplicates = 0
     results = []
     for uploaded_file, bl_id_raw in zip(files, bl_ids):
         if not uploaded_file or not uploaded_file.filename:
@@ -3452,22 +3475,49 @@ def api_bulk_packing_lists(batch_id):
             failed += 1
             results.append({"filename": original_filename, "ok": False, "error": f"Тип .{ext} не разрешён"})
             continue
+
+        # Strip subdirectory components from the relative path (folder upload)
+        clean_base = os.path.basename(original_filename.replace("\\", "/"))
+        storage_name = secure_filename(clean_base) or f"file_{secrets.token_hex(4)}.{ext}"
+        filename = clean_base or storage_name
+
+        # Dedupe: this BL already has a file with the same basename.
+        # Skip silently and report as success so the UI tags the row as ✅
+        # rather than ❌ — from the user's perspective the file "is attached".
+        name_key = filename.strip().lower()
+        already = _existing_names(bl_id)
+        if name_key in already:
+            skipped_duplicates += 1
+            uploaded += 1   # count as success for UI purposes
+            results.append({
+                "filename": filename,
+                "ok": True,
+                "bl_id": bl_id,
+                "skipped_duplicate": True,
+            })
+            continue
+
         try:
-            # Strip subdirectory components from the relative path (folder upload)
-            clean_base = os.path.basename(original_filename.replace("\\", "/"))
-            storage_name = secure_filename(clean_base) or f"file_{secrets.token_hex(4)}.{ext}"
-            filename = clean_base or storage_name
             unique = f"bl{bl_id}_{secrets.token_hex(4)}_{storage_name}"
             file_path = os.path.join(UPLOAD_FOLDER, unique)
             uploaded_file.save(file_path)
             db.add_file(bl_id, filename, file_path)
+            # Remember it so a same-batch second copy of this file also gets
+            # caught by the dedupe above.
+            already.add(name_key)
             uploaded += 1
             results.append({"filename": filename, "ok": True, "bl_id": bl_id})
         except Exception as exc:
             failed += 1
             results.append({"filename": original_filename, "ok": False, "error": str(exc)})
 
-    return jsonify({"ok": True, "uploaded": uploaded, "failed": failed, "results": results})
+    return jsonify({
+        "ok": True,
+        "uploaded": uploaded,
+        "failed": failed,
+        "skipped_duplicates": skipped_duplicates,
+        "results": results,
+    })
 
 
 @app.route("/public/file/<public_token>")
