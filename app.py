@@ -2824,6 +2824,92 @@ def api_google_sheets_preview():
     )
 
 
+# Generic stop-words for chat-title token extraction (used by the sheet
+# import's auto-chat-match). These appear in nearly every group title and
+# would otherwise route every BL to the first chat seen.
+_CHAT_TITLE_STOPWORDS = {
+    "BURAQ", "LOGISTICS", "LOGISTIC", "BURAQLOGISTICS",
+    "COMPANY", "LLC", "LTD", "INC", "GROUP", "TRADE", "TRADING",
+}
+
+
+def _build_chat_code_lookup() -> dict[str, str]:
+    """Map normalized identifier tokens → chat_id for every Telegram chat.
+
+    Example, chat title "HI-TECH (BL-146) & BURAQ LOGISTICS" registers:
+        {"HITECH": cid, "HI": cid, "TECH": cid, "BL146": cid, "146": cid}
+    So an incoming BL row with `code` = "BL-146" / "146" / "HI-TECH" all
+    auto-pick the same chat. Stopwords filter out "BURAQ"/"LOGISTICS"
+    so we don't accidentally route every BL to the first chat in the list.
+
+    First chat wins on collision (stable insertion order).
+    """
+    lookup: dict[str, str] = {}
+    try:
+        chats = db.get_telegram_chats(include_inactive=True) or []
+    except Exception:
+        return lookup
+
+    for chat in chats:
+        chat_id = str(chat.get("chat_id") or "").strip()
+        title = str(chat.get("title") or "").strip()
+        if not chat_id or not title:
+            continue
+        upper = title.upper()
+        # Individual alphanumeric tokens — only register tokens 3+ chars to
+        # avoid noise from "BL", "HI", "DV" etc. fragments. The 2-char
+        # exclusion stops "BL" from gobbling every incoming BL code.
+        for tok in re.findall(r"[A-Za-z0-9]+", upper):
+            if len(tok) < 3 or tok in _CHAT_TITLE_STOPWORDS:
+                continue
+            lookup.setdefault(tok, chat_id)
+        # Concatenated form of the "meaningful" identifier — strips BL-NNN
+        # and stopwords, then joins what's left. This catches multi-word
+        # client names that appear hyphenated or space-separated in the
+        # chat title, e.g.:
+        #   "HI-TECH (BL-146) & BURAQ LOGISTICS"   -> "HITECH"
+        #   "LUX LIGHTING (BL-234) & BURAQ ..."    -> "LUXLIGHTING"
+        # So incoming codes "HI-TECH" or "LUX LIGHTING" auto-pick the chat.
+        cleaned = re.sub(r"\bBL[-_ ]?\d+[A-Z0-9]*\b", " ", upper)
+        meaningful = [
+            t for t in re.findall(r"[A-Za-z0-9]+", cleaned)
+            if len(t) >= 2 and t not in _CHAT_TITLE_STOPWORDS
+        ]
+        if meaningful:
+            concat = "".join(meaningful)
+            if len(concat) >= 3:
+                lookup.setdefault(concat, chat_id)
+        # BL-NNN patterns get registered in three forms so a BL code typed
+        # any of these ways auto-matches: "BL-146", "BL146", "146".
+        for m in re.finditer(r"BL[-_ ]?(\d+)", upper):
+            number = m.group(1)
+            lookup.setdefault(f"BL{number}", chat_id)
+            lookup.setdefault(number, chat_id)
+    return lookup
+
+
+def _find_chat_for_bl_code(code: str, lookup: dict[str, str]) -> str:
+    """Return best-match chat_id for a BL code, or '' if nothing fits."""
+    if not code or not lookup:
+        return ""
+    norm = _normalize_bl_code(code)  # "BL-146" → "BL146", "ARTE" → "ARTE"
+    if not norm:
+        return ""
+    # Exact normalized match (covers BL-146, BL146, ARTE, 5077, ...).
+    if norm in lookup:
+        return lookup[norm]
+    # "BL146" → try "146" too.
+    if norm.startswith("BL") and norm[2:].isdigit():
+        stripped = norm[2:]
+        if stripped in lookup:
+            return lookup[stripped]
+    # Pure digits "146" → try "BL146" too.
+    if norm.isdigit():
+        if f"BL{norm}" in lookup:
+            return lookup[f"BL{norm}"]
+    return ""
+
+
 @app.route("/api/batches/<int:batch_id>/import-sheet", methods=["POST"])
 @editor_required
 def api_import_google_sheet_rows(batch_id):
@@ -2835,17 +2921,25 @@ def api_import_google_sheet_rows(batch_id):
     if not isinstance(rows, list) or not rows:
         return jsonify({"error": "Не выбраны строки для импорта"}), 400
 
+    # Auto-chat-match: build lookup once per request so we don't query the
+    # chats table per BL.
+    chat_lookup = _build_chat_code_lookup()
+
     imported = []
     skipped = []
+    auto_matched = 0
     for row in rows:
         code = str((row or {}).get("code") or "").strip()
         if not code:
             continue
+        # Auto-find the Telegram chat whose title contains this BL code.
+        # Empty string if no match — operator can fill it manually later.
+        chat_id = _find_chat_for_bl_code(code, chat_lookup)
         success = db.add_bl(
             batch_id=batch_id,
             code=code,
             client_name="",
-            chat_id="",
+            chat_id=chat_id,
             cargo_type="",
             weight_kg=(row or {}).get("weight_kg", 0),
             volume_cbm=(row or {}).get("volume_cbm", 0),
@@ -2856,6 +2950,8 @@ def api_import_google_sheet_rows(batch_id):
         )
         if success:
             imported.append(code)
+            if chat_id:
+                auto_matched += 1
         else:
             skipped.append({"code": code, "reason": "duplicate"})
 
@@ -2864,6 +2960,7 @@ def api_import_google_sheet_rows(batch_id):
             "ok": True,
             "imported_count": len(imported),
             "skipped_count": len(skipped),
+            "auto_matched_count": auto_matched,
             "imported": imported,
             "skipped": skipped,
         }
@@ -2945,6 +3042,43 @@ def api_delete_bl(bl_id):
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     return jsonify({"ok": True})
+
+
+@app.route("/api/bl/bulk-delete", methods=["POST"])
+@editor_required
+def api_bulk_delete_bl():
+    """Delete many BL rows in one call.
+
+    Body: {"ids": [int, int, ...]}
+    Returns: {ok: True, deleted: N, failed: [{id, error}, ...]}
+    Each row uses the same robust delete_bl path (handles attached files,
+    problems, send logs, etc). Failures don't stop the batch — we
+    accumulate per-id errors so the operator can see which ones survived.
+    """
+    data = request.json or {}
+    raw_ids = data.get("ids") or []
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify({"error": "Не выбраны BL для удаления"}), 400
+
+    ids: list[int] = []
+    for item in raw_ids:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return jsonify({"error": "Список ID пуст"}), 400
+
+    deleted = 0
+    failed: list[dict] = []
+    for bl_id in ids:
+        try:
+            db.delete_bl(bl_id)
+            deleted += 1
+        except Exception as exc:
+            app.logger.exception("Bulk delete failed for bl_id=%s", bl_id)
+            failed.append({"id": bl_id, "error": str(exc)})
+    return jsonify({"ok": True, "deleted": deleted, "failed": failed})
 
 
 @app.route("/api/bl/<int:bl_id>/move", methods=["POST"])
