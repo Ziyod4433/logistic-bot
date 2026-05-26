@@ -1561,6 +1561,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openPackingListBulkModal()">📦 Packing lists</button>
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openAddBLModal()">+ Добавить BL</button>
                 <button class="btn btn-red btn-sm editor-only" id="bulk-delete-btn" onclick="bulkDeleteSelectedBL()" disabled title="Выбери BL чекбоксами, чтобы удалить массово">🗑 Удалить выбранные</button>
+                <button class="btn btn-ghost btn-sm editor-only" id="recall-tracking-btn" onclick="recallTrackingPrompt()" disabled title="Удалить из Telegram чатов последнюю отправку (или только выбранные BL)">↩ Отозвать отправку</button>
                 <button class="btn btn-amber btn-sm editor-only" id="send-batch-btn" onclick="openSendBatchModal()">📤 Отправить партию</button>
               </div>
             </div>
@@ -3153,6 +3154,84 @@ function refreshBulkDeleteButton() {
   const count = selectedBLIds.size;
   btn.disabled = count === 0;
   btn.textContent = count > 0 ? `🗑 Удалить выбранные (${count})` : "🗑 Удалить выбранные";
+  // Recall button shares the same selection state.
+  refreshRecallButton();
+}
+
+async function refreshRecallButton() {
+  const btn = document.getElementById("recall-tracking-btn");
+  if (!btn) return;
+  if (!currentBatchId) {
+    btn.disabled = true;
+    btn.title = "Открой партию";
+    btn.textContent = "↩ Отозвать отправку";
+    return;
+  }
+  // If user has BLs selected, button operates on those; otherwise on last dispatch.
+  const selectedCount = selectedBLIds.size;
+  try {
+    const r = await api(`/api/batches/${currentBatchId}/recallable`);
+    const last = Number(r.last_dispatch_count || 0);
+    const total = Number(r.total_recallable || 0);
+    if (selectedCount > 0) {
+      btn.disabled = false;
+      btn.textContent = `↩ Отозвать у выбранных (${selectedCount})`;
+      btn.title = `Удалить сообщения у ${selectedCount} выбранных BL`;
+    } else if (last > 0) {
+      btn.disabled = false;
+      btn.textContent = `↩ Отозвать последнюю отправку (${last})`;
+      btn.title = `Удалить ${last} сообщений из чатов · Всего отзывных: ${total}`;
+    } else {
+      btn.disabled = true;
+      btn.textContent = "↩ Отозвать отправку";
+      btn.title = "Нет сообщений для отзыва (старше 48 ч?)";
+    }
+  } catch (e) {
+    btn.disabled = true;
+    btn.textContent = "↩ Отозвать отправку";
+    btn.title = "Не удалось получить состояние: " + e.message;
+  }
+}
+
+async function recallTrackingPrompt() {
+  if (!ensureEditor()) return;
+  if (!currentBatchId) { toast("Сначала открой партию", "err"); return; }
+
+  const selectedIds = Array.from(selectedBLIds);
+  const usingSelection = selectedIds.length > 0;
+
+  const promptMsg = usingSelection
+    ? `Отозвать сообщения у ${selectedIds.length} выбранных BL?\n\nБот удалит ранее отправленные сообщения из Telegram-чатов.\nЭто работает только для сообщений не старше 48 часов.`
+    : `Отозвать ПОСЛЕДНЮЮ отправку трекинга для всей партии?\n\nБот попытается удалить из чатов все сообщения, отправленные в течение последних 60 секунд от самого свежего сообщения.\nЭто работает только для сообщений не старше 48 часов.`;
+  if (!confirm(promptMsg)) return;
+
+  const btn = document.getElementById("recall-tracking-btn");
+  const originalText = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ Отзыв..."; }
+
+  const body = usingSelection
+    ? { bl_ids: selectedIds, scope: "all" }
+    : { scope: "last_dispatch" };
+
+  try {
+    const r = await api(`/api/batches/${currentBatchId}/recall-tracking`, "POST", body);
+    const deleted = Number(r.deleted || 0);
+    const failed = Number(r.failed || 0);
+    if (failed > 0) {
+      toast(`Отозвано: ${deleted}, ошибок: ${failed} (часть сообщений старше 48 ч или удалены вручную)`, "ok");
+    } else if (deleted > 0) {
+      toast(`✅ Отозвано из чатов: ${deleted} сообщ.`, "ok");
+    } else {
+      toast("Нечего отзывать", "err");
+    }
+    selectedBLIds.clear();
+    await loadBatchDetail(currentBatchId);
+  } catch (e) {
+    toast(e.message, "err");
+  } finally {
+    if (btn) { btn.textContent = originalText; }
+    refreshRecallButton();
+  }
 }
 
 async function bulkDeleteSelectedBL() {

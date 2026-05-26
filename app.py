@@ -1129,6 +1129,17 @@ def _extract_tg_file_id_from_send_response(payload) -> str:
     return str(fid).strip()
 
 
+def _extract_message_id(payload) -> int:
+    """Pull the message_id out of any Telegram send* response payload."""
+    if not isinstance(payload, dict):
+        return 0
+    result = payload.get("result") or {}
+    try:
+        return int(result.get("message_id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def telegram_send_photo(
     chat_id,
     file_path: str,
@@ -1417,6 +1428,11 @@ def send_with_track_keyboard(
     reply_markup: dict | None = None,
     parse_mode: str | None = "HTML",
 ):
+    """Returns the raw Telegram API response (or None on failure inside).
+
+    Callers that want to remember message_id for later recall can read
+    response["result"]["message_id"].
+    """
     if is_group_chat_id(chat_id):
         # In groups, suppress the "Yuk holati" reply keyboard (those only
         # belong to private chats), but keep inline keyboards (e.g. file
@@ -1425,14 +1441,13 @@ def send_with_track_keyboard(
         inline_only = None
         if isinstance(reply_markup, dict) and reply_markup.get("inline_keyboard"):
             inline_only = {"inline_keyboard": reply_markup["inline_keyboard"]}
-        telegram_send_message(
+        return telegram_send_message(
             chat_id,
             text,
             reply_markup=inline_only,
             parse_mode=parse_mode,
         )
-        return
-    telegram_send_message(
+    return telegram_send_message(
         chat_id,
         text,
         reply_markup=reply_markup or build_main_reply_markup(chat_id=chat_id, language=language),
@@ -1599,10 +1614,35 @@ def _deliver_file_async(chat_id, file_info: dict) -> None:
     if _file_delivery_should_skip(chat_id, file_id):
         return
 
+    # Resolve BL id for recall-bookkeeping below (file → BL → batch).
+    bl_id_for_recall = None
+    batch_id_for_recall = None
+    try:
+        if file_id:
+            file_row = db.get_file_by_id(int(file_id)) or {}
+            bl_id_for_recall = file_row.get("bl_id")
+            if bl_id_for_recall:
+                bl_row = db.get_bl_by_id(int(bl_id_for_recall)) or {}
+                batch_id_for_recall = bl_row.get("batch_id")
+    except Exception:
+        pass
+
     # Fast path: previously uploaded — reuse Telegram's CDN copy.
     if cached_tg_id:
         try:
-            telegram_send_document_by_file_id(chat_id, cached_tg_id)
+            cdn_payload = telegram_send_document_by_file_id(chat_id, cached_tg_id)
+            try:
+                msg_id = _extract_message_id(cdn_payload)
+                if msg_id:
+                    db.record_sent_telegram_message(
+                        bl_id=bl_id_for_recall,
+                        batch_id=batch_id_for_recall,
+                        chat_id=chat_id,
+                        message_id=msg_id,
+                        kind="file",
+                    )
+            except Exception:
+                app.logger.exception("Failed to record file message id (CDN path)")
             return
         except Exception as exc:
             app.logger.warning(
@@ -1646,6 +1686,18 @@ def _deliver_file_async(chat_id, file_info: dict) -> None:
                 db.set_file_tg_file_id(file_id, new_id)
             except Exception as exc:
                 app.logger.warning("failed to cache tg_file_id: %s", exc)
+        try:
+            msg_id = _extract_message_id(payload)
+            if msg_id:
+                db.record_sent_telegram_message(
+                    bl_id=bl_id_for_recall,
+                    batch_id=batch_id_for_recall,
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    kind="file",
+                )
+        except Exception:
+            app.logger.exception("Failed to record file message id (upload path)")
     except Exception as exc:
         app.logger.exception("file delivery failed (file_id=%s)", file_id)
         if _is_too_large_error(exc):
@@ -2143,15 +2195,35 @@ def _send_single_bl_status(chat_id, bl: dict, batch_name: str):
     batch = db.get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
     show_packing_list = not db.is_customer_delivery_eta((batch or {}).get("eta_destination") or "")
     language = normalize_message_language(bl.get("message_language"))
+    sent_response = None
     try:
-        send_with_track_keyboard(chat_id, text, language=language)
+        sent_response = send_with_track_keyboard(chat_id, text, language=language)
     except Exception:
-        send_with_track_keyboard(
-            chat_id,
-            _plain_text_message(text),
-            language=language,
-            parse_mode=None,
-        )
+        try:
+            sent_response = send_with_track_keyboard(
+                chat_id,
+                _plain_text_message(text),
+                language=language,
+                parse_mode=None,
+            )
+        except Exception:
+            app.logger.exception("Yuk holati: both send attempts failed")
+            sent_response = None
+
+    # Same recall-bookkeeping as the admin-send path.
+    if sent_response is not None:
+        try:
+            msg_id = _extract_message_id(sent_response)
+            if msg_id:
+                db.record_sent_telegram_message(
+                    bl_id=bl.get("id"),
+                    batch_id=bl.get("batch_id"),
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    kind="tracking",
+                )
+        except Exception:
+            app.logger.exception("Failed to record Yuk-holati message id")
 
     if show_packing_list:
         try:
@@ -2408,8 +2480,9 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
 
     delivered = False
     last_error = ""
+    sent_response = None
     try:
-        send_with_track_keyboard(
+        sent_response = send_with_track_keyboard(
             chat_id,
             rendered_message,
             language=language,
@@ -2420,7 +2493,7 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
         last_error = str(exc)
         try:
             fallback_message = _plain_text_message(rendered_message)
-            send_with_track_keyboard(
+            sent_response = send_with_track_keyboard(
                 chat_id,
                 fallback_message,
                 language=language,
@@ -2431,6 +2504,22 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
             last_error = ""
         except Exception as fallback_exc:
             return False, str(fallback_exc or exc)
+
+    # Remember the message_id so the operator can recall it later via
+    # /api/batches/<id>/recall-tracking. Best-effort — never blocks send.
+    if delivered:
+        try:
+            msg_id = _extract_message_id(sent_response)
+            if msg_id:
+                db.record_sent_telegram_message(
+                    bl_id=bl.get("id"),
+                    batch_id=bl.get("batch_id"),
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    kind="tracking",
+                )
+        except Exception:
+            app.logger.exception("Failed to record tracking message id")
 
     # Auto-attach packing lists right after the message, before moving on
     # to the next batch in the bundle.
@@ -3079,6 +3168,162 @@ def api_bulk_delete_bl():
             app.logger.exception("Bulk delete failed for bl_id=%s", bl_id)
             failed.append({"id": bl_id, "error": str(exc)})
     return jsonify({"ok": True, "deleted": deleted, "failed": failed})
+
+
+@app.route("/api/batches/<int:batch_id>/recall-tracking", methods=["POST"])
+@editor_required
+def api_recall_tracking(batch_id):
+    """Delete previously-sent Telegram messages for this batch.
+
+    Body (optional):
+      {
+        "bl_ids":     [int, ...],   # restrict to specific BLs
+        "scope":      "last_dispatch" | "all"  (default "last_dispatch")
+      }
+
+    "last_dispatch" — only messages from the most recent broadcast window
+    (everything within 60 seconds of the newest sent_at timestamp). This
+    is the typical use case: "I just sent wrong tracking — undo it."
+
+    "all" — every still-recallable message in this batch (or for the
+    selected BLs if bl_ids was provided).
+
+    Per-message: Telegram's deleteMessage works for ~48 h on messages the
+    bot sent itself. Failures are tagged on the row so the operator can
+    see WHY (e.g. "message to delete not found", "not enough rights").
+    """
+    if not BOT_TOKEN:
+        return jsonify({"error": "BOT_TOKEN не настроен"}), 500
+    batch = db.get_batch(batch_id)
+    if not batch:
+        abort(404)
+
+    data = request.json or {}
+    raw_bl_ids = data.get("bl_ids") or []
+    if not isinstance(raw_bl_ids, list):
+        raw_bl_ids = []
+    bl_ids: list[int] = []
+    for item in raw_bl_ids:
+        try:
+            bl_ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    scope = str(data.get("scope") or "last_dispatch").strip().lower()
+    if scope not in {"last_dispatch", "all"}:
+        scope = "last_dispatch"
+
+    rows = db.get_recallable_messages(
+        batch_id=batch_id,
+        bl_ids=bl_ids if bl_ids else None,
+        only_unrecalled=True,
+    )
+    if not rows:
+        return jsonify({"ok": True, "deleted": 0, "failed": 0, "skipped": 0,
+                        "message": "Нечего отзывать — нет сообщений в журнале"})
+
+    # last_dispatch: keep only rows within 60 s of the freshest sent_at.
+    if scope == "last_dispatch":
+        newest = rows[0].get("sent_at") or ""
+        try:
+            from datetime import datetime as _dt
+            newest_dt = _dt.strptime(newest, "%Y-%m-%d %H:%M:%S")
+            cutoff = newest_dt.timestamp() - 60.0
+            filtered = []
+            for r in rows:
+                try:
+                    sent_dt = _dt.strptime(r.get("sent_at") or "", "%Y-%m-%d %H:%M:%S")
+                    if sent_dt.timestamp() >= cutoff:
+                        filtered.append(r)
+                except ValueError:
+                    continue
+            rows = filtered
+        except ValueError:
+            pass  # malformed timestamp; just recall everything
+
+    deleted = 0
+    failed = 0
+    deleted_bl_ids: set[int] = set()
+    for row in rows:
+        try:
+            telegram_delete_message(row["chat_id"], row["message_id"])
+            db.mark_message_recalled(row["id"])
+            deleted += 1
+            if row.get("bl_id"):
+                try:
+                    deleted_bl_ids.add(int(row["bl_id"]))
+                except (TypeError, ValueError):
+                    pass
+        except Exception as exc:
+            # Telegram returned an error (most often: message too old, or
+            # bot lost permission). Tag the row so the operator can see why
+            # and we won't keep retrying it on every subsequent recall.
+            err_str = str(exc)[:300]
+            # "message to delete not found" is a normal outcome if the user
+            # already deleted it manually — treat as a soft success so the
+            # row doesn't keep showing up in the "still recallable" list.
+            if "to delete not found" in err_str.lower():
+                db.mark_message_recalled(row["id"])
+                deleted += 1
+                if row.get("bl_id"):
+                    try:
+                        deleted_bl_ids.add(int(row["bl_id"]))
+                    except (TypeError, ValueError):
+                        pass
+            else:
+                db.mark_message_recalled(row["id"], error=err_str)
+                failed += 1
+
+    # If we recalled the tracking message for a BL, clear its
+    # tracking_delivery_coverage so the system shows it as "needs to send"
+    # again — otherwise the green ✅ "отправлено" badge stays misleading.
+    cleared_coverage = 0
+    if deleted_bl_ids:
+        try:
+            cleared_coverage = db.clear_tracking_delivery_coverage(list(deleted_bl_ids))
+        except Exception:
+            app.logger.exception("Failed to clear tracking_delivery_coverage after recall")
+
+    return jsonify({
+        "ok": True,
+        "deleted": deleted,
+        "failed": failed,
+        "scope": scope,
+        "cleared_coverage": cleared_coverage,
+    })
+
+
+@app.route("/api/batches/<int:batch_id>/recallable", methods=["GET"])
+@login_required
+def api_recallable_summary(batch_id):
+    """Cheap summary for the UI: how many messages can be recalled, what's
+    the newest sent_at? Used to enable/disable the recall button and show
+    "Last dispatch: 16.05.2026 17:31, 23 messages".
+    """
+    rows = db.get_recallable_messages(batch_id=batch_id, only_unrecalled=True)
+    total = len(rows)
+    newest = rows[0].get("sent_at") if rows else ""
+    # Count messages within the last-dispatch window (60s)
+    last_dispatch_count = 0
+    if rows and newest:
+        try:
+            from datetime import datetime as _dt
+            newest_dt = _dt.strptime(newest, "%Y-%m-%d %H:%M:%S")
+            cutoff = newest_dt.timestamp() - 60.0
+            for r in rows:
+                try:
+                    sent_dt = _dt.strptime(r.get("sent_at") or "", "%Y-%m-%d %H:%M:%S")
+                    if sent_dt.timestamp() >= cutoff:
+                        last_dispatch_count += 1
+                except ValueError:
+                    continue
+        except ValueError:
+            last_dispatch_count = total
+    return jsonify({
+        "ok": True,
+        "total_recallable": total,
+        "last_dispatch_count": last_dispatch_count,
+        "newest_sent_at": newest or "",
+    })
 
 
 @app.route("/api/bl/<int:bl_id>/move", methods=["POST"])

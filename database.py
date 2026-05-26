@@ -627,6 +627,32 @@ def init_db():
             PRIMARY KEY(batch_id, bl_id)
         );
 
+        -- Catalogue of every Telegram message we've sent that the operator
+        -- might want to recall later (tracking texts and the packing-list
+        -- files that follow them). Populated by record_sent_telegram_message
+        -- and consumed by /api/batches/<id>/recall-tracking.
+        --
+        -- bl_id is NULLABLE because once a BL row is deleted we still want
+        -- to be able to recall its messages by chat_id+message_id. batch_id
+        -- is also NULLABLE for the same reason.
+        CREATE TABLE IF NOT EXISTS tracking_sent_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bl_id INTEGER REFERENCES bl_codes(id) ON DELETE SET NULL,
+            batch_id INTEGER REFERENCES batches(id) ON DELETE SET NULL,
+            chat_id TEXT NOT NULL,
+            message_id INTEGER NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'tracking',  -- 'tracking' | 'file'
+            sent_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            recalled_at TEXT DEFAULT '',
+            recall_error TEXT DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_tsm_batch_sent
+            ON tracking_sent_messages(batch_id, sent_at);
+        CREATE INDEX IF NOT EXISTS idx_tsm_bl_sent
+            ON tracking_sent_messages(bl_id, sent_at);
+        CREATE INDEX IF NOT EXISTS idx_tsm_recalled
+            ON tracking_sent_messages(recalled_at);
+
         CREATE TABLE IF NOT EXISTS message_template (
             id INTEGER PRIMARY KEY,
             content TEXT NOT NULL,
@@ -2851,6 +2877,157 @@ def record_tracking_delivery(primary_bl: dict, include_related_batches: bool = T
             )
         conn.commit()
         return bundle
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Sent-message catalogue for the "recall last tracking" feature.
+# Stores every chat_id + message_id we've sent so the operator can later
+# ask the bot to delete them via Telegram's deleteMessage API.
+# ─────────────────────────────────────────────────────────────────────────
+def record_sent_telegram_message(
+    *,
+    bl_id: int | None,
+    batch_id: int | None,
+    chat_id: str | int,
+    message_id: int | None,
+    kind: str = "tracking",
+) -> None:
+    """Remember a freshly-sent Telegram message so we can recall it later.
+
+    Safe to call from background threads — opens its own connection. Silent
+    no-op on bad inputs (a missing message_id just means we'd have no way
+    to call deleteMessage anyway, so there's nothing to record).
+    """
+    try:
+        msg_id = int(message_id) if message_id is not None else 0
+    except (TypeError, ValueError):
+        msg_id = 0
+    if not msg_id:
+        return
+    chat_value = str(chat_id or "").strip()
+    if not chat_value:
+        return
+    try:
+        bl_value = int(bl_id) if bl_id is not None else None
+    except (TypeError, ValueError):
+        bl_value = None
+    try:
+        batch_value = int(batch_id) if batch_id is not None else None
+    except (TypeError, ValueError):
+        batch_value = None
+    safe_kind = "file" if str(kind).lower() == "file" else "tracking"
+
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO tracking_sent_messages(
+                bl_id, batch_id, chat_id, message_id, kind, sent_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (bl_value, batch_value, chat_value, msg_id, safe_kind, current_ts()),
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        # Disk-IO hiccup — don't crash the send path. The Telegram message
+        # already went out; we just lose the ability to recall this one.
+        pass
+    finally:
+        conn.close()
+
+
+def get_recallable_messages(
+    *,
+    batch_id: int | None = None,
+    bl_ids: list[int] | None = None,
+    only_unrecalled: bool = True,
+) -> list[dict]:
+    """List messages eligible for recall, newest first.
+
+    Filters:
+      - batch_id  : restrict to one batch's messages.
+      - bl_ids    : restrict to a list of BLs (useful for per-row recall).
+      - only_unrecalled (default True): skip rows already deleted.
+    """
+    where = []
+    params: list = []
+    if batch_id is not None:
+        where.append("batch_id = ?")
+        params.append(int(batch_id))
+    if bl_ids:
+        cleaned = [int(b) for b in bl_ids if b is not None]
+        if cleaned:
+            placeholders = ",".join("?" for _ in cleaned)
+            where.append(f"bl_id IN ({placeholders})")
+            params.extend(cleaned)
+    if only_unrecalled:
+        where.append("COALESCE(recalled_at, '') = ''")
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT id, bl_id, batch_id, chat_id, message_id, kind,
+                   sent_at, recalled_at, recall_error
+            FROM tracking_sent_messages
+            {where_sql}
+            ORDER BY sent_at DESC, id DESC
+            """,
+            tuple(params),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def mark_message_recalled(message_row_id: int, error: str = "") -> None:
+    """Tag a single tracking_sent_messages row as recalled (or note its error)."""
+    try:
+        rid = int(message_row_id)
+    except (TypeError, ValueError):
+        return
+    conn = get_conn()
+    try:
+        if error:
+            conn.execute(
+                """
+                UPDATE tracking_sent_messages
+                SET recall_error = ?
+                WHERE id = ?
+                """,
+                (str(error)[:500], rid),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE tracking_sent_messages
+                SET recalled_at = ?, recall_error = ''
+                WHERE id = ?
+                """,
+                (current_ts(), rid),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_tracking_delivery_coverage(bl_ids: list[int]) -> int:
+    """After a successful recall, wipe the delivery-coverage row so the BL
+    is treated as "needs to send tracking again" on the next batch send."""
+    cleaned = [int(b) for b in (bl_ids or []) if b is not None]
+    if not cleaned:
+        return 0
+    placeholders = ",".join("?" for _ in cleaned)
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            f"DELETE FROM tracking_delivery_coverage WHERE bl_id IN ({placeholders})",
+            tuple(cleaned),
+        )
+        conn.commit()
+        return cur.rowcount or 0
     finally:
         conn.close()
 
