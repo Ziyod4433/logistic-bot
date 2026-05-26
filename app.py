@@ -1523,8 +1523,16 @@ def send_announcement_broadcast(chat_id, text: str, attachment: dict | None = No
                 filename or os.path.basename(file_path),
                 caption=caption_text if can_use_single_caption else None,
             )
-        if can_use_single_caption:
+        # File already carries the text as caption (or there's no text to
+        # send). Either way, no second message is needed.
+        if can_use_single_caption or not caption_text:
             return
+    # Pure-text path or text-too-long-for-caption follow-up. Telegram
+    # rejects empty sendMessage payloads, so guard against the no-text
+    # + no-file degenerate case (the caller-level validator should have
+    # blocked it already).
+    if not caption_text:
+        return
     telegram_send_message(chat_id, text, parse_mode=None)
 
 
@@ -4639,9 +4647,16 @@ def api_send_announcements():
         return jsonify({"error": "BOT_TOKEN не настроен в .env"}), 500
 
     data = request.json or {}
-    content = (data.get("content") or "").strip() or db.get_announcement_template()
+    # Empty text is OK as long as there's an attachment — the file gets
+    # sent on its own (no caption, no follow-up message). If both are
+    # empty we have nothing to send and reject early.
+    content = (data.get("content") or "").strip()
     if not content:
-        return jsonify({"error": "Текст объявления не может быть пустым"}), 400
+        content = db.get_announcement_template().strip()
+    attachment = db.get_announcement_attachment() or {}
+    has_attachment = bool((attachment.get("file_path") or "").strip())
+    if not content and not has_attachment:
+        return jsonify({"error": "Нужно либо текст, либо вложение"}), 400
 
     selected_chat_ids = [str(chat_id).strip() for chat_id in (data.get("chat_ids") or []) if str(chat_id).strip()]
     if not selected_chat_ids:
@@ -4652,7 +4667,6 @@ def api_send_announcements():
         for item in db.get_announcement_recipients()
         if str(item.get("chat_id") or "").strip()
     }
-    attachment = db.get_announcement_attachment()
     sent = 0
     skipped = 0
     errors = []
@@ -4687,6 +4701,240 @@ def api_send_announcements():
             "errors": errors,
         }
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Scheduled announcements — server-side queue, background scheduler.
+# ─────────────────────────────────────────────────────────────────────────
+_TASHKENT_TZ_APP = db.TASHKENT_TZ
+
+
+def _parse_scheduled_at(raw: str) -> str:
+    """Normalize user input into 'YYYY-MM-DD HH:MM:SS' Tashkent local.
+
+    Accepts:
+      - 'YYYY-MM-DDTHH:MM'        (HTML datetime-local default)
+      - 'YYYY-MM-DDTHH:MM:SS'
+      - 'YYYY-MM-DD HH:MM'
+      - 'YYYY-MM-DD HH:MM:SS'
+
+    Treats the input as TASHKENT LOCAL TIME — never converts to UTC.
+    Raises ValueError on bad input or past timestamps (>1 min in the past).
+    """
+    s = str(raw or "").strip().replace("T", " ")
+    if not s:
+        raise ValueError("Не указано время отправки")
+    fmts = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M")
+    parsed = None
+    for f in fmts:
+        try:
+            parsed = datetime.strptime(s, f)
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        raise ValueError("Неверный формат времени (нужен YYYY-MM-DD HH:MM)")
+    parsed_with_tz = parsed.replace(tzinfo=_TASHKENT_TZ_APP)
+    now = datetime.now(_TASHKENT_TZ_APP)
+    if (now - parsed_with_tz).total_seconds() > 60:
+        raise ValueError("Время уже прошло")
+    return parsed_with_tz.strftime("%Y-%m-%d %H:%M:%S")
+
+
+@app.route("/api/announcements/schedule", methods=["POST"])
+@editor_required
+def api_schedule_announcement():
+    """Queue an announcement to fire at a specific Tashkent-local time.
+
+    Body:
+      {
+        "content":      "...",            (optional — falls back to template)
+        "chat_ids":     [str, ...],
+        "scheduled_at": "YYYY-MM-DDTHH:MM" (Tashkent local)
+      }
+    Returns: { ok: true, schedule: {...} }
+
+    Snapshot semantics — text + chat list + current attachment metadata
+    are FROZEN at the moment of scheduling. Changing the global template
+    or attachment afterwards does NOT affect a pending job.
+    """
+    if not BOT_TOKEN:
+        return jsonify({"error": "BOT_TOKEN не настроен в .env"}), 500
+
+    data = request.json or {}
+    content = (data.get("content") or "").strip()
+    if not content:
+        content = db.get_announcement_template().strip()
+    attachment = db.get_announcement_attachment() or {}
+    has_attachment = bool((attachment.get("file_path") or "").strip())
+    if not content and not has_attachment:
+        return jsonify({"error": "Нужно либо текст, либо вложение"}), 400
+
+    chat_ids = [str(c).strip() for c in (data.get("chat_ids") or []) if str(c).strip()]
+    if not chat_ids:
+        return jsonify({"error": "Выбери хотя бы одну группу"}), 400
+
+    try:
+        scheduled_at = _parse_scheduled_at(data.get("scheduled_at") or "")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    snapshot = {
+        "filename": attachment.get("filename") or "",
+        "file_path": attachment.get("file_path") or "",
+        "kind": attachment.get("kind") or "",
+    } if has_attachment else {}
+
+    sid = db.create_announcement_schedule(
+        content=content,
+        chat_ids=chat_ids,
+        attachment_snapshot=snapshot,
+        scheduled_at=scheduled_at,
+        created_by=str(session.get("username") or ""),
+    )
+    return jsonify({
+        "ok": True,
+        "schedule": {
+            "id": sid,
+            "scheduled_at": scheduled_at,
+            "chat_count": len(chat_ids),
+            "has_attachment": has_attachment,
+        },
+    })
+
+
+@app.route("/api/announcements/schedules", methods=["GET"])
+@login_required
+def api_list_announcement_schedules():
+    rows = db.list_announcement_schedules(limit=100)
+    # Don't leak file paths in the response — frontend doesn't need them.
+    for r in rows:
+        snap = r.get("attachment_snapshot") or {}
+        if isinstance(snap, dict):
+            r["attachment_snapshot"] = {
+                "filename": snap.get("filename") or "",
+                "kind": snap.get("kind") or "",
+                "had_attachment": bool(snap.get("file_path")),
+            }
+    return jsonify({"ok": True, "schedules": rows})
+
+
+@app.route("/api/announcements/schedules/<int:schedule_id>", methods=["DELETE"])
+@editor_required
+def api_cancel_announcement_schedule(schedule_id: int):
+    ok = db.cancel_announcement_schedule(schedule_id)
+    if not ok:
+        return jsonify({"error": "Эту запись нельзя отменить (уже отправлена или не найдена)"}), 400
+    return jsonify({"ok": True})
+
+
+# Background scheduler ─────────────────────────────────────────────────
+# Wakes up every 30 sec, picks up due rows, fires them. Threading.Event
+# is used as a sleep primitive so a future shutdown() can wake the loop
+# instantly. Idempotent boot — safe to call twice (the lock makes it a
+# no-op on the second call).
+_ANNOUNCEMENT_SCHEDULER_LOCK = threading.Lock()
+_ANNOUNCEMENT_SCHEDULER_STARTED = False
+_ANNOUNCEMENT_SCHEDULER_STOP = threading.Event()
+
+
+def _fire_scheduled_announcement(row: dict) -> tuple[int, int, str]:
+    """Send one scheduled broadcast. Returns (sent_count, failed_count, last_error)."""
+    content = (row.get("content") or "").strip()
+    chat_ids = [str(c).strip() for c in (row.get("chat_ids") or []) if str(c).strip()]
+    snap = row.get("attachment_snapshot") or {}
+    file_path = (snap.get("file_path") or "").strip() if isinstance(snap, dict) else ""
+    attachment = None
+    if file_path and os.path.exists(file_path):
+        attachment = {
+            "filename": snap.get("filename") or "",
+            "file_path": file_path,
+            "kind": snap.get("kind") or "",
+        }
+    if not content and not attachment:
+        return 0, len(chat_ids), "Ни текста, ни вложения на момент отправки"
+
+    sent = 0
+    failed = 0
+    last_err = ""
+    for chat_id in chat_ids:
+        try:
+            send_announcement_broadcast(chat_id, content, attachment)
+            sent += 1
+        except Exception as exc:
+            failed += 1
+            last_err = str(exc)[:300]
+            app.logger.exception(
+                "Scheduled announcement to %s failed (schedule_id=%s)",
+                chat_id, row.get("id"),
+            )
+    return sent, failed, last_err
+
+
+def _announcement_scheduler_loop() -> None:
+    # Revive any rows left in 'sending' state from a crash before the
+    # main loop starts (otherwise they'd stay stuck forever).
+    try:
+        revived = db.reset_orphaned_sending_announcements()
+        if revived:
+            app.logger.info("Scheduler revived %d orphaned sending row(s)", revived)
+    except Exception:
+        app.logger.exception("Failed to revive orphaned schedules at boot")
+
+    while not _ANNOUNCEMENT_SCHEDULER_STOP.is_set():
+        try:
+            due = db.due_announcement_schedules()
+            for row in due:
+                sent, failed, last_err = _fire_scheduled_announcement(row)
+                status = "sent" if (sent > 0 and failed == 0) else (
+                    "failed" if (sent == 0 and failed > 0) else "sent"
+                )
+                db.mark_announcement_schedule_result(
+                    row["id"],
+                    status=status,
+                    sent=sent,
+                    failed=failed,
+                    error=last_err,
+                )
+                if sent > 0:
+                    try:
+                        db.mark_announcement_last_sent()
+                    except Exception:
+                        pass
+        except Exception:
+            # Never let the scheduler thread die from a transient error —
+            # log and keep ticking.
+            app.logger.exception("Announcement scheduler tick error")
+
+        # Wake up every 30 sec or sooner if shutdown requested.
+        _ANNOUNCEMENT_SCHEDULER_STOP.wait(timeout=30.0)
+
+
+def start_announcement_scheduler_once() -> None:
+    """Idempotent boot of the background scheduler thread."""
+    global _ANNOUNCEMENT_SCHEDULER_STARTED
+    with _ANNOUNCEMENT_SCHEDULER_LOCK:
+        if _ANNOUNCEMENT_SCHEDULER_STARTED:
+            return
+        t = threading.Thread(
+            target=_announcement_scheduler_loop,
+            name="announcement-scheduler",
+            daemon=True,
+        )
+        t.start()
+        _ANNOUNCEMENT_SCHEDULER_STARTED = True
+        app.logger.info("Announcement scheduler thread started")
+
+
+# Boot the scheduler at import time so it runs even when Flask hasn't
+# received its first request yet. The thread is a daemon — it dies with
+# the process and survives nothing (which is what we want for a single-
+# replica deployment).
+try:
+    start_announcement_scheduler_once()
+except Exception:
+    # Don't block app boot on a scheduler hiccup.
+    pass
 
 
 @app.route("/analytics/api/overview")

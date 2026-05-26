@@ -1,5 +1,6 @@
 ﻿import hashlib
 import html
+import json
 import os
 import re
 import secrets
@@ -626,6 +627,27 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now','localtime')),
             PRIMARY KEY(batch_id, bl_id)
         );
+
+        -- Queued announcement broadcasts: snapshot the text + recipients +
+        -- attachment AT SCHEDULE TIME so swapping the global announcement
+        -- template later doesn't affect a pending job. A background thread
+        -- (announcement_scheduler) wakes up every 30 sec and fires due rows.
+        CREATE TABLE IF NOT EXISTS announcement_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL DEFAULT '',
+            chat_ids TEXT NOT NULL DEFAULT '',       -- JSON array of chat_id strings
+            attachment_snapshot TEXT NOT NULL DEFAULT '',  -- JSON {filename, file_path, kind}
+            scheduled_at TEXT NOT NULL,              -- "YYYY-MM-DD HH:MM:SS" Tashkent local
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            created_by TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',  -- pending | sending | sent | cancelled | failed
+            sent_at TEXT NOT NULL DEFAULT '',
+            result_sent INTEGER NOT NULL DEFAULT 0,
+            result_failed INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_anns_status_at
+            ON announcement_schedules(status, scheduled_at);
 
         -- Catalogue of every Telegram message we've sent that the operator
         -- might want to recall later (tracking texts and the packing-list
@@ -3704,6 +3726,192 @@ def mark_announcement_last_sent(sent_at: str | None = None) -> str:
 
 def get_announcement_last_sent_at() -> str:
     return get_setting(ANNOUNCEMENT_LAST_SENT_AT_KEY, "").strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Announcement scheduling — server-side queue + background firing.
+# The fire decision is "scheduled_at <= current_ts()" using string-lexical
+# comparison (safe because both sides are "YYYY-MM-DD HH:MM:SS" in the
+# same timezone — Tashkent local).
+# ─────────────────────────────────────────────────────────────────────────
+def _json_dump_safe(value) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        return ""
+
+
+def _json_load_safe(value, default=None):
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def create_announcement_schedule(
+    *,
+    content: str,
+    chat_ids: list[str],
+    attachment_snapshot: dict | None,
+    scheduled_at: str,
+    created_by: str = "",
+) -> int:
+    """Persist a pending broadcast that the scheduler thread will fire later.
+
+    scheduled_at MUST be "YYYY-MM-DD HH:MM:SS" in Tashkent local time.
+    Returns the new schedule id.
+    """
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO announcement_schedules(
+                content, chat_ids, attachment_snapshot, scheduled_at,
+                created_at, created_by, status
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending')
+            """,
+            (
+                str(content or ""),
+                _json_dump_safe([str(c).strip() for c in (chat_ids or []) if str(c).strip()]),
+                _json_dump_safe(attachment_snapshot or {}),
+                scheduled_at.strip(),
+                current_ts(),
+                str(created_by or "").strip(),
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def list_announcement_schedules(limit: int = 50) -> list[dict]:
+    """Recent schedules — newest first. Used by the UI panel."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM announcement_schedules
+            ORDER BY
+              CASE status WHEN 'pending' THEN 0 WHEN 'sending' THEN 0 ELSE 1 END,
+              scheduled_at DESC,
+              id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["chat_ids"] = _json_load_safe(d.get("chat_ids"), []) or []
+            d["attachment_snapshot"] = _json_load_safe(d.get("attachment_snapshot"), {}) or {}
+            out.append(d)
+        return out
+    finally:
+        conn.close()
+
+
+def due_announcement_schedules(now_ts: str | None = None) -> list[dict]:
+    """All pending rows whose scheduled_at <= now (Tashkent local).
+    Atomically flips them to 'sending' so a concurrent run can't pick them up."""
+    cutoff = (now_ts or current_ts()).strip()
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            """
+            SELECT * FROM announcement_schedules
+            WHERE status = 'pending' AND scheduled_at <= ?
+            ORDER BY scheduled_at ASC, id ASC
+            """,
+            (cutoff,),
+        ).fetchall()
+        ids = [int(r["id"]) for r in rows]
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(
+                f"UPDATE announcement_schedules SET status = 'sending' "
+                f"WHERE id IN ({placeholders})",
+                tuple(ids),
+            )
+        conn.commit()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["chat_ids"] = _json_load_safe(d.get("chat_ids"), []) or []
+            d["attachment_snapshot"] = _json_load_safe(d.get("attachment_snapshot"), {}) or {}
+            out.append(d)
+        return out
+    finally:
+        conn.close()
+
+
+def mark_announcement_schedule_result(
+    schedule_id: int,
+    *,
+    status: str,
+    sent: int = 0,
+    failed: int = 0,
+    error: str = "",
+) -> None:
+    """Update a schedule row after firing — sent / failed counts + status."""
+    if status not in {"sent", "failed", "cancelled", "pending"}:
+        status = "failed"
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE announcement_schedules
+            SET status = ?, sent_at = ?, result_sent = ?, result_failed = ?, last_error = ?
+            WHERE id = ?
+            """,
+            (
+                status,
+                current_ts() if status in {"sent", "failed"} else "",
+                int(sent or 0),
+                int(failed or 0),
+                str(error or "")[:500],
+                int(schedule_id),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def cancel_announcement_schedule(schedule_id: int) -> bool:
+    """Soft-cancel a pending schedule. No-op on already-fired rows."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE announcement_schedules
+            SET status = 'cancelled', last_error = ''
+            WHERE id = ? AND status IN ('pending')
+            """,
+            (int(schedule_id),),
+        )
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
+def reset_orphaned_sending_announcements() -> int:
+    """If the process crashed mid-fire, any rows left in 'sending' state stay
+    that way forever. Called at boot: flip them back to 'pending' so the next
+    scheduler tick retries them. Returns the count revived."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE announcement_schedules SET status = 'pending' WHERE status = 'sending'"
+        )
+        conn.commit()
+        return cur.rowcount or 0
+    finally:
+        conn.close()
 
 
 def get_announcement_recipients():

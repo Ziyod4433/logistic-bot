@@ -1868,8 +1868,31 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               <div class="mini-stat"><div class="mini-stat-v" id="announce-attachment-state">Нет</div><div class="mini-stat-l">Вложение</div></div>
               <div class="mini-stat"><div class="mini-stat-v" id="announce-last-sent">—</div><div class="mini-stat-l">Последняя рассылка</div></div>
             </div>
-            <div class="kpi-note" style="margin-top:12px">Если прикрепить файл или фото, Telegram сначала отправит вложение, а затем сам текст объявления.</div>
+            <div class="kpi-note" style="margin-top:12px">Можно отправить без текста — тогда уйдёт только файл или фото. Текст до 1024 символов идёт подписью к вложению, длиннее — отдельным сообщением.</div>
+            <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+              <div style="display:flex;flex-direction:column;gap:4px">
+                <label style="font-size:11px;color:var(--muted2);letter-spacing:0.5px">⏰ Запланировать (Ташкент UTC+5)</label>
+                <input type="datetime-local" class="inp" id="announcement-schedule-at" style="min-width:230px">
+              </div>
+              <button class="btn btn-ghost btn-sm editor-only" onclick="scheduleAnnouncementBroadcast()" title="Бот выполнит отправку сам в указанное время, даже если ты закроешь админ-панель">📅 Запланировать</button>
+              <span class="kpi-note" style="margin:0">Расписание работает на сервере — закрытие админки не отменяет задачу. Бот считает время по Ташкенту.</span>
+            </div>
           </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Очередь и история рассылок</span>
+            <button class="btn btn-ghost btn-sm" onclick="loadAnnouncementSchedules()">↻ Обновить</button>
+          </div>
+          <table class="tbl">
+            <thead><tr>
+              <th>Когда</th><th>Статус</th><th>Групп</th><th>Текст</th><th>Вложение</th><th>Результат</th><th>Создал</th><th></th>
+            </tr></thead>
+            <tbody id="announcement-schedules-table">
+              <tr><td colspan="8"><div class="empty"><div class="empty-icon">📅</div><p>Нет запланированных рассылок.</p></div></td></tr>
+            </tbody>
+          </table>
         </div>
 
         <div class="card">
@@ -5471,24 +5494,36 @@ async function loadAnnouncementsPage() {
     document.getElementById("announce-last-sent").textContent = data.summary?.last_sent_at || "—";
     renderAnnouncementAttachmentMeta(data.attachment || {});
     renderAnnouncementRecipientsTable();
+    // Also refresh the schedule queue. Don't await — a slow schedule
+    // query shouldn't gate the rest of the page.
+    loadAnnouncementSchedules().catch(() => {});
   } catch(e) {
     toast(e.message, "err");
   }
+}
+
+function _hasAnnouncementAttachment() {
+  const stateEl = document.getElementById("announce-attachment-state");
+  return stateEl ? stateEl.textContent.trim() === "Есть" : false;
 }
 
 async function sendAnnouncementBroadcast() {
   if (!ensureEditor()) return;
   const content = (document.getElementById("announcement-template")?.value || "").trim();
   const chatIds = Array.from(selectedAnnouncementChats);
-  if (!content) {
-    toast("Вставь текст объявления перед отправкой", "err");
+  const hasAttachment = _hasAnnouncementAttachment();
+  if (!content && !hasAttachment) {
+    toast("Нужен либо текст, либо вложение", "err");
     return;
   }
   if (!chatIds.length) {
     toast("Выбери хотя бы одну группу для рассылки", "err");
     return;
   }
-  if (!confirm(`Отправить объявление в выбранные группы: ${chatIds.length}?`)) return;
+  const promptText = content
+    ? `Отправить объявление в выбранные группы: ${chatIds.length}?`
+    : `Отправить вложение (без текста) в выбранные группы: ${chatIds.length}?`;
+  if (!confirm(promptText)) return;
   try {
     const res = await api("/api/announcements/send", "POST", { content, chat_ids: chatIds });
     if ((res.sent || 0) === 0 && (res.errors || []).length) {
@@ -5498,6 +5533,110 @@ async function sendAnnouncementBroadcast() {
       toast(`Отправлено: ${res.sent}, пропущено: ${res.skipped}, ошибок: ${(res.errors || []).length}`, (res.errors || []).length ? "inf" : "ok");
     }
     loadAnnouncementsPage();
+  } catch(e) {
+    toast(e.message, "err");
+  }
+}
+
+async function scheduleAnnouncementBroadcast() {
+  if (!ensureEditor()) return;
+  const content = (document.getElementById("announcement-template")?.value || "").trim();
+  const chatIds = Array.from(selectedAnnouncementChats);
+  const hasAttachment = _hasAnnouncementAttachment();
+  const scheduledAt = (document.getElementById("announcement-schedule-at")?.value || "").trim();
+  if (!content && !hasAttachment) {
+    toast("Нужен либо текст, либо вложение", "err");
+    return;
+  }
+  if (!chatIds.length) {
+    toast("Выбери хотя бы одну группу", "err");
+    return;
+  }
+  if (!scheduledAt) {
+    toast("Укажи время отправки", "err");
+    return;
+  }
+  // Human-readable Tashkent time in the confirm prompt
+  const displayTime = scheduledAt.replace("T", " ");
+  if (!confirm(`Запланировать отправку на ${displayTime} (Ташкент) для ${chatIds.length} групп?\n\nЗадача выполнится сама — закрывать админку можно.`)) return;
+  try {
+    const res = await api("/api/announcements/schedule", "POST", {
+      content,
+      chat_ids: chatIds,
+      scheduled_at: scheduledAt,
+    });
+    toast(`✅ Запланировано на ${res.schedule.scheduled_at}`, "ok");
+    document.getElementById("announcement-schedule-at").value = "";
+    loadAnnouncementSchedules();
+  } catch(e) {
+    toast(e.message, "err");
+  }
+}
+
+function _formatScheduleStatus(status) {
+  const map = {
+    pending:   `<span class="badge badge-amber">⏳ ожидает</span>`,
+    sending:   `<span class="badge badge-blue">📤 идёт отправка</span>`,
+    sent:      `<span class="badge badge-green">✅ отправлено</span>`,
+    failed:    `<span class="badge badge-red">❌ ошибка</span>`,
+    cancelled: `<span class="badge" style="background:rgba(255,255,255,.08);color:var(--muted2)">⛔ отменено</span>`,
+  };
+  return map[status] || esc(status || "");
+}
+
+async function loadAnnouncementSchedules() {
+  const tbody = document.getElementById("announcement-schedules-table");
+  if (!tbody) return;
+  try {
+    const data = await api("/api/announcements/schedules");
+    const rows = Array.isArray(data.schedules) ? data.schedules : [];
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📅</div><p>Нет запланированных рассылок.</p></div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map(r => {
+      const previewText = String(r.content || "").trim();
+      const preview = previewText
+        ? esc(previewText.slice(0, 60)) + (previewText.length > 60 ? "…" : "")
+        : `<span style="color:var(--muted)">(только вложение)</span>`;
+      const attach = r.attachment_snapshot || {};
+      const attachLabel = attach.had_attachment
+        ? `${attach.kind === "photo" ? "🖼" : "📎"} ${esc(attach.filename || "")}`
+        : `<span style="color:var(--muted)">—</span>`;
+      const result = (r.status === "sent" || r.status === "failed")
+        ? `✅ ${Number(r.result_sent || 0)} / ❌ ${Number(r.result_failed || 0)}`
+        : "—";
+      const canCancel = r.status === "pending";
+      const cancelBtn = canCancel
+        ? `<button class="btn btn-red btn-xs editor-only" onclick="cancelAnnouncementSchedule(${r.id})">✕ Отменить</button>`
+        : "";
+      const lastError = r.last_error
+        ? `<div class="kpi-note" style="margin-top:4px;color:var(--red)">${esc(r.last_error)}</div>`
+        : "";
+      const chatCount = Array.isArray(r.chat_ids) ? r.chat_ids.length : 0;
+      return `<tr>
+        <td class="mono" style="font-size:12px">${esc(r.scheduled_at || "")}</td>
+        <td>${_formatScheduleStatus(r.status)}${lastError}</td>
+        <td>${chatCount}</td>
+        <td style="font-size:12px">${preview}</td>
+        <td style="font-size:12px">${attachLabel}</td>
+        <td style="font-size:12px">${result}</td>
+        <td style="font-size:11px;color:var(--muted2)">${esc(r.created_by || "—")}</td>
+        <td>${cancelBtn}</td>
+      </tr>`;
+    }).join("");
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="color:var(--red);padding:14px">${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function cancelAnnouncementSchedule(id) {
+  if (!ensureEditor()) return;
+  if (!confirm("Отменить запланированную рассылку?")) return;
+  try {
+    await api(`/api/announcements/schedules/${id}`, "DELETE");
+    toast("Запись отменена", "ok");
+    loadAnnouncementSchedules();
   } catch(e) {
     toast(e.message, "err");
   }
