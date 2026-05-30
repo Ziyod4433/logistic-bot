@@ -4187,6 +4187,58 @@ function onPackingListManualPick(index, blIdRaw) {
     row.matchMethod = "manual";
     row.matchedOn = "";
   }
+  // Confirming a pick exits edit mode. The savedMatch snapshot is no
+  // longer needed (the user has accepted the new choice).
+  row.editing = false;
+  row.savedMatch = null;
+  renderPackingListBulkTable();
+}
+
+// Open the inline BL-picker for a row whose status is "matched" or
+// "manual" — lets the operator override the auto-pick / change the
+// previous manual pick without first having to clear it. The current
+// match data is snapshotted in row.savedMatch so cancelPackingListEdit
+// can restore it intact.
+function editPackingListMatch(index) {
+  const row = packingListBulkFiles[index];
+  if (!row) return;
+  // Don't snapshot twice if user clicks ✏ while already editing.
+  if (!row.editing) {
+    row.savedMatch = {
+      blId:        row.blId,
+      blCode:      row.blCode,
+      client:      row.client,
+      batchName:   row.batchName,
+      isCurrent:   row.isCurrent,
+      status:      row.status,
+      matchMethod: row.matchMethod,
+      matchedOn:   row.matchedOn,
+      manual:      row.manual,
+    };
+  }
+  row.editing = true;
+  renderPackingListBulkTable();
+}
+
+// Revert from edit mode back to whatever the row was before ✏ изменить
+// was pressed (auto-matched green or manual blue).
+function cancelPackingListEdit(index) {
+  const row = packingListBulkFiles[index];
+  if (!row) return;
+  const saved = row.savedMatch;
+  if (saved) {
+    row.blId = saved.blId;
+    row.blCode = saved.blCode;
+    row.client = saved.client;
+    row.batchName = saved.batchName;
+    row.isCurrent = saved.isCurrent;
+    row.status = saved.status;
+    row.matchMethod = saved.matchMethod;
+    row.matchedOn = saved.matchedOn;
+    row.manual = saved.manual;
+  }
+  row.editing = false;
+  row.savedMatch = null;
   renderPackingListBulkTable();
 }
 
@@ -4213,6 +4265,22 @@ function renderPackingListBulkTable() {
       doneErr++;
       badge = `<span class="badge badge-red">❌ Ошибка: ${esc(row.uploadError || "")}</span>
                <button class="btn btn-ghost btn-xs" onclick="resetPackingListUploadResult(${idx})" style="margin-left:6px">↻ повторить</button>`;
+    } else if (row.editing) {
+      // Operator opened the dropdown to override the current pick (or to
+      // pick one for the first time on an unmatched row). Pre-select the
+      // current blId so swapping is easy.
+      if (row.status === "matched") matched++;
+      else if (row.status === "manual") manual++;
+      else missed++;
+      const cancelBtn = (row.status === "matched" || row.status === "manual")
+        ? `<button class="btn btn-ghost btn-xs" onclick="cancelPackingListEdit(${idx})" style="margin-left:6px" title="Вернуть прежнюю привязку">↶ отменить правку</button>`
+        : `<button class="btn btn-ghost btn-xs" onclick="cancelPackingListEdit(${idx})" style="margin-left:6px">↶ закрыть</button>`;
+      badge = `<span class="badge badge-blue">✏ Выбери BL вручную:</span>
+               ${cancelBtn}
+               <select class="inp" style="min-width:240px;margin-top:4px;display:block"
+                       onchange="onPackingListManualPick(${idx}, this.value)">
+                 ${packingListBlOptionsHTML(row.blId || "")}
+               </select>`;
     } else if (row.status === "matched") {
       matched++;
       const method = row.matchMethod === "name" ? "по имени клиента"
@@ -4222,13 +4290,15 @@ function renderPackingListBulkTable() {
       const crossBatch = (row.isCurrent === false && row.batchName)
         ? ` <span class="badge badge-amber" style="margin-left:4px">📂 ${esc(row.batchName)}</span>`
         : "";
-      badge = `<span class="badge badge-green">Совпало ${method}${matchedOn}</span>${crossBatch}`;
+      badge = `<span class="badge badge-green">Совпало ${method}${matchedOn}</span>${crossBatch}
+               <button class="btn btn-ghost btn-xs" onclick="editPackingListMatch(${idx})" style="margin-left:6px" title="Привязать к другому BL вручную">✏ изменить</button>`;
     } else if (row.status === "manual") {
       manual++;
       const crossBatch = (row.isCurrent === false && row.batchName)
         ? ` <span class="badge badge-amber" style="margin-left:4px">📂 ${esc(row.batchName)}</span>`
         : "";
       badge = `<span class="badge badge-blue">Привязано вручную</span>${crossBatch}
+               <button class="btn btn-ghost btn-xs" onclick="editPackingListMatch(${idx})" style="margin-left:6px" title="Выбрать другой BL">✏ изменить</button>
                <button class="btn btn-ghost btn-xs" onclick="onPackingListManualPick(${idx}, '')" style="margin-left:6px">✕ сбросить</button>`;
     } else {
       missed++;
@@ -4248,7 +4318,11 @@ function renderPackingListBulkTable() {
     </tr>`;
   }).join("");
   const summary = document.getElementById("packing-list-bulk-summary");
+  // Rows currently sitting in edit mode aren't counted as "ready" — the
+  // user opened the picker and hasn't confirmed a choice yet.
+  const editingCount = packingListBulkFiles.filter(r => r.editing).length;
   const parts = [`Авто: ${matched}`, `Вручную: ${manual}`, `Без привязки: ${missed}`];
+  if (editingCount) parts.push(`✏ редактируется: ${editingCount}`);
   if (doneOk) parts.push(`✅ ${doneOk}`);
   if (doneErr) parts.push(`❌ ${doneErr}`);
   summary.textContent = parts.join(" · ");
@@ -4257,8 +4331,9 @@ function renderPackingListBulkTable() {
   //   - Disabled and labeled "✅ Все прикреплены" when nothing left to send.
   //   - Disabled when there are no matched/manual rows yet to upload.
   //   - Active when at least one row is queued for the next upload pass.
+  // Rows currently editing aren't queued, so subtract them from pending.
   const btn = document.getElementById("packing-list-bulk-upload-btn");
-  const pending = matched + manual;        // rows ready to upload (not yet ok)
+  const pending = (matched + manual) - editingCount;  // rows ready to upload (not yet ok, not editing)
   const hasFilesAttempted = packingListBulkFiles.length > 0;
   if (pending === 0 && doneOk > 0 && doneErr === 0) {
     btn.disabled = true;
@@ -4268,7 +4343,7 @@ function renderPackingListBulkTable() {
     btn.innerHTML = "📤 Прикрепить совпавшие";
   } else {
     btn.disabled = pending === 0;
-    btn.innerHTML = "📤 Прикрепить совпавшие";
+    btn.innerHTML = pending > 0 ? `📤 Прикрепить совпавшие (${pending})` : "📤 Прикрепить совпавшие";
   }
 }
 
@@ -4284,11 +4359,15 @@ async function uploadPackingListBulk() {
   if (!ensureEditor()) return;
   if (!currentBatchId) { toast("Сначала открой партию", "err"); return; }
 
-  // Collect indexes of rows that are ready to be uploaded
+  // Collect indexes of rows that are ready to be uploaded. Rows currently
+  // in edit mode are skipped — the user opened the BL picker on them but
+  // hasn't confirmed; uploading their stale data would be surprising.
   const queue = [];
   let alreadyUploaded = 0;
   let attached = 0;
+  let editingCount = 0;
   packingListBulkFiles.forEach((row, idx) => {
+    if (row.editing) { editingCount++; return; }
     const isAttached = (row.status === "matched" || row.status === "manual") && row.blId;
     if (isAttached) attached++;
     if (isAttached && !row.uploadResult) {
@@ -4298,7 +4377,9 @@ async function uploadPackingListBulk() {
     }
   });
   if (!queue.length) {
-    if (alreadyUploaded > 0 && attached === alreadyUploaded) {
+    if (editingCount > 0) {
+      toast(`Сначала подтверди или отмени правку у ${editingCount} строк`, "err");
+    } else if (alreadyUploaded > 0 && attached === alreadyUploaded) {
       toast(`✅ Все ${alreadyUploaded} файл(ов) уже прикреплены`, "ok");
     } else if (attached === 0) {
       toast("Нет привязанных файлов — выбери BL для нужных файлов в списке", "err");
