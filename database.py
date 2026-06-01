@@ -397,6 +397,95 @@ def _english_days_word(number: int | None, has_range: bool = False) -> str:
     return "day" if number == 1 else "days"
 
 
+# Operators frequently type free-form Uzbek (mixed with stray Russian
+# loan-words like "Peregruz") into the ETA value field. The day-word
+# swap below only normalizes "N kun" → "N дней / days / кун", but leaves
+# everything BEFORE the number untranslated, so a Russian recipient
+# would see "Peregruz bo'lish vaqti 4-5 дней" — half-translated.
+#
+# This dictionary catches the common descriptive phrases and rewrites
+# them per target language. Each entry is (pattern, replacement). Order
+# matters: longer / more-specific phrases first so a 1-word match
+# doesn't shadow a 3-word phrase that contains it.
+_ETA_PHRASE_TRANSLATIONS: dict[str, list[tuple[str, str]]] = {
+    "uz_cyrl": [
+        # Word-order-aware patterns first
+        (r"(\d+(?:\s*-\s*\d+)?)\s+kun\s+ichida",               r"\1 кун ичида"),
+        (r"(\d+(?:\s*-\s*\d+)?)\s+kun\s+qoldi",                r"\1 кун қолди"),
+        # Multi-word phrases
+        (r"Peregruz\s+bo[\'’ʻʼ`]?lish\s+vaqti",                "Перегруз бўлиш вақти"),
+        (r"Qozoq\s+furaga\s+ortilish\s+vaqti",                 "Қозоқ фурага ортилиш вақти"),
+        (r"Qozoq\s+furaga\s+ortilvotti",                       "Қозоқ фурага ортилвотти"),
+        (r"Toshkentga\s+yetib\s+kelish\s+vaqti",               "Тошкентга етиб келиш вақти"),
+        (r"Horgosga\s+yetib\s+kelish\s+vaqti",                 "Хоргосга етиб келиш вақти"),
+        (r"Mijozga\s+yetib\s+borish\s+vaqti",                  "Мижозга етиб бориш вақти"),
+        (r"Yetib\s+kelish\s+vaqti",                            "Етиб келиш вақти"),
+        # Single-word fallbacks
+        (r"\bichida\b",                                        "ичида"),
+        (r"\bqoldi\b",                                         "қолди"),
+        (r"\bbugun\b",                                         "бугун"),
+        (r"\bertaga\b",                                        "эртага"),
+        (r"\bhozir\b",                                         "ҳозир"),
+        (r"\btaxminan\b",                                      "тахминан"),
+        (r"\byo[\'’ʻʼ`]?lda\b",                                "йўлда"),
+    ],
+    "ru": [
+        # "4-5 kun ichida" → "в течение 4-5 kun" (then kun → дней by day-word swap)
+        (r"(\d+(?:\s*-\s*\d+)?)\s+kun\s+ichida",               r"в течение \1 kun"),
+        # "3 kun qoldi" → "осталось 3 kun"
+        (r"(\d+(?:\s*-\s*\d+)?)\s+kun\s+qoldi",                r"осталось \1 kun"),
+        (r"Peregruz\s+bo[\'’ʻʼ`]?lish\s+vaqti",                "Срок перегруза"),
+        (r"Qozoq\s+furaga\s+ortilish\s+vaqti",                 "Срок погрузки на казахскую фуру"),
+        (r"Qozoq\s+furaga\s+ortilvotti",                       "Уже погружен на казахскую фуру"),
+        (r"Toshkentga\s+yetib\s+kelish\s+vaqti",               "Срок прибытия в Ташкент"),
+        (r"Horgosga\s+yetib\s+kelish\s+vaqti",                 "Срок прибытия в Хоргос"),
+        (r"Mijozga\s+yetib\s+borish\s+vaqti",                  "Срок доставки клиенту"),
+        (r"Yetib\s+kelish\s+vaqti",                            "Срок прибытия"),
+        (r"\bichida\b",                                        "в течение"),
+        (r"\bqoldi\b",                                         "осталось"),
+        (r"\bbugun\b",                                         "сегодня"),
+        (r"\bertaga\b",                                        "завтра"),
+        (r"\bhozir\b",                                         "сейчас"),
+        (r"\btaxminan\b",                                      "примерно"),
+        (r"\byo[\'’ʻʼ`]?lda\b",                                "в пути"),
+    ],
+    "en": [
+        (r"(\d+(?:\s*-\s*\d+)?)\s+kun\s+ichida",               r"within \1 kun"),
+        (r"(\d+(?:\s*-\s*\d+)?)\s+kun\s+qoldi",                r"\1 kun remaining"),
+        (r"Peregruz\s+bo[\'’ʻʼ`]?lish\s+vaqti",                "Reloading time"),
+        (r"Qozoq\s+furaga\s+ortilish\s+vaqti",                 "Loading time onto Kazakh truck"),
+        (r"Qozoq\s+furaga\s+ortilvotti",                       "Already loaded onto Kazakh truck"),
+        (r"Toshkentga\s+yetib\s+kelish\s+vaqti",               "Arrival time to Tashkent"),
+        (r"Horgosga\s+yetib\s+kelish\s+vaqti",                 "Arrival time to Horgos"),
+        (r"Mijozga\s+yetib\s+borish\s+vaqti",                  "Delivery time to client"),
+        (r"Yetib\s+kelish\s+vaqti",                            "Arrival time"),
+        (r"\bichida\b",                                        "within"),
+        (r"\bqoldi\b",                                         "remaining"),
+        (r"\bbugun\b",                                         "today"),
+        (r"\bertaga\b",                                        "tomorrow"),
+        (r"\bhozir\b",                                         "now"),
+        (r"\btaxminan\b",                                      "approximately"),
+        (r"\byo[\'’ʻʼ`]?lda\b",                                "on the way"),
+    ],
+}
+
+
+def _apply_eta_phrase_translations(text: str, language: str) -> str:
+    """Rewrite known Uzbek tracking phrases inside the ETA value.
+
+    Operates BEFORE the day-word swap so "Peregruz bo'lish vaqti 4-5 kun"
+    can become "Срок перегруза 4-5 kun" first, and then the day-word swap
+    turns the trailing "kun" into "дней" / "days".
+    """
+    table = _ETA_PHRASE_TRANSLATIONS.get(language) or []
+    if not table:
+        return text
+    out = text
+    for pattern, replacement in table:
+        out = re.sub(pattern, replacement, out, flags=re.IGNORECASE)
+    return out
+
+
 def _localize_eta_value(value: str, language: str = DEFAULT_MESSAGE_LANGUAGE) -> str:
     text = str(value or "").strip()
     if not text:
@@ -405,6 +494,13 @@ def _localize_eta_value(value: str, language: str = DEFAULT_MESSAGE_LANGUAGE) ->
     if normalized_language == "uz_latn":
         return text
 
+    # 1) Phrase pass — translate Uzbek descriptors (Peregruz / Yetib /
+    #    bugun / qoldi etc.) so the value reads naturally in the target
+    #    language even when the operator typed a multi-word note.
+    text = _apply_eta_phrase_translations(text, normalized_language)
+
+    # 2) Day-word pass — pluralize "kun / кун / day(s) / день/дня/дней"
+    #    according to the trailing number, in the target language.
     last_number = _extract_eta_last_number(text)
     has_range = bool(re.search(r"\d+\s*-\s*\d+", text))
     day_word_map = {
