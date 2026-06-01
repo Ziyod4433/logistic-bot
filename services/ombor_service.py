@@ -36,15 +36,147 @@ def _col_to_index(col: str) -> int:
     return result - 1
 
 
+# Month-name lookup for parsing free-text dates like "1 iyun 2026" or
+# "01 июн 2026". Keys are normalized (lowercased + stripped trailing dot).
+_MONTH_NAME_INDEX: dict[str, int] = {}
+def _populate_month_name_index() -> None:
+    if _MONTH_NAME_INDEX:
+        return
+    entries = [
+        # English
+        (1, ["jan", "january"]),
+        (2, ["feb", "february"]),
+        (3, ["mar", "march"]),
+        (4, ["apr", "april"]),
+        (5, ["may"]),
+        (6, ["jun", "june"]),
+        (7, ["jul", "july"]),
+        (8, ["aug", "august"]),
+        (9, ["sep", "sept", "september"]),
+        (10, ["oct", "october"]),
+        (11, ["nov", "november"]),
+        (12, ["dec", "december"]),
+        # Russian (case-folded)
+        (1, ["янв", "январь", "января"]),
+        (2, ["фев", "февраль", "февраля"]),
+        (3, ["мар", "март", "марта"]),
+        (4, ["апр", "апрель", "апреля"]),
+        (5, ["май", "мая"]),
+        (6, ["июн", "июнь", "июня"]),
+        (7, ["июл", "июль", "июля"]),
+        (8, ["авг", "август", "августа"]),
+        (9, ["сен", "сент", "сентябрь", "сентября"]),
+        (10, ["окт", "октябрь", "октября"]),
+        (11, ["ноя", "ноябрь", "ноября"]),
+        (12, ["дек", "декабрь", "декабря"]),
+        # Uzbek (Latin)
+        (1, ["yan", "yanvar"]),
+        (2, ["fev", "fevral"]),
+        (3, ["mar", "mart"]),
+        (4, ["apr", "aprel"]),
+        (5, ["may"]),
+        (6, ["iyn", "iyun"]),
+        (7, ["iyl", "iyul"]),
+        (8, ["avg", "avgust"]),
+        (9, ["sen", "sent", "sentabr", "sentyabr"]),
+        (10, ["okt", "oktabr", "oktyabr"]),
+        (11, ["noy", "noyabr"]),
+        (12, ["dek", "dekabr"]),
+        # Uzbek (Cyrillic)
+        (1, ["янв", "январ"]),
+        (2, ["фев", "феврал"]),
+        (3, ["мар", "март"]),
+        (4, ["апр", "апрел"]),
+        (5, ["май"]),
+        (6, ["июн"]),
+        (7, ["июл"]),
+        (8, ["авг", "август"]),
+        (9, ["сен", "сент", "сентябр"]),
+        (10, ["окт", "октябр"]),
+        (11, ["ноя", "ноябр"]),
+        (12, ["дек", "декабр"]),
+    ]
+    for month, names in entries:
+        for n in names:
+            _MONTH_NAME_INDEX[n] = month
+_populate_month_name_index()
+
+
+# Excel/Sheets store dates as serial numbers (days since 1899-12-30 for
+# Lotus-compat). gviz CSV usually formats them, but if the column type
+# is unformatted Number some operators see raw integers in the export.
+_EXCEL_EPOCH = date(1899, 12, 30)
+
+
 def _parse_date(value: Any) -> date | None:
+    """Parse a wide range of date representations into a date.
+
+    Supported:
+      - Standard numeric formats: DD.MM.YYYY, DD.MM.YY, DD/MM/YYYY,
+        DD-MM-YYYY, YYYY-MM-DD, YYYY/MM/DD, MM/DD/YYYY (US).
+      - Text dates with month names in EN/RU/UZ-Latn/UZ-Cyrl:
+        "1 iyun 2026", "01 июн 2026", "27 may 2026", etc.
+      - gviz raw Date format: "Date(2026,5,1)" (month is 0-indexed).
+      - Excel/Sheets serial numbers (40000-99999 range, ≈ 2009-2173).
+    """
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
     text = str(value or "").strip()
     if not text:
         return None
-    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+
+    # gviz raw "Date(2026,5,1)" — month is 0-indexed in this format.
+    m = re.match(r"^\s*Date\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", text, re.IGNORECASE)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)) + 1, int(m.group(3)))
+        except (ValueError, TypeError):
+            pass
+
+    # Plain Excel/Sheets serial number. Avoid matching short numbers that
+    # could be just a year or a day — require 5 digits (range 10000 →
+    # 1927-05-18) which covers any plausible business date.
+    if re.fullmatch(r"\d{5,6}(\.\d+)?", text):
+        try:
+            serial = int(float(text))
+            if 10000 < serial < 80000:   # ≈ 1927 .. 2118
+                return _EXCEL_EPOCH + timedelta(days=serial)
+        except (ValueError, OverflowError):
+            pass
+
+    # Strict numeric formats (most common path — fast).
+    for fmt in (
+        "%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d",
+        "%d.%m.%y",                # 01.06.26
+        "%Y.%m.%d",                # 2026.06.01
+        "%m/%d/%Y",                # 06/01/2026 (US)
+    ):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:
             continue
+
+    # Text date with month name: "1 iyun 2026" / "27 may 2026" /
+    # "01 июн 2026" / "1-iyun-2026" / "01.iyun.2026" etc.
+    txt_match = re.match(
+        r"^\s*(\d{1,2})[\s./\-]+([A-Za-zА-Яа-яЁё]+)[\s./\-]+(\d{2,4})\s*$",
+        text,
+    )
+    if txt_match:
+        day_s, name, year_s = txt_match.group(1), txt_match.group(2), txt_match.group(3)
+        key = name.lower().rstrip(".")
+        month = _MONTH_NAME_INDEX.get(key)
+        if month is not None:
+            try:
+                year = int(year_s)
+                if year < 100:
+                    year = 2000 + year
+                return date(year, month, int(day_s))
+            except (ValueError, TypeError):
+                pass
+
     return None
 
 
@@ -330,7 +462,9 @@ def fetch_ombor_data(
         "rows_bad_date": 0,         # date unparseable
         "rows_outside_period": 0,   # date OK but outside plan period
         "rows_no_bl": 0,             # BRAND NAME (bl_col) empty — counts CBM but not BL
-        "sample_dates": [],          # up to 5 sample raw dates from data rows
+        "sample_dates": [],          # up to 5 raw "date" cells with parse result
+        "sample_bad_dates": [],      # up to 5 raw cells that FAILED to parse
+        "sample_outside_period": [],  # up to 5 dates we DID parse but rejected as out-of-range
     }
 
     def safe_cell(row: list[str], idx: int) -> str:
@@ -343,14 +477,25 @@ def fetch_ombor_data(
             continue
 
         raw_date_cell = safe_cell(row, date_idx)
-        if len(diag["sample_dates"]) < 5 and raw_date_cell:
-            diag["sample_dates"].append(raw_date_cell)
         row_date = _parse_date(raw_date_cell)
+        if len(diag["sample_dates"]) < 5 and raw_date_cell:
+            diag["sample_dates"].append({
+                "raw": raw_date_cell,
+                "parsed": row_date.isoformat() if row_date else None,
+            })
         if row_date is None:
             diag["rows_bad_date"] += 1
+            if raw_date_cell and len(diag["sample_bad_dates"]) < 5:
+                diag["sample_bad_dates"].append(raw_date_cell)
             continue
         if (date_from and row_date < date_from) or (date_to and row_date > date_to):
             diag["rows_outside_period"] += 1
+            if len(diag["sample_outside_period"]) < 5:
+                diag["sample_outside_period"].append({
+                    "raw": raw_date_cell,
+                    "parsed": row_date.isoformat(),
+                    "window": f"{date_from.isoformat() if date_from else ''}..{date_to.isoformat() if date_to else ''}",
+                })
             continue
 
         # BL identifier — BRAND NAME cell. Empty → this row contributes CBM
