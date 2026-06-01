@@ -2,6 +2,14 @@
   const bootstrap = window.SALES_MONITOR_BOOTSTRAP || {};
   const query = new URLSearchParams(window.location.search);
   const REFRESH_SECONDS = 120;            // 2-min data refresh (background, silent)
+  // Kiosk profile (login `sales` / `sales123`) — no UI to switch plans.
+  // We deliberately DON'T lock to the bootstrap.activePlanId here, because
+  // the TV stays open for days/weeks while the admin may activate new
+  // monthly plans. By sending no sales_plan_id to the backend, the
+  // server's _active_plan() resolves the current active plan every poll,
+  // so the kiosk auto-follows whichever plan admin flagged as active.
+  const isKiosk = !!bootstrap.isKiosk
+    || (typeof document !== "undefined" && document.body && document.body.classList.contains("role-kiosk"));
 
   // ── Rotation segments (one full cycle = 50 sec) ──────────────────
   // The bottom progress bar tracks the CURRENT segment's duration so it
@@ -14,7 +22,13 @@
 
   const state = {
     plans: Array.isArray(bootstrap.salesPlans) ? bootstrap.salesPlans : [],
-    planId: query.get("sales_plan_id") || bootstrap.activePlanId || "",
+    // Kiosk: leave planId empty so /analytics/api/monitor always falls
+    // through to the backend's current active plan. Admin/editor users
+    // keep the URL-pinned-or-bootstrap-active behavior so they can
+    // switch via the dropdown.
+    planId: isKiosk
+      ? ""
+      : (query.get("sales_plan_id") || bootstrap.activePlanId || ""),
     metric: query.get("metric") || "cbm",
     segmentIndex: 0,                       // pointer into SEGMENTS
     segmentDurationSeconds: SEGMENTS[0].seconds,   // denominator for countdown bar

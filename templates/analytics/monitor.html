@@ -310,6 +310,7 @@
     window.SALES_MONITOR_BOOTSTRAP = {
       activePlanId: {{ active_plan_id|tojson }},
       salesPlans: {{ sales_plans|tojson }},
+      isKiosk: {{ is_kiosk|tojson }},
     };
   </script>
   <script src="{{ url_for('static', filename='js/sales_monitor.js') }}"></script>

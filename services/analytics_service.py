@@ -2079,6 +2079,40 @@ def get_monitor(args: Any) -> dict[str, Any]:
         seller_leaders = [_to_leader(s) for s in ombor.get("sellers", [])]
         logist_leaders = [_to_leader(l) for l in ombor.get("logists", [])]
 
+        # ─────────────────────────────────────────────────────────────────
+        # Oylik dinamika ("Monthly dynamics" panel) — independent of the
+        # active plan's date range. The active plan only filters the totals
+        # / leaders. The monthly history bar chart shows the last ~12 months
+        # of CBM regardless of which plan happens to be active right now,
+        # so a plan that closed last month (or finished at >100%) still
+        # appears in the historical bars.
+        #
+        # Uses a SECOND fetch with a wide date window. The result is cached
+        # per its own (wider) cache_key for 30 sec — only one Google call
+        # per cache window, no impact on the responsive admin path.
+        try:
+            today = date.today()
+            wide_from = today.replace(day=1) - timedelta(days=365)
+            wide_to = today
+            ombor_history = ombor_service.fetch_combined_ltl_data(
+                sheet_id=ombor_sheet_id,
+                primary_sheet_name=_clean_text(selected_plan.get("ombor_sheet_name") or "Ombor"),
+                primary_cbm_col=cbm_col_stored or "V",
+                primary_date_col=date_col_stored or "Z",
+                primary_seller_col=seller_col_stored or "AG",
+                primary_logist_col=_clean_text(selected_plan.get("ombor_logist_col") or "AH"),
+                primary_bl_col=_clean_text(selected_plan.get("ombor_bl_col") or "E"),
+                primary_header_rows=max(0, _to_int(selected_plan.get("ombor_header_rows") if selected_plan.get("ombor_header_rows") is not None else 2)),
+                date_from=wide_from,
+                date_to=wide_to,
+                force=force,
+            )
+            monthly_source = ombor_history.get("monthly") or []
+        except Exception:
+            # If the history fetch fails, fall back to the active-plan
+            # monthly so we don't blank the panel entirely.
+            monthly_source = ombor.get("monthly", []) or []
+
         monthly = [
             {
                 "month": m["month"],
@@ -2086,7 +2120,7 @@ def get_monitor(args: Any) -> dict[str, Any]:
                 "value": _round(m["cbm"]),
                 "bl_count": _to_int(m["bl_count"]),
             }
-            for m in ombor.get("monthly", [])
+            for m in monthly_source
         ]
 
         return {
