@@ -754,6 +754,13 @@ def fetch_combined_ltl_data(
                 "total_bl":  r.get("total_bl") or 0,
                 "rows_used": stage_diag.get("rows_used"),
                 "rows_total": stage_diag.get("rows_total"),
+                "rows_no_cbm":     stage_diag.get("rows_no_cbm"),
+                "rows_bad_date":   stage_diag.get("rows_bad_date"),
+                "rows_outside_period": stage_diag.get("rows_outside_period"),
+                "rows_no_bl":      stage_diag.get("rows_no_bl"),
+                "sample_dates":    stage_diag.get("sample_dates"),
+                "sample_bad_dates": stage_diag.get("sample_bad_dates"),
+                "sample_outside_period": stage_diag.get("sample_outside_period"),
                 "fetched_at": r.get("fetched_at"),
                 "served_from_cache": cached,
             }

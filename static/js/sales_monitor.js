@@ -60,6 +60,7 @@
     clock: byId("clock"),
     planName: byId("plan-name"),
     planPeriod: byId("plan-period"),
+    planStatusBanner: byId("plan-status-banner"),
     lastUpdated: byId("last-updated"),
     sourceName: byId("source-name"),
     progressArc: byId("progress-arc"),
@@ -474,6 +475,35 @@
     els.planName.textContent = plan.name || "—";
     els.planPeriod.textContent = plan.period_start && plan.period_end ? `${plan.period_start} → ${plan.period_end}` : "—";
     els.lastUpdated.textContent = payload.last_updated || "—";
+
+    // Plan-vs-sheet status banner inside UMUMIY PLAN card. Backend sets
+    // payload.plan_data_status.state to one of:
+    //   "ok"               — data present, banner hidden
+    //   "empty_in_period"  — sheet has data, but none falls inside the
+    //                        active plan's date range (typical when
+    //                        operator activates next-month plan before
+    //                        any rows are dated for that month)
+    //   "sheet_empty"      — wide-range fetch returned nothing at all
+    //                        (column config wrong, sheet access lost, etc.)
+    if (els.planStatusBanner) {
+      const status = payload.plan_data_status || {};
+      const state = String(status.state || "ok");
+      if (state === "empty_in_period" || state === "sheet_empty") {
+        const icon = state === "sheet_empty" ? "⛔" : "⚠️";
+        const hint = state === "sheet_empty"
+          ? "Проверь URL таблицы, доступ (Anyone with link · Viewer) и колонки CBM / SANA / SOTUVCHI."
+          : "Скорректируй период плана или внеси строки с датами в этот период.";
+        els.planStatusBanner.dataset.state = state;
+        els.planStatusBanner.innerHTML =
+          `<span class="psb-icon">${icon}</span>` +
+          `<span class="psb-body">${escapeHtml(status.message || "")}` +
+          `<div class="psb-hint">${escapeHtml(hint)}</div></span>`;
+        els.planStatusBanner.hidden = false;
+      } else {
+        els.planStatusBanner.hidden = true;
+        els.planStatusBanner.innerHTML = "";
+      }
+    }
 
     if (isLive) {
       els.sourceName.innerHTML = `<span class="source-live">LIVE · ${escapeHtml(payload.source_name || "Ombor")}</span>`;

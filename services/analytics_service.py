@@ -2138,6 +2138,62 @@ def get_monitor(args: Any) -> dict[str, Any]:
             for m in monthly_source
         ]
 
+        # ─────────────────────────────────────────────────────────────────
+        # Plan-vs-sheet "why is my plan empty?" hint.
+        # When the active plan resolves to 0 rows in the configured period
+        # but the wide-range fetch DID find rows, the operator is usually
+        # confused about which window the plan covers vs where their
+        # sheet data actually lives. We compute a one-shot status string
+        # the UI can render as a yellow banner so they don't have to
+        # inspect the diagnostics blob.
+        plan_data_status: dict[str, Any] = {"state": "ok"}
+        try:
+            plan_period_start = _clean_text(selected_plan.get("period_start"))
+            plan_period_end   = _clean_text(selected_plan.get("period_end"))
+            active_diag = ombor.get("diagnostics") or {}
+            per_stage_active = active_diag.get("per_stage") or {}
+            # rows_used across the active-plan stages (already filtered)
+            active_rows_used = sum(
+                int((s or {}).get("rows_used") or 0)
+                for s in per_stage_active.values()
+                if isinstance(s, dict)
+            )
+            history_total_cbm = 0.0
+            history_latest_month = ""
+            if ombor_history:
+                history_total_cbm = float(ombor_history.get("total_cbm") or 0)
+                hist_monthly = ombor_history.get("monthly") or []
+                if hist_monthly:
+                    last = hist_monthly[-1]
+                    history_latest_month = last.get("label") or last.get("month") or ""
+            # Active plan saw zero rows? Was the wide-range fetch empty too?
+            if active_rows_used == 0 and history_total_cbm > 0:
+                plan_data_status = {
+                    "state": "empty_in_period",
+                    "plan_period_start": plan_period_start,
+                    "plan_period_end":   plan_period_end,
+                    "history_latest_month": history_latest_month,
+                    "message": (
+                        f"План «{_clean_text(selected_plan.get('name'))}» "
+                        f"({plan_period_start} → {plan_period_end}) пуст: "
+                        f"в Google Sheet нет строк с датами в этом периоде. "
+                        f"Последние данные — {history_latest_month}."
+                    ),
+                }
+            elif active_rows_used == 0 and history_total_cbm == 0:
+                plan_data_status = {
+                    "state": "sheet_empty",
+                    "plan_period_start": plan_period_start,
+                    "plan_period_end":   plan_period_end,
+                    "message": (
+                        "Google Sheet не вернул ни одной строки за последние 24 месяца. "
+                        "Проверь настройки колонок (CBM=V, SANA=Z, SOTUVCHI=AG) "
+                        "и доступ к таблице по ссылке."
+                    ),
+                }
+        except Exception:
+            plan_data_status = {"state": "ok"}
+
         return {
             "empty": False,
             "data_source": "ombor_live",
@@ -2191,6 +2247,7 @@ def get_monitor(args: Any) -> dict[str, Any]:
             },
             "last_updated": ombor["fetched_at"],
             "source_name": "Google Sheets - " + str(selected_plan.get("ombor_sheet_name") or "Ombor"),
+            "plan_data_status": plan_data_status,
             "diagnostics": ombor.get("diagnostics"),
             "ftl_diagnostics": ftl_diag,
             "history_diagnostics": {

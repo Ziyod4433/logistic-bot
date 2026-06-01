@@ -798,6 +798,43 @@ body.tv-mode .dept-mode-badge {
   pointer-events: none;
 }
 
+/* "Why is the active plan empty?" banner — shown inside the UMUMIY PLAN
+   card when the configured plan period contains no rows from the sheet.
+   Operators were getting confused when they created a plan whose date
+   range didn't overlap with where their data was actually entered. */
+.plan-status-banner {
+  margin: 12px 18px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 181, 71, 0.35);
+  background: rgba(255, 181, 71, 0.10);
+  color: var(--amber, #ffb547);
+  font-size: 13px;
+  line-height: 1.4;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.plan-status-banner[data-state="sheet_empty"] {
+  border-color: rgba(231, 76, 60, 0.45);
+  background: rgba(231, 76, 60, 0.10);
+  color: var(--red, #e74c3c);
+}
+.plan-status-banner .psb-icon {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.plan-status-banner .psb-body {
+  flex: 1;
+}
+.plan-status-banner .psb-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  opacity: 0.75;
+}
+
 body.monitor-fullscreen .controls,
 body.monitor-fullscreen .monthly-card,
 body.monitor-fullscreen .bottom {
