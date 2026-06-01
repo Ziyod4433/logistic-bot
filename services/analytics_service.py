@@ -2082,18 +2082,32 @@ def get_monitor(args: Any) -> dict[str, Any]:
         # ─────────────────────────────────────────────────────────────────
         # Oylik dinamika ("Monthly dynamics" panel) — independent of the
         # active plan's date range. The active plan only filters the totals
-        # / leaders. The monthly history bar chart shows the last ~12 months
+        # / leaders. The monthly history bar chart shows the last ~24 months
         # of CBM regardless of which plan happens to be active right now,
         # so a plan that closed last month (or finished at >100%) still
         # appears in the historical bars.
         #
-        # Uses a SECOND fetch with a wide date window. The result is cached
-        # per its own (wider) cache_key for 30 sec — only one Google call
-        # per cache window, no impact on the responsive admin path.
+        # IMPORTANT: use Tashkent-local "today" — Railway containers run in
+        # UTC, so `date.today()` shifts forward/back by up to 5 hours at
+        # midnight local. For a monitor that's expected to reflect the
+        # current month accurately the moment a plan period rolls over,
+        # we need the calendar that the operators are looking at.
+        # Default values BEFORE the try block so the diagnostics block at
+        # the bottom can always reference them even if the fetch raises.
+        history_error: str | None = None
+        ombor_history: dict[str, Any] | None = None
         try:
+            today = ombor_service.datetime.now(ombor_service.TASHKENT_TZ).date()
+        except Exception:
             today = date.today()
-            wide_from = today.replace(day=1) - timedelta(days=365)
-            wide_to = today
+        month_start = today.replace(day=1)
+        wide_from = date(month_start.year - 2, month_start.month, 1)
+        wide_to = today
+
+        try:
+            # Span 24 months back from the first of THIS month. Generous
+            # so that no boundary issue can lose a recent month — the
+            # frontend only renders months where there's actual data.
             ombor_history = ombor_service.fetch_combined_ltl_data(
                 sheet_id=ombor_sheet_id,
                 primary_sheet_name=_clean_text(selected_plan.get("ombor_sheet_name") or "Ombor"),
@@ -2108,9 +2122,10 @@ def get_monitor(args: Any) -> dict[str, Any]:
                 force=force,
             )
             monthly_source = ombor_history.get("monthly") or []
-        except Exception:
+        except Exception as exc:
             # If the history fetch fails, fall back to the active-plan
             # monthly so we don't blank the panel entirely.
+            history_error = str(exc)
             monthly_source = ombor.get("monthly", []) or []
 
         monthly = [
@@ -2178,6 +2193,22 @@ def get_monitor(args: Any) -> dict[str, Any]:
             "source_name": "Google Sheets - " + str(selected_plan.get("ombor_sheet_name") or "Ombor"),
             "diagnostics": ombor.get("diagnostics"),
             "ftl_diagnostics": ftl_diag,
+            "history_diagnostics": {
+                # What date window did the history fetch actually cover?
+                "wide_from": wide_from.isoformat(),
+                "wide_to":   wide_to.isoformat(),
+                "today":     today.isoformat(),
+                # Which months came back (with non-zero CBM)?
+                "months_present": [m.get("month") for m in monthly_source if (m.get("cbm") or 0) > 0],
+                "month_count":    len(monthly_source),
+                "error":          history_error or "",
+                # Per-stage row counts so the user can see which tab
+                # contributed to the history aggregate.
+                "stages":         (
+                    (ombor_history.get("diagnostics") or {}).get("per_stage")
+                    if ombor_history else None
+                ),
+            },
             "ombor_config": {
                 "cbm_col": cbm_col_stored or "V",
                 "date_col": date_col_stored or "Z",
