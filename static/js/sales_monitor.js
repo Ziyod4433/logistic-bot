@@ -268,13 +268,22 @@
     els.monthlyBars.innerHTML = rows
       .map((row) => {
         const width = Math.max(6, (Number(row.value || 0) / max) * 100);
-        const trucks = Number(row.savdo_trucks || 0);
+        const sv_trucks = Number(row.savdo_trucks || 0);
+        const lg_trucks = Number(row.logistika_trucks || 0);
+        const total_trucks = sv_trucks + lg_trucks;
         // Bar value line: m³ · fura · BL.
-        // Trucks segment only appears for months that had any FTL (cleaner
-        // visual for months with LTL only).
-        const trucksChip = trucks > 0
-          ? ` • <span class="bar-trucks">${escapeHtml(formatNumber(trucks))} fura</span>`
-          : "";
+        // Format the trucks chip three ways:
+        //   no trucks         → no chip
+        //   only SAVDO trucks → "7 fura"
+        //   both              → "7 + 4 fura" (SAVDO + LOGISTIKA; LOGISTIKA
+        //                       trucks are shown but do NOT add to m³)
+        let trucksChip = "";
+        if (total_trucks > 0) {
+          const label = (sv_trucks > 0 && lg_trucks > 0)
+            ? `${formatNumber(sv_trucks)} + ${formatNumber(lg_trucks)} fura`
+            : `${formatNumber(sv_trucks + lg_trucks)} fura`;
+          trucksChip = ` • <span class="bar-trucks" title="SAVDO + LOGISTIKA fura. LOGISTIKA m³ ga qo'shilmaydi.">${escapeHtml(label)}</span>`;
+        }
         const ym = row.month || "";
         // Whole bar item is clickable; data-month is the click handler key.
         return `

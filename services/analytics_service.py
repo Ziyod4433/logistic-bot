@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
@@ -2152,35 +2154,45 @@ def get_monitor(args: Any) -> dict[str, Any]:
                 # FTL is optional — silently fall back to LTL-only monthly bars.
                 ftl_history_by_month = {}
 
-        # For each month, compute SAVDO FTL m³ contribution. Trucks of
-        # LOGISTIKA (the hardcoded 3 names) are EXCLUDED — they stay
-        # hidden from the main bar and only appear in the click popup.
-        def _split_ftl_month(month_sellers: dict[str, dict[str, Any]]) -> tuple[float, float, int]:
-            """Return (savdo_trucks, savdo_cbm, savdo_bl) for one month."""
+        # For each month, split FTL trucks into:
+        #   SAVDO  — counts toward the bar's m³ (1 fura = ftl_cbm_per_truck)
+        #   LOGISTIKA — counts only as a separate truck number on the bar
+        #               (per user request: shown but NOT multiplied into m³)
+        def _split_ftl_month(month_sellers: dict[str, dict[str, Any]]) -> tuple[float, float, int, float, int]:
+            """Return (savdo_trucks, savdo_cbm, savdo_bl, log_trucks, log_bl)."""
             sv_trucks = 0.0
             sv_bl = 0
+            lg_trucks = 0.0
+            lg_bl = 0
             for raw_name, info in (month_sellers or {}).items():
+                trucks = float(info.get("trucks") or 0)
+                bl = int(info.get("bl") or 0)
                 if _norm_person(raw_name) in LOGIST_SET:
-                    continue   # LOGISTIKA — excluded from the bar
-                sv_trucks += float(info.get("trucks") or 0)
-                sv_bl     += int(info.get("bl") or 0)
-            return sv_trucks, sv_trucks * ftl_cbm_per_truck, sv_bl
+                    lg_trucks += trucks
+                    lg_bl     += bl
+                else:
+                    sv_trucks += trucks
+                    sv_bl     += bl
+            return sv_trucks, sv_trucks * ftl_cbm_per_truck, sv_bl, lg_trucks, lg_bl
 
         # Build the monthly array — LTL m³ + SAVDO FTL m³, plus separate
-        # SAVDO truck count for display.
+        # SAVDO and LOGISTIKA truck counts for the bar.
         monthly = []
         for m in monthly_source:
             ym = m["month"]
             ltl_cbm = float(m.get("cbm") or 0)
-            sv_trucks, sv_cbm, _sv_bl = _split_ftl_month(ftl_history_by_month.get(ym, {}))
+            sv_trucks, sv_cbm, _sv_bl, lg_trucks, _lg_bl = _split_ftl_month(
+                ftl_history_by_month.get(ym, {})
+            )
             monthly.append({
                 "month": ym,
                 "label": m.get("label") or ym,
-                "value": _round(ltl_cbm + sv_cbm),     # LTL + SAVDO FTL m³
-                "ltl_cbm": _round(ltl_cbm),
-                "savdo_ftl_cbm": _round(sv_cbm),
-                "savdo_trucks": _round(sv_trucks),     # for the "Y fura" badge in the bar
-                "bl_count": _to_int(m.get("bl_count")),  # unique Ombor BLs only
+                "value":           _round(ltl_cbm + sv_cbm),  # LTL + SAVDO FTL m³ only
+                "ltl_cbm":         _round(ltl_cbm),
+                "savdo_ftl_cbm":   _round(sv_cbm),
+                "savdo_trucks":    _round(sv_trucks),         # contributes to m³
+                "logistika_trucks": _round(lg_trucks),        # display-only, NOT in m³
+                "bl_count":        _to_int(m.get("bl_count")),  # unique Ombor BLs only
             })
 
         # ─────────────────────────────────────────────────────────────────
