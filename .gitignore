@@ -3,3 +3,5 @@ logistic.db
 uploads/ 
 __pycache__/ 
 data/
+.claude/worktrees
+.claude/circle_preview.html
