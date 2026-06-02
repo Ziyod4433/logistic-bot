@@ -3942,8 +3942,7 @@ def api_send_batch(batch_id):
                 selected_ids.add(int(item))
             except (TypeError, ValueError):
                 continue
-    include_related_batches = data.get("include_related_batches")
-    include_related_batches = True if include_related_batches is None else bool(include_related_batches)
+    include_related_batches = False
 
     bl_rows = db.get_bl_by_batch(batch_id)
     if selected_ids:
@@ -4062,13 +4061,10 @@ def api_send_one(bl_id):
 
     batch = db.get_batch(bl["batch_id"])
     batch_name = batch["name"] if batch else "—"
-    data = request.get_json(silent=True) or {}
-    include_related_batches = data.get("include_related_batches")
-    include_related_batches = True if include_related_batches is None else bool(include_related_batches)
     success, error_msg = send_bl_package(
         bl,
         batch_name,
-        include_related_batches=include_related_batches,
+        include_related_batches=False,
     )
     db.add_log(bl["id"], bl["code"], batch_name, bl["chat_id"], bl["status"], success, error_msg)
 
