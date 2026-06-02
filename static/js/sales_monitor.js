@@ -823,7 +823,25 @@
         credentials: "same-origin",
         cache: "no-store",
       });
-      const data = await r.json();
+      // Read body as text first; sometimes the server returns an HTML
+      // error page (404 / 502 / login redirect) and r.json() would
+      // throw "Unexpected token '<'". Parse to JSON only if the body
+      // actually looks like JSON.
+      const raw = await r.text();
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        const status = r.status || "?";
+        const preview = (raw || "").slice(0, 160).replace(/\s+/g, " ").trim();
+        let hint = "";
+        if (status === 404) hint = " — endpoint topilmadi, Railway deploy tugagunicha kuting (~1-2 daqiqa).";
+        else if (status === 401 || status === 403) hint = " — login bo'lib qayta urinib ko'ring.";
+        else if (status >= 500)   hint = " — server xatosi, logni tekshiring.";
+        body.innerHTML = `<div class="mb-empty">HTTP ${escapeHtml(String(status))}${escapeHtml(hint)}<br><small style="opacity:.6">${escapeHtml(preview)}</small></div>`;
+        title.textContent = ym;
+        return;
+      }
       if (!r.ok || data.empty) {
         body.innerHTML = `<div class="mb-empty">${escapeHtml(data.message || data.error || "Ma'lumot yo'q.")}</div>`;
         title.textContent = ym;

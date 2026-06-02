@@ -5103,12 +5103,22 @@ def analytics_api_monitor_month(ym: str):
     ym is "YYYY-MM" in Tashkent local. Returns separate SAVDO + LOGISTIKA
     leaderboards for that month — same shape the rotating panels use, so
     the frontend can reuse its existing rendering.
+
+    Wraps every failure mode in JSON so the kiosk page never gets an HTML
+    error page (which the JS can't parse and surfaces as
+    "Unexpected token '<'").
     """
     try:
         payload = analytics_service.get_monitor_month_breakdown(ym, request.args)
+        return jsonify(payload)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    return jsonify(payload)
+        return jsonify({"error": str(exc), "kind": "validation"}), 400
+    except Exception as exc:
+        app.logger.exception("monitor month breakdown failed for ym=%s", ym)
+        return jsonify({
+            "error": f"Server error: {str(exc)[:300]}",
+            "kind": "server",
+        }), 500
 
 
 @app.route("/analytics/api/plans/<int:plan_id>/ombor-config", methods=["POST"])
