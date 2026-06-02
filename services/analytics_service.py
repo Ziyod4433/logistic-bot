@@ -2128,15 +2128,60 @@ def get_monitor(args: Any) -> dict[str, Any]:
             history_error = str(exc)
             monthly_source = ombor.get("monthly", []) or []
 
-        monthly = [
-            {
-                "month": m["month"],
-                "label": m["label"],
-                "value": _round(m["cbm"]),
-                "bl_count": _to_int(m["bl_count"]),
-            }
-            for m in monthly_source
-        ]
+        # ─────────────────────────────────────────────────────────────────
+        # FTL history — 24-month window of full-truckload sales so the
+        # Oylik dinamika bars can show SAVDO trucks for previous months
+        # (not just the active plan's month). Same caching as the LTL
+        # history fetch — 30s TTL keyed on the wide range.
+        ftl_history_by_month: dict[str, dict[str, dict[str, Any]]] = {}
+        if ftl_sheet_id:
+            try:
+                ftl_history = ombor_service.fetch_ftl_data(
+                    sheet_id=ftl_sheet_id,
+                    gid=ftl_gid,
+                    type_col=_clean_text(selected_plan.get("ftl_type_col")   or "J"),
+                    date_col=_clean_text(selected_plan.get("ftl_date_col")   or "L"),
+                    seller_col=_clean_text(selected_plan.get("ftl_seller_col") or "AB"),
+                    header_rows=max(0, _to_int(selected_plan.get("ftl_header_rows") if selected_plan.get("ftl_header_rows") is not None else 1)),
+                    date_from=wide_from,
+                    date_to=wide_to,
+                    force=force,
+                )
+                ftl_history_by_month = ftl_history.get("by_month_seller") or {}
+            except Exception:
+                # FTL is optional — silently fall back to LTL-only monthly bars.
+                ftl_history_by_month = {}
+
+        # For each month, compute SAVDO FTL m³ contribution. Trucks of
+        # LOGISTIKA (the hardcoded 3 names) are EXCLUDED — they stay
+        # hidden from the main bar and only appear in the click popup.
+        def _split_ftl_month(month_sellers: dict[str, dict[str, Any]]) -> tuple[float, float, int]:
+            """Return (savdo_trucks, savdo_cbm, savdo_bl) for one month."""
+            sv_trucks = 0.0
+            sv_bl = 0
+            for raw_name, info in (month_sellers or {}).items():
+                if _norm_person(raw_name) in LOGIST_SET:
+                    continue   # LOGISTIKA — excluded from the bar
+                sv_trucks += float(info.get("trucks") or 0)
+                sv_bl     += int(info.get("bl") or 0)
+            return sv_trucks, sv_trucks * ftl_cbm_per_truck, sv_bl
+
+        # Build the monthly array — LTL m³ + SAVDO FTL m³, plus separate
+        # SAVDO truck count for display.
+        monthly = []
+        for m in monthly_source:
+            ym = m["month"]
+            ltl_cbm = float(m.get("cbm") or 0)
+            sv_trucks, sv_cbm, _sv_bl = _split_ftl_month(ftl_history_by_month.get(ym, {}))
+            monthly.append({
+                "month": ym,
+                "label": m.get("label") or ym,
+                "value": _round(ltl_cbm + sv_cbm),     # LTL + SAVDO FTL m³
+                "ltl_cbm": _round(ltl_cbm),
+                "savdo_ftl_cbm": _round(sv_cbm),
+                "savdo_trucks": _round(sv_trucks),     # for the "Y fura" badge in the bar
+                "bl_count": _to_int(m.get("bl_count")),  # unique Ombor BLs only
+            })
 
         # ─────────────────────────────────────────────────────────────────
         # Plan-vs-sheet "why is my plan empty?" hint.
@@ -2339,4 +2384,198 @@ def get_monitor(args: Any) -> dict[str, Any]:
         },
         "last_updated": sync_status.get("last_sync_at", ""),
         "source_name": sync_status.get("source_name", ""),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# /analytics/api/monitor/month/<YYYY-MM> click-popup endpoint
+# Returns SAVDO + LOGISTIKA leaderboards for one specific calendar month,
+# using the wide-range LTL + FTL fetches as data sources (so it almost
+# always hits the same 30-sec cache the main monitor warmed).
+# ──────────────────────────────────────────────────────────────────────────
+def get_monitor_month_breakdown(ym: str, args: Any) -> dict[str, Any]:
+    from services import ombor_service
+
+    ym_clean = str(ym or "").strip()
+    if not re.match(r"^\d{4}-\d{2}$", ym_clean):
+        raise ValueError("ym должен быть в формате YYYY-MM")
+
+    plans = list_sales_plans()
+    initial_filters = parse_filters(args)
+    selected_plan = _get_selected_plan(initial_filters, plans)
+    if not selected_plan:
+        return {"empty": True, "message": "Avval sales plan tanlang yoki yarating."}
+
+    ombor_sheet_id = _clean_text(selected_plan.get("ombor_sheet_id") or "")
+    if not ombor_sheet_id:
+        return {"empty": True, "message": "Ombor sheet не настроен у текущего плана."}
+
+    cbm_col_stored    = _clean_text(selected_plan.get("ombor_cbm_col") or "")
+    date_col_stored   = _clean_text(selected_plan.get("ombor_date_col") or "")
+    seller_col_stored = _clean_text(selected_plan.get("ombor_seller_col") or "")
+    if cbm_col_stored.upper() == "W" and date_col_stored.upper() == "AA" and seller_col_stored.upper() == "AH":
+        cbm_col_stored, date_col_stored, seller_col_stored = "V", "Z", "AG"
+
+    try:
+        today = ombor_service.datetime.now(ombor_service.TASHKENT_TZ).date()
+    except Exception:
+        today = date.today()
+    month_start = today.replace(day=1)
+    wide_from = date(month_start.year - 2, month_start.month, 1)
+    wide_to = today
+
+    try:
+        ombor_history = ombor_service.fetch_combined_ltl_data(
+            sheet_id=ombor_sheet_id,
+            primary_sheet_name=_clean_text(selected_plan.get("ombor_sheet_name") or "Ombor"),
+            primary_cbm_col=cbm_col_stored or "V",
+            primary_date_col=date_col_stored or "Z",
+            primary_seller_col=seller_col_stored or "AG",
+            primary_logist_col=_clean_text(selected_plan.get("ombor_logist_col") or "AH"),
+            primary_bl_col=_clean_text(selected_plan.get("ombor_bl_col") or "E"),
+            primary_header_rows=max(0, _to_int(selected_plan.get("ombor_header_rows") if selected_plan.get("ombor_header_rows") is not None else 2)),
+            date_from=wide_from,
+            date_to=wide_to,
+            force=False,
+        )
+    except Exception as exc:
+        return {"empty": True, "message": f"Ombor sheet xatosi: {exc}"}
+
+    LOGIST_NAMES = (
+        "SAYFULLAYEV ABDULLOH ORIFJON O'G'LI",
+        "O'KTAMOV MAQSUDXO'JA MAXAMAT O'G'LI",
+        "ABDULLAYEV IBROHIM ABDUSATTOR O'G'LI",
+    )
+    def _norm_person(name: str) -> str:
+        if not name:
+            return ""
+        n = name.casefold()
+        for ch in ("ʻ", "ʼ", "'", "`", "‘", "’"):
+            n = n.replace(ch, "")
+        return " ".join(n.split()).strip()
+    LOGIST_SET = {_norm_person(n) for n in LOGIST_NAMES}
+
+    ltl_month_map = (ombor_history.get("monthly_sellers") or {}).get(ym_clean, {})
+
+    ftl_month_map: dict[str, dict[str, Any]] = {}
+    ftl_sheet_id = _clean_text(selected_plan.get("ftl_sheet_id") or "1Ud46UlcezyxnO-PHbx60K0wzLgxGPVleOmPBDQdV9-I")
+    ftl_gid      = _clean_text(selected_plan.get("ftl_sheet_gid") or "619267330")
+    ftl_cbm_per_truck = _to_float(selected_plan.get("ftl_cbm_per_truck")) or 10.0
+    if ftl_sheet_id:
+        try:
+            ftl_history = ombor_service.fetch_ftl_data(
+                sheet_id=ftl_sheet_id,
+                gid=ftl_gid,
+                type_col=_clean_text(selected_plan.get("ftl_type_col")   or "J"),
+                date_col=_clean_text(selected_plan.get("ftl_date_col")   or "L"),
+                seller_col=_clean_text(selected_plan.get("ftl_seller_col") or "AB"),
+                header_rows=max(0, _to_int(selected_plan.get("ftl_header_rows") if selected_plan.get("ftl_header_rows") is not None else 1)),
+                date_from=wide_from,
+                date_to=wide_to,
+                force=False,
+            )
+            ftl_month_map = (ftl_history.get("by_month_seller") or {}).get(ym_clean, {})
+        except Exception:
+            ftl_month_map = {}
+
+    ltl_by_key: dict[str, dict[str, Any]] = {}
+    for skey, sval in ltl_month_map.items():
+        ltl_by_key[skey] = {
+            "name": sval.get("name") or "",
+            "ltl_cbm": float(sval.get("cbm") or 0),
+            "ltl_bl": int(sval.get("bl_count") or 0),
+            "ftl_trucks": 0.0,
+            "ftl_bl": 0,
+        }
+
+    logistika_rows: list[dict[str, Any]] = []
+    for raw_ftl_name, info in (ftl_month_map or {}).items():
+        norm_key = _norm_person(raw_ftl_name)
+        if not norm_key:
+            continue
+        trucks = float(info.get("trucks") or 0)
+        bl = int(info.get("bl") or 0)
+        if norm_key in LOGIST_SET:
+            logistika_rows.append({
+                "name": raw_ftl_name,
+                "ftl_trucks": round(trucks, 2),
+                "ftl_bl": bl,
+            })
+            continue
+        seller = ltl_by_key.get(norm_key)
+        if seller is None:
+            seller = {
+                "name": raw_ftl_name,
+                "ltl_cbm": 0.0,
+                "ltl_bl": 0,
+                "ftl_trucks": 0.0,
+                "ftl_bl": 0,
+            }
+            ltl_by_key[norm_key] = seller
+        elif len(raw_ftl_name) > len(seller["name"]):
+            seller["name"] = raw_ftl_name
+        seller["ftl_trucks"] += trucks
+        seller["ftl_bl"]     += bl
+
+    savdo_sellers: list[dict[str, Any]] = []
+    savdo_total_ltl = 0.0
+    savdo_total_ftl_trucks = 0.0
+    savdo_total_ftl_cbm = 0.0
+    savdo_total_bl = 0
+    for sval in ltl_by_key.values():
+        ftl_cbm = sval["ftl_trucks"] * ftl_cbm_per_truck
+        total_cbm = sval["ltl_cbm"] + ftl_cbm
+        savdo_sellers.append({
+            "name":       sval["name"],
+            "initials":   "".join(p[0].upper() for p in sval["name"].split()[:2] if p) or "?",
+            "ltl_cbm":    _round(sval["ltl_cbm"]),
+            "ftl_trucks": _round(sval["ftl_trucks"]),
+            "ftl_cbm":    _round(ftl_cbm),
+            "total_cbm":  _round(total_cbm),
+            "bl_count":   sval["ltl_bl"],
+        })
+        savdo_total_ltl        += sval["ltl_cbm"]
+        savdo_total_ftl_trucks += sval["ftl_trucks"]
+        savdo_total_ftl_cbm    += ftl_cbm
+        savdo_total_bl         += sval["ltl_bl"]
+    savdo_total_cbm = savdo_total_ltl + savdo_total_ftl_cbm
+    for row in savdo_sellers:
+        share = (float(row["total_cbm"]) / savdo_total_cbm * 100) if savdo_total_cbm else 0
+        row["share_percent"] = round(share, 1)
+    savdo_sellers.sort(key=lambda x: x["total_cbm"], reverse=True)
+
+    logistika_total_trucks = sum(r["ftl_trucks"] for r in logistika_rows)
+    logistika_total_bl     = sum(r["ftl_bl"]     for r in logistika_rows)
+    for row in logistika_rows:
+        row["initials"] = "".join(p[0].upper() for p in row["name"].split()[:2] if p) or "?"
+        row["share_percent"] = (
+            round(row["ftl_trucks"] / logistika_total_trucks * 100, 1)
+            if logistika_total_trucks else 0
+        )
+    logistika_rows.sort(key=lambda x: x["ftl_trucks"], reverse=True)
+
+    try:
+        year_part, month_part = ym_clean.split("-")
+        month_label = f"{ombor_service.MONTH_NAMES.get(month_part, month_part)} {year_part}"
+    except ValueError:
+        month_label = ym_clean
+
+    return {
+        "empty": False,
+        "month": ym_clean,
+        "label": month_label,
+        "savdo": {
+            "total_ltl_cbm":    _round(savdo_total_ltl),
+            "total_ftl_trucks": _round(savdo_total_ftl_trucks),
+            "total_ftl_cbm":    _round(savdo_total_ftl_cbm),
+            "total_cbm":        _round(savdo_total_cbm),
+            "total_bl":         savdo_total_bl,
+            "sellers":          savdo_sellers,
+        },
+        "logistika": {
+            "total_trucks": _round(logistika_total_trucks),
+            "total_bl":     logistika_total_bl,
+            "logists":      logistika_rows,
+        },
+        "ftl_cbm_per_truck": ftl_cbm_per_truck,
     }

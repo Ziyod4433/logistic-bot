@@ -268,11 +268,21 @@
     els.monthlyBars.innerHTML = rows
       .map((row) => {
         const width = Math.max(6, (Number(row.value || 0) / max) * 100);
+        const trucks = Number(row.savdo_trucks || 0);
+        // Bar value line: m³ · fura · BL.
+        // Trucks segment only appears for months that had any FTL (cleaner
+        // visual for months with LTL only).
+        const trucksChip = trucks > 0
+          ? ` • <span class="bar-trucks">${escapeHtml(formatNumber(trucks))} fura</span>`
+          : "";
+        const ym = row.month || "";
+        // Whole bar item is clickable; data-month is the click handler key.
         return `
-          <div class="bar-item">
+          <div class="bar-item bar-item--clickable" data-month="${escapeHtml(ym)}"
+               onclick="window.__openMonthBreakdown && window.__openMonthBreakdown('${escapeHtml(ym)}')">
             <div class="bar-row">
-              <div class="bar-name">${escapeHtml(row.label)}</div>
-              <div class="bar-value">${escapeHtml(formatMetricValue(row.value, metric, label))} • ${escapeHtml(String(row.bl_count || 0))} BL</div>
+              <div class="bar-name">${escapeHtml(row.label)} <span class="bar-name-hint">▸</span></div>
+              <div class="bar-value">${escapeHtml(formatMetricValue(row.value, metric, label))}${trucksChip} • ${escapeHtml(String(row.bl_count || 0))} BL</div>
             </div>
             <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
           </div>
@@ -764,6 +774,151 @@
     scheduleRefresh();
     startSegmentRotation();     // SAVDO_LTL 25 s → SAVDO_FTL 10 s → LOGISTIKA 15 s → loop
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Month click-popup — opens a modal with SAVDO + LOGISTIKA leaderboards
+  // for the clicked month. Wired to the global so inline onclick handlers
+  // on .bar-item can reach it (avoids closure problems with HTML strings).
+  // ─────────────────────────────────────────────────────────────────────────
+  async function openMonthBreakdown(ym) {
+    if (!ym) return;
+    let overlay = document.getElementById("month-breakdown-overlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "month-breakdown-overlay";
+      overlay.className = "month-breakdown-overlay";
+      overlay.innerHTML = `
+        <div class="month-breakdown-modal" id="month-breakdown-modal">
+          <div class="mb-head">
+            <div class="mb-title" id="mb-title">…</div>
+            <button class="mb-close" id="mb-close-btn" aria-label="Yopish">×</button>
+          </div>
+          <div class="mb-body" id="mb-body">
+            <div class="mb-loading">Yuklanmoqda…</div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) closeMonthBreakdown();
+      });
+      overlay.querySelector("#mb-close-btn").addEventListener("click", closeMonthBreakdown);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeMonthBreakdown();
+      });
+    }
+    overlay.classList.add("active");
+    const body = overlay.querySelector("#mb-body");
+    const title = overlay.querySelector("#mb-title");
+    title.textContent = "…";
+    body.innerHTML = `<div class="mb-loading">Yuklanmoqda…</div>`;
+
+    const params = new URLSearchParams();
+    if (state.planId) params.set("sales_plan_id", state.planId);
+    params.set("_t", Date.now().toString());
+
+    try {
+      const r = await fetch(`/analytics/api/monitor/month/${encodeURIComponent(ym)}?${params.toString()}`, {
+        headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const data = await r.json();
+      if (!r.ok || data.empty) {
+        body.innerHTML = `<div class="mb-empty">${escapeHtml(data.message || data.error || "Ma'lumot yo'q.")}</div>`;
+        title.textContent = ym;
+        return;
+      }
+      title.textContent = data.label || ym;
+      body.innerHTML = renderMonthBreakdownBody(data);
+    } catch (err) {
+      body.innerHTML = `<div class="mb-empty">Xato: ${escapeHtml(err.message || String(err))}</div>`;
+    }
+  }
+
+  function closeMonthBreakdown() {
+    const overlay = document.getElementById("month-breakdown-overlay");
+    if (overlay) overlay.classList.remove("active");
+  }
+
+  function renderMonthBreakdownBody(data) {
+    const savdo = data.savdo || {};
+    const logistika = data.logistika || {};
+    const cbmPerTruck = Number(data.ftl_cbm_per_truck || 10);
+
+    const savdoSellers = Array.isArray(savdo.sellers) ? savdo.sellers : [];
+    const savdoRowsHtml = savdoSellers.length
+      ? savdoSellers.map((row, i) => {
+          const rankClass = i === 0 ? "r1" : i === 1 ? "r2" : i === 2 ? "r3" : "rn";
+          const width = Math.max(6, Math.min(100, Number(row.share_percent || 0)));
+          const trucksBlock = Number(row.ftl_trucks || 0) > 0
+            ? `<div class="mb-extra">${escapeHtml(formatNumber(row.ftl_trucks))} fura · ${escapeHtml(formatNumber(row.ftl_cbm))} m³</div>`
+            : "";
+          return `
+            <div class="lr">
+              <div class="lrank ${rankClass}">${i + 1}</div>
+              <div class="lav blue">${escapeHtml(row.initials || "?")}</div>
+              <div class="li">
+                <div class="lname">${escapeHtml(row.name || "")}</div>
+                <div class="lsub">LTL ${escapeHtml(formatNumber(row.ltl_cbm))} m³ · ${escapeHtml(String(row.bl_count || 0))} BL ${trucksBlock}</div>
+              </div>
+              <div class="lsc">
+                <div class="lscv">${escapeHtml(formatNumber(row.total_cbm))} <span class="lscv-unit">m³</span></div>
+                <div class="lscs">${escapeHtml(Number(row.share_percent || 0).toFixed(1))}%</div>
+              </div>
+              <div class="lbar"><div class="lbf blue" style="width:${width}%"></div></div>
+            </div>`;
+        }).join("")
+      : `<div class="mb-empty mb-empty-small">SAVDO sotuvchi yo'q</div>`;
+
+    const logists = Array.isArray(logistika.logists) ? logistika.logists : [];
+    const logistRowsHtml = logists.length
+      ? logists.map((row, i) => {
+          const rankClass = i === 0 ? "r1" : i === 1 ? "r2" : i === 2 ? "r3" : "rn";
+          const width = Math.max(6, Math.min(100, Number(row.share_percent || 0)));
+          return `
+            <div class="lr">
+              <div class="lrank ${rankClass}">${i + 1}</div>
+              <div class="lav purple">${escapeHtml(row.initials || "?")}</div>
+              <div class="li">
+                <div class="lname">${escapeHtml(row.name || "")}</div>
+                <div class="lsub">${escapeHtml(String(row.ftl_bl || 0))} BL</div>
+              </div>
+              <div class="lsc">
+                <div class="lscv">${escapeHtml(formatNumber(row.ftl_trucks))} <span class="lscv-unit">fura</span></div>
+                <div class="lscs">${escapeHtml(Number(row.share_percent || 0).toFixed(1))}%</div>
+              </div>
+              <div class="lbar"><div class="lbf purple" style="width:${width}%"></div></div>
+            </div>`;
+        }).join("")
+      : `<div class="mb-empty mb-empty-small">LOGISTIKA fura yo'q</div>`;
+
+    return `
+      <section class="mb-section">
+        <div class="mb-section-h"><span class="dot blue"></span>SAVDO BO'LIMI</div>
+        <div class="mb-totals">
+          ${escapeHtml(formatNumber(savdo.total_cbm))} m³
+          (LTL ${escapeHtml(formatNumber(savdo.total_ltl_cbm))} + FTL ${escapeHtml(formatNumber(savdo.total_ftl_cbm))})
+          · ${escapeHtml(formatNumber(savdo.total_ftl_trucks))} fura
+          · ${escapeHtml(String(savdo.total_bl || 0))} BL
+          <span class="mb-totals-hint">1 fura = ${cbmPerTruck} m³</span>
+        </div>
+        <div class="mb-leaderboard">${savdoRowsHtml}</div>
+      </section>
+
+      <section class="mb-section">
+        <div class="mb-section-h"><span class="dot purple"></span>LOGISTIKA BO'LIMI</div>
+        <div class="mb-totals">
+          ${escapeHtml(formatNumber(logistika.total_trucks))} fura · ${escapeHtml(String(logistika.total_bl || 0))} BL
+          <span class="mb-totals-hint">rejada hisoblanmaydi</span>
+        </div>
+        <div class="mb-leaderboard">${logistRowsHtml}</div>
+      </section>
+    `;
+  }
+
+  // Expose for the inline onclick on .bar-item.
+  window.__openMonthBreakdown = openMonthBreakdown;
 
   document.addEventListener("DOMContentLoaded", init);
 })();

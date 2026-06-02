@@ -518,6 +518,153 @@ body::before {
   transition: width 0.8s ease;
 }
 
+/* Clickable month bar — opens the per-month breakdown modal. */
+.bar-item--clickable {
+  cursor: pointer;
+  transition: background 0.15s ease;
+  border-radius: 6px;
+  padding: 4px 6px;
+  margin: 0 -6px;
+}
+.bar-item--clickable:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.bar-name-hint {
+  opacity: 0;
+  margin-left: 4px;
+  font-size: 11px;
+  transition: opacity 0.15s ease;
+  color: var(--orange, #ffb547);
+}
+.bar-item--clickable:hover .bar-name-hint {
+  opacity: 1;
+}
+.bar-trucks {
+  color: var(--blue, #38bdf8);
+  font-weight: 600;
+}
+
+/* Month-breakdown modal — fired by openMonthBreakdown(ym). Overlay covers
+   the whole screen with a dimmed background; the modal is a centered
+   card with SAVDO + LOGISTIKA leaderboards stacked vertically. */
+.month-breakdown-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 8, 23, 0.78);
+  backdrop-filter: blur(6px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 24px;
+}
+.month-breakdown-overlay.active {
+  display: flex;
+}
+.month-breakdown-modal {
+  width: min(960px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--surface, #0f172a);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+}
+.mb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mb-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--orange, #ffb547);
+}
+.mb-close {
+  background: none;
+  border: none;
+  color: var(--muted, #94a3b8);
+  font-size: 28px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 6px;
+}
+.mb-close:hover {
+  color: var(--text, #fff);
+}
+.mb-body {
+  padding: 18px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.mb-loading,
+.mb-empty {
+  padding: 36px;
+  text-align: center;
+  color: var(--muted2, #94a3b8);
+}
+.mb-empty-small {
+  padding: 14px;
+}
+.mb-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mb-section-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.mb-section-h .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.mb-section-h .dot.blue   { background: var(--blue,   #38bdf8); box-shadow: 0 0 8px var(--blue, #38bdf8); }
+.mb-section-h .dot.purple { background: var(--purple, #a78bfa); box-shadow: 0 0 8px var(--purple, #a78bfa); }
+.mb-totals {
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--muted, #cbd5e1);
+}
+.mb-totals-hint {
+  margin-left: 10px;
+  font-size: 11px;
+  color: var(--muted2, #94a3b8);
+  font-style: italic;
+}
+.mb-leaderboard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mb-extra {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--blue, #38bdf8);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .lb {
   flex: 1;
   overflow: hidden;

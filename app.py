@@ -5095,6 +5095,22 @@ def analytics_api_monitor():
     return jsonify(monitor_service.get_monitor_payload(request.args))
 
 
+@app.route("/analytics/api/monitor/month/<ym>")
+@login_required
+def analytics_api_monitor_month(ym: str):
+    """Per-month breakdown for the Oylik dinamika click-popup.
+
+    ym is "YYYY-MM" in Tashkent local. Returns separate SAVDO + LOGISTIKA
+    leaderboards for that month — same shape the rotating panels use, so
+    the frontend can reuse its existing rendering.
+    """
+    try:
+        payload = analytics_service.get_monitor_month_breakdown(ym, request.args)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(payload)
+
+
 @app.route("/analytics/api/plans/<int:plan_id>/ombor-config", methods=["POST"])
 @editor_required
 def analytics_api_plan_ombor_config(plan_id: int):

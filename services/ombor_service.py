@@ -340,6 +340,11 @@ def fetch_ftl_data(
     data_rows = rows[max(0, int(header_rows)):]
 
     by_seller: dict[str, dict[str, Any]] = {}
+    # NEW: by_month_seller — {"YYYY-MM": {seller_name: {trucks, bl}}}.
+    # Used for Oylik dinamika click-to-detail popup so we can show which
+    # SAVDO/LOGISTIKA sellers contributed trucks per month without
+    # refetching Google for every click.
+    by_month_seller: dict[str, dict[str, dict[str, Any]]] = {}
     diag = {
         "rows_total": len(data_rows),
         "rows_used": 0,
@@ -381,12 +386,30 @@ def fetch_ftl_data(
             by_seller[key] = {"name": key, "trucks": 0.0, "bl": 0}
         by_seller[key]["trucks"] += trucks
         by_seller[key]["bl"] += 1
+
+        # Per-(month, seller) breakdown.
+        ym = row_date.strftime("%Y-%m")
+        month_bucket = by_month_seller.setdefault(ym, {})
+        seller_bucket = month_bucket.setdefault(key, {"name": key, "trucks": 0.0, "bl": 0})
+        seller_bucket["trucks"] += trucks
+        seller_bucket["bl"] += 1
+
         diag["rows_used"] += 1
         diag["trucks_total"] += trucks
 
     diag["trucks_total"] = round(diag["trucks_total"], 2)
     diag["served_from_cache"] = False
-    result: dict[str, Any] = {"by_seller": by_seller, "diagnostics": diag}
+    # Round trucks to 2dp on the way out so JSON stays compact.
+    for s in by_seller.values():
+        s["trucks"] = round(s["trucks"], 2)
+    for ym_bucket in by_month_seller.values():
+        for s in ym_bucket.values():
+            s["trucks"] = round(s["trucks"], 2)
+    result: dict[str, Any] = {
+        "by_seller": by_seller,
+        "by_month_seller": by_month_seller,
+        "diagnostics": diag,
+    }
 
     with _lock:
         _cache[cache_key] = {"data": result, "expires_at": now + CACHE_TTL_SECONDS}
@@ -454,6 +477,10 @@ def fetch_ombor_data(
     seller_bl_sets: dict[str, set[str]] = {}
     logist_bl_sets: dict[str, set[str]] = {}
     monthly_bl_sets: dict[str, set[str]] = {}
+    # Per-(month, seller_key) breakdown for the click-to-detail Oylik
+    # dinamika popup. CBM accumulates; BL is a unique set per bucket.
+    monthly_sellers: dict[str, dict[str, dict[str, Any]]] = {}
+    monthly_seller_bl_sets: dict[str, dict[str, set[str]]] = {}
     # Diagnostics: help users debug why their data shows 0%
     diag = {
         "rows_total": len(data_rows),
@@ -547,6 +574,26 @@ def fetch_ombor_data(
             if bl_id:
                 monthly_bl_sets[ym].add(bl_id)
 
+            # Per-(month, seller_key) detail for click-popup.
+            ms_month = monthly_sellers.setdefault(ym, {})
+            ms_bl_month = monthly_seller_bl_sets.setdefault(ym, {})
+            ms_seller = ms_month.get(seller_key)
+            if ms_seller is None:
+                ms_seller = {
+                    "name": sellers[seller_key]["name"],
+                    "seller_key": seller_key,
+                    "cbm": 0.0,
+                    "bl_count": 0,
+                }
+                ms_month[seller_key] = ms_seller
+                ms_bl_month[seller_key] = set()
+            ms_seller["cbm"] += cbm
+            # Keep the upgraded display name in sync with the global bucket.
+            if len(sellers[seller_key]["name"]) > len(ms_seller["name"]):
+                ms_seller["name"] = sellers[seller_key]["name"]
+            if bl_id:
+                ms_bl_month[seller_key].add(bl_id)
+
         if bl_id:
             total_bl_set.add(bl_id)
 
@@ -559,6 +606,12 @@ def fetch_ombor_data(
         v["bl_count"] = len(logist_bl_sets.get(k, set()))
     for k, v in monthly.items():
         v["bl_count"] = len(monthly_bl_sets.get(k, set()))
+    # Per-(month, seller) BL counts.
+    for ym_key, sellers_in_month in monthly_sellers.items():
+        bl_sets_in_month = monthly_seller_bl_sets.get(ym_key, {})
+        for skey, sval in sellers_in_month.items():
+            sval["bl_count"] = len(bl_sets_in_month.get(skey, set()))
+            sval["cbm"] = round(sval["cbm"], 2)
     total_bl = len(total_bl_set)
     diag["rows_used"] = rows_used
 
@@ -586,6 +639,9 @@ def fetch_ombor_data(
         "sellers": seller_list,
         "logists": logist_list,                 # NEW: aggregation by logist (col AH)
         "monthly": monthly_list,
+        # NEW: per-(month, seller_key) breakdown for click-popup.
+        # Shape: {"2026-05": {seller_key: {"name", "seller_key", "cbm", "bl_count"}}}
+        "monthly_sellers": monthly_sellers,
         "fetched_at": datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S"),
         "diagnostics": diag,
     }
@@ -681,6 +737,8 @@ def fetch_combined_ltl_data(
     sellers_acc: dict[str, dict[str, Any]] = {}
     logists_acc: dict[str, dict[str, Any]] = {}
     monthly_acc: dict[str, dict[str, Any]] = {}
+    # Per-(month, seller_key) breakdown across stages.
+    monthly_sellers_acc: dict[str, dict[str, dict[str, Any]]] = {}
     total_cbm = 0.0
     total_bl = 0
 
@@ -715,6 +773,26 @@ def fetch_combined_ltl_data(
                 monthly_acc[key] = {"month": key, "label": m.get("label") or key, "cbm": 0.0, "bl_count": 0}
             monthly_acc[key]["cbm"]      += float(m.get("cbm") or 0)
             monthly_acc[key]["bl_count"] += int(m.get("bl_count") or 0)
+        # Merge per-(month, seller) breakdown.
+        for ym_key, sellers_in_ym in (r.get("monthly_sellers") or {}).items():
+            ms_target = monthly_sellers_acc.setdefault(ym_key, {})
+            for raw_skey, sval in sellers_in_ym.items():
+                norm_skey = _normalize_person_key(sval.get("name") or raw_skey)
+                if not norm_skey:
+                    continue
+                target = ms_target.get(norm_skey)
+                if target is None:
+                    target = {
+                        "name": sval.get("name") or raw_skey,
+                        "seller_key": norm_skey,
+                        "cbm": 0.0,
+                        "bl_count": 0,
+                    }
+                    ms_target[norm_skey] = target
+                elif len(str(sval.get("name") or "")) > len(target["name"]):
+                    target["name"] = sval.get("name") or target["name"]
+                target["cbm"]      += float(sval.get("cbm") or 0)
+                target["bl_count"] += int(sval.get("bl_count") or 0)
         total_cbm += float(r.get("total_cbm") or 0)
         total_bl  += int(r.get("total_bl") or 0)
 
@@ -778,6 +856,12 @@ def fetch_combined_ltl_data(
     if not latest_fetched_at:
         latest_fetched_at = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
+    # Round CBM in the merged monthly_sellers map (it's been summed across
+    # stages so the floats are now ugly).
+    for ym_key, sellers_map in monthly_sellers_acc.items():
+        for sval in sellers_map.values():
+            sval["cbm"] = round(sval["cbm"], 2)
+
     return {
         "ok": True,
         "total_cbm": round(total_cbm, 2),
@@ -785,6 +869,7 @@ def fetch_combined_ltl_data(
         "sellers": seller_list,
         "logists": logist_list,
         "monthly": monthly_list,
+        "monthly_sellers": monthly_sellers_acc,
         "fetched_at": latest_fetched_at,
         "diagnostics": {
             "stages_fetched": len([r for _, r, _ in per_stage if r]),
