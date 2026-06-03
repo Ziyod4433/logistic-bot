@@ -745,6 +745,21 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_anns_status_at
             ON announcement_schedules(status, scheduled_at);
 
+        -- Director dashboard: one row per section (savdo / ombor / agentlar).
+        -- Stores the Google Sheets source URL plus a JSON column-mapping so
+        -- the director can re-connect/re-configure sources without code change.
+        CREATE TABLE IF NOT EXISTS director_dashboard_config (
+            section TEXT PRIMARY KEY,                -- 'savdo' | 'ombor' | 'agentlar'
+            sheet_url TEXT NOT NULL DEFAULT '',
+            sheet_id TEXT NOT NULL DEFAULT '',
+            sheet_gid TEXT NOT NULL DEFAULT '',
+            sheet_name TEXT NOT NULL DEFAULT '',
+            header_rows INTEGER NOT NULL DEFAULT 1,
+            columns_json TEXT NOT NULL DEFAULT '{}', -- JSON {field_key: column_letter, ...}
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_by TEXT NOT NULL DEFAULT ''
+        );
+
         -- Catalogue of every Telegram message we've sent that the operator
         -- might want to recall later (tracking texts and the packing-list
         -- files that follow them). Populated by record_sent_telegram_message
@@ -5514,4 +5529,116 @@ def get_communication_rate_summary(month_key):
         "pending": max(sent - answered, 0),
         "average_score": avg_row[0] if avg_row and avg_row[0] is not None else 0,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Director dashboard config (3 sections: savdo / ombor / agentlar)
+# ──────────────────────────────────────────────────────────────────────────
+DIRECTOR_SECTIONS = ("savdo", "ombor", "agentlar")
+
+_SHEET_ID_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9_-]+)")
+_SHEET_GID_RE = re.compile(r"[#&?]gid=(\d+)")
+
+
+def _parse_sheet_url(url: str) -> tuple[str, str]:
+    """Extract sheet_id and gid from a Google Sheets URL. Returns ('', '') if not parseable."""
+    if not url:
+        return "", ""
+    m_id = _SHEET_ID_RE.search(url)
+    m_gid = _SHEET_GID_RE.search(url)
+    return (m_id.group(1) if m_id else ""), (m_gid.group(1) if m_gid else "")
+
+
+def get_director_config(section: str = "") -> dict | list[dict]:
+    """Return one section config dict (when section given) or list of all 3."""
+    conn = get_conn()
+    try:
+        if section:
+            row = conn.execute(
+                "SELECT section, sheet_url, sheet_id, sheet_gid, sheet_name, header_rows, columns_json, updated_at, updated_by FROM director_dashboard_config WHERE section = ?",
+                (section,),
+            ).fetchone()
+            return _director_row_to_dict(row, section)
+        rows = conn.execute(
+            "SELECT section, sheet_url, sheet_id, sheet_gid, sheet_name, header_rows, columns_json, updated_at, updated_by FROM director_dashboard_config"
+        ).fetchall()
+        by_section = {r[0]: r for r in rows}
+        return [_director_row_to_dict(by_section.get(s), s) for s in DIRECTOR_SECTIONS]
+    finally:
+        conn.close()
+
+
+def _director_row_to_dict(row, section: str) -> dict:
+    if not row:
+        return {
+            "section": section,
+            "sheet_url": "",
+            "sheet_id": "",
+            "sheet_gid": "",
+            "sheet_name": "",
+            "header_rows": 1,
+            "columns": {},
+            "updated_at": "",
+            "updated_by": "",
+        }
+    try:
+        cols = json.loads(row[6] or "{}")
+    except json.JSONDecodeError:
+        cols = {}
+    return {
+        "section": row[0],
+        "sheet_url": row[1] or "",
+        "sheet_id": row[2] or "",
+        "sheet_gid": row[3] or "",
+        "sheet_name": row[4] or "",
+        "header_rows": int(row[5] or 1),
+        "columns": cols if isinstance(cols, dict) else {},
+        "updated_at": row[7] or "",
+        "updated_by": row[8] or "",
+    }
+
+
+def save_director_config(
+    section: str,
+    sheet_url: str,
+    sheet_name: str,
+    header_rows: int,
+    columns: dict,
+    updated_by: str = "",
+) -> dict:
+    if section not in DIRECTOR_SECTIONS:
+        raise ValueError(f"Unknown director section: {section}")
+    sheet_id, sheet_gid = _parse_sheet_url(sheet_url or "")
+    columns_json = json.dumps(columns or {}, ensure_ascii=False)
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO director_dashboard_config(section, sheet_url, sheet_id, sheet_gid, sheet_name, header_rows, columns_json, updated_at, updated_by)
+            VALUES(?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), ?)
+            ON CONFLICT(section) DO UPDATE SET
+                sheet_url   = excluded.sheet_url,
+                sheet_id    = excluded.sheet_id,
+                sheet_gid   = excluded.sheet_gid,
+                sheet_name  = excluded.sheet_name,
+                header_rows = excluded.header_rows,
+                columns_json= excluded.columns_json,
+                updated_at  = excluded.updated_at,
+                updated_by  = excluded.updated_by
+            """,
+            (
+                section,
+                (sheet_url or "").strip(),
+                sheet_id,
+                sheet_gid,
+                (sheet_name or "").strip(),
+                max(0, int(header_rows or 1)),
+                columns_json,
+                (updated_by or "").strip(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_director_config(section)
 

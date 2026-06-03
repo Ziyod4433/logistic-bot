@@ -5117,6 +5117,114 @@ def analytics_api_monitor_month(ym: str):
         }), 500
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Director dashboard endpoints
+# ──────────────────────────────────────────────────────────────────────────
+DIRECTOR_DEFAULT_COLUMNS = {
+    "savdo": {
+        "date_col":   "A",
+        "seller_col": "B",
+        "amount_col": "C",
+        "cbm_col":    "D",
+        "bl_col":     "E",
+    },
+    "ombor": {
+        "date_col":   "A",
+        "status_col": "B",
+        "cbm_col":    "C",
+        "bl_col":     "D",
+        "client_col": "E",
+    },
+    "agentlar": {
+        "date_col":   "A",
+        "agent_col":  "B",
+        "amount_col": "C",
+        "deals_col":  "D",
+        "client_col": "E",
+    },
+}
+
+
+@app.route("/api/director/config", methods=["GET"])
+@login_required
+def api_director_config_get():
+    if session.get("role") == ROLE_KIOSK:
+        return jsonify({"error": "Forbidden"}), 403
+    try:
+        configs = db.get_director_config()
+        return jsonify({"sections": configs, "defaults": DIRECTOR_DEFAULT_COLUMNS})
+    except Exception as exc:
+        app.logger.exception("director config get failed")
+        return jsonify({"error": f"Server error: {str(exc)[:300]}"}), 500
+
+
+@app.route("/api/director/config", methods=["POST"])
+@editor_required
+def api_director_config_save():
+    if session.get("role") == ROLE_KIOSK:
+        return jsonify({"error": "Forbidden"}), 403
+    data = request.get_json(silent=True) or {}
+    section = (data.get("section") or "").strip().lower()
+    if section not in db.DIRECTOR_SECTIONS:
+        return jsonify({"error": f"Unknown section: {section}"}), 400
+    try:
+        result = db.save_director_config(
+            section=section,
+            sheet_url=str(data.get("sheet_url") or ""),
+            sheet_name=str(data.get("sheet_name") or ""),
+            header_rows=int(data.get("header_rows") or 1),
+            columns=data.get("columns") if isinstance(data.get("columns"), dict) else {},
+            updated_by=session.get("username") or "",
+        )
+        return jsonify({"ok": True, "config": result})
+    except Exception as exc:
+        app.logger.exception("director config save failed")
+        return jsonify({"error": f"Server error: {str(exc)[:300]}"}), 500
+
+
+@app.route("/api/director/<section>/data", methods=["GET"])
+@login_required
+def api_director_section_data(section: str):
+    """Return aggregated KPI + chart series for one section.
+
+    For now returns a placeholder shape so the UI can be built and tested.
+    When the director attaches a real Google Sheet, this will fetch the CSV
+    and aggregate by the configured columns.
+    """
+    if session.get("role") == ROLE_KIOSK:
+        return jsonify({"error": "Forbidden"}), 403
+    if section not in db.DIRECTOR_SECTIONS:
+        return jsonify({"error": f"Unknown section: {section}"}), 400
+    date_from = (request.args.get("from") or "").strip()
+    date_to   = (request.args.get("to") or "").strip()
+    try:
+        cfg = db.get_director_config(section)
+        if not cfg.get("sheet_id"):
+            return jsonify({
+                "section": section,
+                "configured": False,
+                "message": "Sheet manbasini sozlang (⚙).",
+                "from": date_from,
+                "to": date_to,
+                "kpis": [],
+                "charts": {},
+            })
+        # TODO: fetch + aggregate Google Sheet here. For now placeholder.
+        return jsonify({
+            "section": section,
+            "configured": True,
+            "from": date_from,
+            "to": date_to,
+            "sheet_id": cfg.get("sheet_id"),
+            "kpis": [],
+            "charts": {},
+            "message": "Источник подключён. Данные подтянутся, как только закончим маппинг столбцов.",
+        })
+    except Exception as exc:
+        app.logger.exception("director section data failed: %s", section)
+        return jsonify({"error": f"Server error: {str(exc)[:300]}"}), 500
+
+
 @app.route("/analytics/api/plans/<int:plan_id>/ombor-config", methods=["POST"])
 @editor_required
 def analytics_api_plan_ombor_config(plan_id: int):

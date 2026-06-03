@@ -577,6 +577,16 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .btn-green:hover { background: rgba(16,185,129,.2); }
 .btn-blue  { background: rgba(56,189,248,.1);  color: var(--blue);  border: 1px solid rgba(56,189,248,.2); }
 .btn-blue:hover { background: rgba(56,189,248,.18); }
+
+/* Director panel tabs */
+.director-tab-btn.is-active {
+  background: linear-gradient(180deg, var(--amber3), var(--amber));
+  color: #0a0905;
+  border: 1px solid var(--amber);
+  box-shadow: 0 6px 18px rgba(245,166,35,.22);
+}
+.director-tab-btn { transition: all .15s ease; }
+.director-panel .card-h { border-bottom: 1px solid var(--stroke); padding-bottom: 14px; }
 .bl-actions {
   display:flex;
   gap:4px;
@@ -1319,6 +1329,98 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         </div>
         <div style="border-radius:16px;overflow:hidden;height:calc(100vh - 160px);min-height:520px">
           <iframe id="monitor-frame" src="/analytics/monitor" style="width:100%;height:100%;border:none;display:block" title="Sales Monitor"></iframe>
+        </div>
+
+        <!-- ─────────────────────────────────────────────────────── -->
+        <!-- DIRECTOR PANEL — real-time KPI dashboard for the boss    -->
+        <!-- ─────────────────────────────────────────────────────── -->
+        <div class="card director-panel" id="director-panel" style="margin-top:24px">
+          <div class="card-h" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:20px">👔</span>
+              <span class="card-title">Direktor paneli</span>
+              <span class="badge badge-blue" style="font-size:11px">Real-time</span>
+            </div>
+            <div class="director-tabs" style="display:flex;gap:6px;flex-wrap:wrap" role="tablist">
+              <button type="button" class="btn btn-sm director-tab-btn is-active" data-dir-tab="savdo" onclick="switchDirectorTab('savdo')">📊 Savdo bo'yicha ko'rsatkichlar</button>
+              <button type="button" class="btn btn-sm btn-ghost director-tab-btn" data-dir-tab="ombor" onclick="switchDirectorTab('ombor')">📦 Ombor va yuklar statusi</button>
+              <button type="button" class="btn btn-sm btn-ghost director-tab-btn" data-dir-tab="agentlar" onclick="switchDirectorTab('agentlar')">👥 Agentlar</button>
+            </div>
+          </div>
+
+          <div class="card-body">
+            <!-- Section toolbar: date filter + sheet config button -->
+            <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
+                <input type="date" id="director-date-from" onchange="reloadDirectorSection()" style="padding:6px 10px">
+                <span style="color:var(--muted)">→</span>
+                <input type="date" id="director-date-to" onchange="reloadDirectorSection()" style="padding:6px 10px">
+                <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset(7)">7 kun</button>
+                <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset(30)">30 kun</button>
+                <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset(90)">90 kun</button>
+                <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('month')">Joriy oy</button>
+              </div>
+              <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <span id="director-source-status" style="font-size:12px;color:var(--muted2)"></span>
+                <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection(true)" title="Yangilash">↻</button>
+                <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings()">⚙ Manba (Google Sheets)</button>
+              </div>
+            </div>
+
+            <!-- KPI cards row -->
+            <div id="director-kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px">
+              <!-- KPI cards injected here -->
+            </div>
+
+            <!-- Charts grid -->
+            <div id="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
+              <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                <div style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px" id="director-chart1-title">Dinamika</div>
+                <div style="position:relative;height:240px"><canvas id="director-chart-1"></canvas></div>
+              </div>
+              <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                <div style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px" id="director-chart2-title">Reyting</div>
+                <div style="position:relative;height:240px"><canvas id="director-chart-2"></canvas></div>
+              </div>
+            </div>
+
+            <!-- Empty / status message -->
+            <div id="director-status-message" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+          </div>
+        </div>
+
+        <!-- Director settings modal -->
+        <div class="overlay" id="director-settings-modal">
+          <div class="modal" style="width:640px">
+            <div class="modal-title">Manba sozlamalari — <em id="director-settings-section-label">—</em></div>
+            <div style="font-size:13px;color:var(--muted2);margin-bottom:14px">
+              Google Sheets havolasini joylashtiring. Tizim sheet ID va gid'ni avtomatik aniqlaydi.
+              Quyida har bir bo'lim uchun kerakli ustun harflarini (A, B, C…) ko'rsating.
+            </div>
+            <div class="form-group">
+              <label>Google Sheets URL</label>
+              <input type="text" id="director-settings-url" placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=…">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div class="form-group">
+                <label>Varaq nomi (sheet name)</label>
+                <input type="text" id="director-settings-sheetname" placeholder="Sheet1">
+              </div>
+              <div class="form-group">
+                <label>Header qatorlari</label>
+                <input type="number" id="director-settings-headerrows" min="0" max="10" value="1">
+              </div>
+            </div>
+            <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin:6px 0 8px">Ustunlar (column letters)</div>
+            <div id="director-settings-columns" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+              <!-- column inputs injected -->
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn btn-ghost" onclick="closeModal('director-settings-modal')">Bekor qilish</button>
+              <button class="btn btn-amber editor-only" onclick="saveDirectorSettings()">💾 Saqlash</button>
+            </div>
+          </div>
         </div>
 
         <!-- Legacy stubs: analytics.js/inline-JS reference these IDs; must exist in DOM -->
@@ -6560,6 +6662,221 @@ if ((INITIAL_VIEW || "dashboard") === "analytics") {
 }
 // Enter key for login
 document.getElementById("new-batch-name")?.addEventListener("keydown",e=>{if(e.key==="Enter")createBatch();});
+
+// ═══════════════════════════════════════════════════════════════
+// DIRECTOR PANEL — tab switching, settings modal, data + charts
+// ═══════════════════════════════════════════════════════════════
+let directorState = {
+  activeTab: "savdo",
+  configs: { savdo: null, ombor: null, agentlar: null },
+  defaults: {},
+  charts: { c1: null, c2: null },
+};
+
+const DIRECTOR_SECTION_LABELS = {
+  savdo:    "Savdo bo'yicha ko'rsatkichlar",
+  ombor:    "Ombor va yuklar statusi",
+  agentlar: "Agentlar",
+};
+
+const DIRECTOR_COLUMN_LABELS = {
+  date_col:   "Sana ustuni",
+  seller_col: "Sotuvchi ustuni",
+  amount_col: "Summa ustuni",
+  cbm_col:    "CBM ustuni",
+  bl_col:     "BL ustuni",
+  status_col: "Status ustuni",
+  client_col: "Mijoz ustuni",
+  agent_col:  "Agent ustuni",
+  deals_col:  "Bitimlar soni ustuni",
+};
+
+function switchDirectorTab(section) {
+  if (!["savdo","ombor","agentlar"].includes(section)) return;
+  directorState.activeTab = section;
+  document.querySelectorAll(".director-tab-btn").forEach(btn => {
+    const active = btn.dataset.dirTab === section;
+    btn.classList.toggle("is-active", active);
+    btn.classList.toggle("btn-ghost", !active);
+  });
+  reloadDirectorSection();
+}
+
+function setDirectorPreset(preset) {
+  const now = new Date();
+  const to = now.toISOString().slice(0,10);
+  let from;
+  if (preset === "month") {
+    from = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`;
+  } else {
+    const d = new Date(now);
+    d.setDate(d.getDate() - Number(preset || 30));
+    from = d.toISOString().slice(0,10);
+  }
+  document.getElementById("director-date-from").value = from;
+  document.getElementById("director-date-to").value = to;
+  reloadDirectorSection();
+}
+
+async function loadDirectorConfigs() {
+  try {
+    const res = await api("/api/director/config", "GET");
+    if (Array.isArray(res?.sections)) {
+      res.sections.forEach(cfg => { directorState.configs[cfg.section] = cfg; });
+    }
+    directorState.defaults = res?.defaults || {};
+  } catch (e) {
+    console.warn("director config load failed", e);
+  }
+}
+
+async function reloadDirectorSection(force) {
+  const section = directorState.activeTab;
+  const from = document.getElementById("director-date-from")?.value || "";
+  const to   = document.getElementById("director-date-to")?.value || "";
+  const statusEl = document.getElementById("director-source-status");
+  const msgEl    = document.getElementById("director-status-message");
+  const cfg = directorState.configs[section];
+  if (statusEl) {
+    statusEl.textContent = cfg && cfg.sheet_id
+      ? `Manba: ${cfg.sheet_name || "varaq"} (gid ${cfg.sheet_gid || "—"})`
+      : "Manba ulanmagan";
+  }
+  try {
+    const q = new URLSearchParams({ from, to, _t: Date.now() });
+    const res = await api(`/api/director/${section}/data?${q.toString()}`, "GET");
+    renderDirectorPayload(section, res);
+  } catch (e) {
+    if (msgEl) msgEl.textContent = `Xato: ${e.message || e}`;
+  }
+}
+
+function renderDirectorPayload(section, payload) {
+  const msgEl = document.getElementById("director-status-message");
+  const kpiRow = document.getElementById("director-kpi-row");
+  if (kpiRow) kpiRow.innerHTML = "";
+  destroyDirectorCharts();
+
+  if (!payload?.configured) {
+    if (msgEl) msgEl.textContent = payload?.message || "Bu bo'lim uchun Google Sheets manbasini sozlang (⚙).";
+    document.getElementById("director-chart1-title").textContent = "Dinamika";
+    document.getElementById("director-chart2-title").textContent = "Reyting";
+    return;
+  }
+
+  if (msgEl) msgEl.textContent = payload?.message || "";
+
+  const kpis = Array.isArray(payload.kpis) ? payload.kpis : [];
+  if (kpiRow && kpis.length) {
+    kpiRow.innerHTML = kpis.map(k => `
+      <div style="padding:14px 16px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.03)">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.14em;margin-bottom:6px">${esc(k.label || "")}</div>
+        <div style="font-size:22px;font-weight:700;color:var(--txt)">${esc(k.value || "—")}</div>
+        ${k.hint ? `<div style="font-size:11px;color:var(--muted2);margin-top:4px">${esc(k.hint)}</div>` : ""}
+      </div>
+    `).join("");
+  }
+
+  const charts = payload.charts || {};
+  if (charts.chart1) renderDirectorChart("director-chart-1", "c1", charts.chart1);
+  if (charts.chart2) renderDirectorChart("director-chart-2", "c2", charts.chart2);
+
+  document.getElementById("director-chart1-title").textContent = charts.chart1?.title || (section === "agentlar" ? "Agent aktivligi" : "Kunlik dinamika");
+  document.getElementById("director-chart2-title").textContent = charts.chart2?.title || "Reyting (top 10)";
+}
+
+function destroyDirectorCharts() {
+  ["c1","c2"].forEach(k => {
+    if (directorState.charts[k]) {
+      try { directorState.charts[k].destroy(); } catch(e) {}
+      directorState.charts[k] = null;
+    }
+  });
+}
+
+function renderDirectorChart(canvasId, key, spec) {
+  const ctx = document.getElementById(canvasId)?.getContext("2d");
+  if (!ctx) return;
+  const type = spec.type || "line";
+  directorState.charts[key] = new Chart(ctx, {
+    type,
+    data: {
+      labels: spec.labels || [],
+      datasets: (spec.datasets || []).map((ds, i) => ({
+        label: ds.label || "",
+        data: ds.data || [],
+        backgroundColor: ds.backgroundColor || ["#4aa8ff","#2ad09b","#ffb739","#ff5b7f","#a78bfa","#22d3ee"][i % 6],
+        borderColor: ds.borderColor || ["#4aa8ff","#2ad09b","#ffb739","#ff5b7f","#a78bfa","#22d3ee"][i % 6],
+        tension: 0.3,
+        fill: type === "line" ? false : true,
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: "#cbd5e1" } } },
+      scales: {
+        x: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(148,163,184,.12)" } },
+        y: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(148,163,184,.12)" } },
+      },
+    },
+  });
+}
+
+function openDirectorSettings() {
+  const section = directorState.activeTab;
+  document.getElementById("director-settings-section-label").textContent = DIRECTOR_SECTION_LABELS[section] || section;
+  const cfg = directorState.configs[section] || {};
+  document.getElementById("director-settings-url").value = cfg.sheet_url || "";
+  document.getElementById("director-settings-sheetname").value = cfg.sheet_name || "";
+  document.getElementById("director-settings-headerrows").value = cfg.header_rows ?? 1;
+
+  const defaults = directorState.defaults[section] || {};
+  const cols = { ...defaults, ...(cfg.columns || {}) };
+  const colsEl = document.getElementById("director-settings-columns");
+  colsEl.innerHTML = Object.keys(defaults).map(key => `
+    <div class="form-group" style="margin:0">
+      <label>${esc(DIRECTOR_COLUMN_LABELS[key] || key)}</label>
+      <input type="text" data-dir-col="${esc(key)}" value="${esc(cols[key] || "")}" placeholder="${esc(defaults[key] || "A")}" maxlength="4" style="text-transform:uppercase">
+    </div>
+  `).join("");
+  openModal("director-settings-modal");
+}
+
+async function saveDirectorSettings() {
+  const section = directorState.activeTab;
+  const sheet_url = document.getElementById("director-settings-url").value.trim();
+  const sheet_name = document.getElementById("director-settings-sheetname").value.trim();
+  const header_rows = parseInt(document.getElementById("director-settings-headerrows").value || "1", 10);
+  const columns = {};
+  document.querySelectorAll("#director-settings-columns [data-dir-col]").forEach(inp => {
+    const k = inp.dataset.dirCol;
+    const v = (inp.value || "").trim().toUpperCase();
+    if (v) columns[k] = v;
+  });
+  try {
+    const res = await api("/api/director/config", "POST", { section, sheet_url, sheet_name, header_rows, columns });
+    if (res?.config) directorState.configs[section] = res.config;
+    toast("✅ Manba saqlandi", "ok");
+    closeModal("director-settings-modal");
+    reloadDirectorSection(true);
+  } catch (e) {
+    toast(`Xato: ${e.message || e}`, "err");
+  }
+}
+
+async function initDirectorPanel() {
+  if (!document.getElementById("director-panel")) return;
+  // default date range: current month
+  setDirectorPreset("month");
+  await loadDirectorConfigs();
+  await reloadDirectorSection();
+}
+
+// Initialize after page settles (analytics page only)
+if (INITIAL_VIEW === "analytics" || document.getElementById("director-panel")) {
+  setTimeout(initDirectorPanel, 200);
+}
 {% endif %}
 </script>
 <script src="{{ url_for('static', filename='js/analytics.js') }}"></script>
