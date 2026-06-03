@@ -5122,13 +5122,15 @@ def analytics_api_monitor_month(ym: str):
 # ──────────────────────────────────────────────────────────────────────────
 DIRECTOR_DEFAULT_COLUMNS = {
     # SELIY = whole-truck (FTL). Department column distinguishes
-    # Savdo bo'limi from Logistika bo'limi.
+    # Savdo bo'limi from Logistika bo'limi. Agent/Client columns feed
+    # the agent + client leaderboards shown at the bottom of the page.
     "savdo_seliy": {
         "date_col":       "A",
         "department_col": "B",
         "logist_col":     "C",
         "trucks_col":     "D",
         "client_col":     "E",
+        "agent_col":      "F",
     },
     # SBORNIY = consolidated (LTL) — by seller.
     "savdo_sborniy": {
@@ -5231,6 +5233,8 @@ def api_director_section_data(section: str):
                     "savdo":     {"kpis": [], "chart": None, "summary": ""},
                     "logistika": {"kpis": [], "chart": None, "summary": ""},
                 },
+                "agents":  {"rows": [], "chart": None, "total_trucks": 0},
+                "clients": {"rows": [], "chart": None, "total_trucks": 0},
                 "message": "Manba ulangan. Bo'limlar bo'yicha agregatsiya ustun mapping tasdiqlangach yakunlanadi.",
             })
         return jsonify({

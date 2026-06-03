@@ -1606,6 +1606,30 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               </div>
             </div>
           </div>
+          <!-- Agentlar & Mijozlar reytingi — same sheet, different aggregations -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:18px;margin-bottom:18px">
+            <div class="card" style="border:1px solid var(--stroke)">
+              <div class="card-h" style="display:flex;align-items:center;justify-content:space-between">
+                <span class="card-title" style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">🧑‍💼</span> Agentlar reytingi</span>
+                <span style="font-size:11px;color:var(--muted2)" id="dir-seliy-agents-meta">—</span>
+              </div>
+              <div class="card-body">
+                <div style="position:relative;height:220px;margin-bottom:14px"><canvas data-dir-chart="savdo_seliy-agents"></canvas></div>
+                <div data-dir-list="savdo_seliy:agents" style="display:flex;flex-direction:column;gap:6px"></div>
+              </div>
+            </div>
+            <div class="card" style="border:1px solid var(--stroke)">
+              <div class="card-h" style="display:flex;align-items:center;justify-content:space-between">
+                <span class="card-title" style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">🤝</span> Mijozlar reytingi</span>
+                <span style="font-size:11px;color:var(--muted2)" id="dir-seliy-clients-meta">—</span>
+              </div>
+              <div class="card-body">
+                <div style="position:relative;height:220px;margin-bottom:14px"><canvas data-dir-chart="savdo_seliy-clients"></canvas></div>
+                <div data-dir-list="savdo_seliy:clients" style="display:flex;flex-direction:column;gap:6px"></div>
+              </div>
+            </div>
+          </div>
+
           <div class="director-status-message" data-dir-msg="savdo_seliy" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
         </div>
 
@@ -6863,6 +6887,29 @@ const DIRECTOR_COLUMN_LABELS = {
   trucks_col:     "Furalar soni ustuni",
 };
 
+function buildLeaderboardHtml(rows, totalKey, unitLabel) {
+  if (!Array.isArray(rows) || !rows.length) {
+    return `<div style="font-size:12px;color:var(--muted2);text-align:center;padding:14px">Bu davr uchun ma'lumot yo'q</div>`;
+  }
+  const total = rows.reduce((s, r) => s + (Number(r[totalKey] || 0)), 0) || 1;
+  return rows.slice(0, 10).map((r, i) => {
+    const value = Number(r[totalKey] || 0);
+    const share = (value / total * 100);
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:10px;background:rgba(255,255,255,.02)">
+        <div style="width:22px;font-size:12px;color:var(--muted2);text-align:center">${i+1}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name || "—")}</div>
+          <div style="position:relative;height:4px;background:rgba(255,255,255,.05);border-radius:3px;margin-top:4px;overflow:hidden">
+            <div style="position:absolute;left:0;top:0;bottom:0;width:${share.toFixed(1)}%;background:linear-gradient(90deg,var(--amber),#ff9540)"></div>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--txt);font-weight:600;text-align:right;min-width:80px">${value} ${esc(unitLabel)}<div style="font-size:10px;color:var(--muted2);font-weight:400">${share.toFixed(1)}%</div></div>
+      </div>
+    `;
+  }).join("");
+}
+
 function toggleDirectorMenu(forceOpen) {
   const children = document.getElementById("nav-director-children");
   const chev = document.getElementById("nav-director-chev");
@@ -7007,6 +7054,16 @@ function renderDirectorPayload(section, payload) {
     const logMeta   = document.getElementById("dir-seliy-logistika-meta");
     if (savdoMeta) savdoMeta.textContent = "—";
     if (logMeta)   logMeta.textContent = "—";
+    destroyDirectorChart("savdo_seliy-agents");
+    destroyDirectorChart("savdo_seliy-clients");
+    const agentsListEl  = document.querySelector(`[data-dir-list="savdo_seliy:agents"]`);
+    const clientsListEl = document.querySelector(`[data-dir-list="savdo_seliy:clients"]`);
+    if (agentsListEl)  agentsListEl.innerHTML  = "";
+    if (clientsListEl) clientsListEl.innerHTML = "";
+    const agentsMeta  = document.getElementById("dir-seliy-agents-meta");
+    const clientsMeta = document.getElementById("dir-seliy-clients-meta");
+    if (agentsMeta)  agentsMeta.textContent  = "—";
+    if (clientsMeta) clientsMeta.textContent = "—";
   } else {
     const kpiRow = document.querySelector(`[data-dir-kpi="${section}"]`);
     if (kpiRow) kpiRow.innerHTML = "";
@@ -7030,6 +7087,22 @@ function renderDirectorPayload(section, payload) {
     if (logMeta   && dept.logistika?.summary) logMeta.textContent = dept.logistika.summary;
     if (dept.savdo?.chart)     renderDirectorChart(`${section}-1`, dept.savdo.chart);
     if (dept.logistika?.chart) renderDirectorChart(`${section}-2`, dept.logistika.chart);
+
+    // Agentlar + Mijozlar reytingi (same sheet, different slice)
+    const agents  = payload.agents  || {};
+    const clients = payload.clients || {};
+    const agentsListEl  = document.querySelector(`[data-dir-list="savdo_seliy:agents"]`);
+    const clientsListEl = document.querySelector(`[data-dir-list="savdo_seliy:clients"]`);
+    if (agentsListEl)  agentsListEl.innerHTML  = buildLeaderboardHtml(agents.rows  || [], "trucks", "fura");
+    if (clientsListEl) clientsListEl.innerHTML = buildLeaderboardHtml(clients.rows || [], "trucks", "fura");
+    const agentsMeta  = document.getElementById("dir-seliy-agents-meta");
+    const clientsMeta = document.getElementById("dir-seliy-clients-meta");
+    const agentsTotal  = Number(agents.total_trucks  || 0);
+    const clientsTotal = Number(clients.total_trucks || 0);
+    if (agentsMeta)  agentsMeta.textContent  = `${(agents.rows  || []).length} ta agent · ${agentsTotal} fura`;
+    if (clientsMeta) clientsMeta.textContent = `${(clients.rows || []).length} ta mijoz · ${clientsTotal} fura`;
+    if (agents.chart)  renderDirectorChart("savdo_seliy-agents",  agents.chart);
+    if (clients.chart) renderDirectorChart("savdo_seliy-clients", clients.chart);
     return;
   }
 
