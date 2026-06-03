@@ -1199,7 +1199,14 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         <span class="nav-chevron" id="nav-director-chev" style="margin-left:auto;font-size:12px;transition:transform .18s">▾</span>
       </div>
       <div class="nav-children" id="nav-director-children" style="display:none;margin:-2px 0 6px 14px;padding-left:8px;border-left:1px solid var(--stroke)">
-        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('savdo')"><span class="ico">📊</span> Savdo bo'yicha</div>
+        <div class="nav-link nav-sublink nav-parent" id="nav-savdo-parent" onclick="toggleDirectorSavdoMenu()">
+          <span class="ico">📊</span> Savdo bo'yicha
+          <span class="nav-chevron" id="nav-savdo-chev" style="margin-left:auto;font-size:11px;transition:transform .18s">▾</span>
+        </div>
+        <div class="nav-children" id="nav-savdo-children" style="display:none;margin:-2px 0 4px 14px;padding-left:8px;border-left:1px solid var(--stroke)">
+          <div class="nav-link nav-sublink nav-sublink-2" onclick="gotoDirectorSection('savdo_seliy')"><span class="ico">🚛</span> Seliy</div>
+          <div class="nav-link nav-sublink nav-sublink-2" onclick="gotoDirectorSection('savdo_sborniy')"><span class="ico">📦</span> Sborniy</div>
+        </div>
         <div class="nav-link nav-sublink" onclick="gotoDirectorSection('ombor')"><span class="ico">📦</span> Ombor va yuklar</div>
         <div class="nav-link nav-sublink" onclick="gotoDirectorSection('agentlar')"><span class="ico">👥</span> Agentlar</div>
       </div>
@@ -1517,12 +1524,19 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           <div style="font-size:13px;color:var(--muted2);margin-bottom:18px">
             Yon panelidan bo'limni tanlang: <b>Savdo</b>, <b>Ombor</b> yoki <b>Agentlar</b>.
           </div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px">
-            <div class="card" style="cursor:pointer" onclick="gotoDirectorSection('savdo')">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">
+            <div class="card" style="cursor:pointer" onclick="gotoDirectorSection('savdo_seliy')">
               <div class="card-body" style="text-align:center">
-                <div style="font-size:36px;margin-bottom:6px">📊</div>
-                <div class="card-title">Savdo bo'yicha</div>
-                <div style="font-size:12px;color:var(--muted2);margin-top:4px">Sotuvchilar va summa</div>
+                <div style="font-size:36px;margin-bottom:6px">🚛</div>
+                <div class="card-title">Savdo · Seliy</div>
+                <div style="font-size:12px;color:var(--muted2);margin-top:4px">Butun yuklar (FTL)</div>
+              </div>
+            </div>
+            <div class="card" style="cursor:pointer" onclick="gotoDirectorSection('savdo_sborniy')">
+              <div class="card-body" style="text-align:center">
+                <div style="font-size:36px;margin-bottom:6px">📦</div>
+                <div class="card-title">Savdo · Sborniy</div>
+                <div style="font-size:12px;color:var(--muted2);margin-top:4px">Sborniy yuklar (LTL)</div>
               </div>
             </div>
             <div class="card" style="cursor:pointer" onclick="gotoDirectorSection('ombor')">
@@ -1543,40 +1557,93 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         </div>
 
         <!-- One section is visible at a time -->
-        <div class="dir-section-view" data-dir-section-view="savdo" style="display:none">
+        <!-- SAVDO · SELIY (whole-truck / FTL) — split by department -->
+        <div class="dir-section-view" data-dir-section-view="savdo_seliy" style="display:none">
           <div class="page-h" style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-            <span style="font-size:22px">📊</span>
-            <span>Savdo bo'yicha ko'rsatkichlar</span>
-            <span class="director-source-badge" id="director-source-badge-savdo" style="font-size:11px;color:var(--muted2);margin-left:6px"></span>
+            <span style="font-size:22px">🚛</span>
+            <span>Savdo · Seliy <span style="color:var(--muted2);font-weight:400;font-size:14px">— butun yuklar (FTL)</span></span>
+            <span class="director-source-badge" id="director-source-badge-savdo_seliy" style="font-size:11px;color:var(--muted2);margin-left:6px"></span>
           </div>
           <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
-              <input type="date" data-dir-from="savdo" onchange="reloadDirectorSection('savdo')" style="padding:6px 10px">
+              <input type="date" data-dir-from="savdo_seliy" onchange="reloadDirectorSection('savdo_seliy')" style="padding:6px 10px">
               <span style="color:var(--muted)">→</span>
-              <input type="date" data-dir-to="savdo" onchange="reloadDirectorSection('savdo')" style="padding:6px 10px">
-              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',7)">7 kun</button>
-              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',30)">30 kun</button>
-              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',90)">90 kun</button>
-              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo','month')">Joriy oy</button>
+              <input type="date" data-dir-to="savdo_seliy" onchange="reloadDirectorSection('savdo_seliy')" style="padding:6px 10px">
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo_seliy',7)">7 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo_seliy',30)">30 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo_seliy',90)">90 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo_seliy','month')">Joriy oy</button>
             </div>
             <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-              <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('savdo',true)" title="Yangilash">↻</button>
-              <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('savdo')">⚙ Manba</button>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('savdo_seliy',true)" title="Yangilash">↻</button>
+              <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('savdo_seliy')">⚙ Manba</button>
             </div>
           </div>
-          <div class="director-kpi-row" data-dir-kpi="savdo" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
+
+          <!-- Department split: Savdo bo'limi vs Logistika bo'limi -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:18px;margin-bottom:18px">
+            <div class="card" style="border:1px solid var(--stroke)">
+              <div class="card-h" style="display:flex;align-items:center;justify-content:space-between">
+                <span class="card-title" style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">🛒</span> Savdo bo'limi</span>
+                <span style="font-size:11px;color:var(--muted2)" id="dir-seliy-savdo-meta">—</span>
+              </div>
+              <div class="card-body">
+                <div class="director-kpi-row" data-dir-kpi="savdo_seliy:savdo" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:14px"></div>
+                <div class="director-chart-title" data-dir-chart-title="savdo_seliy-1" style="font-size:12px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Kunlik furalar</div>
+                <div style="position:relative;height:220px"><canvas data-dir-chart="savdo_seliy-1"></canvas></div>
+              </div>
+            </div>
+            <div class="card" style="border:1px solid var(--stroke)">
+              <div class="card-h" style="display:flex;align-items:center;justify-content:space-between">
+                <span class="card-title" style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">🚚</span> Logistika bo'limi</span>
+                <span style="font-size:11px;color:var(--muted2)" id="dir-seliy-logistika-meta">—</span>
+              </div>
+              <div class="card-body">
+                <div class="director-kpi-row" data-dir-kpi="savdo_seliy:logistika" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:14px"></div>
+                <div class="director-chart-title" data-dir-chart-title="savdo_seliy-2" style="font-size:12px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Kunlik furalar</div>
+                <div style="position:relative;height:220px"><canvas data-dir-chart="savdo_seliy-2"></canvas></div>
+              </div>
+            </div>
+          </div>
+          <div class="director-status-message" data-dir-msg="savdo_seliy" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+        </div>
+
+        <!-- SAVDO · SBORNIY (consolidated / LTL) -->
+        <div class="dir-section-view" data-dir-section-view="savdo_sborniy" style="display:none">
+          <div class="page-h" style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+            <span style="font-size:22px">📦</span>
+            <span>Savdo · Sborniy <span style="color:var(--muted2);font-weight:400;font-size:14px">— sborniy yuklar (LTL)</span></span>
+            <span class="director-source-badge" id="director-source-badge-savdo_sborniy" style="font-size:11px;color:var(--muted2);margin-left:6px"></span>
+          </div>
+          <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
+              <input type="date" data-dir-from="savdo_sborniy" onchange="reloadDirectorSection('savdo_sborniy')" style="padding:6px 10px">
+              <span style="color:var(--muted)">→</span>
+              <input type="date" data-dir-to="savdo_sborniy" onchange="reloadDirectorSection('savdo_sborniy')" style="padding:6px 10px">
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo_sborniy',7)">7 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo_sborniy',30)">30 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo_sborniy',90)">90 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo_sborniy','month')">Joriy oy</button>
+            </div>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('savdo_sborniy',true)" title="Yangilash">↻</button>
+              <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('savdo_sborniy')">⚙ Manba</button>
+            </div>
+          </div>
+          <div class="director-kpi-row" data-dir-kpi="savdo_sborniy" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
           <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
             <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-              <div class="director-chart-title" data-dir-chart-title="savdo-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Kunlik dinamika</div>
-              <div style="position:relative;height:240px"><canvas data-dir-chart="savdo-1"></canvas></div>
+              <div class="director-chart-title" data-dir-chart-title="savdo_sborniy-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Kunlik dinamika</div>
+              <div style="position:relative;height:240px"><canvas data-dir-chart="savdo_sborniy-1"></canvas></div>
             </div>
             <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-              <div class="director-chart-title" data-dir-chart-title="savdo-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Top sotuvchilar</div>
-              <div style="position:relative;height:240px"><canvas data-dir-chart="savdo-2"></canvas></div>
+              <div class="director-chart-title" data-dir-chart-title="savdo_sborniy-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Top sotuvchilar</div>
+              <div style="position:relative;height:240px"><canvas data-dir-chart="savdo_sborniy-2"></canvas></div>
             </div>
           </div>
-          <div class="director-status-message" data-dir-msg="savdo" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+          <div class="director-status-message" data-dir-msg="savdo_sborniy" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
         </div>
 
         <div class="dir-section-view" data-dir-section-view="ombor" style="display:none">
@@ -6762,7 +6829,7 @@ document.getElementById("new-batch-name")?.addEventListener("keydown",e=>{if(e.k
 // ═══════════════════════════════════════════════════════════════
 // DIRECTOR PANEL — page with 3 collapsible sections
 // ═══════════════════════════════════════════════════════════════
-const DIRECTOR_SECTIONS = ["savdo","ombor","agentlar"];
+const DIRECTOR_SECTIONS = ["savdo_seliy","savdo_sborniy","ombor","agentlar"];
 
 let directorState = {
   configs: { savdo: null, ombor: null, agentlar: null },
@@ -6775,21 +6842,25 @@ let directorState = {
 };
 
 const DIRECTOR_SECTION_LABELS = {
-  savdo:    "Savdo bo'yicha ko'rsatkichlar",
-  ombor:    "Ombor va yuklar statusi",
-  agentlar: "Agentlar",
+  savdo_seliy:   "Savdo · Seliy (butun yuklar)",
+  savdo_sborniy: "Savdo · Sborniy (sborniy yuklar)",
+  ombor:         "Ombor va yuklar statusi",
+  agentlar:      "Agentlar",
 };
 
 const DIRECTOR_COLUMN_LABELS = {
-  date_col:   "Sana ustuni",
-  seller_col: "Sotuvchi ustuni",
-  amount_col: "Summa ustuni",
-  cbm_col:    "CBM ustuni",
-  bl_col:     "BL ustuni",
-  status_col: "Status ustuni",
-  client_col: "Mijoz ustuni",
-  agent_col:  "Agent ustuni",
-  deals_col:  "Bitimlar soni ustuni",
+  date_col:       "Sana ustuni",
+  seller_col:     "Sotuvchi ustuni",
+  amount_col:     "Summa ustuni",
+  cbm_col:        "CBM ustuni",
+  bl_col:         "BL ustuni",
+  status_col:     "Status ustuni",
+  client_col:     "Mijoz ustuni",
+  agent_col:      "Agent ustuni",
+  deals_col:      "Bitimlar soni ustuni",
+  department_col: "Bo'lim ustuni (Savdo/Logistika)",
+  logist_col:     "Logist ustuni",
+  trucks_col:     "Furalar soni ustuni",
 };
 
 function toggleDirectorMenu(forceOpen) {
@@ -6801,10 +6872,22 @@ function toggleDirectorMenu(forceOpen) {
   if (chev) chev.style.transform = willOpen ? "rotate(180deg)" : "rotate(0deg)";
 }
 
+function toggleDirectorSavdoMenu(forceOpen) {
+  const children = document.getElementById("nav-savdo-children");
+  const chev = document.getElementById("nav-savdo-chev");
+  if (!children) return;
+  const willOpen = (forceOpen === true) ? true : (forceOpen === false ? false : children.style.display === "none");
+  children.style.display = willOpen ? "block" : "none";
+  if (chev) chev.style.transform = willOpen ? "rotate(180deg)" : "rotate(0deg)";
+}
+
 function gotoDirectorSection(section) {
   if (!DIRECTOR_SECTIONS.includes(section)) return;
   // Open sidebar group + activate
   toggleDirectorMenu(true);
+  if (section === "savdo_seliy" || section === "savdo_sborniy") {
+    toggleDirectorSavdoMenu(true);
+  }
   // Show director page
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.getElementById("page-director").classList.add("active");
@@ -6899,30 +6982,59 @@ async function reloadDirectorSection(section, force) {
   }
 }
 
+function buildKpiCardsHtml(kpis) {
+  if (!Array.isArray(kpis) || !kpis.length) return "";
+  return kpis.map(k => `
+    <div style="padding:12px 14px;border:1px solid var(--stroke);border-radius:12px;background:rgba(255,255,255,.03)">
+      <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.14em;margin-bottom:6px">${esc(k.label || "")}</div>
+      <div style="font-size:20px;font-weight:700;color:var(--txt)">${esc(k.value || "—")}</div>
+      ${k.hint ? `<div style="font-size:11px;color:var(--muted2);margin-top:4px">${esc(k.hint)}</div>` : ""}
+    </div>
+  `).join("");
+}
+
 function renderDirectorPayload(section, payload) {
   const msgEl = document.querySelector(`[data-dir-msg="${section}"]`);
-  const kpiRow = document.querySelector(`[data-dir-kpi="${section}"]`);
-  if (kpiRow) kpiRow.innerHTML = "";
   destroyDirectorChart(`${section}-1`);
   destroyDirectorChart(`${section}-2`);
+
+  if (section === "savdo_seliy") {
+    const savdoKpiEl = document.querySelector(`[data-dir-kpi="savdo_seliy:savdo"]`);
+    const logKpiEl   = document.querySelector(`[data-dir-kpi="savdo_seliy:logistika"]`);
+    if (savdoKpiEl) savdoKpiEl.innerHTML = "";
+    if (logKpiEl)   logKpiEl.innerHTML   = "";
+    const savdoMeta = document.getElementById("dir-seliy-savdo-meta");
+    const logMeta   = document.getElementById("dir-seliy-logistika-meta");
+    if (savdoMeta) savdoMeta.textContent = "—";
+    if (logMeta)   logMeta.textContent = "—";
+  } else {
+    const kpiRow = document.querySelector(`[data-dir-kpi="${section}"]`);
+    if (kpiRow) kpiRow.innerHTML = "";
+  }
 
   if (!payload?.configured) {
     if (msgEl) msgEl.textContent = payload?.message || "Bu bo'lim uchun Google Sheets manbasini sozlang (⚙).";
     return;
   }
-
   if (msgEl) msgEl.textContent = payload?.message || "";
 
-  const kpis = Array.isArray(payload.kpis) ? payload.kpis : [];
-  if (kpiRow && kpis.length) {
-    kpiRow.innerHTML = kpis.map(k => `
-      <div style="padding:14px 16px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.03)">
-        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.14em;margin-bottom:6px">${esc(k.label || "")}</div>
-        <div style="font-size:22px;font-weight:700;color:var(--txt)">${esc(k.value || "—")}</div>
-        ${k.hint ? `<div style="font-size:11px;color:var(--muted2);margin-top:4px">${esc(k.hint)}</div>` : ""}
-      </div>
-    `).join("");
+  if (section === "savdo_seliy") {
+    const dept = payload.departments || {};
+    const savdoKpiEl = document.querySelector(`[data-dir-kpi="savdo_seliy:savdo"]`);
+    const logKpiEl   = document.querySelector(`[data-dir-kpi="savdo_seliy:logistika"]`);
+    if (savdoKpiEl) savdoKpiEl.innerHTML = buildKpiCardsHtml(dept.savdo?.kpis);
+    if (logKpiEl)   logKpiEl.innerHTML   = buildKpiCardsHtml(dept.logistika?.kpis);
+    const savdoMeta = document.getElementById("dir-seliy-savdo-meta");
+    const logMeta   = document.getElementById("dir-seliy-logistika-meta");
+    if (savdoMeta && dept.savdo?.summary) savdoMeta.textContent = dept.savdo.summary;
+    if (logMeta   && dept.logistika?.summary) logMeta.textContent = dept.logistika.summary;
+    if (dept.savdo?.chart)     renderDirectorChart(`${section}-1`, dept.savdo.chart);
+    if (dept.logistika?.chart) renderDirectorChart(`${section}-2`, dept.logistika.chart);
+    return;
   }
+
+  const kpiRow = document.querySelector(`[data-dir-kpi="${section}"]`);
+  if (kpiRow) kpiRow.innerHTML = buildKpiCardsHtml(payload.kpis);
 
   const charts = payload.charts || {};
   if (charts.chart1) renderDirectorChart(`${section}-1`, charts.chart1);

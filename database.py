@@ -5534,7 +5534,7 @@ def get_communication_rate_summary(month_key):
 # ──────────────────────────────────────────────────────────────────────────
 # Director dashboard config (3 sections: savdo / ombor / agentlar)
 # ──────────────────────────────────────────────────────────────────────────
-DIRECTOR_SECTIONS = ("savdo", "ombor", "agentlar")
+DIRECTOR_SECTIONS = ("savdo_seliy", "savdo_sborniy", "ombor", "agentlar")
 
 _SHEET_ID_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9_-]+)")
 _SHEET_GID_RE = re.compile(r"[#&?]gid=(\d+)")

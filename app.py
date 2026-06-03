@@ -5121,7 +5121,17 @@ def analytics_api_monitor_month(ym: str):
 # Director dashboard endpoints
 # ──────────────────────────────────────────────────────────────────────────
 DIRECTOR_DEFAULT_COLUMNS = {
-    "savdo": {
+    # SELIY = whole-truck (FTL). Department column distinguishes
+    # Savdo bo'limi from Logistika bo'limi.
+    "savdo_seliy": {
+        "date_col":       "A",
+        "department_col": "B",
+        "logist_col":     "C",
+        "trucks_col":     "D",
+        "client_col":     "E",
+    },
+    # SBORNIY = consolidated (LTL) — by seller.
+    "savdo_sborniy": {
         "date_col":   "A",
         "seller_col": "B",
         "amount_col": "C",
@@ -5210,6 +5220,19 @@ def api_director_section_data(section: str):
                 "charts": {},
             })
         # TODO: fetch + aggregate Google Sheet here. For now placeholder.
+        if section == "savdo_seliy":
+            return jsonify({
+                "section": section,
+                "configured": True,
+                "from": date_from,
+                "to": date_to,
+                "sheet_id": cfg.get("sheet_id"),
+                "departments": {
+                    "savdo":     {"kpis": [], "chart": None, "summary": ""},
+                    "logistika": {"kpis": [], "chart": None, "summary": ""},
+                },
+                "message": "Manba ulangan. Bo'limlar bo'yicha agregatsiya ustun mapping tasdiqlangach yakunlanadi.",
+            })
         return jsonify({
             "section": section,
             "configured": True,
@@ -5218,7 +5241,7 @@ def api_director_section_data(section: str):
             "sheet_id": cfg.get("sheet_id"),
             "kpis": [],
             "charts": {},
-            "message": "Источник подключён. Данные подтянутся, как только закончим маппинг столбцов.",
+            "message": "Manba ulangan. Ko'rsatkichlar ustun mapping tasdiqlangach to'ldiriladi.",
         })
     except Exception as exc:
         app.logger.exception("director section data failed: %s", section)
