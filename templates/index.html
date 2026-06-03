@@ -578,15 +578,11 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .btn-blue  { background: rgba(56,189,248,.1);  color: var(--blue);  border: 1px solid rgba(56,189,248,.2); }
 .btn-blue:hover { background: rgba(56,189,248,.18); }
 
-/* Director panel tabs */
-.director-tab-btn.is-active {
-  background: linear-gradient(180deg, var(--amber3), var(--amber));
-  color: #0a0905;
-  border: 1px solid var(--amber);
-  box-shadow: 0 6px 18px rgba(245,166,35,.22);
-}
-.director-tab-btn { transition: all .15s ease; }
-.director-panel .card-h { border-bottom: 1px solid var(--stroke); padding-bottom: 14px; }
+/* Director panel — collapsible sections */
+.director-section .card-h { border-bottom: 1px solid var(--stroke); }
+.director-section-header:hover { background: rgba(255,255,255,.02); }
+.director-section-header { transition: background .15s ease; }
+.director-section-body { animation: fadein .15s ease; }
 .bl-actions {
   display:flex;
   gap:4px;
@@ -1197,6 +1193,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="nav-section">Главное</div>
       <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Dashboard</div>
       <div class="nav-link" onclick="goto('analytics')"><span class="ico">📈</span> Sales Monitor</div>
+      <div class="nav-link" onclick="goto('director')"><span class="ico">👔</span> Direktor paneli</div>
       <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
       <div class="nav-link" onclick="goto('clients')"><span class="ico">👥</span> Клиенты</div>
       <div class="nav-link" onclick="goto('chats')"><span class="ico">💬</span> Telegram группы <span class="badge-count" id="nav-chat-count">0</span></div>
@@ -1329,98 +1326,6 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         </div>
         <div style="border-radius:16px;overflow:hidden;height:calc(100vh - 160px);min-height:520px">
           <iframe id="monitor-frame" src="/analytics/monitor" style="width:100%;height:100%;border:none;display:block" title="Sales Monitor"></iframe>
-        </div>
-
-        <!-- ─────────────────────────────────────────────────────── -->
-        <!-- DIRECTOR PANEL — real-time KPI dashboard for the boss    -->
-        <!-- ─────────────────────────────────────────────────────── -->
-        <div class="card director-panel" id="director-panel" style="margin-top:24px">
-          <div class="card-h" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-            <div style="display:flex;align-items:center;gap:10px">
-              <span style="font-size:20px">👔</span>
-              <span class="card-title">Direktor paneli</span>
-              <span class="badge badge-blue" style="font-size:11px">Real-time</span>
-            </div>
-            <div class="director-tabs" style="display:flex;gap:6px;flex-wrap:wrap" role="tablist">
-              <button type="button" class="btn btn-sm director-tab-btn is-active" data-dir-tab="savdo" onclick="switchDirectorTab('savdo')">📊 Savdo bo'yicha ko'rsatkichlar</button>
-              <button type="button" class="btn btn-sm btn-ghost director-tab-btn" data-dir-tab="ombor" onclick="switchDirectorTab('ombor')">📦 Ombor va yuklar statusi</button>
-              <button type="button" class="btn btn-sm btn-ghost director-tab-btn" data-dir-tab="agentlar" onclick="switchDirectorTab('agentlar')">👥 Agentlar</button>
-            </div>
-          </div>
-
-          <div class="card-body">
-            <!-- Section toolbar: date filter + sheet config button -->
-            <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
-                <input type="date" id="director-date-from" onchange="reloadDirectorSection()" style="padding:6px 10px">
-                <span style="color:var(--muted)">→</span>
-                <input type="date" id="director-date-to" onchange="reloadDirectorSection()" style="padding:6px 10px">
-                <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset(7)">7 kun</button>
-                <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset(30)">30 kun</button>
-                <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset(90)">90 kun</button>
-                <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('month')">Joriy oy</button>
-              </div>
-              <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <span id="director-source-status" style="font-size:12px;color:var(--muted2)"></span>
-                <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection(true)" title="Yangilash">↻</button>
-                <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings()">⚙ Manba (Google Sheets)</button>
-              </div>
-            </div>
-
-            <!-- KPI cards row -->
-            <div id="director-kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px">
-              <!-- KPI cards injected here -->
-            </div>
-
-            <!-- Charts grid -->
-            <div id="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
-              <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                <div style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px" id="director-chart1-title">Dinamika</div>
-                <div style="position:relative;height:240px"><canvas id="director-chart-1"></canvas></div>
-              </div>
-              <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                <div style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px" id="director-chart2-title">Reyting</div>
-                <div style="position:relative;height:240px"><canvas id="director-chart-2"></canvas></div>
-              </div>
-            </div>
-
-            <!-- Empty / status message -->
-            <div id="director-status-message" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
-          </div>
-        </div>
-
-        <!-- Director settings modal -->
-        <div class="overlay" id="director-settings-modal">
-          <div class="modal" style="width:640px">
-            <div class="modal-title">Manba sozlamalari — <em id="director-settings-section-label">—</em></div>
-            <div style="font-size:13px;color:var(--muted2);margin-bottom:14px">
-              Google Sheets havolasini joylashtiring. Tizim sheet ID va gid'ni avtomatik aniqlaydi.
-              Quyida har bir bo'lim uchun kerakli ustun harflarini (A, B, C…) ko'rsating.
-            </div>
-            <div class="form-group">
-              <label>Google Sheets URL</label>
-              <input type="text" id="director-settings-url" placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=…">
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-              <div class="form-group">
-                <label>Varaq nomi (sheet name)</label>
-                <input type="text" id="director-settings-sheetname" placeholder="Sheet1">
-              </div>
-              <div class="form-group">
-                <label>Header qatorlari</label>
-                <input type="number" id="director-settings-headerrows" min="0" max="10" value="1">
-              </div>
-            </div>
-            <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin:6px 0 8px">Ustunlar (column letters)</div>
-            <div id="director-settings-columns" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-              <!-- column inputs injected -->
-            </div>
-            <div style="display:flex;gap:8px;justify-content:flex-end">
-              <button class="btn btn-ghost" onclick="closeModal('director-settings-modal')">Bekor qilish</button>
-              <button class="btn btn-amber editor-only" onclick="saveDirectorSettings()">💾 Saqlash</button>
-            </div>
-          </div>
         </div>
 
         <!-- Legacy stubs: analytics.js/inline-JS reference these IDs; must exist in DOM -->
@@ -1586,6 +1491,182 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <div id="analytics-monitor-summary"></div>
           </div>
           <div id="analytics-section-sync" class="analytics-section"></div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════ -->
+      <!-- PAGE: DIRECTOR PANEL -->
+      <!-- ═══════════════════════════════════════════════════ -->
+      <div class="page" id="page-director">
+        <div class="page-h" style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="font-size:22px">👔</span>
+          <span>Direktor paneli</span>
+          <span class="badge badge-blue" style="font-size:11px">Real-time</span>
+        </div>
+        <div style="font-size:13px;color:var(--muted2);margin-bottom:18px">
+          Direktor uchun real vaqt rejimida ko'rsatkichlar. Har bir bo'limni ochib, sanani tanlang va Google Sheets manbasini ulang.
+        </div>
+
+        <!-- 3 collapsible sections -->
+        <div style="display:flex;flex-direction:column;gap:14px">
+
+          <!-- SECTION 1: Savdo -->
+          <div class="card director-section" data-dir-section="savdo">
+            <div class="card-h director-section-header" onclick="toggleDirectorSection('savdo')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="font-size:22px">📊</span>
+                <span class="card-title">Savdo bo'yicha ko'rsatkichlar</span>
+                <span class="director-source-badge" id="director-source-badge-savdo" style="font-size:11px;color:var(--muted2)"></span>
+              </div>
+              <div class="director-section-chevron" id="director-chev-savdo" style="font-size:18px;color:var(--muted2);transition:transform .2s">▼</div>
+            </div>
+            <div class="card-body director-section-body" id="director-body-savdo" style="display:none">
+              <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
+                  <input type="date" data-dir-from="savdo" onchange="reloadDirectorSection('savdo')" style="padding:6px 10px">
+                  <span style="color:var(--muted)">→</span>
+                  <input type="date" data-dir-to="savdo" onchange="reloadDirectorSection('savdo')" style="padding:6px 10px">
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',7)">7 kun</button>
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',30)">30 kun</button>
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',90)">90 kun</button>
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo','month')">Joriy oy</button>
+                </div>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('savdo',true)" title="Yangilash">↻</button>
+                  <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('savdo')">⚙ Manba</button>
+                </div>
+              </div>
+              <div class="director-kpi-row" data-dir-kpi="savdo" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
+              <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
+                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                  <div class="director-chart-title" data-dir-chart-title="savdo-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Kunlik dinamika</div>
+                  <div style="position:relative;height:240px"><canvas data-dir-chart="savdo-1"></canvas></div>
+                </div>
+                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                  <div class="director-chart-title" data-dir-chart-title="savdo-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Top sotuvchilar</div>
+                  <div style="position:relative;height:240px"><canvas data-dir-chart="savdo-2"></canvas></div>
+                </div>
+              </div>
+              <div class="director-status-message" data-dir-msg="savdo" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+            </div>
+          </div>
+
+          <!-- SECTION 2: Ombor -->
+          <div class="card director-section" data-dir-section="ombor">
+            <div class="card-h director-section-header" onclick="toggleDirectorSection('ombor')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="font-size:22px">📦</span>
+                <span class="card-title">Ombor va yuklar statusi</span>
+                <span class="director-source-badge" id="director-source-badge-ombor" style="font-size:11px;color:var(--muted2)"></span>
+              </div>
+              <div class="director-section-chevron" id="director-chev-ombor" style="font-size:18px;color:var(--muted2);transition:transform .2s">▼</div>
+            </div>
+            <div class="card-body director-section-body" id="director-body-ombor" style="display:none">
+              <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
+                  <input type="date" data-dir-from="ombor" onchange="reloadDirectorSection('ombor')" style="padding:6px 10px">
+                  <span style="color:var(--muted)">→</span>
+                  <input type="date" data-dir-to="ombor" onchange="reloadDirectorSection('ombor')" style="padding:6px 10px">
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor',7)">7 kun</button>
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor',30)">30 kun</button>
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor',90)">90 kun</button>
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor','month')">Joriy oy</button>
+                </div>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('ombor',true)" title="Yangilash">↻</button>
+                  <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('ombor')">⚙ Manba</button>
+                </div>
+              </div>
+              <div class="director-kpi-row" data-dir-kpi="ombor" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
+              <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
+                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                  <div class="director-chart-title" data-dir-chart-title="ombor-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Kunlik harakat</div>
+                  <div style="position:relative;height:240px"><canvas data-dir-chart="ombor-1"></canvas></div>
+                </div>
+                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                  <div class="director-chart-title" data-dir-chart-title="ombor-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Status taqsimoti</div>
+                  <div style="position:relative;height:240px"><canvas data-dir-chart="ombor-2"></canvas></div>
+                </div>
+              </div>
+              <div class="director-status-message" data-dir-msg="ombor" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+            </div>
+          </div>
+
+          <!-- SECTION 3: Agentlar -->
+          <div class="card director-section" data-dir-section="agentlar">
+            <div class="card-h director-section-header" onclick="toggleDirectorSection('agentlar')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+              <div style="display:flex;align-items:center;gap:12px">
+                <span style="font-size:22px">👥</span>
+                <span class="card-title">Agentlar</span>
+                <span class="director-source-badge" id="director-source-badge-agentlar" style="font-size:11px;color:var(--muted2)"></span>
+              </div>
+              <div class="director-section-chevron" id="director-chev-agentlar" style="font-size:18px;color:var(--muted2);transition:transform .2s">▼</div>
+            </div>
+            <div class="card-body director-section-body" id="director-body-agentlar" style="display:none">
+              <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
+                  <input type="date" data-dir-from="agentlar" onchange="reloadDirectorSection('agentlar')" style="padding:6px 10px">
+                  <span style="color:var(--muted)">→</span>
+                  <input type="date" data-dir-to="agentlar" onchange="reloadDirectorSection('agentlar')" style="padding:6px 10px">
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar',7)">7 kun</button>
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar',30)">30 kun</button>
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar',90)">90 kun</button>
+                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar','month')">Joriy oy</button>
+                </div>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('agentlar',true)" title="Yangilash">↻</button>
+                  <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('agentlar')">⚙ Manba</button>
+                </div>
+              </div>
+              <div class="director-kpi-row" data-dir-kpi="agentlar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
+              <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
+                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                  <div class="director-chart-title" data-dir-chart-title="agentlar-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Agent aktivligi</div>
+                  <div style="position:relative;height:240px"><canvas data-dir-chart="agentlar-1"></canvas></div>
+                </div>
+                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+                  <div class="director-chart-title" data-dir-chart-title="agentlar-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Reyting (top 10)</div>
+                  <div style="position:relative;height:240px"><canvas data-dir-chart="agentlar-2"></canvas></div>
+                </div>
+              </div>
+              <div class="director-status-message" data-dir-msg="agentlar" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Director settings modal (shared) -->
+        <div class="overlay" id="director-settings-modal">
+          <div class="modal" style="width:640px">
+            <div class="modal-title">Manba sozlamalari — <em id="director-settings-section-label">—</em></div>
+            <div style="font-size:13px;color:var(--muted2);margin-bottom:14px">
+              Google Sheets havolasini joylashtiring. Tizim sheet ID va gid'ni avtomatik aniqlaydi.
+              Quyida har bir bo'lim uchun kerakli ustun harflarini (A, B, C…) ko'rsating.
+            </div>
+            <div class="form-group">
+              <label>Google Sheets URL</label>
+              <input type="text" id="director-settings-url" placeholder="https://docs.google.com/spreadsheets/d/…/edit#gid=…">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div class="form-group">
+                <label>Varaq nomi (sheet name)</label>
+                <input type="text" id="director-settings-sheetname" placeholder="Sheet1">
+              </div>
+              <div class="form-group">
+                <label>Header qatorlari</label>
+                <input type="number" id="director-settings-headerrows" min="0" max="10" value="1">
+              </div>
+            </div>
+            <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin:6px 0 8px">Ustunlar (column letters)</div>
+            <div id="director-settings-columns" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn btn-ghost" onclick="closeModal('director-settings-modal')">Bekor qilish</button>
+              <button class="btn btn-amber editor-only" onclick="saveDirectorSettings()">💾 Saqlash</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2781,6 +2862,7 @@ function goto(page) {
   const labels = {
     dashboard:"Dashboard",
     analytics:"Sales Monitor",
+    director:"Direktor paneli",
     batches:"Партии",
     clients:"Клиенты",
     chats:"Telegram группы",
@@ -2797,6 +2879,7 @@ function goto(page) {
 
   if (page==="dashboard")  loadDashboard();
   if (page==="analytics")  { switchSMTab(ANALYTICS_STATE.tab || "monitor"); if (typeof window.loadAnalyticsPage === "function") window.loadAnalyticsPage(); }
+  if (page==="director")   { initDirectorPanel(); }
   if (page==="batches")    { showBatchList(); loadBatches(); }
   if (page==="clients")    loadClientsPage();
   if (page==="chats")      loadChatsPage();
@@ -6664,13 +6747,18 @@ if ((INITIAL_VIEW || "dashboard") === "analytics") {
 document.getElementById("new-batch-name")?.addEventListener("keydown",e=>{if(e.key==="Enter")createBatch();});
 
 // ═══════════════════════════════════════════════════════════════
-// DIRECTOR PANEL — tab switching, settings modal, data + charts
+// DIRECTOR PANEL — page with 3 collapsible sections
 // ═══════════════════════════════════════════════════════════════
+const DIRECTOR_SECTIONS = ["savdo","ombor","agentlar"];
+
 let directorState = {
-  activeTab: "savdo",
   configs: { savdo: null, ombor: null, agentlar: null },
   defaults: {},
-  charts: { c1: null, c2: null },
+  charts: {},        // canvas-id -> Chart instance
+  opened: {},        // section -> bool
+  loaded: {},        // section -> bool (has been fetched at least once)
+  settingsSection: "",
+  initialized: false,
 };
 
 const DIRECTOR_SECTION_LABELS = {
@@ -6691,18 +6779,22 @@ const DIRECTOR_COLUMN_LABELS = {
   deals_col:  "Bitimlar soni ustuni",
 };
 
-function switchDirectorTab(section) {
-  if (!["savdo","ombor","agentlar"].includes(section)) return;
-  directorState.activeTab = section;
-  document.querySelectorAll(".director-tab-btn").forEach(btn => {
-    const active = btn.dataset.dirTab === section;
-    btn.classList.toggle("is-active", active);
-    btn.classList.toggle("btn-ghost", !active);
-  });
-  reloadDirectorSection();
+function toggleDirectorSection(section) {
+  if (!DIRECTOR_SECTIONS.includes(section)) return;
+  const body = document.getElementById(`director-body-${section}`);
+  const chev = document.getElementById(`director-chev-${section}`);
+  if (!body) return;
+  const willOpen = body.style.display === "none";
+  body.style.display = willOpen ? "block" : "none";
+  if (chev) chev.style.transform = willOpen ? "rotate(180deg)" : "rotate(0deg)";
+  directorState.opened[section] = willOpen;
+  if (willOpen && !directorState.loaded[section]) {
+    // First open — set default date range and load
+    setDirectorPreset(section, "month");
+  }
 }
 
-function setDirectorPreset(preset) {
+function setDirectorPreset(section, preset) {
   const now = new Date();
   const to = now.toISOString().slice(0,10);
   let from;
@@ -6713,9 +6805,11 @@ function setDirectorPreset(preset) {
     d.setDate(d.getDate() - Number(preset || 30));
     from = d.toISOString().slice(0,10);
   }
-  document.getElementById("director-date-from").value = from;
-  document.getElementById("director-date-to").value = to;
-  reloadDirectorSection();
+  const fromInp = document.querySelector(`[data-dir-from="${section}"]`);
+  const toInp = document.querySelector(`[data-dir-to="${section}"]`);
+  if (fromInp) fromInp.value = from;
+  if (toInp) toInp.value = to;
+  reloadDirectorSection(section);
 }
 
 async function loadDirectorConfigs() {
@@ -6725,26 +6819,34 @@ async function loadDirectorConfigs() {
       res.sections.forEach(cfg => { directorState.configs[cfg.section] = cfg; });
     }
     directorState.defaults = res?.defaults || {};
+    DIRECTOR_SECTIONS.forEach(updateDirectorSourceBadge);
   } catch (e) {
     console.warn("director config load failed", e);
   }
 }
 
-async function reloadDirectorSection(force) {
-  const section = directorState.activeTab;
-  const from = document.getElementById("director-date-from")?.value || "";
-  const to   = document.getElementById("director-date-to")?.value || "";
-  const statusEl = document.getElementById("director-source-status");
-  const msgEl    = document.getElementById("director-status-message");
+function updateDirectorSourceBadge(section) {
+  const badge = document.getElementById(`director-source-badge-${section}`);
+  if (!badge) return;
   const cfg = directorState.configs[section];
-  if (statusEl) {
-    statusEl.textContent = cfg && cfg.sheet_id
-      ? `Manba: ${cfg.sheet_name || "varaq"} (gid ${cfg.sheet_gid || "—"})`
-      : "Manba ulanmagan";
+  if (cfg && cfg.sheet_id) {
+    badge.textContent = `· ${cfg.sheet_name || "varaq"} ulangan`;
+    badge.style.color = "var(--green)";
+  } else {
+    badge.textContent = "· manba ulanmagan";
+    badge.style.color = "var(--muted2)";
   }
+}
+
+async function reloadDirectorSection(section, force) {
+  if (!DIRECTOR_SECTIONS.includes(section)) return;
+  const from = document.querySelector(`[data-dir-from="${section}"]`)?.value || "";
+  const to   = document.querySelector(`[data-dir-to="${section}"]`)?.value || "";
+  const msgEl = document.querySelector(`[data-dir-msg="${section}"]`);
   try {
     const q = new URLSearchParams({ from, to, _t: Date.now() });
     const res = await api(`/api/director/${section}/data?${q.toString()}`, "GET");
+    directorState.loaded[section] = true;
     renderDirectorPayload(section, res);
   } catch (e) {
     if (msgEl) msgEl.textContent = `Xato: ${e.message || e}`;
@@ -6752,15 +6854,14 @@ async function reloadDirectorSection(force) {
 }
 
 function renderDirectorPayload(section, payload) {
-  const msgEl = document.getElementById("director-status-message");
-  const kpiRow = document.getElementById("director-kpi-row");
+  const msgEl = document.querySelector(`[data-dir-msg="${section}"]`);
+  const kpiRow = document.querySelector(`[data-dir-kpi="${section}"]`);
   if (kpiRow) kpiRow.innerHTML = "";
-  destroyDirectorCharts();
+  destroyDirectorChart(`${section}-1`);
+  destroyDirectorChart(`${section}-2`);
 
   if (!payload?.configured) {
     if (msgEl) msgEl.textContent = payload?.message || "Bu bo'lim uchun Google Sheets manbasini sozlang (⚙).";
-    document.getElementById("director-chart1-title").textContent = "Dinamika";
-    document.getElementById("director-chart2-title").textContent = "Reyting";
     return;
   }
 
@@ -6778,27 +6879,28 @@ function renderDirectorPayload(section, payload) {
   }
 
   const charts = payload.charts || {};
-  if (charts.chart1) renderDirectorChart("director-chart-1", "c1", charts.chart1);
-  if (charts.chart2) renderDirectorChart("director-chart-2", "c2", charts.chart2);
+  if (charts.chart1) renderDirectorChart(`${section}-1`, charts.chart1);
+  if (charts.chart2) renderDirectorChart(`${section}-2`, charts.chart2);
 
-  document.getElementById("director-chart1-title").textContent = charts.chart1?.title || (section === "agentlar" ? "Agent aktivligi" : "Kunlik dinamika");
-  document.getElementById("director-chart2-title").textContent = charts.chart2?.title || "Reyting (top 10)";
+  const t1 = document.querySelector(`[data-dir-chart-title="${section}-1"]`);
+  const t2 = document.querySelector(`[data-dir-chart-title="${section}-2"]`);
+  if (t1 && charts.chart1?.title) t1.textContent = charts.chart1.title;
+  if (t2 && charts.chart2?.title) t2.textContent = charts.chart2.title;
 }
 
-function destroyDirectorCharts() {
-  ["c1","c2"].forEach(k => {
-    if (directorState.charts[k]) {
-      try { directorState.charts[k].destroy(); } catch(e) {}
-      directorState.charts[k] = null;
-    }
-  });
+function destroyDirectorChart(chartKey) {
+  if (directorState.charts[chartKey]) {
+    try { directorState.charts[chartKey].destroy(); } catch(e) {}
+    directorState.charts[chartKey] = null;
+  }
 }
 
-function renderDirectorChart(canvasId, key, spec) {
-  const ctx = document.getElementById(canvasId)?.getContext("2d");
-  if (!ctx) return;
+function renderDirectorChart(chartKey, spec) {
+  const canvas = document.querySelector(`[data-dir-chart="${chartKey}"]`);
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
   const type = spec.type || "line";
-  directorState.charts[key] = new Chart(ctx, {
+  directorState.charts[chartKey] = new Chart(ctx, {
     type,
     data: {
       labels: spec.labels || [],
@@ -6808,14 +6910,14 @@ function renderDirectorChart(canvasId, key, spec) {
         backgroundColor: ds.backgroundColor || ["#4aa8ff","#2ad09b","#ffb739","#ff5b7f","#a78bfa","#22d3ee"][i % 6],
         borderColor: ds.borderColor || ["#4aa8ff","#2ad09b","#ffb739","#ff5b7f","#a78bfa","#22d3ee"][i % 6],
         tension: 0.3,
-        fill: type === "line" ? false : true,
+        fill: type === "line" ? false : (type !== "bar"),
       })),
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: { legend: { labels: { color: "#cbd5e1" } } },
-      scales: {
+      scales: type === "pie" || type === "doughnut" ? {} : {
         x: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(148,163,184,.12)" } },
         y: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(148,163,184,.12)" } },
       },
@@ -6823,8 +6925,8 @@ function renderDirectorChart(canvasId, key, spec) {
   });
 }
 
-function openDirectorSettings() {
-  const section = directorState.activeTab;
+function openDirectorSettings(section) {
+  directorState.settingsSection = section;
   document.getElementById("director-settings-section-label").textContent = DIRECTOR_SECTION_LABELS[section] || section;
   const cfg = directorState.configs[section] || {};
   document.getElementById("director-settings-url").value = cfg.sheet_url || "";
@@ -6844,7 +6946,8 @@ function openDirectorSettings() {
 }
 
 async function saveDirectorSettings() {
-  const section = directorState.activeTab;
+  const section = directorState.settingsSection;
+  if (!section) return;
   const sheet_url = document.getElementById("director-settings-url").value.trim();
   const sheet_name = document.getElementById("director-settings-sheetname").value.trim();
   const header_rows = parseInt(document.getElementById("director-settings-headerrows").value || "1", 10);
@@ -6857,25 +6960,21 @@ async function saveDirectorSettings() {
   try {
     const res = await api("/api/director/config", "POST", { section, sheet_url, sheet_name, header_rows, columns });
     if (res?.config) directorState.configs[section] = res.config;
+    updateDirectorSourceBadge(section);
     toast("✅ Manba saqlandi", "ok");
     closeModal("director-settings-modal");
-    reloadDirectorSection(true);
+    reloadDirectorSection(section, true);
   } catch (e) {
     toast(`Xato: ${e.message || e}`, "err");
   }
 }
 
 async function initDirectorPanel() {
-  if (!document.getElementById("director-panel")) return;
-  // default date range: current month
-  setDirectorPreset("month");
+  if (!document.getElementById("page-director")) return;
+  if (directorState.initialized) return;
+  directorState.initialized = true;
   await loadDirectorConfigs();
-  await reloadDirectorSection();
-}
-
-// Initialize after page settles (analytics page only)
-if (INITIAL_VIEW === "analytics" || document.getElementById("director-panel")) {
-  setTimeout(initDirectorPanel, 200);
+  // Sections start collapsed; data loads on first expand.
 }
 {% endif %}
 </script>
