@@ -578,11 +578,12 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .btn-blue  { background: rgba(56,189,248,.1);  color: var(--blue);  border: 1px solid rgba(56,189,248,.2); }
 .btn-blue:hover { background: rgba(56,189,248,.18); }
 
-/* Director panel — collapsible sections */
-.director-section .card-h { border-bottom: 1px solid var(--stroke); }
-.director-section-header:hover { background: rgba(255,255,255,.02); }
-.director-section-header { transition: background .15s ease; }
-.director-section-body { animation: fadein .15s ease; }
+/* Director panel — sidebar accordion + section views */
+.nav-sublink { font-size: 12px !important; padding: 8px 11px !important; }
+.nav-sublink .ico { font-size: 13px !important; }
+.dir-section-view { animation: fadein .15s ease; }
+.dir-landing .card { transition: transform .15s ease, border-color .15s ease; }
+.dir-landing .card:hover { transform: translateY(-2px); border-color: var(--amber); }
 .bl-actions {
   display:flex;
   gap:4px;
@@ -1193,7 +1194,15 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <div class="nav-section">Главное</div>
       <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Dashboard</div>
       <div class="nav-link" onclick="goto('analytics')"><span class="ico">📈</span> Sales Monitor</div>
-      <div class="nav-link" onclick="goto('director')"><span class="ico">👔</span> Direktor paneli</div>
+      <div class="nav-link nav-parent" id="nav-director-parent" onclick="toggleDirectorMenu()">
+        <span class="ico">👔</span> Direktor paneli
+        <span class="nav-chevron" id="nav-director-chev" style="margin-left:auto;font-size:12px;transition:transform .18s">▾</span>
+      </div>
+      <div class="nav-children" id="nav-director-children" style="display:none;margin:-2px 0 6px 14px;padding-left:8px;border-left:1px solid var(--stroke)">
+        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('savdo')"><span class="ico">📊</span> Savdo bo'yicha</div>
+        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('ombor')"><span class="ico">📦</span> Ombor va yuklar</div>
+        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('agentlar')"><span class="ico">👥</span> Agentlar</div>
+      </div>
       <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
       <div class="nav-link" onclick="goto('clients')"><span class="ico">👥</span> Клиенты</div>
       <div class="nav-link" onclick="goto('chats')"><span class="ico">💬</span> Telegram группы <span class="badge-count" id="nav-chat-count">0</span></div>
@@ -1498,144 +1507,148 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
       <!-- PAGE: DIRECTOR PANEL -->
       <!-- ═══════════════════════════════════════════════════ -->
       <div class="page" id="page-director">
-        <div class="page-h" style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-          <span style="font-size:22px">👔</span>
-          <span>Direktor paneli</span>
-          <span class="badge badge-blue" style="font-size:11px">Real-time</span>
+        <!-- Landing view (no section picked yet) -->
+        <div class="dir-landing" id="director-landing">
+          <div class="page-h" style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="font-size:22px">👔</span>
+            <span>Direktor paneli</span>
+            <span class="badge badge-blue" style="font-size:11px">Real-time</span>
+          </div>
+          <div style="font-size:13px;color:var(--muted2);margin-bottom:18px">
+            Yon panelidan bo'limni tanlang: <b>Savdo</b>, <b>Ombor</b> yoki <b>Agentlar</b>.
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px">
+            <div class="card" style="cursor:pointer" onclick="gotoDirectorSection('savdo')">
+              <div class="card-body" style="text-align:center">
+                <div style="font-size:36px;margin-bottom:6px">📊</div>
+                <div class="card-title">Savdo bo'yicha</div>
+                <div style="font-size:12px;color:var(--muted2);margin-top:4px">Sotuvchilar va summa</div>
+              </div>
+            </div>
+            <div class="card" style="cursor:pointer" onclick="gotoDirectorSection('ombor')">
+              <div class="card-body" style="text-align:center">
+                <div style="font-size:36px;margin-bottom:6px">📦</div>
+                <div class="card-title">Ombor va yuklar</div>
+                <div style="font-size:12px;color:var(--muted2);margin-top:4px">Statuslar va harakat</div>
+              </div>
+            </div>
+            <div class="card" style="cursor:pointer" onclick="gotoDirectorSection('agentlar')">
+              <div class="card-body" style="text-align:center">
+                <div style="font-size:36px;margin-bottom:6px">👥</div>
+                <div class="card-title">Agentlar</div>
+                <div style="font-size:12px;color:var(--muted2);margin-top:4px">Reyting va aktivlik</div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div style="font-size:13px;color:var(--muted2);margin-bottom:18px">
-          Direktor uchun real vaqt rejimida ko'rsatkichlar. Har bir bo'limni ochib, sanani tanlang va Google Sheets manbasini ulang.
+
+        <!-- One section is visible at a time -->
+        <div class="dir-section-view" data-dir-section-view="savdo" style="display:none">
+          <div class="page-h" style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+            <span style="font-size:22px">📊</span>
+            <span>Savdo bo'yicha ko'rsatkichlar</span>
+            <span class="director-source-badge" id="director-source-badge-savdo" style="font-size:11px;color:var(--muted2);margin-left:6px"></span>
+          </div>
+          <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
+              <input type="date" data-dir-from="savdo" onchange="reloadDirectorSection('savdo')" style="padding:6px 10px">
+              <span style="color:var(--muted)">→</span>
+              <input type="date" data-dir-to="savdo" onchange="reloadDirectorSection('savdo')" style="padding:6px 10px">
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',7)">7 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',30)">30 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',90)">90 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo','month')">Joriy oy</button>
+            </div>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('savdo',true)" title="Yangilash">↻</button>
+              <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('savdo')">⚙ Manba</button>
+            </div>
+          </div>
+          <div class="director-kpi-row" data-dir-kpi="savdo" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
+          <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
+            <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+              <div class="director-chart-title" data-dir-chart-title="savdo-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Kunlik dinamika</div>
+              <div style="position:relative;height:240px"><canvas data-dir-chart="savdo-1"></canvas></div>
+            </div>
+            <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+              <div class="director-chart-title" data-dir-chart-title="savdo-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Top sotuvchilar</div>
+              <div style="position:relative;height:240px"><canvas data-dir-chart="savdo-2"></canvas></div>
+            </div>
+          </div>
+          <div class="director-status-message" data-dir-msg="savdo" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
         </div>
 
-        <!-- 3 collapsible sections -->
-        <div style="display:flex;flex-direction:column;gap:14px">
-
-          <!-- SECTION 1: Savdo -->
-          <div class="card director-section" data-dir-section="savdo">
-            <div class="card-h director-section-header" onclick="toggleDirectorSection('savdo')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-              <div style="display:flex;align-items:center;gap:12px">
-                <span style="font-size:22px">📊</span>
-                <span class="card-title">Savdo bo'yicha ko'rsatkichlar</span>
-                <span class="director-source-badge" id="director-source-badge-savdo" style="font-size:11px;color:var(--muted2)"></span>
-              </div>
-              <div class="director-section-chevron" id="director-chev-savdo" style="font-size:18px;color:var(--muted2);transition:transform .2s">▼</div>
+        <div class="dir-section-view" data-dir-section-view="ombor" style="display:none">
+          <div class="page-h" style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+            <span style="font-size:22px">📦</span>
+            <span>Ombor va yuklar statusi</span>
+            <span class="director-source-badge" id="director-source-badge-ombor" style="font-size:11px;color:var(--muted2);margin-left:6px"></span>
+          </div>
+          <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
+              <input type="date" data-dir-from="ombor" onchange="reloadDirectorSection('ombor')" style="padding:6px 10px">
+              <span style="color:var(--muted)">→</span>
+              <input type="date" data-dir-to="ombor" onchange="reloadDirectorSection('ombor')" style="padding:6px 10px">
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor',7)">7 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor',30)">30 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor',90)">90 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor','month')">Joriy oy</button>
             </div>
-            <div class="card-body director-section-body" id="director-body-savdo" style="display:none">
-              <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                  <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
-                  <input type="date" data-dir-from="savdo" onchange="reloadDirectorSection('savdo')" style="padding:6px 10px">
-                  <span style="color:var(--muted)">→</span>
-                  <input type="date" data-dir-to="savdo" onchange="reloadDirectorSection('savdo')" style="padding:6px 10px">
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',7)">7 kun</button>
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',30)">30 kun</button>
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo',90)">90 kun</button>
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('savdo','month')">Joriy oy</button>
-                </div>
-                <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-                  <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('savdo',true)" title="Yangilash">↻</button>
-                  <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('savdo')">⚙ Manba</button>
-                </div>
-              </div>
-              <div class="director-kpi-row" data-dir-kpi="savdo" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
-              <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
-                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                  <div class="director-chart-title" data-dir-chart-title="savdo-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Kunlik dinamika</div>
-                  <div style="position:relative;height:240px"><canvas data-dir-chart="savdo-1"></canvas></div>
-                </div>
-                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                  <div class="director-chart-title" data-dir-chart-title="savdo-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Top sotuvchilar</div>
-                  <div style="position:relative;height:240px"><canvas data-dir-chart="savdo-2"></canvas></div>
-                </div>
-              </div>
-              <div class="director-status-message" data-dir-msg="savdo" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('ombor',true)" title="Yangilash">↻</button>
+              <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('ombor')">⚙ Manba</button>
             </div>
           </div>
-
-          <!-- SECTION 2: Ombor -->
-          <div class="card director-section" data-dir-section="ombor">
-            <div class="card-h director-section-header" onclick="toggleDirectorSection('ombor')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-              <div style="display:flex;align-items:center;gap:12px">
-                <span style="font-size:22px">📦</span>
-                <span class="card-title">Ombor va yuklar statusi</span>
-                <span class="director-source-badge" id="director-source-badge-ombor" style="font-size:11px;color:var(--muted2)"></span>
-              </div>
-              <div class="director-section-chevron" id="director-chev-ombor" style="font-size:18px;color:var(--muted2);transition:transform .2s">▼</div>
+          <div class="director-kpi-row" data-dir-kpi="ombor" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
+          <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
+            <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+              <div class="director-chart-title" data-dir-chart-title="ombor-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Kunlik harakat</div>
+              <div style="position:relative;height:240px"><canvas data-dir-chart="ombor-1"></canvas></div>
             </div>
-            <div class="card-body director-section-body" id="director-body-ombor" style="display:none">
-              <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                  <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
-                  <input type="date" data-dir-from="ombor" onchange="reloadDirectorSection('ombor')" style="padding:6px 10px">
-                  <span style="color:var(--muted)">→</span>
-                  <input type="date" data-dir-to="ombor" onchange="reloadDirectorSection('ombor')" style="padding:6px 10px">
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor',7)">7 kun</button>
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor',30)">30 kun</button>
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor',90)">90 kun</button>
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('ombor','month')">Joriy oy</button>
-                </div>
-                <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-                  <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('ombor',true)" title="Yangilash">↻</button>
-                  <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('ombor')">⚙ Manba</button>
-                </div>
-              </div>
-              <div class="director-kpi-row" data-dir-kpi="ombor" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
-              <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
-                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                  <div class="director-chart-title" data-dir-chart-title="ombor-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Kunlik harakat</div>
-                  <div style="position:relative;height:240px"><canvas data-dir-chart="ombor-1"></canvas></div>
-                </div>
-                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                  <div class="director-chart-title" data-dir-chart-title="ombor-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Status taqsimoti</div>
-                  <div style="position:relative;height:240px"><canvas data-dir-chart="ombor-2"></canvas></div>
-                </div>
-              </div>
-              <div class="director-status-message" data-dir-msg="ombor" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+            <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+              <div class="director-chart-title" data-dir-chart-title="ombor-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Status taqsimoti</div>
+              <div style="position:relative;height:240px"><canvas data-dir-chart="ombor-2"></canvas></div>
             </div>
           </div>
+          <div class="director-status-message" data-dir-msg="ombor" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+        </div>
 
-          <!-- SECTION 3: Agentlar -->
-          <div class="card director-section" data-dir-section="agentlar">
-            <div class="card-h director-section-header" onclick="toggleDirectorSection('agentlar')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-              <div style="display:flex;align-items:center;gap:12px">
-                <span style="font-size:22px">👥</span>
-                <span class="card-title">Agentlar</span>
-                <span class="director-source-badge" id="director-source-badge-agentlar" style="font-size:11px;color:var(--muted2)"></span>
-              </div>
-              <div class="director-section-chevron" id="director-chev-agentlar" style="font-size:18px;color:var(--muted2);transition:transform .2s">▼</div>
+        <div class="dir-section-view" data-dir-section-view="agentlar" style="display:none">
+          <div class="page-h" style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+            <span style="font-size:22px">👥</span>
+            <span>Agentlar</span>
+            <span class="director-source-badge" id="director-source-badge-agentlar" style="font-size:11px;color:var(--muted2);margin-left:6px"></span>
+          </div>
+          <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
+              <input type="date" data-dir-from="agentlar" onchange="reloadDirectorSection('agentlar')" style="padding:6px 10px">
+              <span style="color:var(--muted)">→</span>
+              <input type="date" data-dir-to="agentlar" onchange="reloadDirectorSection('agentlar')" style="padding:6px 10px">
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar',7)">7 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar',30)">30 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar',90)">90 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar','month')">Joriy oy</button>
             </div>
-            <div class="card-body director-section-body" id="director-body-agentlar" style="display:none">
-              <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                  <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
-                  <input type="date" data-dir-from="agentlar" onchange="reloadDirectorSection('agentlar')" style="padding:6px 10px">
-                  <span style="color:var(--muted)">→</span>
-                  <input type="date" data-dir-to="agentlar" onchange="reloadDirectorSection('agentlar')" style="padding:6px 10px">
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar',7)">7 kun</button>
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar',30)">30 kun</button>
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar',90)">90 kun</button>
-                  <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('agentlar','month')">Joriy oy</button>
-                </div>
-                <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-                  <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('agentlar',true)" title="Yangilash">↻</button>
-                  <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('agentlar')">⚙ Manba</button>
-                </div>
-              </div>
-              <div class="director-kpi-row" data-dir-kpi="agentlar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
-              <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
-                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                  <div class="director-chart-title" data-dir-chart-title="agentlar-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Agent aktivligi</div>
-                  <div style="position:relative;height:240px"><canvas data-dir-chart="agentlar-1"></canvas></div>
-                </div>
-                <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-                  <div class="director-chart-title" data-dir-chart-title="agentlar-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Reyting (top 10)</div>
-                  <div style="position:relative;height:240px"><canvas data-dir-chart="agentlar-2"></canvas></div>
-                </div>
-              </div>
-              <div class="director-status-message" data-dir-msg="agentlar" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('agentlar',true)" title="Yangilash">↻</button>
+              <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('agentlar')">⚙ Manba</button>
             </div>
           </div>
-
+          <div class="director-kpi-row" data-dir-kpi="agentlar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
+          <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
+            <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+              <div class="director-chart-title" data-dir-chart-title="agentlar-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Agent aktivligi</div>
+              <div style="position:relative;height:240px"><canvas data-dir-chart="agentlar-1"></canvas></div>
+            </div>
+            <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+              <div class="director-chart-title" data-dir-chart-title="agentlar-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Reyting (top 10)</div>
+              <div style="position:relative;height:240px"><canvas data-dir-chart="agentlar-2"></canvas></div>
+            </div>
+          </div>
+          <div class="director-status-message" data-dir-msg="agentlar" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
         </div>
 
         <!-- Director settings modal (shared) -->
@@ -6779,19 +6792,52 @@ const DIRECTOR_COLUMN_LABELS = {
   deals_col:  "Bitimlar soni ustuni",
 };
 
-function toggleDirectorSection(section) {
-  if (!DIRECTOR_SECTIONS.includes(section)) return;
-  const body = document.getElementById(`director-body-${section}`);
-  const chev = document.getElementById(`director-chev-${section}`);
-  if (!body) return;
-  const willOpen = body.style.display === "none";
-  body.style.display = willOpen ? "block" : "none";
+function toggleDirectorMenu(forceOpen) {
+  const children = document.getElementById("nav-director-children");
+  const chev = document.getElementById("nav-director-chev");
+  if (!children) return;
+  const willOpen = (forceOpen === true) ? true : (forceOpen === false ? false : children.style.display === "none");
+  children.style.display = willOpen ? "block" : "none";
   if (chev) chev.style.transform = willOpen ? "rotate(180deg)" : "rotate(0deg)";
-  directorState.opened[section] = willOpen;
-  if (willOpen && !directorState.loaded[section]) {
-    // First open — set default date range and load
-    setDirectorPreset(section, "month");
-  }
+}
+
+function gotoDirectorSection(section) {
+  if (!DIRECTOR_SECTIONS.includes(section)) return;
+  // Open sidebar group + activate
+  toggleDirectorMenu(true);
+  // Show director page
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.getElementById("page-director").classList.add("active");
+  // Mark sidebar active state
+  document.querySelectorAll(".nav-link").forEach(n=>n.classList.remove("active"));
+  const subLinks = document.querySelectorAll("#nav-director-children .nav-sublink");
+  subLinks.forEach(el => {
+    const handler = el.getAttribute("onclick") || "";
+    if (handler.includes(`'${section}'`)) el.classList.add("active");
+  });
+  document.getElementById("nav-director-parent")?.classList.add("active");
+  // Update breadcrumb
+  const cr = document.getElementById("breadcrumb");
+  if (cr) cr.innerHTML = `Direktor paneli / ${DIRECTOR_SECTION_LABELS[section] || section}`;
+  // Hide landing + other section views
+  document.getElementById("director-landing").style.display = "none";
+  document.querySelectorAll(".dir-section-view").forEach(v => {
+    v.style.display = v.dataset.dirSectionView === section ? "block" : "none";
+  });
+  // Load configs + data
+  ensureDirectorConfigsLoaded().then(() => {
+    if (!directorState.loaded[section]) {
+      setDirectorPreset(section, "month");
+    } else {
+      reloadDirectorSection(section);
+    }
+  });
+}
+
+async function ensureDirectorConfigsLoaded() {
+  if (directorState.initialized) return;
+  directorState.initialized = true;
+  await loadDirectorConfigs();
 }
 
 function setDirectorPreset(section, preset) {
@@ -6971,10 +7017,12 @@ async function saveDirectorSettings() {
 
 async function initDirectorPanel() {
   if (!document.getElementById("page-director")) return;
-  if (directorState.initialized) return;
-  directorState.initialized = true;
-  await loadDirectorConfigs();
-  // Sections start collapsed; data loads on first expand.
+  // Show landing, hide all section views
+  document.getElementById("director-landing").style.display = "block";
+  document.querySelectorAll(".dir-section-view").forEach(v => { v.style.display = "none"; });
+  // Open sidebar accordion so children are visible
+  toggleDirectorMenu(true);
+  await ensureDirectorConfigsLoaded();
 }
 {% endif %}
 </script>
