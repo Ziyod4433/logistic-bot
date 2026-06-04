@@ -2668,6 +2668,8 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     daily_logistika: dict[str, float] = {}
     by_agent: dict[str, dict[str, Any]] = {}
     by_client: dict[str, dict[str, Any]] = {}
+    by_savdo_seller: dict[str, dict[str, Any]] = {}
+    by_log_seller:   dict[str, dict[str, Any]] = {}
     savdo_total = 0.0
     log_total   = 0.0
     savdo_bl    = 0
@@ -2718,14 +2720,23 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             is_logistika = _norm_person_director(logist_name) in _DIRECTOR_LOGIST_SET
 
         date_key = row_date.strftime("%Y-%m-%d")
+        seller_key = (logist_name or "").strip()
         if is_logistika:
             daily_logistika[date_key] = daily_logistika.get(date_key, 0.0) + trucks
             log_total += trucks
             log_bl += 1
+            if seller_key:
+                bucket = by_log_seller.setdefault(seller_key, {"name": seller_key, "trucks": 0.0, "bl": 0})
+                bucket["trucks"] += trucks
+                bucket["bl"] += 1
         else:
             daily_savdo[date_key] = daily_savdo.get(date_key, 0.0) + trucks
             savdo_total += trucks
             savdo_bl += 1
+            if seller_key:
+                bucket = by_savdo_seller.setdefault(seller_key, {"name": seller_key, "trucks": 0.0, "bl": 0})
+                bucket["trucks"] += trucks
+                bucket["bl"] += 1
 
         agent_name = safe_cell(row, agent_idx)
         if agent_name:
@@ -2791,6 +2802,15 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             }],
         }
 
+    savdo_sellers = sorted(
+        [{"name": v["name"], "trucks": _r(v["trucks"]), "bl": v["bl"]} for v in by_savdo_seller.values()],
+        key=lambda r: r["trucks"], reverse=True,
+    )
+    log_sellers = sorted(
+        [{"name": v["name"], "trucks": _r(v["trucks"]), "bl": v["bl"]} for v in by_log_seller.values()],
+        key=lambda r: r["trucks"], reverse=True,
+    )
+
     return {
         "configured": True,
         "departments": {
@@ -2799,16 +2819,20 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
                 "kpis": [
                     {"label": "Furalar", "value": f"{_r(savdo_total)}"},
                     {"label": "Yozuvlar", "value": str(savdo_bl)},
+                    {"label": "Sotuvchilar", "value": str(len(savdo_sellers))},
                 ],
                 "chart": savdo_chart,
+                "sellers": savdo_sellers,
             },
             "logistika": {
                 "summary": f"{_r(log_total)} fura · {log_bl} ta yozuv",
                 "kpis": [
                     {"label": "Furalar", "value": f"{_r(log_total)}"},
                     {"label": "Yozuvlar", "value": str(log_bl)},
+                    {"label": "Logistlar", "value": str(len(log_sellers))},
                 ],
                 "chart": log_chart,
+                "sellers": log_sellers,
             },
         },
         "agents":  {

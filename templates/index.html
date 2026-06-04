@@ -1591,7 +1591,9 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               <div class="card-body">
                 <div class="director-kpi-row" data-dir-kpi="savdo_seliy:savdo" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:14px"></div>
                 <div class="director-chart-title" data-dir-chart-title="savdo_seliy-1" style="font-size:12px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Kunlik furalar</div>
-                <div style="position:relative;height:220px"><canvas data-dir-chart="savdo_seliy-1"></canvas></div>
+                <div style="position:relative;height:220px;margin-bottom:14px"><canvas data-dir-chart="savdo_seliy-1"></canvas></div>
+                <div style="font-size:12px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Top sotuvchilar</div>
+                <div data-dir-list="savdo_seliy:savdo_sellers" style="display:flex;flex-direction:column;gap:6px"></div>
               </div>
             </div>
             <div class="card" style="border:1px solid var(--stroke)">
@@ -1602,7 +1604,9 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               <div class="card-body">
                 <div class="director-kpi-row" data-dir-kpi="savdo_seliy:logistika" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:14px"></div>
                 <div class="director-chart-title" data-dir-chart-title="savdo_seliy-2" style="font-size:12px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Kunlik furalar</div>
-                <div style="position:relative;height:220px"><canvas data-dir-chart="savdo_seliy-2"></canvas></div>
+                <div style="position:relative;height:220px;margin-bottom:14px"><canvas data-dir-chart="savdo_seliy-2"></canvas></div>
+                <div style="font-size:12px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Logistlar reytingi</div>
+                <div data-dir-list="savdo_seliy:log_sellers" style="display:flex;flex-direction:column;gap:6px"></div>
               </div>
             </div>
           </div>
@@ -7060,6 +7064,10 @@ function renderDirectorPayload(section, payload) {
     const clientsListEl = document.querySelector(`[data-dir-list="savdo_seliy:clients"]`);
     if (agentsListEl)  agentsListEl.innerHTML  = "";
     if (clientsListEl) clientsListEl.innerHTML = "";
+    const savdoSellersEl = document.querySelector(`[data-dir-list="savdo_seliy:savdo_sellers"]`);
+    const logSellersEl   = document.querySelector(`[data-dir-list="savdo_seliy:log_sellers"]`);
+    if (savdoSellersEl) savdoSellersEl.innerHTML = "";
+    if (logSellersEl)   logSellersEl.innerHTML   = "";
     const agentsMeta  = document.getElementById("dir-seliy-agents-meta");
     const clientsMeta = document.getElementById("dir-seliy-clients-meta");
     if (agentsMeta)  agentsMeta.textContent  = "—";
@@ -7087,6 +7095,12 @@ function renderDirectorPayload(section, payload) {
     if (logMeta   && dept.logistika?.summary) logMeta.textContent = dept.logistika.summary;
     if (dept.savdo?.chart)     renderDirectorChart(`${section}-1`, dept.savdo.chart);
     if (dept.logistika?.chart) renderDirectorChart(`${section}-2`, dept.logistika.chart);
+
+    // Per-department sellers leaderboard
+    const savdoSellersEl = document.querySelector(`[data-dir-list="savdo_seliy:savdo_sellers"]`);
+    const logSellersEl   = document.querySelector(`[data-dir-list="savdo_seliy:log_sellers"]`);
+    if (savdoSellersEl) savdoSellersEl.innerHTML = buildLeaderboardHtml(dept.savdo?.sellers     || [], "trucks", "fura");
+    if (logSellersEl)   logSellersEl.innerHTML   = buildLeaderboardHtml(dept.logistika?.sellers || [], "trucks", "fura");
 
     // Agentlar + Mijozlar reytingi (same sheet, different slice)
     const agents  = payload.agents  || {};
