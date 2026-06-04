@@ -2692,6 +2692,13 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         "rows_bad_date": 0,
         "rows_outside_period": 0,
         "rows_no_trucks": 0,
+        "sample_used": [],     # first 5 rows that passed filter (raw_date → parsed)
+        "sample_outside": [],  # first 5 rows rejected as outside period
+        "by_month": {},        # "YYYY-MM" → {trucks: X, rows: Y}
+        "sheet_id": sheet_id[:12] + "…",
+        "sheet_ref": gid_or_name,
+        "filter_from": date_from_str or "",
+        "filter_to":   date_to_str or "",
     }
 
     def safe_cell(row: list[str], idx: int | None) -> str:
@@ -2710,13 +2717,30 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             diag["rows_no_trucks"] += 1
             continue
 
-        row_date = ombor_service._parse_date(safe_cell(row, date_idx))
+        raw_date_text = safe_cell(row, date_idx)
+        row_date = ombor_service._parse_date(raw_date_text)
         if row_date is None:
             diag["rows_bad_date"] += 1
             continue
         if (date_from and row_date < date_from) or (date_to and row_date > date_to):
             diag["rows_outside_period"] += 1
+            if len(diag["sample_outside"]) < 5:
+                diag["sample_outside"].append({
+                    "raw": raw_date_text[:30],
+                    "parsed": row_date.isoformat(),
+                    "trucks": trucks,
+                })
             continue
+        if len(diag["sample_used"]) < 5:
+            diag["sample_used"].append({
+                "raw": raw_date_text[:30],
+                "parsed": row_date.isoformat(),
+                "trucks": trucks,
+            })
+        ym_bucket = row_date.strftime("%Y-%m")
+        m_stats = diag["by_month"].setdefault(ym_bucket, {"trucks": 0.0, "rows": 0})
+        m_stats["trucks"] += trucks
+        m_stats["rows"] += 1
 
         # Department: prefer explicit label IF the user pointed at a
         # department column; otherwise use the same 3-name LOGIST_NAMES
@@ -2866,11 +2890,22 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             "total_trucks": _r(sum(r["trucks"] for r in clients_rows)),
         },
         "diagnostics": diag,
-        "message": (
-            f"Yangilangan: {diag['rows_used']} / {diag['rows_total']} qator "
-            f"({date_from or '∞'} → {date_to or '∞'}). "
-            f"Tashlangan: trucks={diag['rows_no_trucks']}, "
-            f"sana={diag['rows_bad_date']}, "
-            f"davrdan tashqari={diag['rows_outside_period']}"
-        ),
+        "message": _build_seliy_diagnostic_message(diag, date_from, date_to, sheet_id, gid_or_name),
     }
+
+
+def _build_seliy_diagnostic_message(diag: dict, date_from, date_to, sheet_id: str, gid_or_name: str) -> str:
+    # Round trucks in by_month for display
+    by_month_sorted = sorted(diag.get("by_month", {}).items())
+    by_month_str = ", ".join(
+        f"{ym}: {round(m['trucks'], 1)} fura ({m['rows']} qator)"
+        for ym, m in by_month_sorted
+    ) or "—"
+    return (
+        f"Manba: {sheet_id[:14]}… · gid/varaq {gid_or_name} | "
+        f"Davr: {date_from or '∞'} → {date_to or '∞'} | "
+        f"Olingan: {diag['rows_used']} / {diag['rows_total']} qator. "
+        f"Tashlangan: trucks={diag['rows_no_trucks']}, sana={diag['rows_bad_date']}, "
+        f"davrdan tashqari={diag['rows_outside_period']}. "
+        f"Oylar: {by_month_str}"
+    )
