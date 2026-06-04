@@ -2591,3 +2591,236 @@ def get_monitor_month_breakdown(ym: str, args: Any) -> dict[str, Any]:
         },
         "ftl_cbm_per_truck": ftl_cbm_per_truck,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Director paneli — Savdo · Seliy aggregation
+# Pulls FTL rows from the director's configured Google Sheet (independent
+# of Sales Monitor's sheet) and applies the same Savdo/Logistika split
+# logic the monitor uses: hardcoded 3 LOGIST names + optional department
+# column override.
+# ──────────────────────────────────────────────────────────────────────────
+DIRECTOR_LOGIST_NAMES = (
+    "SAYFULLAYEV ABDULLOH ORIFJON O'G'LI",
+    "O'KTAMOV MAQSUDXO'JA MAXAMAT O'G'LI",
+    "ABDULLAYEV IBROHIM ABDUSATTOR O'G'LI",
+)
+
+
+def _norm_person_director(name: str) -> str:
+    if not name:
+        return ""
+    n = name.casefold()
+    for ch in ("ʻ", "ʼ", "'", "`", "‘", "’"):
+        n = n.replace(ch, "")
+    return " ".join(n.split()).strip()
+
+
+_DIRECTOR_LOGIST_SET = {_norm_person_director(n) for n in DIRECTOR_LOGIST_NAMES}
+
+
+def _parse_iso_date(value: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d").date()
+    except (ValueError, AttributeError):
+        return None
+
+
+def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
+    """Return department-split + agent/client leaderboards for the director's
+    Savdo · Seliy view. cfg comes from db.get_director_config('savdo_seliy').
+    """
+    from services import ombor_service
+
+    sheet_id = (cfg.get("sheet_id") or "").strip()
+    if not sheet_id:
+        return {"configured": False, "message": "Sheet manbasini sozlang (⚙)."}
+
+    gid_or_name = (cfg.get("sheet_gid") or "").strip() or (cfg.get("sheet_name") or "").strip()
+    if not gid_or_name:
+        return {"configured": False, "message": "gid yoki varaq nomini ko'rsating."}
+
+    cols = cfg.get("columns") or {}
+    header_rows = max(0, int(cfg.get("header_rows") or 1))
+
+    date_idx   = ombor_service._col_to_index(cols.get("date_col")       or "A")
+    dept_idx   = ombor_service._col_to_index(cols.get("department_col") or "B")
+    logist_idx = ombor_service._col_to_index(cols.get("logist_col")     or "C")
+    trucks_idx = ombor_service._col_to_index(cols.get("trucks_col")     or "D")
+    client_idx = ombor_service._col_to_index(cols.get("client_col")     or "E")
+    agent_idx  = ombor_service._col_to_index(cols.get("agent_col")      or "F")
+
+    date_from = _parse_iso_date(date_from_str)
+    date_to   = _parse_iso_date(date_to_str)
+
+    try:
+        rows = ombor_service._fetch_csv_by_gid(sheet_id, gid_or_name)
+    except Exception as exc:
+        return {"configured": True, "error": f"Sheet o'qish xatosi: {exc}",
+                "departments": {"savdo": {}, "logistika": {}},
+                "agents": {"rows": []}, "clients": {"rows": []}}
+
+    data_rows = rows[header_rows:]
+
+    daily_savdo: dict[str, float] = {}
+    daily_logistika: dict[str, float] = {}
+    by_agent: dict[str, dict[str, Any]] = {}
+    by_client: dict[str, dict[str, Any]] = {}
+    savdo_total = 0.0
+    log_total   = 0.0
+    savdo_bl    = 0
+    log_bl      = 0
+
+    diag = {
+        "rows_total": len(data_rows),
+        "rows_used":  0,
+        "rows_bad_date": 0,
+        "rows_outside_period": 0,
+        "rows_no_trucks": 0,
+    }
+
+    def safe_cell(row: list[str], idx: int) -> str:
+        return row[idx].strip() if idx < len(row) else ""
+
+    for row in data_rows:
+        # Trucks: try numeric first, then container-type interpretation
+        trucks_raw = safe_cell(row, trucks_idx)
+        try:
+            trucks = float(trucks_raw.replace(",", ".").replace(" ", ""))
+        except ValueError:
+            trucks = ombor_service._truck_count(trucks_raw)
+        if trucks <= 0:
+            diag["rows_no_trucks"] += 1
+            continue
+
+        row_date = ombor_service._parse_date(safe_cell(row, date_idx))
+        if row_date is None:
+            diag["rows_bad_date"] += 1
+            continue
+        if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+            diag["rows_outside_period"] += 1
+            continue
+
+        # Department: prefer explicit label, fall back to hardcoded LOGIST_NAMES
+        dept_label = safe_cell(row, dept_idx).strip().casefold()
+        logist_name = safe_cell(row, logist_idx)
+        is_logistika = False
+        if dept_label:
+            if "logist" in dept_label or "лог" in dept_label:
+                is_logistika = True
+            elif "savdo" in dept_label or "торг" in dept_label or "сав" in dept_label:
+                is_logistika = False
+            else:
+                is_logistika = _norm_person_director(logist_name) in _DIRECTOR_LOGIST_SET
+        else:
+            is_logistika = _norm_person_director(logist_name) in _DIRECTOR_LOGIST_SET
+
+        date_key = row_date.strftime("%Y-%m-%d")
+        if is_logistika:
+            daily_logistika[date_key] = daily_logistika.get(date_key, 0.0) + trucks
+            log_total += trucks
+            log_bl += 1
+        else:
+            daily_savdo[date_key] = daily_savdo.get(date_key, 0.0) + trucks
+            savdo_total += trucks
+            savdo_bl += 1
+
+        agent_name = safe_cell(row, agent_idx)
+        if agent_name:
+            bucket = by_agent.setdefault(agent_name, {"name": agent_name, "trucks": 0.0, "bl": 0})
+            bucket["trucks"] += trucks
+            bucket["bl"] += 1
+
+        client_name = safe_cell(row, client_idx)
+        if client_name:
+            bucket = by_client.setdefault(client_name, {"name": client_name, "trucks": 0.0, "bl": 0})
+            bucket["trucks"] += trucks
+            bucket["bl"] += 1
+
+        diag["rows_used"] += 1
+
+    all_dates = sorted(set(list(daily_savdo.keys()) + list(daily_logistika.keys())))
+
+    def _r(v: float) -> float:
+        return round(float(v or 0), 2)
+
+    savdo_chart = {
+        "type": "line",
+        "title": "Kunlik furalar",
+        "labels": all_dates,
+        "datasets": [{
+            "label": "Furalar",
+            "data": [_r(daily_savdo.get(d, 0)) for d in all_dates],
+            "borderColor": "#4aa8ff",
+            "backgroundColor": "rgba(74,168,255,.15)",
+        }],
+    }
+    log_chart = {
+        "type": "line",
+        "title": "Kunlik furalar",
+        "labels": all_dates,
+        "datasets": [{
+            "label": "Furalar",
+            "data": [_r(daily_logistika.get(d, 0)) for d in all_dates],
+            "borderColor": "#ff5b7f",
+            "backgroundColor": "rgba(255,91,127,.15)",
+        }],
+    }
+
+    agents_rows = sorted(
+        [{"name": v["name"], "trucks": _r(v["trucks"]), "bl": v["bl"]} for v in by_agent.values()],
+        key=lambda r: r["trucks"], reverse=True,
+    )
+    clients_rows = sorted(
+        [{"name": v["name"], "trucks": _r(v["trucks"]), "bl": v["bl"]} for v in by_client.values()],
+        key=lambda r: r["trucks"], reverse=True,
+    )
+
+    def _bar_chart(rows: list[dict], color: str) -> dict:
+        top = rows[:10]
+        return {
+            "type": "bar",
+            "labels": [(r["name"] or "")[:18] for r in top],
+            "datasets": [{
+                "label": "Furalar",
+                "data": [r["trucks"] for r in top],
+                "backgroundColor": color,
+                "borderColor": color,
+            }],
+        }
+
+    return {
+        "configured": True,
+        "departments": {
+            "savdo": {
+                "summary": f"{_r(savdo_total)} fura · {savdo_bl} ta yozuv",
+                "kpis": [
+                    {"label": "Furalar", "value": f"{_r(savdo_total)}"},
+                    {"label": "Yozuvlar", "value": str(savdo_bl)},
+                ],
+                "chart": savdo_chart,
+            },
+            "logistika": {
+                "summary": f"{_r(log_total)} fura · {log_bl} ta yozuv",
+                "kpis": [
+                    {"label": "Furalar", "value": f"{_r(log_total)}"},
+                    {"label": "Yozuvlar", "value": str(log_bl)},
+                ],
+                "chart": log_chart,
+            },
+        },
+        "agents":  {
+            "rows": agents_rows,
+            "chart": _bar_chart(agents_rows, "#2ad09b"),
+            "total_trucks": _r(sum(r["trucks"] for r in agents_rows)),
+        },
+        "clients": {
+            "rows": clients_rows,
+            "chart": _bar_chart(clients_rows, "#a78bfa"),
+            "total_trucks": _r(sum(r["trucks"] for r in clients_rows)),
+        },
+        "diagnostics": diag,
+        "message": f"Yangilangan: {diag['rows_used']} ta yozuv {date_from or '∞'} → {date_to or '∞'}",
+    }

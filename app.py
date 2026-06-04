@@ -5221,22 +5221,14 @@ def api_director_section_data(section: str):
                 "kpis": [],
                 "charts": {},
             })
-        # TODO: fetch + aggregate Google Sheet here. For now placeholder.
+        # SAVDO · SELIY — real aggregation (same logic as Sales Monitor's FTL)
         if section == "savdo_seliy":
-            return jsonify({
-                "section": section,
-                "configured": True,
-                "from": date_from,
-                "to": date_to,
-                "sheet_id": cfg.get("sheet_id"),
-                "departments": {
-                    "savdo":     {"kpis": [], "chart": None, "summary": ""},
-                    "logistika": {"kpis": [], "chart": None, "summary": ""},
-                },
-                "agents":  {"rows": [], "chart": None, "total_trucks": 0},
-                "clients": {"rows": [], "chart": None, "total_trucks": 0},
-                "message": "Manba ulangan. Bo'limlar bo'yicha agregatsiya ustun mapping tasdiqlangach yakunlanadi.",
-            })
+            agg = analytics_service.get_director_seliy(cfg, date_from, date_to)
+            agg.setdefault("section", section)
+            agg.setdefault("from", date_from)
+            agg.setdefault("to", date_to)
+            agg.setdefault("sheet_id", cfg.get("sheet_id"))
+            return jsonify(agg)
         return jsonify({
             "section": section,
             "configured": True,
