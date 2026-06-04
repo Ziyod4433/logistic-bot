@@ -2645,12 +2645,23 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     cols = cfg.get("columns") or {}
     header_rows = max(0, int(cfg.get("header_rows") or 1))
 
-    date_idx   = ombor_service._col_to_index(cols.get("date_col")       or "A")
-    dept_idx   = ombor_service._col_to_index(cols.get("department_col") or "B")
-    logist_idx = ombor_service._col_to_index(cols.get("logist_col")     or "C")
-    trucks_idx = ombor_service._col_to_index(cols.get("trucks_col")     or "D")
-    client_idx = ombor_service._col_to_index(cols.get("client_col")     or "E")
-    agent_idx  = ombor_service._col_to_index(cols.get("agent_col")      or "F")
+    def _maybe_idx(letter: str) -> int | None:
+        """Returns column index OR None if the user left this column empty
+        in settings. This avoids reading unrelated cells when the source
+        sheet doesn't have e.g. an explicit department/client/agent column."""
+        s = (letter or "").strip().upper()
+        if not s:
+            return None
+        return ombor_service._col_to_index(s)
+
+    # Required columns: date, logist (seller name), trucks (type or count)
+    date_idx   = _maybe_idx(cols.get("date_col")   or "A")
+    logist_idx = _maybe_idx(cols.get("logist_col") or "C")
+    trucks_idx = _maybe_idx(cols.get("trucks_col") or "D")
+    # Optional columns: if user left them blank, skip reading them
+    dept_idx   = _maybe_idx(cols.get("department_col") or "")
+    client_idx = _maybe_idx(cols.get("client_col")     or "")
+    agent_idx  = _maybe_idx(cols.get("agent_col")      or "")
 
     date_from = _parse_iso_date(date_from_str)
     date_to   = _parse_iso_date(date_to_str)
@@ -2683,16 +2694,18 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         "rows_no_trucks": 0,
     }
 
-    def safe_cell(row: list[str], idx: int) -> str:
+    def safe_cell(row: list[str], idx: int | None) -> str:
+        if idx is None or idx < 0:
+            return ""
         return row[idx].strip() if idx < len(row) else ""
 
     for row in data_rows:
-        # Trucks: try numeric first, then container-type interpretation
+        # Trucks counting — identical to Sales Monitor's fetch_ftl_data:
+        # use _truck_count on the cell content (20GP/20HQ → 0.5, anything
+        # else with a digit or 'FURA' → 1.0, header/junk → 0). This way
+        # Director · Seliy matches Sales Monitor numbers on the same sheet.
         trucks_raw = safe_cell(row, trucks_idx)
-        try:
-            trucks = float(trucks_raw.replace(",", ".").replace(" ", ""))
-        except ValueError:
-            trucks = ombor_service._truck_count(trucks_raw)
+        trucks = ombor_service._truck_count(trucks_raw)
         if trucks <= 0:
             diag["rows_no_trucks"] += 1
             continue
@@ -2705,15 +2718,20 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             diag["rows_outside_period"] += 1
             continue
 
-        # Department: prefer explicit label, fall back to hardcoded LOGIST_NAMES
-        dept_label = safe_cell(row, dept_idx).strip().casefold()
+        # Department: prefer explicit label IF the user pointed at a
+        # department column; otherwise use the same 3-name LOGIST_NAMES
+        # check that Sales Monitor uses (Sayfullayev / O'ktamov / Abdullayev).
         logist_name = safe_cell(row, logist_idx)
         is_logistika = False
-        if dept_label:
-            if "logist" in dept_label or "лог" in dept_label:
-                is_logistika = True
-            elif "savdo" in dept_label or "торг" in dept_label or "сав" in dept_label:
-                is_logistika = False
+        if dept_idx is not None:
+            dept_label = safe_cell(row, dept_idx).strip().casefold()
+            if dept_label:
+                if "logist" in dept_label or "лог" in dept_label:
+                    is_logistika = True
+                elif "savdo" in dept_label or "торг" in dept_label or "сав" in dept_label:
+                    is_logistika = False
+                else:
+                    is_logistika = _norm_person_director(logist_name) in _DIRECTOR_LOGIST_SET
             else:
                 is_logistika = _norm_person_director(logist_name) in _DIRECTOR_LOGIST_SET
         else:
@@ -2738,17 +2756,19 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
                 bucket["trucks"] += trucks
                 bucket["bl"] += 1
 
-        agent_name = safe_cell(row, agent_idx)
-        if agent_name:
-            bucket = by_agent.setdefault(agent_name, {"name": agent_name, "trucks": 0.0, "bl": 0})
-            bucket["trucks"] += trucks
-            bucket["bl"] += 1
+        if agent_idx is not None:
+            agent_name = safe_cell(row, agent_idx)
+            if agent_name:
+                bucket = by_agent.setdefault(agent_name, {"name": agent_name, "trucks": 0.0, "bl": 0})
+                bucket["trucks"] += trucks
+                bucket["bl"] += 1
 
-        client_name = safe_cell(row, client_idx)
-        if client_name:
-            bucket = by_client.setdefault(client_name, {"name": client_name, "trucks": 0.0, "bl": 0})
-            bucket["trucks"] += trucks
-            bucket["bl"] += 1
+        if client_idx is not None:
+            client_name = safe_cell(row, client_idx)
+            if client_name:
+                bucket = by_client.setdefault(client_name, {"name": client_name, "trucks": 0.0, "bl": 0})
+                bucket["trucks"] += trucks
+                bucket["bl"] += 1
 
         diag["rows_used"] += 1
 
@@ -2846,5 +2866,11 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             "total_trucks": _r(sum(r["trucks"] for r in clients_rows)),
         },
         "diagnostics": diag,
-        "message": f"Yangilangan: {diag['rows_used']} ta yozuv {date_from or '∞'} → {date_to or '∞'}",
+        "message": (
+            f"Yangilangan: {diag['rows_used']} / {diag['rows_total']} qator "
+            f"({date_from or '∞'} → {date_to or '∞'}). "
+            f"Tashlangan: trucks={diag['rows_no_trucks']}, "
+            f"sana={diag['rows_bad_date']}, "
+            f"davrdan tashqari={diag['rows_outside_period']}"
+        ),
     }
