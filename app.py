@@ -5133,12 +5133,13 @@ DIRECTOR_DEFAULT_COLUMNS = {
         "client_col": "E",
         "agent_col":  "F",
     },
-    # SBORNIY = consolidated (LTL) — by seller.
+    # SBORNIY = consolidated (LTL) — by seller. Defaults match the Ombor
+    # sheet shape Sales Monitor uses (cbm V, date Z, seller AG, bl E,
+    # header_rows 2). User can override per-sheet.
     "savdo_sborniy": {
-        "date_col":   "A",
-        "seller_col": "B",
-        "amount_col": "C",
-        "cbm_col":    "D",
+        "date_col":   "Z",
+        "seller_col": "AG",
+        "cbm_col":    "V",
         "bl_col":     "E",
     },
     "ombor": {
@@ -5225,6 +5226,14 @@ def api_director_section_data(section: str):
         # SAVDO · SELIY — real aggregation (same logic as Sales Monitor's FTL)
         if section == "savdo_seliy":
             agg = analytics_service.get_director_seliy(cfg, date_from, date_to)
+            agg.setdefault("section", section)
+            agg.setdefault("from", date_from)
+            agg.setdefault("to", date_to)
+            agg.setdefault("sheet_id", cfg.get("sheet_id"))
+            return jsonify(agg)
+        # SAVDO · SBORNIY — LTL aggregation via Ombor (no FTL trucks)
+        if section == "savdo_sborniy":
+            agg = analytics_service.get_director_sborniy(cfg, date_from, date_to)
             agg.setdefault("section", section)
             agg.setdefault("from", date_from)
             agg.setdefault("to", date_to)

@@ -2947,6 +2947,132 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     }
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Director paneli — Savdo · Sborniy (consolidated / LTL)
+# Mirrors Sales Monitor's Savdo bo'limi LTL leaderboard. Reads the Ombor
+# sheet via the same fetch_ombor_data() helper Sales Monitor uses, so
+# CBM totals and seller buckets are identical. FTL trucks are NOT
+# included here — Seliy is the separate page for whole-truck data.
+# ──────────────────────────────────────────────────────────────────────────
+def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
+    from services import ombor_service
+
+    sheet_id = (cfg.get("sheet_id") or "").strip()
+    if not sheet_id:
+        return {"configured": False, "message": "Sheet manbasini sozlang (⚙)."}
+
+    sheet_name = (cfg.get("sheet_name") or "").strip() or "Ombor"
+    cols = cfg.get("columns") or {}
+    header_rows = max(0, int(cfg.get("header_rows") or 2))
+
+    cbm_col    = (cols.get("cbm_col")    or "V").strip().upper() or "V"
+    date_col   = (cols.get("date_col")   or "Z").strip().upper() or "Z"
+    seller_col = (cols.get("seller_col") or "AG").strip().upper() or "AG"
+    bl_col     = (cols.get("bl_col")     or "E").strip().upper() or "E"
+
+    date_from = _parse_iso_date(date_from_str)
+    date_to   = _parse_iso_date(date_to_str)
+
+    try:
+        ombor = ombor_service.fetch_ombor_data(
+            sheet_id=sheet_id,
+            sheet_name=sheet_name,
+            cbm_col=cbm_col,
+            date_col=date_col,
+            seller_col=seller_col,
+            header_rows=header_rows,
+            date_from=date_from,
+            date_to=date_to,
+            force=False,
+            bl_col=bl_col,
+        )
+    except Exception as exc:
+        return {
+            "configured": True,
+            "error": f"Sheet o'qish xatosi: {exc}",
+            "kpis": [], "charts": {},
+            "message": f"Xato: {exc}",
+        }
+
+    sellers_map = ombor.get("sellers") or {}
+    diag = ombor.get("diagnostics") or {}
+
+    def _r(v: float) -> float:
+        return round(float(v or 0), 2)
+
+    # Sort sellers by CBM desc
+    sellers_sorted = sorted(
+        [
+            {"name": v.get("name") or "—", "cbm": _r(v.get("cbm") or 0), "bl": int(v.get("bl_count") or 0)}
+            for v in sellers_map.values()
+        ],
+        key=lambda r: r["cbm"], reverse=True,
+    )
+
+    total_cbm = sum(s["cbm"] for s in sellers_sorted)
+    total_bl  = sum(s["bl"]  for s in sellers_sorted)
+
+    # Top-N bar chart
+    top_n = sellers_sorted[:10]
+    bar_chart = {
+        "type": "bar",
+        "title": "Top sotuvchilar (m³)",
+        "labels": [(s["name"] or "")[:18] for s in top_n],
+        "datasets": [{
+            "label": "m³",
+            "data": [s["cbm"] for s in top_n],
+            "backgroundColor": "#4aa8ff",
+            "borderColor": "#4aa8ff",
+        }],
+    }
+
+    # Daily CBM line chart from monthly bucket isn't granular enough, so
+    # build it from the raw rows via a second pass through ombor_service.
+    # ombor_service exposes monthly aggregation already; for daily we re-walk
+    # the CSV here using the same helpers. Simpler: lean on `monthly` only
+    # if no `daily` field exists, and fall back to a coarse month axis.
+    daily_axis: list[str] = []
+    daily_values: list[float] = []
+    monthly_data = ombor.get("monthly") or {}
+    if monthly_data:
+        for ym in sorted(monthly_data.keys()):
+            daily_axis.append(ym)
+            daily_values.append(_r(monthly_data[ym].get("cbm") or 0))
+    line_chart = {
+        "type": "line",
+        "title": "Kunlik dinamika (m³)",
+        "labels": daily_axis,
+        "datasets": [{
+            "label": "m³",
+            "data": daily_values,
+            "borderColor": "#2ad09b",
+            "backgroundColor": "rgba(42,208,155,.15)",
+        }],
+    }
+
+    return {
+        "configured": True,
+        "kpis": [
+            {"label": "Jami m³", "value": f"{_r(total_cbm)}"},
+            {"label": "Jami BL", "value": str(total_bl)},
+            {"label": "Sotuvchilar", "value": str(len(sellers_sorted))},
+        ],
+        "charts": {
+            "chart1": line_chart,
+            "chart2": bar_chart,
+        },
+        "sellers": sellers_sorted,
+        "diagnostics": diag,
+        "message": (
+            f"Yangilangan: {diag.get('rows_used', 0)} / {diag.get('rows_total', 0)} qator "
+            f"({date_from or '∞'} → {date_to or '∞'}). "
+            f"Tashlangan: CBM={diag.get('rows_no_cbm', 0)}, "
+            f"sana={diag.get('rows_bad_date', 0)}, "
+            f"davrdan tashqari={diag.get('rows_outside_period', 0)}"
+        ),
+    }
+
+
 def _build_seliy_diagnostic_message(diag: dict, date_from, date_to, sheet_id: str, gid_or_name: str) -> str:
     # Round trucks in by_month for display
     by_month_sorted = sorted(diag.get("by_month", {}).items())
