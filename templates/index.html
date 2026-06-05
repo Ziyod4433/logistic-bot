@@ -1684,6 +1684,16 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
           </div>
 
+          <div class="card" style="margin-top:18px;border:1px solid var(--stroke)">
+            <div class="card-h" style="display:flex;align-items:center;justify-content:space-between">
+              <span class="card-title" style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">🧑‍💼</span> Agentlar reytingi (Fura statuslari)</span>
+              <span style="font-size:11px;color:var(--muted2)" id="dir-sborniy-agents-meta">—</span>
+            </div>
+            <div class="card-body">
+              <div data-dir-list="savdo_sborniy:agents" style="display:flex;flex-direction:column;gap:6px"></div>
+            </div>
+          </div>
+
           <div class="director-status-message" data-dir-msg="savdo_sborniy" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
         </div>
 
@@ -6952,6 +6962,8 @@ const DIRECTOR_COLUMN_LABELS = {
   capacity_yiwu:      "YIWU sig'imi (m³)",
   capacity_zhongshan: "ZHONGSHAN sig'imi (m³)",
   capacity_horgos:    "HORGOS sig'imi (m³)",
+  fura_agent_col:     "Fura statuslari — Agent ustuni",
+  fura_date_col:      "Fura statuslari — Sana ustuni (ixtiyoriy)",
 };
 
 function _directorSettingsIsCapacityKey(key) {
@@ -7197,6 +7209,10 @@ function renderDirectorPayload(section, payload) {
       if (sellersEl) sellersEl.innerHTML = "";
       const metaEl = document.getElementById("dir-sborniy-sellers-meta");
       if (metaEl) metaEl.textContent = "—";
+      const agentsEl = document.querySelector(`[data-dir-list="savdo_sborniy:agents"]`);
+      if (agentsEl) agentsEl.innerHTML = "";
+      const agentsMetaEl = document.getElementById("dir-sborniy-agents-meta");
+      if (agentsMetaEl) agentsMetaEl.textContent = "—";
     }
     if (section === "ombor") {
       ["YIWU","ZHONGSHAN","HORGOS"].forEach(n => {
@@ -7277,7 +7293,7 @@ function renderDirectorPayload(section, payload) {
     warehouses.forEach(w => renderWarehouseGauge(w));
   }
 
-  // Sborniy: render LTL sellers leaderboard (full list, with CBM + BL)
+  // Sborniy: render LTL sellers + agents (from Fura statuslari) leaderboards
   if (section === "savdo_sborniy") {
     const sellersEl = document.querySelector(`[data-dir-list="savdo_sborniy:sellers"]`);
     const metaEl    = document.getElementById("dir-sborniy-sellers-meta");
@@ -7287,6 +7303,15 @@ function renderDirectorPayload(section, payload) {
       const totalCbm = sellers.reduce((s, r) => s + Number(r.cbm || 0), 0);
       const totalBl  = sellers.reduce((s, r) => s + Number(r.bl  || 0), 0);
       metaEl.textContent = `${sellers.length} ta sotuvchi · ${totalCbm.toFixed(1)} m³ · ${totalBl} BL`;
+    }
+
+    const agentsEl = document.querySelector(`[data-dir-list="savdo_sborniy:agents"]`);
+    const agentsMetaEl = document.getElementById("dir-sborniy-agents-meta");
+    const agents = Array.isArray(payload.agents) ? payload.agents : [];
+    if (agentsEl) agentsEl.innerHTML = buildLeaderboardHtml(agents, "trucks", "fura");
+    if (agentsMetaEl) {
+      const totalFura = agents.reduce((s, r) => s + Number(r.trucks || 0), 0);
+      agentsMetaEl.textContent = `${agents.length} ta agent · ${totalFura} fura`;
     }
   }
 }

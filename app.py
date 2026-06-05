@@ -5136,11 +5136,16 @@ DIRECTOR_DEFAULT_COLUMNS = {
     # SBORNIY = consolidated (LTL) — by seller. Defaults match the Ombor
     # sheet shape Sales Monitor uses (cbm V, date Z, seller AG, bl E,
     # header_rows 2). User can override per-sheet.
+    # 'fura_*' fields point at the separate 'Fura statuslari' tab in the
+    # same spreadsheet — used to build the agent ranking shown under the
+    # sellers leaderboard.
     "savdo_sborniy": {
-        "date_col":   "Z",
-        "seller_col": "AG",
-        "cbm_col":    "V",
-        "bl_col":     "E",
+        "date_col":      "Z",
+        "seller_col":    "AG",
+        "cbm_col":       "V",
+        "bl_col":        "E",
+        "fura_agent_col": "B",
+        "fura_date_col":  "",   # optional — leave blank to disable date filter on agents
     },
     # OMBOR = warehouse fill. Aggregates CBM by warehouse name (matched
     # against YIWU/ZHONGSHAN/HORGOS substring). Capacity per warehouse

@@ -2947,6 +2947,62 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     }
 
 
+def _director_sborniy_agents(
+    sheet_id: str,
+    agent_col: str,
+    date_col: str,
+    date_from,
+    date_to,
+    sheet_name: str = "Fura statuslari",
+    header_rows: int = 1,
+) -> list[dict]:
+    """Build agent ranking from a separate 'Fura statuslari' tab.
+
+    Each row in that sheet represents one fura; we group by the agent
+    name in column `agent_col` and count rows. If `date_col` is set
+    AND parses, we also apply the same date filter as the rest of
+    Sborniy so the leaderboard reflects the chosen period.
+    """
+    from services import ombor_service
+
+    if not sheet_id or not agent_col:
+        return []
+    try:
+        rows = ombor_service._fetch_csv(sheet_id, sheet_name)
+    except Exception:
+        return []
+
+    agent_idx = ombor_service._col_to_index(agent_col)
+    date_idx  = ombor_service._col_to_index(date_col) if date_col else None
+    data_rows = rows[max(0, int(header_rows)):]
+
+    by_agent: dict[str, dict] = {}
+    for row in data_rows:
+        agent = (row[agent_idx].strip() if agent_idx < len(row) else "")
+        if not agent:
+            continue
+        if date_idx is not None:
+            raw_date = row[date_idx].strip() if date_idx < len(row) else ""
+            row_date = ombor_service._parse_date(raw_date)
+            if row_date is None:
+                continue
+            if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+                continue
+        # Normalize key (case-fold + apostrophe-strip) so 'Aliyev' /
+        # 'ALIYEV' / 'aliyev' merge into one row, like everywhere else.
+        key = _norm_person_director(agent)
+        bucket = by_agent.setdefault(key, {"name": agent, "trucks": 0, "bl": 0})
+        if len(agent) > len(bucket["name"]):
+            bucket["name"] = agent
+        bucket["trucks"] += 1
+        bucket["bl"] += 1
+
+    return sorted(
+        [{"name": v["name"], "trucks": v["trucks"], "bl": v["bl"]} for v in by_agent.values()],
+        key=lambda r: r["trucks"], reverse=True,
+    )
+
+
 # Per-stage daily aggregator for the Sborniy 'Kunlik dinamika' chart.
 # Reuses ombor_service's cached _fetch_csv and parsing helpers so the
 # 3 sheets aren't re-downloaded after fetch_combined_ltl_data already
@@ -3026,6 +3082,9 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
     # default. Not exposed in the director UI (we don't show a separate
     # logist leaderboard for Sborniy), but the combined fetcher needs it.
     logist_col = (cols.get("logist_col") or "AH").strip().upper() or "AH"
+    # Fura statuslari tab — for agent ranking
+    fura_agent_col = (cols.get("fura_agent_col") or "B").strip().upper() or "B"
+    fura_date_col  = (cols.get("fura_date_col")  or "").strip().upper()
 
     date_from = _parse_iso_date(date_from_str)
     date_to   = _parse_iso_date(date_to_str)
@@ -3135,24 +3194,36 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         stage_summaries.append(f"{stage_name}: {used}/{total}")
     stages_summary = " | ".join(stage_summaries) or "—"
 
+    # Agent ranking from the 'Fura statuslari' tab in the same spreadsheet
+    agents_rows = _director_sborniy_agents(
+        sheet_id=sheet_id,
+        agent_col=fura_agent_col,
+        date_col=fura_date_col,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
     return {
         "configured": True,
         "kpis": [
             {"label": "Jami m³",     "value": f"{_r(total_cbm)}"},
             {"label": "Jami BL",     "value": str(total_bl)},
             {"label": "Sotuvchilar", "value": str(len(sellers_sorted))},
+            {"label": "Agentlar",    "value": str(len(agents_rows))},
         ],
         "charts": {
             "chart1": line_chart,
             "chart2": bar_chart,
         },
         "sellers": sellers_sorted,
+        "agents":  agents_rows,
         "diagnostics": diag,
         "message": (
             f"3 ta bosqich birlashtirildi (Ombor + Ortilgan furalar + Yetib keldi). "
             f"Jami: {total_rows_used}/{total_rows_total} qator "
             f"({date_from or '∞'} → {date_to or '∞'}). "
-            f"Bosqichlar bo'yicha: {stages_summary}"
+            f"Bosqichlar bo'yicha: {stages_summary}. "
+            f"Agentlar (Fura statuslari): {len(agents_rows)} ta"
         ),
     }
 
