@@ -1710,13 +1710,57 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
           </div>
           <div class="director-kpi-row" data-dir-kpi="ombor" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
+
+          <!-- Warehouse fill gauges: YIWU / ZHONGSHAN / HORGOS -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-bottom:18px" id="dir-ombor-gauges">
+            <div class="card" data-dir-gauge-wh="YIWU" style="border:1px solid var(--stroke)">
+              <div class="card-body" style="padding:18px">
+                <div style="position:relative;height:170px">
+                  <canvas data-dir-gauge="YIWU"></canvas>
+                  <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:6px;pointer-events:none">
+                    <div style="font-size:30px;font-weight:800;line-height:1" data-dir-gauge-pct="YIWU">0%</div>
+                    <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-gauge-amount="YIWU">0 / 0 m³</div>
+                  </div>
+                </div>
+                <div style="text-align:center;margin-top:10px;font-size:14px;font-weight:700;color:var(--txt);letter-spacing:.05em">🏬 YIWU</div>
+                <div style="text-align:center;font-size:11px;color:var(--muted2);margin-top:2px" data-dir-gauge-meta="YIWU">—</div>
+              </div>
+            </div>
+            <div class="card" data-dir-gauge-wh="ZHONGSHAN" style="border:1px solid var(--stroke)">
+              <div class="card-body" style="padding:18px">
+                <div style="position:relative;height:170px">
+                  <canvas data-dir-gauge="ZHONGSHAN"></canvas>
+                  <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:6px;pointer-events:none">
+                    <div style="font-size:30px;font-weight:800;line-height:1" data-dir-gauge-pct="ZHONGSHAN">0%</div>
+                    <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-gauge-amount="ZHONGSHAN">0 / 0 m³</div>
+                  </div>
+                </div>
+                <div style="text-align:center;margin-top:10px;font-size:14px;font-weight:700;color:var(--txt);letter-spacing:.05em">🏬 ZHONGSHAN</div>
+                <div style="text-align:center;font-size:11px;color:var(--muted2);margin-top:2px" data-dir-gauge-meta="ZHONGSHAN">—</div>
+              </div>
+            </div>
+            <div class="card" data-dir-gauge-wh="HORGOS" style="border:1px solid var(--stroke)">
+              <div class="card-body" style="padding:18px">
+                <div style="position:relative;height:170px">
+                  <canvas data-dir-gauge="HORGOS"></canvas>
+                  <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:6px;pointer-events:none">
+                    <div style="font-size:30px;font-weight:800;line-height:1" data-dir-gauge-pct="HORGOS">0%</div>
+                    <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-gauge-amount="HORGOS">0 / 0 m³</div>
+                  </div>
+                </div>
+                <div style="text-align:center;margin-top:10px;font-size:14px;font-weight:700;color:var(--txt);letter-spacing:.05em">🏬 HORGOS</div>
+                <div style="text-align:center;font-size:11px;color:var(--muted2);margin-top:2px" data-dir-gauge-meta="HORGOS">—</div>
+              </div>
+            </div>
+          </div>
+
           <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
             <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
               <div class="director-chart-title" data-dir-chart-title="ombor-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Kunlik harakat</div>
               <div style="position:relative;height:240px"><canvas data-dir-chart="ombor-1"></canvas></div>
             </div>
             <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
-              <div class="director-chart-title" data-dir-chart-title="ombor-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Status taqsimoti</div>
+              <div class="director-chart-title" data-dir-chart-title="ombor-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Ombor bo'yicha taqsimot</div>
               <div style="position:relative;height:240px"><canvas data-dir-chart="ombor-2"></canvas></div>
             </div>
           </div>
@@ -6906,17 +6950,25 @@ const DIRECTOR_SECTION_LABELS = {
 };
 
 const DIRECTOR_COLUMN_LABELS = {
-  date_col:       "Sana ustuni",
-  seller_col:     "Sotuvchi ustuni",
-  cbm_col:        "CBM (m³) ustuni",
-  bl_col:         "BL (BRAND NAME) ustuni",
-  status_col:     "Status ustuni",
-  client_col:     "Mijoz ustuni",
-  agent_col:      "Agent ustuni",
-  deals_col:      "Bitimlar soni ustuni",
-  logist_col:     "Sotuvchi ustuni",
-  trucks_col:     "Furalar / konteyner turi ustuni",
+  date_col:           "Sana ustuni",
+  seller_col:         "Sotuvchi ustuni",
+  cbm_col:            "CBM (m³) ustuni",
+  bl_col:             "BL (BRAND NAME) ustuni",
+  status_col:         "Status ustuni",
+  client_col:         "Mijoz ustuni",
+  agent_col:          "Agent ustuni",
+  deals_col:          "Bitimlar soni ustuni",
+  logist_col:         "Sotuvchi ustuni",
+  trucks_col:         "Furalar / konteyner turi ustuni",
+  warehouse_col:      "Ombor ustuni (YIWU/ZHONGSHAN/HORGOS)",
+  capacity_yiwu:      "YIWU sig'imi (m³)",
+  capacity_zhongshan: "ZHONGSHAN sig'imi (m³)",
+  capacity_horgos:    "HORGOS sig'imi (m³)",
 };
+
+function _directorSettingsIsCapacityKey(key) {
+  return typeof key === "string" && key.startsWith("capacity_");
+}
 
 function buildLeaderboardHtml(rows, totalKey, unitLabel, opts) {
   opts = opts || {};
@@ -7158,6 +7210,21 @@ function renderDirectorPayload(section, payload) {
       const metaEl = document.getElementById("dir-sborniy-sellers-meta");
       if (metaEl) metaEl.textContent = "—";
     }
+    if (section === "ombor") {
+      ["YIWU","ZHONGSHAN","HORGOS"].forEach(n => {
+        const chartKey = `gauge-${n}`;
+        if (directorState.charts[chartKey]) {
+          try { directorState.charts[chartKey].destroy(); } catch(e) {}
+          directorState.charts[chartKey] = null;
+        }
+        const pctEl    = document.querySelector(`[data-dir-gauge-pct="${n}"]`);
+        const amountEl = document.querySelector(`[data-dir-gauge-amount="${n}"]`);
+        const metaEl   = document.querySelector(`[data-dir-gauge-meta="${n}"]`);
+        if (pctEl) { pctEl.textContent = "0%"; pctEl.style.color = ""; }
+        if (amountEl) amountEl.textContent = "0 / 0 m³";
+        if (metaEl) metaEl.textContent = "—";
+      });
+    }
   }
 
   if (!payload?.configured) {
@@ -7218,6 +7285,12 @@ function renderDirectorPayload(section, payload) {
   if (t1 && charts.chart1?.title) t1.textContent = charts.chart1.title;
   if (t2 && charts.chart2?.title) t2.textContent = charts.chart2.title;
 
+  // Ombor: render 3 warehouse fill gauges (YIWU / ZHONGSHAN / HORGOS)
+  if (section === "ombor") {
+    const warehouses = Array.isArray(payload.warehouses) ? payload.warehouses : [];
+    warehouses.forEach(w => renderWarehouseGauge(w));
+  }
+
   // Sborniy: render LTL sellers leaderboard (full list, with CBM + BL)
   if (section === "savdo_sborniy") {
     const sellersEl = document.querySelector(`[data-dir-list="savdo_sborniy:sellers"]`);
@@ -7269,6 +7342,60 @@ function renderDirectorChart(chartKey, spec) {
   });
 }
 
+function renderWarehouseGauge(wh) {
+  const name = wh.name;
+  const canvas = document.querySelector(`[data-dir-gauge="${name}"]`);
+  if (!canvas) return;
+
+  const capacity = Number(wh.capacity || 0);
+  const cbm      = Number(wh.cbm || 0);
+  const pctRaw   = Number(wh.fill_percent || 0);
+  const pctClamped = Math.max(0, Math.min(pctRaw, 100));
+  const remaining = Math.max(0, 100 - pctClamped);
+
+  // Color by fill level: green < 60, amber 60-85, red > 85, overfill > 100
+  let fillColor = "#2ad09b";
+  if (pctRaw > 100)      fillColor = "#ff5b7f";
+  else if (pctRaw >= 85) fillColor = "#ff5b7f";
+  else if (pctRaw >= 60) fillColor = "#ffb739";
+
+  // Destroy previous instance
+  const chartKey = `gauge-${name}`;
+  if (directorState.charts[chartKey]) {
+    try { directorState.charts[chartKey].destroy(); } catch (e) {}
+  }
+  const ctx = canvas.getContext("2d");
+  directorState.charts[chartKey] = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      datasets: [{
+        data: [pctClamped, remaining],
+        backgroundColor: [fillColor, "rgba(255,255,255,.05)"],
+        borderWidth: 0,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: "75%",
+      rotation: -90,
+      circumference: 180,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    },
+  });
+
+  const pctEl    = document.querySelector(`[data-dir-gauge-pct="${name}"]`);
+  const amountEl = document.querySelector(`[data-dir-gauge-amount="${name}"]`);
+  const metaEl   = document.querySelector(`[data-dir-gauge-meta="${name}"]`);
+  if (pctEl) {
+    pctEl.textContent = `${pctRaw.toFixed(1)}%`;
+    pctEl.style.color = fillColor;
+  }
+  if (amountEl) amountEl.textContent = `${cbm.toFixed(1)} / ${capacity.toFixed(0)} m³`;
+  if (metaEl) metaEl.textContent =
+    capacity > 0 ? `${wh.bl} BL · ${wh.rows || 0} qator` : `Sig'imi sozlanmagan · ${wh.bl} BL`;
+}
+
 function openDirectorSettings(section) {
   directorState.settingsSection = section;
   document.getElementById("director-settings-section-label").textContent = DIRECTOR_SECTION_LABELS[section] || section;
@@ -7280,12 +7407,19 @@ function openDirectorSettings(section) {
   const defaults = directorState.defaults[section] || {};
   const cols = { ...defaults, ...(cfg.columns || {}) };
   const colsEl = document.getElementById("director-settings-columns");
-  colsEl.innerHTML = Object.keys(defaults).map(key => `
-    <div class="form-group" style="margin:0">
-      <label>${esc(DIRECTOR_COLUMN_LABELS[key] || key)}</label>
-      <input type="text" data-dir-col="${esc(key)}" value="${esc(cols[key] || "")}" placeholder="${esc(defaults[key] || "A")}" maxlength="4" style="text-transform:uppercase">
-    </div>
-  `).join("");
+  colsEl.innerHTML = Object.keys(defaults).map(key => {
+    const isCap = _directorSettingsIsCapacityKey(key);
+    const inputType = isCap ? "number" : "text";
+    const inputStyle = isCap ? "" : "text-transform:uppercase";
+    const inputAttrs = isCap ? 'min="0" step="any"' : 'maxlength="4"';
+    const placeholder = isCap ? "0" : (defaults[key] || "A");
+    return `
+      <div class="form-group" style="margin:0">
+        <label>${esc(DIRECTOR_COLUMN_LABELS[key] || key)}</label>
+        <input type="${inputType}" data-dir-col="${esc(key)}" value="${esc(cols[key] || "")}" placeholder="${esc(placeholder)}" ${inputAttrs} style="${inputStyle}">
+      </div>
+    `;
+  }).join("");
   openModal("director-settings-modal");
 }
 
@@ -7298,7 +7432,9 @@ async function saveDirectorSettings() {
   const columns = {};
   document.querySelectorAll("#director-settings-columns [data-dir-col]").forEach(inp => {
     const k = inp.dataset.dirCol;
-    const v = (inp.value || "").trim().toUpperCase();
+    let v = (inp.value || "").trim();
+    // Capacity fields are numeric, don't uppercase
+    if (!_directorSettingsIsCapacityKey(k)) v = v.toUpperCase();
     if (v) columns[k] = v;
   });
   try {

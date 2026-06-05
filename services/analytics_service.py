@@ -3157,6 +3157,181 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
     }
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Director paneli — Ombor va yuklar statusi
+# Warehouse fill gauges: aggregates CBM by warehouse name and shows
+# fill % against per-warehouse capacity. The 3 hardcoded warehouses
+# are YIWU / ZHONGSHAN / HORGOS — matched case-insensitively against
+# the configured warehouse column (substring match handles cells like
+# 'YIWU склад', 'horgos warehouse', etc.).
+# ──────────────────────────────────────────────────────────────────────────
+DIRECTOR_WAREHOUSES = ("YIWU", "ZHONGSHAN", "HORGOS")
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        return float(str(value).replace(",", ".").replace(" ", ""))
+    except (ValueError, TypeError):
+        return default
+
+
+def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
+    from services import ombor_service
+
+    sheet_id = (cfg.get("sheet_id") or "").strip()
+    if not sheet_id:
+        return {"configured": False, "message": "Sheet manbasini sozlang (⚙)."}
+
+    sheet_name = (cfg.get("sheet_name") or "Ombor").strip() or "Ombor"
+    cols = cfg.get("columns") or {}
+    header_rows = max(0, int(cfg.get("header_rows") or 2))
+
+    date_idx = ombor_service._col_to_index((cols.get("date_col") or "Z"))
+    cbm_idx  = ombor_service._col_to_index((cols.get("cbm_col")  or "V"))
+    bl_letter = (cols.get("bl_col") or "").strip().upper()
+    bl_idx   = ombor_service._col_to_index(bl_letter) if bl_letter else None
+    wh_letter = (cols.get("warehouse_col") or "").strip().upper()
+    wh_idx   = ombor_service._col_to_index(wh_letter) if wh_letter else None
+
+    capacities = {
+        "YIWU":      _safe_float(cols.get("capacity_yiwu")),
+        "ZHONGSHAN": _safe_float(cols.get("capacity_zhongshan")),
+        "HORGOS":    _safe_float(cols.get("capacity_horgos")),
+    }
+
+    date_from = _parse_iso_date(date_from_str)
+    date_to   = _parse_iso_date(date_to_str)
+
+    try:
+        rows = ombor_service._fetch_csv(sheet_id, sheet_name)
+    except Exception as exc:
+        return {
+            "configured": True,
+            "error": f"Sheet o'qish xatosi: {exc}",
+            "kpis": [], "charts": {}, "warehouses": [],
+            "message": f"Xato: {exc}",
+        }
+
+    data_rows = rows[max(0, header_rows):]
+
+    by_wh: dict[str, dict] = {n: {"cbm": 0.0, "bl_set": set(), "rows": 0} for n in DIRECTOR_WAREHOUSES}
+    daily: dict[str, float] = {}
+    diag = {
+        "rows_total": len(data_rows),
+        "rows_used": 0,
+        "rows_no_cbm": 0,
+        "rows_bad_date": 0,
+        "rows_outside_period": 0,
+        "rows_no_warehouse": 0,
+    }
+
+    def safe_cell(row: list[str], idx) -> str:
+        if idx is None or idx < 0:
+            return ""
+        return row[idx].strip() if idx < len(row) else ""
+
+    for row in data_rows:
+        cbm = ombor_service._parse_float(safe_cell(row, cbm_idx))
+        if cbm <= 0:
+            diag["rows_no_cbm"] += 1
+            continue
+        row_date = ombor_service._parse_date(safe_cell(row, date_idx))
+        if row_date is None:
+            diag["rows_bad_date"] += 1
+            continue
+        if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+            diag["rows_outside_period"] += 1
+            continue
+
+        wh_raw = safe_cell(row, wh_idx).upper()
+        matched: str | None = None
+        if wh_raw:
+            for wh in DIRECTOR_WAREHOUSES:
+                if wh in wh_raw:
+                    matched = wh
+                    break
+        if matched:
+            bucket = by_wh[matched]
+            bucket["cbm"] += cbm
+            bucket["rows"] += 1
+            bl_id = safe_cell(row, bl_idx) if bl_idx is not None else f"__row_{diag['rows_used']}__"
+            if bl_id:
+                bucket["bl_set"].add(bl_id)
+        else:
+            diag["rows_no_warehouse"] += 1
+
+        day_key = row_date.strftime("%Y-%m-%d")
+        daily[day_key] = daily.get(day_key, 0.0) + cbm
+        diag["rows_used"] += 1
+
+    def _r(v: float) -> float:
+        return round(float(v or 0), 2)
+
+    warehouses = []
+    for wh in DIRECTOR_WAREHOUSES:
+        b = by_wh[wh]
+        cap = capacities[wh]
+        cbm = _r(b["cbm"])
+        fill = round((cbm / cap * 100) if cap > 0 else 0, 1)
+        warehouses.append({
+            "name": wh,
+            "cbm": cbm,
+            "bl":  len(b["bl_set"]),
+            "rows": b["rows"],
+            "capacity": _r(cap),
+            "fill_percent": fill,
+        })
+
+    daily_sorted = dict(sorted(daily.items()))
+    daily_chart = {
+        "type": "line",
+        "title": "Kunlik harakat (m³)",
+        "labels": list(daily_sorted.keys()),
+        "datasets": [{
+            "label": "m³",
+            "data": [_r(v) for v in daily_sorted.values()],
+            "borderColor": "#4aa8ff",
+            "backgroundColor": "rgba(74,168,255,.15)",
+        }],
+    }
+
+    active_warehouses = [w for w in warehouses if w["cbm"] > 0]
+    dist_chart = {
+        "type": "doughnut",
+        "title": "Ombor bo'yicha taqsimot",
+        "labels": [w["name"] for w in active_warehouses],
+        "datasets": [{
+            "label": "m³",
+            "data":  [w["cbm"] for w in active_warehouses],
+            "backgroundColor": ["#4aa8ff", "#2ad09b", "#ffb739"],
+        }],
+    }
+
+    total_cbm = sum(w["cbm"] for w in warehouses)
+    total_bl  = sum(w["bl"]  for w in warehouses)
+
+    return {
+        "configured": True,
+        "kpis": [
+            {"label": "Jami m³", "value": f"{_r(total_cbm)}"},
+            {"label": "Jami BL", "value": str(total_bl)},
+            {"label": "Faol omborlar", "value": str(len(active_warehouses))},
+        ],
+        "warehouses": warehouses,
+        "charts": {"chart1": daily_chart, "chart2": dist_chart},
+        "diagnostics": diag,
+        "message": (
+            f"Yangilangan: {diag['rows_used']} / {diag['rows_total']} qator "
+            f"({date_from or '∞'} → {date_to or '∞'}). "
+            f"Ombor topilmadi: {diag['rows_no_warehouse']}, "
+            f"CBM={diag['rows_no_cbm']}, sana={diag['rows_bad_date']}, "
+            f"davrdan tashqari={diag['rows_outside_period']}"
+        ),
+    }
+
+
 def _build_seliy_diagnostic_message(diag: dict, date_from, date_to, sheet_id: str, gid_or_name: str) -> str:
     # Round trucks in by_month for display
     by_month_sorted = sorted(diag.get("by_month", {}).items())

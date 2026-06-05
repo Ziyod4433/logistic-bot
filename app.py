@@ -5142,12 +5142,17 @@ DIRECTOR_DEFAULT_COLUMNS = {
         "cbm_col":    "V",
         "bl_col":     "E",
     },
+    # OMBOR = warehouse fill. Aggregates CBM by warehouse name (matched
+    # against YIWU/ZHONGSHAN/HORGOS substring). Capacity per warehouse
+    # is stored alongside the column letters in columns_json.
     "ombor": {
-        "date_col":   "A",
-        "status_col": "B",
-        "cbm_col":    "C",
-        "bl_col":     "D",
-        "client_col": "E",
+        "date_col":          "Z",
+        "cbm_col":           "V",
+        "bl_col":            "E",
+        "warehouse_col":     "T",
+        "capacity_yiwu":      "1000",
+        "capacity_zhongshan": "1000",
+        "capacity_horgos":    "1000",
     },
     "agentlar": {
         "date_col":   "A",
@@ -5234,6 +5239,14 @@ def api_director_section_data(section: str):
         # SAVDO · SBORNIY — LTL aggregation via Ombor (no FTL trucks)
         if section == "savdo_sborniy":
             agg = analytics_service.get_director_sborniy(cfg, date_from, date_to)
+            agg.setdefault("section", section)
+            agg.setdefault("from", date_from)
+            agg.setdefault("to", date_to)
+            agg.setdefault("sheet_id", cfg.get("sheet_id"))
+            return jsonify(agg)
+        # OMBOR — per-warehouse fill (YIWU / ZHONGSHAN / HORGOS) + daily flow
+        if section == "ombor":
+            agg = analytics_service.get_director_ombor(cfg, date_from, date_to)
             agg.setdefault("section", section)
             agg.setdefault("from", date_from)
             agg.setdefault("to", date_to)
