@@ -2947,6 +2947,59 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     }
 
 
+# Per-stage daily aggregator for the Sborniy 'Kunlik dinamika' chart.
+# Reuses ombor_service's cached _fetch_csv and parsing helpers so the
+# 3 sheets aren't re-downloaded after fetch_combined_ltl_data already
+# warmed the cache.
+def _director_sborniy_daily(
+    sheet_id: str,
+    primary_sheet_name: str,
+    primary_cbm_col: str,
+    primary_date_col: str,
+    primary_header_rows: int,
+    date_from,
+    date_to,
+) -> dict:
+    from services import ombor_service
+
+    stages = [
+        {
+            "sheet_name":  primary_sheet_name,
+            "cbm_col":     primary_cbm_col,
+            "date_col":    primary_date_col,
+            "header_rows": primary_header_rows,
+        },
+        # Stages 2 & 3 use the same fixed layout LTL_PIPELINE_STAGES does.
+        {"sheet_name": "Ortilgan furalar", "cbm_col": "U", "date_col": "Y", "header_rows": 1},
+        {"sheet_name": "Yetib keldi",      "cbm_col": "T", "date_col": "X", "header_rows": 1},
+    ]
+
+    daily: dict[str, float] = {}
+    for st in stages:
+        try:
+            rows = ombor_service._fetch_csv(sheet_id, st["sheet_name"])
+        except Exception:
+            continue
+        cbm_idx  = ombor_service._col_to_index(st["cbm_col"])
+        date_idx = ombor_service._col_to_index(st["date_col"])
+        data_rows = rows[max(0, int(st["header_rows"])):]
+        for row in data_rows:
+            cbm_cell = row[cbm_idx].strip() if cbm_idx < len(row) else ""
+            cbm = ombor_service._parse_float(cbm_cell)
+            if cbm <= 0:
+                continue
+            raw_date = row[date_idx].strip() if date_idx < len(row) else ""
+            row_date = ombor_service._parse_date(raw_date)
+            if row_date is None:
+                continue
+            if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+                continue
+            day_key = row_date.strftime("%Y-%m-%d")
+            daily[day_key] = daily.get(day_key, 0.0) + cbm
+    # Return as ordered dict sorted by date asc
+    return dict(sorted(daily.items()))
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Director paneli — Savdo · Sborniy (consolidated / LTL)
 # Mirrors Sales Monitor's Savdo bo'limi LTL leaderboard. Reads the Ombor
@@ -3038,17 +3091,20 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         }],
     }
 
-    # fetch_ombor_data already aggregated by month — it's a list of
-    # {"month": "YYYY-MM", "cbm": X, "bl_count": Y} sorted by month asc.
-    monthly_raw = ombor.get("monthly") or []
-    if not isinstance(monthly_raw, list):
-        # Defensive: if upstream ever returns a dict, normalize to list-of-rows
-        monthly_raw = [
-            {"month": k, "cbm": (v.get("cbm") if isinstance(v, dict) else 0), "bl_count": (v.get("bl_count") if isinstance(v, dict) else 0)}
-            for k, v in monthly_raw.items()
-        ]
-    daily_axis  = [m.get("month") or "" for m in monthly_raw]
-    daily_values = [_r(m.get("cbm") or 0) for m in monthly_raw]
+    # Daily CBM breakdown across all 3 stages. fetch_combined_ltl_data
+    # only returns month-level aggregates, so we walk the raw CSVs here
+    # (cached by ombor_service) and bucket by day.
+    daily_totals = _director_sborniy_daily(
+        sheet_id=sheet_id,
+        primary_sheet_name=sheet_name,
+        primary_cbm_col=cbm_col,
+        primary_date_col=date_col,
+        primary_header_rows=header_rows,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    daily_axis  = list(daily_totals.keys())  # already sorted
+    daily_values = [_r(daily_totals[d]) for d in daily_axis]
     line_chart = {
         "type": "line",
         "title": "Kunlik dinamika (m³)",
