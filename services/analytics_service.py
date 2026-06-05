@@ -2914,20 +2914,18 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         "configured": True,
         "departments": {
             "savdo": {
-                "summary": f"{_r(savdo_total)} fura · {savdo_bl} ta yozuv",
+                "summary": f"{_r(savdo_total)} fura",
                 "kpis": [
                     {"label": "Furalar", "value": f"{_r(savdo_total)}"},
-                    {"label": "Yozuvlar", "value": str(savdo_bl)},
                     {"label": "Sotuvchilar", "value": str(len(savdo_sellers))},
                 ],
                 "chart": savdo_chart,
                 "sellers": savdo_sellers,
             },
             "logistika": {
-                "summary": f"{_r(log_total)} fura · {log_bl} ta yozuv",
+                "summary": f"{_r(log_total)} fura",
                 "kpis": [
                     {"label": "Furalar", "value": f"{_r(log_total)}"},
-                    {"label": "Yozuvlar", "value": str(log_bl)},
                     {"label": "Logistlar", "value": str(len(log_sellers))},
                 ],
                 "chart": log_chart,
