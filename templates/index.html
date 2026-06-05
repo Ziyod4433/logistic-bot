@@ -1711,45 +1711,33 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
           <div class="director-kpi-row" data-dir-kpi="ombor" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
 
-          <!-- Warehouse fill gauges: YIWU / ZHONGSHAN / HORGOS -->
+          <!-- Warehouse fill gauges: YIWU / ZHONGSHAN / HORGOS (analog dial) -->
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-bottom:18px" id="dir-ombor-gauges">
-            <div class="card" data-dir-gauge-wh="YIWU" style="border:1px solid var(--stroke)">
-              <div class="card-body" style="padding:18px">
-                <div style="position:relative;height:170px">
-                  <canvas data-dir-gauge="YIWU"></canvas>
-                  <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:6px;pointer-events:none">
-                    <div style="font-size:30px;font-weight:800;line-height:1" data-dir-gauge-pct="YIWU">0%</div>
-                    <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-gauge-amount="YIWU">0 / 0 m³</div>
-                  </div>
-                </div>
-                <div style="text-align:center;margin-top:10px;font-size:14px;font-weight:700;color:var(--txt);letter-spacing:.05em">🏬 YIWU</div>
-                <div style="text-align:center;font-size:11px;color:var(--muted2);margin-top:2px" data-dir-gauge-meta="YIWU">—</div>
+            <div class="card dir-wh-gauge-card" style="border:1px solid var(--stroke)">
+              <div class="card-body" style="padding:18px;text-align:center">
+                <div data-dir-gauge="YIWU" style="height:170px;position:relative"></div>
+                <div style="font-size:28px;font-weight:800;line-height:1;margin-top:6px" data-dir-gauge-pct="YIWU">0%</div>
+                <div style="font-size:12px;color:var(--muted2);margin-top:4px" data-dir-gauge-amount="YIWU">0 / 0 m³</div>
+                <div style="margin-top:10px;font-size:14px;font-weight:700;color:var(--txt);letter-spacing:.05em">🏬 YIWU</div>
+                <div style="font-size:11px;color:var(--muted2);margin-top:2px" data-dir-gauge-meta="YIWU">—</div>
               </div>
             </div>
-            <div class="card" data-dir-gauge-wh="ZHONGSHAN" style="border:1px solid var(--stroke)">
-              <div class="card-body" style="padding:18px">
-                <div style="position:relative;height:170px">
-                  <canvas data-dir-gauge="ZHONGSHAN"></canvas>
-                  <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:6px;pointer-events:none">
-                    <div style="font-size:30px;font-weight:800;line-height:1" data-dir-gauge-pct="ZHONGSHAN">0%</div>
-                    <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-gauge-amount="ZHONGSHAN">0 / 0 m³</div>
-                  </div>
-                </div>
-                <div style="text-align:center;margin-top:10px;font-size:14px;font-weight:700;color:var(--txt);letter-spacing:.05em">🏬 ZHONGSHAN</div>
-                <div style="text-align:center;font-size:11px;color:var(--muted2);margin-top:2px" data-dir-gauge-meta="ZHONGSHAN">—</div>
+            <div class="card dir-wh-gauge-card" style="border:1px solid var(--stroke)">
+              <div class="card-body" style="padding:18px;text-align:center">
+                <div data-dir-gauge="ZHONGSHAN" style="height:170px;position:relative"></div>
+                <div style="font-size:28px;font-weight:800;line-height:1;margin-top:6px" data-dir-gauge-pct="ZHONGSHAN">0%</div>
+                <div style="font-size:12px;color:var(--muted2);margin-top:4px" data-dir-gauge-amount="ZHONGSHAN">0 / 0 m³</div>
+                <div style="margin-top:10px;font-size:14px;font-weight:700;color:var(--txt);letter-spacing:.05em">🏬 ZHONGSHAN</div>
+                <div style="font-size:11px;color:var(--muted2);margin-top:2px" data-dir-gauge-meta="ZHONGSHAN">—</div>
               </div>
             </div>
-            <div class="card" data-dir-gauge-wh="HORGOS" style="border:1px solid var(--stroke)">
-              <div class="card-body" style="padding:18px">
-                <div style="position:relative;height:170px">
-                  <canvas data-dir-gauge="HORGOS"></canvas>
-                  <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:6px;pointer-events:none">
-                    <div style="font-size:30px;font-weight:800;line-height:1" data-dir-gauge-pct="HORGOS">0%</div>
-                    <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-gauge-amount="HORGOS">0 / 0 m³</div>
-                  </div>
-                </div>
-                <div style="text-align:center;margin-top:10px;font-size:14px;font-weight:700;color:var(--txt);letter-spacing:.05em">🏬 HORGOS</div>
-                <div style="text-align:center;font-size:11px;color:var(--muted2);margin-top:2px" data-dir-gauge-meta="HORGOS">—</div>
+            <div class="card dir-wh-gauge-card" style="border:1px solid var(--stroke)">
+              <div class="card-body" style="padding:18px;text-align:center">
+                <div data-dir-gauge="HORGOS" style="height:170px;position:relative"></div>
+                <div style="font-size:28px;font-weight:800;line-height:1;margin-top:6px" data-dir-gauge-pct="HORGOS">0%</div>
+                <div style="font-size:12px;color:var(--muted2);margin-top:4px" data-dir-gauge-amount="HORGOS">0 / 0 m³</div>
+                <div style="margin-top:10px;font-size:14px;font-weight:700;color:var(--txt);letter-spacing:.05em">🏬 HORGOS</div>
+                <div style="font-size:11px;color:var(--muted2);margin-top:2px" data-dir-gauge-meta="HORGOS">—</div>
               </div>
             </div>
           </div>
@@ -7212,11 +7200,9 @@ function renderDirectorPayload(section, payload) {
     }
     if (section === "ombor") {
       ["YIWU","ZHONGSHAN","HORGOS"].forEach(n => {
-        const chartKey = `gauge-${n}`;
-        if (directorState.charts[chartKey]) {
-          try { directorState.charts[chartKey].destroy(); } catch(e) {}
-          directorState.charts[chartKey] = null;
-        }
+        const container = document.querySelector(`[data-dir-gauge="${n}"]`);
+        if (container) container.innerHTML = "";
+        directorState.charts[`gauge-${n}`] = null;
         const pctEl    = document.querySelector(`[data-dir-gauge-pct="${n}"]`);
         const amountEl = document.querySelector(`[data-dir-gauge-amount="${n}"]`);
         const metaEl   = document.querySelector(`[data-dir-gauge-meta="${n}"]`);
@@ -7342,54 +7328,105 @@ function renderDirectorChart(chartKey, spec) {
   });
 }
 
+// Convert an angle (0=top, clockwise positive) + radius into SVG xy coord.
+function _gaugePolar(cx, cy, r, angleDeg) {
+  const rad = (angleDeg - 90) * Math.PI / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function _gaugeArcPath(cx, cy, r, a1, a2) {
+  const s = _gaugePolar(cx, cy, r, a1);
+  const e = _gaugePolar(cx, cy, r, a2);
+  const large = (a2 - a1) > 180 ? 1 : 0;
+  return `M ${s.x.toFixed(2)} ${s.y.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${e.x.toFixed(2)} ${e.y.toFixed(2)}`;
+}
+
 function renderWarehouseGauge(wh) {
   const name = wh.name;
-  const canvas = document.querySelector(`[data-dir-gauge="${name}"]`);
-  if (!canvas) return;
+  const container = document.querySelector(`[data-dir-gauge="${name}"]`);
+  if (!container) return;
 
   const capacity = Number(wh.capacity || 0);
   const cbm      = Number(wh.cbm || 0);
   const pctRaw   = Number(wh.fill_percent || 0);
   const pctClamped = Math.max(0, Math.min(pctRaw, 100));
-  const remaining = Math.max(0, 100 - pctClamped);
 
-  // Color by fill level: green < 60, amber 60-85, red > 85, overfill > 100
-  let fillColor = "#2ad09b";
-  if (pctRaw > 100)      fillColor = "#ff5b7f";
-  else if (pctRaw >= 85) fillColor = "#ff5b7f";
-  else if (pctRaw >= 60) fillColor = "#ffb739";
+  // Color by overall level shown to the user (not the per-segment colors)
+  let textColor = "#2ad09b";
+  if (pctRaw > 100)      textColor = "#ff5b7f";
+  else if (pctRaw >= 85) textColor = "#ff5b7f";
+  else if (pctRaw >= 60) textColor = "#ffb739";
 
-  // Destroy previous instance
-  const chartKey = `gauge-${name}`;
-  if (directorState.charts[chartKey]) {
-    try { directorState.charts[chartKey].destroy(); } catch (e) {}
-  }
-  const ctx = canvas.getContext("2d");
-  directorState.charts[chartKey] = new Chart(ctx, {
-    type: "doughnut",
-    data: {
-      datasets: [{
-        data: [pctClamped, remaining],
-        backgroundColor: [fillColor, "rgba(255,255,255,.05)"],
-        borderWidth: 0,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: "75%",
-      rotation: -90,
-      circumference: 180,
-      plugins: { legend: { display: false }, tooltip: { enabled: false } },
-    },
-  });
+  // Gauge geometry: 270° sweep from -135° (lower-left) to +135° (lower-right)
+  const VB_W = 260, VB_H = 180;
+  const cx = 130, cy = 130, r = 90;
+  const A_START = -135;
+  const A_END   = 135;
+  const SWEEP   = A_END - A_START;  // 270
+
+  const greenEnd  = A_START + 0.60 * SWEEP;  //  27°
+  const yellowEnd = A_START + 0.80 * SWEEP;  //  81°
+  const needleAng = A_START + (pctClamped / 100) * SWEEP;
+
+  // Tick marks at 0/25/50/75/100
+  const TICKS = [0, 25, 50, 75, 100];
+
+  // Needle tip extends to r-14 (just inside the arc).
+  const needleR = r - 14;
+
+  // Track (background) arc
+  const trackPath = _gaugeArcPath(cx, cy, r, A_START, A_END);
+  const greenPath  = _gaugeArcPath(cx, cy, r, A_START,  greenEnd);
+  const yellowPath = _gaugeArcPath(cx, cy, r, greenEnd, yellowEnd);
+  const redPath    = _gaugeArcPath(cx, cy, r, yellowEnd, A_END);
+
+  const ticksSvg = TICKS.map(p => {
+    const a = A_START + (p / 100) * SWEEP;
+    const inner = _gaugePolar(cx, cy, r - 18, a);
+    const outer = _gaugePolar(cx, cy, r - 28, a);
+    const lblPos = _gaugePolar(cx, cy, r - 40, a);
+    return `
+      <line x1="${inner.x.toFixed(1)}" y1="${inner.y.toFixed(1)}" x2="${outer.x.toFixed(1)}" y2="${outer.y.toFixed(1)}" stroke="rgba(255,255,255,.45)" stroke-width="1.5" stroke-linecap="round" />
+      <text x="${lblPos.x.toFixed(1)}" y="${(lblPos.y + 3).toFixed(1)}" font-size="9" fill="rgba(255,255,255,.4)" text-anchor="middle" font-family="ui-sans-serif,system-ui">${p}</text>
+    `;
+  }).join("");
+
+  const svg = `
+    <svg viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;display:block">
+      <defs>
+        <filter id="gauge-shadow-${name}" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="2" />
+          <feOffset dy="1.5" result="off" />
+          <feComponentTransfer in="off"><feFuncA type="linear" slope=".4" /></feComponentTransfer>
+          <feMerge><feMergeNode /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <!-- Track -->
+      <path d="${trackPath}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="24" stroke-linecap="butt" />
+      <!-- Colored zones (drawn under, then needle on top) -->
+      <path d="${greenPath}"  fill="none" stroke="#2ad09b" stroke-width="20" stroke-linecap="butt" opacity=".85" />
+      <path d="${yellowPath}" fill="none" stroke="#ffb739" stroke-width="20" stroke-linecap="butt" opacity=".88" />
+      <path d="${redPath}"    fill="none" stroke="#ff5b7f" stroke-width="20" stroke-linecap="butt" opacity=".9" />
+      <!-- Ticks -->
+      ${ticksSvg}
+      <!-- Needle (rotates around centre) -->
+      <g transform="rotate(${needleAng.toFixed(2)}, ${cx}, ${cy})" filter="url(#gauge-shadow-${name})">
+        <polygon points="${cx-3.5},${cy+4} ${cx+3.5},${cy+4} ${cx+1},${cy - needleR + 4} ${cx-1},${cy - needleR + 4}" fill="${textColor}" />
+        <circle cx="${cx}" cy="${cy}" r="9" fill="#0d0d10" stroke="rgba(255,255,255,.18)" stroke-width="1.5" />
+        <circle cx="${cx}" cy="${cy}" r="4" fill="${textColor}" />
+      </g>
+    </svg>
+  `;
+  container.innerHTML = svg;
+  // Track this in directorState so we can clear it; SVG doesn't need destroy
+  directorState.charts[`gauge-${name}`] = { destroy() {} };
 
   const pctEl    = document.querySelector(`[data-dir-gauge-pct="${name}"]`);
   const amountEl = document.querySelector(`[data-dir-gauge-amount="${name}"]`);
   const metaEl   = document.querySelector(`[data-dir-gauge-meta="${name}"]`);
   if (pctEl) {
     pctEl.textContent = `${pctRaw.toFixed(1)}%`;
-    pctEl.style.color = fillColor;
+    pctEl.style.color = textColor;
   }
   if (amountEl) amountEl.textContent = `${cbm.toFixed(1)} / ${capacity.toFixed(0)} m³`;
   if (metaEl) metaEl.textContent =
