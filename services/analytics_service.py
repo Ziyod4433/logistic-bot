@@ -2654,14 +2654,18 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             return None
         return ombor_service._col_to_index(s)
 
-    # Required columns: date, logist (seller name), trucks (type or count)
+    # Required columns: date, sotuvchi (seller name), trucks (type or count)
     date_idx   = _maybe_idx(cols.get("date_col")   or "A")
     logist_idx = _maybe_idx(cols.get("logist_col") or "C")
     trucks_idx = _maybe_idx(cols.get("trucks_col") or "D")
     # Optional columns: if user left them blank, skip reading them
-    dept_idx   = _maybe_idx(cols.get("department_col") or "")
-    client_idx = _maybe_idx(cols.get("client_col")     or "")
-    agent_idx  = _maybe_idx(cols.get("agent_col")      or "")
+    client_idx = _maybe_idx(cols.get("client_col") or "")
+    agent_idx  = _maybe_idx(cols.get("agent_col")  or "")
+    # Department detection is name-based (exactly like Sales Monitor):
+    # always use the 3 LOGIST_NAMES check, never read a department column.
+    # Any stale department_col stored from old config is intentionally
+    # ignored here.
+    dept_idx = None
 
     date_from = _parse_iso_date(date_from_str)
     date_to   = _parse_iso_date(date_to_str)

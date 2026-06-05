@@ -5121,16 +5121,17 @@ def analytics_api_monitor_month(ym: str):
 # Director dashboard endpoints
 # ──────────────────────────────────────────────────────────────────────────
 DIRECTOR_DEFAULT_COLUMNS = {
-    # SELIY = whole-truck (FTL). Department column distinguishes
-    # Savdo bo'limi from Logistika bo'limi. Agent/Client columns feed
-    # the agent + client leaderboards shown at the bottom of the page.
+    # SELIY = whole-truck (FTL). Department split is name-based exactly
+    # like Sales Monitor: each row's 'sotuvchi' (seller) name is checked
+    # against 3 hardcoded LOGIST names (Sayfullayev / O'ktamov /
+    # Abdullayev) — match → Logistika, otherwise → Savdo. No explicit
+    # department column is needed.
     "savdo_seliy": {
-        "date_col":       "A",
-        "department_col": "B",
-        "logist_col":     "C",
-        "trucks_col":     "D",
-        "client_col":     "E",
-        "agent_col":      "F",
+        "date_col":   "A",
+        "logist_col": "C",
+        "trucks_col": "D",
+        "client_col": "E",
+        "agent_col":  "F",
     },
     # SBORNIY = consolidated (LTL) — by seller.
     "savdo_sborniy": {
