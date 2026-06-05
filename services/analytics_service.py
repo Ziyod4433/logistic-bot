@@ -2994,23 +2994,25 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
             "message": f"Xato: {exc}",
         }
 
-    sellers_map = ombor.get("sellers") or {}
+    sellers_raw = ombor.get("sellers") or []
     diag = ombor.get("diagnostics") or {}
 
     def _r(v: float) -> float:
         return round(float(v or 0), 2)
 
-    # Sort sellers by CBM desc
-    sellers_sorted = sorted(
-        [
-            {"name": v.get("name") or "—", "cbm": _r(v.get("cbm") or 0), "bl": int(v.get("bl_count") or 0)}
-            for v in sellers_map.values()
-        ],
-        key=lambda r: r["cbm"], reverse=True,
-    )
+    # fetch_ombor_data returns sellers as a list (already sorted by CBM desc)
+    sellers_sorted = [
+        {
+            "name":  v.get("name") or "—",
+            "cbm":   _r(v.get("cbm") or 0),
+            "bl":    int(v.get("bl_count") or 0),
+            "share": float(v.get("share_percent") or 0),
+        }
+        for v in (sellers_raw if isinstance(sellers_raw, list) else sellers_raw.values())
+    ]
 
-    total_cbm = sum(s["cbm"] for s in sellers_sorted)
-    total_bl  = sum(s["bl"]  for s in sellers_sorted)
+    total_cbm = _r(ombor.get("total_cbm") or sum(s["cbm"] for s in sellers_sorted))
+    total_bl  = int(ombor.get("total_bl")  or sum(s["bl"]  for s in sellers_sorted))
 
     # Top-N bar chart
     top_n = sellers_sorted[:10]
@@ -3026,18 +3028,17 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         }],
     }
 
-    # Daily CBM line chart from monthly bucket isn't granular enough, so
-    # build it from the raw rows via a second pass through ombor_service.
-    # ombor_service exposes monthly aggregation already; for daily we re-walk
-    # the CSV here using the same helpers. Simpler: lean on `monthly` only
-    # if no `daily` field exists, and fall back to a coarse month axis.
-    daily_axis: list[str] = []
-    daily_values: list[float] = []
-    monthly_data = ombor.get("monthly") or {}
-    if monthly_data:
-        for ym in sorted(monthly_data.keys()):
-            daily_axis.append(ym)
-            daily_values.append(_r(monthly_data[ym].get("cbm") or 0))
+    # fetch_ombor_data already aggregated by month — it's a list of
+    # {"month": "YYYY-MM", "cbm": X, "bl_count": Y} sorted by month asc.
+    monthly_raw = ombor.get("monthly") or []
+    if not isinstance(monthly_raw, list):
+        # Defensive: if upstream ever returns a dict, normalize to list-of-rows
+        monthly_raw = [
+            {"month": k, "cbm": (v.get("cbm") if isinstance(v, dict) else 0), "bl_count": (v.get("bl_count") if isinstance(v, dict) else 0)}
+            for k, v in monthly_raw.items()
+        ]
+    daily_axis  = [m.get("month") or "" for m in monthly_raw]
+    daily_values = [_r(m.get("cbm") or 0) for m in monthly_raw]
     line_chart = {
         "type": "line",
         "title": "Kunlik dinamika (m³)",
