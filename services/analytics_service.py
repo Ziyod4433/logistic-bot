@@ -2685,6 +2685,10 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     by_client: dict[str, dict[str, Any]] = {}
     by_savdo_seller: dict[str, dict[str, Any]] = {}
     by_log_seller:   dict[str, dict[str, Any]] = {}
+    # Per-seller client breakdown: seller_key -> client_key -> {name, trucks, bl}
+    # Used for the drill-down modal that opens when a seller is clicked.
+    savdo_seller_clients: dict[str, dict[str, dict[str, Any]]] = {}
+    log_seller_clients:   dict[str, dict[str, dict[str, Any]]] = {}
     savdo_total = 0.0
     log_total   = 0.0
     savdo_bl    = 0
@@ -2771,6 +2775,19 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         # and "OLIMOV ..." merge into one bucket — same dedupe rule the
         # Sales Monitor uses in get_monitor_month_breakdown.
         seller_key = _norm_person_director(raw_seller) if raw_seller else ""
+        raw_client_for_drill = safe_cell(row, client_idx) if client_idx is not None else ""
+        client_key_for_drill = (raw_client_for_drill or "").strip()
+
+        def _track_seller_client(bucket_map: dict, s_key: str, c_raw: str, c_key: str, t: float) -> None:
+            if not s_key or not c_key:
+                return
+            per_seller = bucket_map.setdefault(s_key, {})
+            cb = per_seller.setdefault(c_key, {"name": c_raw, "trucks": 0.0, "bl": 0})
+            if len(c_raw) > len(cb["name"]):
+                cb["name"] = c_raw
+            cb["trucks"] += t
+            cb["bl"] += 1
+
         if is_logistika:
             daily_logistika[date_key] = daily_logistika.get(date_key, 0.0) + trucks
             log_total += trucks
@@ -2782,6 +2799,7 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
                     bucket["name"] = raw_seller
                 bucket["trucks"] += trucks
                 bucket["bl"] += 1
+                _track_seller_client(log_seller_clients, seller_key, raw_client_for_drill, client_key_for_drill, trucks)
         else:
             daily_savdo[date_key] = daily_savdo.get(date_key, 0.0) + trucks
             savdo_total += trucks
@@ -2792,6 +2810,7 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
                     bucket["name"] = raw_seller
                 bucket["trucks"] += trucks
                 bucket["bl"] += 1
+                _track_seller_client(savdo_seller_clients, seller_key, raw_client_for_drill, client_key_for_drill, trucks)
 
         if agent_idx is not None:
             agent_name = safe_cell(row, agent_idx)
@@ -2859,12 +2878,35 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             }],
         }
 
+    def _clients_for_seller(per_seller: dict, seller_key: str) -> list[dict]:
+        clients_map = per_seller.get(seller_key) or {}
+        return sorted(
+            [{"name": c["name"], "trucks": _r(c["trucks"]), "bl": c["bl"]} for c in clients_map.values()],
+            key=lambda r: r["trucks"], reverse=True,
+        )
+
     savdo_sellers = sorted(
-        [{"name": v["name"], "trucks": _r(v["trucks"]), "bl": v["bl"]} for v in by_savdo_seller.values()],
+        [
+            {
+                "name": v["name"],
+                "trucks": _r(v["trucks"]),
+                "bl": v["bl"],
+                "clients": _clients_for_seller(savdo_seller_clients, sk),
+            }
+            for sk, v in by_savdo_seller.items()
+        ],
         key=lambda r: r["trucks"], reverse=True,
     )
     log_sellers = sorted(
-        [{"name": v["name"], "trucks": _r(v["trucks"]), "bl": v["bl"]} for v in by_log_seller.values()],
+        [
+            {
+                "name": v["name"],
+                "trucks": _r(v["trucks"]),
+                "bl": v["bl"],
+                "clients": _clients_for_seller(log_seller_clients, sk),
+            }
+            for sk, v in by_log_seller.items()
+        ],
         key=lambda r: r["trucks"], reverse=True,
     )
 

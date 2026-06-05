@@ -584,6 +584,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .dir-section-view { animation: fadein .15s ease; }
 .dir-landing .card { transition: transform .15s ease, border-color .15s ease; }
 .dir-landing .card:hover { transform: translateY(-2px); border-color: var(--amber); }
+.dir-leaderboard-row[onclick]:hover { background: rgba(245,166,35,.08) !important; border-color: var(--amber); }
 .bl-actions {
   display:flex;
   gap:4px;
@@ -1744,6 +1745,22 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
           </div>
           <div class="director-status-message" data-dir-msg="agentlar" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+        </div>
+
+        <!-- Seller drill-down modal — clients of one seller -->
+        <div class="overlay" id="director-seller-detail-modal">
+          <div class="modal" style="width:640px;max-width:96vw">
+            <div class="modal-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span id="director-seller-detail-icon" style="font-size:22px">🧑‍💼</span>
+              <em id="director-seller-detail-name">—</em>
+            </div>
+            <div style="font-size:12px;color:var(--muted2);margin-bottom:14px" id="director-seller-detail-meta">—</div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Mijozlar (top → bo'yicha)</div>
+            <div id="director-seller-detail-clients" style="display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+              <button class="btn btn-ghost" onclick="closeModal('director-seller-detail-modal')">Yopish</button>
+            </div>
+          </div>
         </div>
 
         <!-- Director settings modal (shared) -->
@@ -6890,19 +6907,25 @@ const DIRECTOR_COLUMN_LABELS = {
   trucks_col:     "Furalar / konteyner turi ustuni",
 };
 
-function buildLeaderboardHtml(rows, totalKey, unitLabel) {
+function buildLeaderboardHtml(rows, totalKey, unitLabel, opts) {
+  opts = opts || {};
   if (!Array.isArray(rows) || !rows.length) {
     return `<div style="font-size:12px;color:var(--muted2);text-align:center;padding:14px">Bu davr uchun ma'lumot yo'q</div>`;
   }
   const total = rows.reduce((s, r) => s + (Number(r[totalKey] || 0)), 0) || 1;
+  const clickKind = opts.clickKind || "";   // "savdo" | "log" | ""
   return rows.slice(0, 10).map((r, i) => {
     const value = Number(r[totalKey] || 0);
     const share = (value / total * 100);
+    const clickable = !!clickKind;
+    const handler = clickable
+      ? `onclick='openDirectorSellerDetail(${JSON.stringify(clickKind)}, ${JSON.stringify(r.name || "")})' style="cursor:pointer"`
+      : "";
     return `
-      <div style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:10px;background:rgba(255,255,255,.02)">
+      <div ${handler} class="dir-leaderboard-row" style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:10px;background:rgba(255,255,255,.02);transition:background .15s">
         <div style="width:22px;font-size:12px;color:var(--muted2);text-align:center">${i+1}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name || "—")}</div>
+          <div style="font-size:13px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name || "—")}${clickable ? ' <span style="font-size:10px;color:var(--muted2);margin-left:4px">▸</span>' : ""}</div>
           <div style="position:relative;height:4px;background:rgba(255,255,255,.05);border-radius:3px;margin-top:4px;overflow:hidden">
             <div style="position:absolute;left:0;top:0;bottom:0;width:${share.toFixed(1)}%;background:linear-gradient(90deg,var(--amber),#ff9540)"></div>
           </div>
@@ -6911,6 +6934,31 @@ function buildLeaderboardHtml(rows, totalKey, unitLabel) {
       </div>
     `;
   }).join("");
+}
+
+// Cache the latest seliy payload so the drill-down modal can look up
+// clients without refetching from the server.
+let __directorSeliyLastPayload = null;
+
+function openDirectorSellerDetail(kind, sellerName) {
+  const payload = __directorSeliyLastPayload || {};
+  const dept = payload.departments || {};
+  const pool = (kind === "log") ? (dept.logistika?.sellers || []) : (dept.savdo?.sellers || []);
+  const seller = pool.find(s => (s.name || "") === sellerName) || null;
+  if (!seller) {
+    toast("Sotuvchi topilmadi", "err");
+    return;
+  }
+  const iconEl = document.getElementById("director-seller-detail-icon");
+  const nameEl = document.getElementById("director-seller-detail-name");
+  const metaEl = document.getElementById("director-seller-detail-meta");
+  const clientsEl = document.getElementById("director-seller-detail-clients");
+  if (iconEl) iconEl.textContent = (kind === "log") ? "🚚" : "🛒";
+  if (nameEl) nameEl.textContent = seller.name || "—";
+  if (metaEl) metaEl.textContent =
+    `${kind === "log" ? "Logistika bo'limi" : "Savdo bo'limi"} · ${seller.trucks} fura · ${seller.bl} yozuv · ${(seller.clients || []).length} ta mijoz`;
+  if (clientsEl) clientsEl.innerHTML = buildLeaderboardHtml(seller.clients || [], "trucks", "fura");
+  openModal("director-seller-detail-modal");
 }
 
 function toggleDirectorMenu(forceOpen) {
@@ -7095,11 +7143,14 @@ function renderDirectorPayload(section, payload) {
     if (dept.savdo?.chart)     renderDirectorChart(`${section}-1`, dept.savdo.chart);
     if (dept.logistika?.chart) renderDirectorChart(`${section}-2`, dept.logistika.chart);
 
-    // Per-department sellers leaderboard
+    // Cache latest payload for the drill-down modal
+    __directorSeliyLastPayload = payload;
+
+    // Per-department sellers leaderboard (clickable → opens drill-down)
     const savdoSellersEl = document.querySelector(`[data-dir-list="savdo_seliy:savdo_sellers"]`);
     const logSellersEl   = document.querySelector(`[data-dir-list="savdo_seliy:log_sellers"]`);
-    if (savdoSellersEl) savdoSellersEl.innerHTML = buildLeaderboardHtml(dept.savdo?.sellers     || [], "trucks", "fura");
-    if (logSellersEl)   logSellersEl.innerHTML   = buildLeaderboardHtml(dept.logistika?.sellers || [], "trucks", "fura");
+    if (savdoSellersEl) savdoSellersEl.innerHTML = buildLeaderboardHtml(dept.savdo?.sellers     || [], "trucks", "fura", { clickKind: "savdo" });
+    if (logSellersEl)   logSellersEl.innerHTML   = buildLeaderboardHtml(dept.logistika?.sellers || [], "trucks", "fura", { clickKind: "log"   });
 
     // Agentlar + Mijozlar reytingi (same sheet, different slice)
     const agents  = payload.agents  || {};
