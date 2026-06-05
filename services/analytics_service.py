@@ -3248,6 +3248,69 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
+def _director_ombor_metric(
+    main_sheet_id: str,
+    override_url: str,
+    sheet_name: str,
+    date_col: str,
+    cbm_col: str,
+    header_rows,
+    date_from,
+    date_to,
+) -> dict:
+    """Compute one sub-metric (sum of m³ on a tab, optionally date-filtered).
+
+    Returns {"cbm": float, "rows": int, "configured": bool}.
+    If override_url is non-empty, parses sheet_id from it; otherwise uses
+    main_sheet_id. Returns configured=False if essentials are missing.
+    """
+    from services import ombor_service
+    import database as _db
+
+    if override_url:
+        sheet_id, _gid = _db._parse_sheet_url(override_url.strip())
+        if not sheet_id:
+            sheet_id = main_sheet_id
+    else:
+        sheet_id = main_sheet_id
+
+    if not sheet_id or not sheet_name or not cbm_col:
+        return {"cbm": 0.0, "rows": 0, "configured": False}
+
+    try:
+        rows = ombor_service._fetch_csv(sheet_id, sheet_name)
+    except Exception:
+        return {"cbm": 0.0, "rows": 0, "configured": True, "error": "fetch failed"}
+
+    try:
+        header_n = max(0, int(header_rows or 1))
+    except (TypeError, ValueError):
+        header_n = 1
+    data_rows = rows[header_n:]
+
+    cbm_idx  = ombor_service._col_to_index(cbm_col)
+    date_idx = ombor_service._col_to_index(date_col) if date_col else None
+
+    total = 0.0
+    used  = 0
+    for row in data_rows:
+        cbm_cell = row[cbm_idx].strip() if cbm_idx < len(row) else ""
+        cbm = ombor_service._parse_float(cbm_cell)
+        if cbm <= 0:
+            continue
+        if date_idx is not None:
+            raw_date = row[date_idx].strip() if date_idx < len(row) else ""
+            row_date = ombor_service._parse_date(raw_date)
+            if row_date is None:
+                continue
+            if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+                continue
+        total += cbm
+        used += 1
+
+    return {"cbm": round(total, 2), "rows": used, "configured": True}
+
+
 def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     from services import ombor_service
 
@@ -3383,6 +3446,34 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     total_cbm = sum(w["cbm"] for w in warehouses)
     total_bl  = sum(w["bl"]  for w in warehouses)
 
+    # 4 configurable sub-metrics — each can point at its own sheet/tab
+    main_sheet_id = sheet_id
+    extra_specs = [
+        ("ortilgan", "Umumiy ortilgan yuklar"),
+        ("hajm",     "Umumiy hajm"),
+        ("yulda",    "Yo'ldagi yuklar"),
+        ("bojxona",  "Bojxonadagi yuklar"),
+    ]
+    extra_kpis = []
+    for prefix, label in extra_specs:
+        result = _director_ombor_metric(
+            main_sheet_id=main_sheet_id,
+            override_url=(cols.get(f"{prefix}_sheet_url") or "").strip(),
+            sheet_name=(cols.get(f"{prefix}_sheet_name") or "").strip(),
+            date_col=(cols.get(f"{prefix}_date_col") or "").strip().upper(),
+            cbm_col=(cols.get(f"{prefix}_cbm_col") or "").strip().upper(),
+            header_rows=cols.get(f"{prefix}_header_rows"),
+            date_from=date_from,
+            date_to=date_to,
+        )
+        extra_kpis.append({
+            "key":   prefix,
+            "label": label,
+            "cbm":   result["cbm"],
+            "rows":  result["rows"],
+            "configured": result["configured"],
+        })
+
     return {
         "configured": True,
         "kpis": [
@@ -3391,6 +3482,7 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             {"label": "Faol omborlar", "value": str(len(active_warehouses))},
         ],
         "warehouses": warehouses,
+        "extra_kpis": extra_kpis,
         "charts": {"chart1": daily_chart, "chart2": dist_chart},
         "diagnostics": diag,
         "message": (

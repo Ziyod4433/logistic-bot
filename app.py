@@ -5149,7 +5149,9 @@ DIRECTOR_DEFAULT_COLUMNS = {
     },
     # OMBOR = warehouse fill. Aggregates CBM by warehouse name (matched
     # against YIWU/ZHONGSHAN/HORGOS substring). Capacity per warehouse
-    # is stored alongside the column letters in columns_json.
+    # is stored alongside the column letters in columns_json. Also includes
+    # 4 sub-metric sources (ortilgan/hajm/yulda/bojxona) each with optional
+    # override URL — if blank, uses the main sheet_url.
     "ombor": {
         "date_col":          "Z",
         "cbm_col":           "V",
@@ -5158,6 +5160,30 @@ DIRECTOR_DEFAULT_COLUMNS = {
         "capacity_yiwu":      "1000",
         "capacity_zhongshan": "1000",
         "capacity_horgos":    "1000",
+        # ─── 1) UMUMIY ORTILGAN YUKLAR ───
+        "ortilgan_sheet_url":    "",
+        "ortilgan_sheet_name":   "Ortilgan furalar",
+        "ortilgan_date_col":     "Y",
+        "ortilgan_cbm_col":      "U",
+        "ortilgan_header_rows":  "1",
+        # ─── 2) UMUMIY HAJM ───
+        "hajm_sheet_url":    "",
+        "hajm_sheet_name":   "Ombor",
+        "hajm_date_col":     "Z",
+        "hajm_cbm_col":      "V",
+        "hajm_header_rows":  "2",
+        # ─── 3) YO'LDAGI YUKLAR ───
+        "yulda_sheet_url":    "",
+        "yulda_sheet_name":   "",
+        "yulda_date_col":     "",
+        "yulda_cbm_col":      "",
+        "yulda_header_rows":  "1",
+        # ─── 4) BOJXONADAGI YUKLAR ───
+        "bojxona_sheet_url":    "",
+        "bojxona_sheet_name":   "",
+        "bojxona_date_col":     "",
+        "bojxona_cbm_col":      "",
+        "bojxona_header_rows":  "1",
     },
     "agentlar": {
         "date_col":   "A",

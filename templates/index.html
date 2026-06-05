@@ -1721,6 +1721,38 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
           </div>
           <div class="director-kpi-row" data-dir-kpi="ombor" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
 
+          <!-- 4 configurable sub-metrics from external sheets -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:18px" id="dir-ombor-extra-kpis">
+            <div class="card" data-dir-extra-kpi="ortilgan" style="border:1px solid var(--stroke)">
+              <div class="card-body" style="padding:16px">
+                <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.14em;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="font-size:14px">📥</span><span>Umumiy ortilgan yuklar</span></div>
+                <div style="font-size:26px;font-weight:800;line-height:1;color:var(--txt)" data-dir-extra-kpi-value="ortilgan">— m³</div>
+                <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-extra-kpi-sub="ortilgan">manba ulanmagan</div>
+              </div>
+            </div>
+            <div class="card" data-dir-extra-kpi="hajm" style="border:1px solid var(--stroke)">
+              <div class="card-body" style="padding:16px">
+                <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.14em;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="font-size:14px">📊</span><span>Umumiy hajm</span></div>
+                <div style="font-size:26px;font-weight:800;line-height:1;color:var(--txt)" data-dir-extra-kpi-value="hajm">— m³</div>
+                <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-extra-kpi-sub="hajm">manba ulanmagan</div>
+              </div>
+            </div>
+            <div class="card" data-dir-extra-kpi="yulda" style="border:1px solid var(--stroke)">
+              <div class="card-body" style="padding:16px">
+                <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.14em;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="font-size:14px">🚛</span><span>Yo'ldagi yuklar</span></div>
+                <div style="font-size:26px;font-weight:800;line-height:1;color:var(--txt)" data-dir-extra-kpi-value="yulda">— m³</div>
+                <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-extra-kpi-sub="yulda">manba ulanmagan</div>
+              </div>
+            </div>
+            <div class="card" data-dir-extra-kpi="bojxona" style="border:1px solid var(--stroke)">
+              <div class="card-body" style="padding:16px">
+                <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.14em;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="font-size:14px">🛃</span><span>Bojxonadagi yuklar</span></div>
+                <div style="font-size:26px;font-weight:800;line-height:1;color:var(--txt)" data-dir-extra-kpi-value="bojxona">— m³</div>
+                <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-extra-kpi-sub="bojxona">manba ulanmagan</div>
+              </div>
+            </div>
+          </div>
+
           <!-- Warehouse fill gauges: YIWU / ZHONGSHAN / HORGOS (analog dial) -->
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-bottom:18px" id="dir-ombor-gauges">
             <div class="card dir-wh-gauge-card" style="border:1px solid var(--stroke)">
@@ -6964,6 +6996,35 @@ const DIRECTOR_COLUMN_LABELS = {
   capacity_horgos:    "HORGOS sig'imi (m³)",
   fura_agent_col:     "Fura statuslari — Agent ustuni",
   fura_date_col:      "Fura statuslari — Sana ustuni (ixtiyoriy)",
+  // 4 sub-metrics on the Ombor page
+  ortilgan_sheet_url:   "Google Sheets URL (ixtiyoriy)",
+  ortilgan_sheet_name:  "Varaq nomi",
+  ortilgan_date_col:    "Sana ustuni",
+  ortilgan_cbm_col:     "m³ ustuni",
+  ortilgan_header_rows: "Header qatorlari",
+  hajm_sheet_url:   "Google Sheets URL (ixtiyoriy)",
+  hajm_sheet_name:  "Varaq nomi",
+  hajm_date_col:    "Sana ustuni",
+  hajm_cbm_col:     "m³ ustuni",
+  hajm_header_rows: "Header qatorlari",
+  yulda_sheet_url:   "Google Sheets URL (ixtiyoriy)",
+  yulda_sheet_name:  "Varaq nomi",
+  yulda_date_col:    "Sana ustuni",
+  yulda_cbm_col:     "m³ ustuni",
+  yulda_header_rows: "Header qatorlari",
+  bojxona_sheet_url:   "Google Sheets URL (ixtiyoriy)",
+  bojxona_sheet_name:  "Varaq nomi",
+  bojxona_date_col:    "Sana ustuni",
+  bojxona_cbm_col:     "m³ ustuni",
+  bojxona_header_rows: "Header qatorlari",
+};
+
+// Visual section headers for the Ombor settings modal — grouped by prefix.
+const DIRECTOR_OMBOR_GROUPS = {
+  ortilgan: "📥 UMUMIY ORTILGAN YUKLAR",
+  hajm:     "📊 UMUMIY HAJM",
+  yulda:    "🚛 YO'LDAGI YUKLAR",
+  bojxona:  "🛃 BOJXONADAGI YUKLAR",
 };
 
 function _directorSettingsIsCapacityKey(key) {
@@ -7226,6 +7287,12 @@ function renderDirectorPayload(section, payload) {
         if (amountEl) amountEl.textContent = "0 / 0 m³";
         if (metaEl) metaEl.textContent = "—";
       });
+      ["ortilgan","hajm","yulda","bojxona"].forEach(k => {
+        const valEl = document.querySelector(`[data-dir-extra-kpi-value="${k}"]`);
+        const subEl = document.querySelector(`[data-dir-extra-kpi-sub="${k}"]`);
+        if (valEl) { valEl.textContent = "— m³"; valEl.style.color = "var(--muted2)"; }
+        if (subEl) subEl.textContent = "manba ulanmagan";
+      });
     }
   }
 
@@ -7288,9 +7355,25 @@ function renderDirectorPayload(section, payload) {
   if (t2 && charts.chart2?.title) t2.textContent = charts.chart2.title;
 
   // Ombor: render 3 warehouse fill gauges (YIWU / ZHONGSHAN / HORGOS)
+  // + 4 configurable sub-metrics (ortilgan / hajm / yulda / bojxona)
   if (section === "ombor") {
     const warehouses = Array.isArray(payload.warehouses) ? payload.warehouses : [];
     warehouses.forEach(w => renderWarehouseGauge(w));
+    const extras = Array.isArray(payload.extra_kpis) ? payload.extra_kpis : [];
+    extras.forEach(k => {
+      const valEl = document.querySelector(`[data-dir-extra-kpi-value="${k.key}"]`);
+      const subEl = document.querySelector(`[data-dir-extra-kpi-sub="${k.key}"]`);
+      if (!valEl) return;
+      if (!k.configured) {
+        valEl.textContent = "— m³";
+        valEl.style.color = "var(--muted2)";
+        if (subEl) subEl.textContent = "manba ulanmagan (⚙)";
+        return;
+      }
+      valEl.textContent = `${Number(k.cbm || 0).toFixed(1)} m³`;
+      valEl.style.color = "var(--txt)";
+      if (subEl) subEl.textContent = `${k.rows || 0} qator`;
+    });
   }
 
   // Sborniy: render LTL sellers + agents (from Fura statuslari) leaderboards
@@ -7469,19 +7552,75 @@ function openDirectorSettings(section) {
   const defaults = directorState.defaults[section] || {};
   const cols = { ...defaults, ...(cfg.columns || {}) };
   const colsEl = document.getElementById("director-settings-columns");
-  colsEl.innerHTML = Object.keys(defaults).map(key => {
-    const isCap = _directorSettingsIsCapacityKey(key);
-    const inputType = isCap ? "number" : "text";
-    const inputStyle = isCap ? "" : "text-transform:uppercase";
-    const inputAttrs = isCap ? 'min="0" step="any"' : 'maxlength="4"';
-    const placeholder = isCap ? "0" : (defaults[key] || "A");
-    return `
-      <div class="form-group" style="margin:0">
+
+  // Detect field "kind" by name pattern so the modal renders them correctly.
+  function _fieldKind(key) {
+    if (_directorSettingsIsCapacityKey(key)) return "number";
+    if (key.endsWith("_sheet_url"))   return "url";
+    if (key.endsWith("_sheet_name"))  return "text";
+    if (key.endsWith("_header_rows")) return "rows";
+    return "col";  // column letter
+  }
+
+  // Detect Ombor sub-metric prefix so we can inject visual group headers.
+  function _omborGroupOf(key) {
+    for (const prefix of Object.keys(DIRECTOR_OMBOR_GROUPS)) {
+      if (key.startsWith(prefix + "_")) return prefix;
+    }
+    return "";
+  }
+
+  let html = "";
+  let currentGroup = "";
+  Object.keys(defaults).forEach(key => {
+    const grp = section === "ombor" ? _omborGroupOf(key) : "";
+    if (grp && grp !== currentGroup) {
+      // Close previous nested grid + start a section header + new grid
+      if (currentGroup) html += `</div></div>`;
+      html += `
+        <div class="dir-settings-group" style="grid-column:1/-1;margin-top:8px;padding:10px 12px;border-top:1px solid var(--stroke)">
+          <div style="font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">${esc(DIRECTOR_OMBOR_GROUPS[grp])}</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      `;
+      currentGroup = grp;
+    } else if (!grp && currentGroup) {
+      // Leaving the grouped area
+      html += `</div></div>`;
+      currentGroup = "";
+    }
+
+    const kind = _fieldKind(key);
+    let inputType = "text";
+    let inputStyle = "";
+    let inputAttrs = "";
+    let placeholder = defaults[key] || "";
+    let fullWidth = false;
+    if (kind === "number") {
+      inputType = "number"; inputAttrs = 'min="0" step="any"';
+      placeholder = defaults[key] || "0";
+    } else if (kind === "url") {
+      inputType = "url"; fullWidth = true;
+      placeholder = "https://docs.google.com/spreadsheets/...";
+    } else if (kind === "rows") {
+      inputType = "number"; inputAttrs = 'min="0" step="1"';
+      placeholder = defaults[key] || "1";
+    } else if (kind === "col") {
+      inputStyle = "text-transform:uppercase"; inputAttrs = 'maxlength="4"';
+      placeholder = defaults[key] || "A";
+    } else {
+      placeholder = defaults[key] || "";
+    }
+
+    const wrap = fullWidth ? ' style="grid-column:1/-1"' : ' style="margin:0"';
+    html += `
+      <div class="form-group"${wrap}>
         <label>${esc(DIRECTOR_COLUMN_LABELS[key] || key)}</label>
         <input type="${inputType}" data-dir-col="${esc(key)}" value="${esc(cols[key] || "")}" placeholder="${esc(placeholder)}" ${inputAttrs} style="${inputStyle}">
       </div>
     `;
-  }).join("");
+  });
+  if (currentGroup) html += `</div></div>`;
+  colsEl.innerHTML = html;
   openModal("director-settings-modal");
 }
 
@@ -7495,8 +7634,12 @@ async function saveDirectorSettings() {
   document.querySelectorAll("#director-settings-columns [data-dir-col]").forEach(inp => {
     const k = inp.dataset.dirCol;
     let v = (inp.value || "").trim();
-    // Capacity fields are numeric, don't uppercase
-    if (!_directorSettingsIsCapacityKey(k)) v = v.toUpperCase();
+    // Don't uppercase: capacity numbers, sheet URLs, sheet tab names, header row counts
+    const skipUpper = _directorSettingsIsCapacityKey(k)
+      || k.endsWith("_sheet_url")
+      || k.endsWith("_sheet_name")
+      || k.endsWith("_header_rows");
+    if (!skipUpper) v = v.toUpperCase();
     if (v) columns[k] = v;
   });
   try {
