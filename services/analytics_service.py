@@ -2969,22 +2969,32 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
     date_col   = (cols.get("date_col")   or "Z").strip().upper() or "Z"
     seller_col = (cols.get("seller_col") or "AG").strip().upper() or "AG"
     bl_col     = (cols.get("bl_col")     or "E").strip().upper() or "E"
+    # Logist col on the primary (Ombor) stage — Sales Monitor uses AH by
+    # default. Not exposed in the director UI (we don't show a separate
+    # logist leaderboard for Sborniy), but the combined fetcher needs it.
+    logist_col = (cols.get("logist_col") or "AH").strip().upper() or "AH"
 
     date_from = _parse_iso_date(date_from_str)
     date_to   = _parse_iso_date(date_to_str)
 
+    # Use the same combined fetcher Sales Monitor uses: it walks the
+    # 3-stage LTL pipeline (Ombor + Ortilgan furalar + Yetib keldi) and
+    # merges sellers/monthly across stages with apostrophe-normalized
+    # name keys. The user only configures the primary (Ombor) columns —
+    # stages 2 and 3 have fixed column layouts baked into ombor_service.
     try:
-        ombor = ombor_service.fetch_ombor_data(
+        ombor = ombor_service.fetch_combined_ltl_data(
             sheet_id=sheet_id,
-            sheet_name=sheet_name,
-            cbm_col=cbm_col,
-            date_col=date_col,
-            seller_col=seller_col,
-            header_rows=header_rows,
+            primary_sheet_name=sheet_name,
+            primary_cbm_col=cbm_col,
+            primary_date_col=date_col,
+            primary_seller_col=seller_col,
+            primary_logist_col=logist_col,
+            primary_bl_col=bl_col,
+            primary_header_rows=header_rows,
             date_from=date_from,
             date_to=date_to,
             force=False,
-            bl_col=bl_col,
         )
     except Exception as exc:
         return {
@@ -3051,11 +3061,29 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         }],
     }
 
+    # Combined-fetcher diagnostics: per-stage rows + cache state
+    per_stage = (diag.get("per_stage") or {}) if isinstance(diag, dict) else {}
+    stage_summaries: list[str] = []
+    total_rows_used  = 0
+    total_rows_total = 0
+    for stage_name, sd in per_stage.items():
+        if not isinstance(sd, dict):
+            continue
+        if sd.get("error"):
+            stage_summaries.append(f"{stage_name}: XATO ({sd['error']})")
+            continue
+        used  = int(sd.get("rows_used")  or 0)
+        total = int(sd.get("rows_total") or 0)
+        total_rows_used  += used
+        total_rows_total += total
+        stage_summaries.append(f"{stage_name}: {used}/{total}")
+    stages_summary = " | ".join(stage_summaries) or "—"
+
     return {
         "configured": True,
         "kpis": [
-            {"label": "Jami m³", "value": f"{_r(total_cbm)}"},
-            {"label": "Jami BL", "value": str(total_bl)},
+            {"label": "Jami m³",     "value": f"{_r(total_cbm)}"},
+            {"label": "Jami BL",     "value": str(total_bl)},
             {"label": "Sotuvchilar", "value": str(len(sellers_sorted))},
         ],
         "charts": {
@@ -3065,11 +3093,10 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         "sellers": sellers_sorted,
         "diagnostics": diag,
         "message": (
-            f"Yangilangan: {diag.get('rows_used', 0)} / {diag.get('rows_total', 0)} qator "
+            f"3 ta bosqich birlashtirildi (Ombor + Ortilgan furalar + Yetib keldi). "
+            f"Jami: {total_rows_used}/{total_rows_total} qator "
             f"({date_from or '∞'} → {date_to or '∞'}). "
-            f"Tashlangan: CBM={diag.get('rows_no_cbm', 0)}, "
-            f"sana={diag.get('rows_bad_date', 0)}, "
-            f"davrdan tashqari={diag.get('rows_outside_period', 0)}"
+            f"Bosqichlar bo'yicha: {stages_summary}"
         ),
     }
 
