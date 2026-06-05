@@ -5173,17 +5173,23 @@ DIRECTOR_DEFAULT_COLUMNS = {
         "hajm_cbm_col":      "V",
         "hajm_header_rows":  "2",
         # ─── 3) YO'LDAGI YUKLAR ───
-        "yulda_sheet_url":    "",
-        "yulda_sheet_name":   "",
-        "yulda_date_col":     "",
-        "yulda_cbm_col":      "",
-        "yulda_header_rows":  "1",
+        # Counts cargos currently in transit: departure_date passed AND
+        # arrival_date is empty or in the future. m³ shown as subtitle.
+        "yulda_sheet_url":      "",
+        "yulda_sheet_name":     "",
+        "yulda_departure_col":  "",
+        "yulda_arrival_col":    "",
+        "yulda_cbm_col":        "",
+        "yulda_header_rows":    "1",
         # ─── 4) BOJXONADAGI YUKLAR ───
-        "bojxona_sheet_url":    "",
-        "bojxona_sheet_name":   "",
-        "bojxona_date_col":     "",
-        "bojxona_cbm_col":      "",
-        "bojxona_header_rows":  "1",
+        # Same transit logic: customs_in date passed AND customs_out empty
+        # or in the future.
+        "bojxona_sheet_url":     "",
+        "bojxona_sheet_name":    "",
+        "bojxona_departure_col": "",
+        "bojxona_arrival_col":   "",
+        "bojxona_cbm_col":       "",
+        "bojxona_header_rows":   "1",
     },
     "agentlar": {
         "date_col":   "A",

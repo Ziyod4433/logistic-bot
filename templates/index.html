@@ -1740,14 +1740,14 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             <div class="card" data-dir-extra-kpi="yulda" style="border:1px solid var(--stroke)">
               <div class="card-body" style="padding:16px">
                 <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.14em;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="font-size:14px">🚛</span><span>Yo'ldagi yuklar</span></div>
-                <div style="font-size:26px;font-weight:800;line-height:1;color:var(--txt)" data-dir-extra-kpi-value="yulda">— m³</div>
+                <div style="font-size:26px;font-weight:800;line-height:1;color:var(--txt)" data-dir-extra-kpi-value="yulda">— ta</div>
                 <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-extra-kpi-sub="yulda">manba ulanmagan</div>
               </div>
             </div>
             <div class="card" data-dir-extra-kpi="bojxona" style="border:1px solid var(--stroke)">
               <div class="card-body" style="padding:16px">
                 <div style="font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.14em;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="font-size:14px">🛃</span><span>Bojxonadagi yuklar</span></div>
-                <div style="font-size:26px;font-weight:800;line-height:1;color:var(--txt)" data-dir-extra-kpi-value="bojxona">— m³</div>
+                <div style="font-size:26px;font-weight:800;line-height:1;color:var(--txt)" data-dir-extra-kpi-value="bojxona">— ta</div>
                 <div style="font-size:11px;color:var(--muted2);margin-top:4px" data-dir-extra-kpi-sub="bojxona">manba ulanmagan</div>
               </div>
             </div>
@@ -7007,16 +7007,18 @@ const DIRECTOR_COLUMN_LABELS = {
   hajm_date_col:    "Sana ustuni",
   hajm_cbm_col:     "m³ ustuni",
   hajm_header_rows: "Header qatorlari",
-  yulda_sheet_url:   "Google Sheets URL (ixtiyoriy)",
-  yulda_sheet_name:  "Varaq nomi",
-  yulda_date_col:    "Sana ustuni",
-  yulda_cbm_col:     "m³ ustuni",
-  yulda_header_rows: "Header qatorlari",
-  bojxona_sheet_url:   "Google Sheets URL (ixtiyoriy)",
-  bojxona_sheet_name:  "Varaq nomi",
-  bojxona_date_col:    "Sana ustuni",
-  bojxona_cbm_col:     "m³ ustuni",
-  bojxona_header_rows: "Header qatorlari",
+  yulda_sheet_url:      "Google Sheets URL (ixtiyoriy)",
+  yulda_sheet_name:     "Varaq nomi",
+  yulda_departure_col:  "Chiqqan sana ustuni",
+  yulda_arrival_col:    "Yetib kelgan sana ustuni",
+  yulda_cbm_col:        "m³ ustuni (ixtiyoriy)",
+  yulda_header_rows:    "Header qatorlari",
+  bojxona_sheet_url:     "Google Sheets URL (ixtiyoriy)",
+  bojxona_sheet_name:    "Varaq nomi",
+  bojxona_departure_col: "Bojxonaga kirgan sana",
+  bojxona_arrival_col:   "Bojxonadan chiqqan sana",
+  bojxona_cbm_col:       "m³ ustuni (ixtiyoriy)",
+  bojxona_header_rows:   "Header qatorlari",
 };
 
 // Visual section headers for the Ombor settings modal — grouped by prefix.
@@ -7290,7 +7292,10 @@ function renderDirectorPayload(section, payload) {
       ["ortilgan","hajm","yulda","bojxona"].forEach(k => {
         const valEl = document.querySelector(`[data-dir-extra-kpi-value="${k}"]`);
         const subEl = document.querySelector(`[data-dir-extra-kpi-sub="${k}"]`);
-        if (valEl) { valEl.textContent = "— m³"; valEl.style.color = "var(--muted2)"; }
+        if (valEl) {
+          valEl.textContent = (k === "yulda" || k === "bojxona") ? "— ta" : "— m³";
+          valEl.style.color = "var(--muted2)";
+        }
         if (subEl) subEl.textContent = "manba ulanmagan";
       });
     }
@@ -7365,14 +7370,24 @@ function renderDirectorPayload(section, payload) {
       const subEl = document.querySelector(`[data-dir-extra-kpi-sub="${k.key}"]`);
       if (!valEl) return;
       if (!k.configured) {
-        valEl.textContent = "— m³";
+        valEl.textContent = (k.mode === "transit") ? "— ta" : "— m³";
         valEl.style.color = "var(--muted2)";
         if (subEl) subEl.textContent = "manba ulanmagan (⚙)";
         return;
       }
-      valEl.textContent = `${Number(k.cbm || 0).toFixed(1)} m³`;
       valEl.style.color = "var(--txt)";
-      if (subEl) subEl.textContent = `${k.rows || 0} qator`;
+      if (k.mode === "transit") {
+        // Count primary, m³ subtitle
+        valEl.textContent = `${k.count || 0} ta`;
+        if (subEl) {
+          const cbm = Number(k.cbm || 0);
+          subEl.textContent = cbm > 0 ? `${cbm.toFixed(1)} m³ · yo'lda` : `yo'lda`;
+        }
+      } else {
+        // Sum m³ mode
+        valEl.textContent = `${Number(k.cbm || 0).toFixed(1)} m³`;
+        if (subEl) subEl.textContent = `${k.count || 0} qator`;
+      }
     });
   }
 

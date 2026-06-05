@@ -3311,6 +3311,88 @@ def _director_ombor_metric(
     return {"cbm": round(total, 2), "rows": used, "configured": True}
 
 
+def _director_ombor_transit_metric(
+    main_sheet_id: str,
+    override_url: str,
+    sheet_name: str,
+    departure_col: str,
+    arrival_col: str,
+    cbm_col: str,
+    header_rows,
+    date_from,
+    date_to,
+) -> dict:
+    """Count cargos currently 'in transit' on a tab.
+
+    A row is in transit if:
+      - departure_date is set AND <= today (cargo has departed), AND
+      - arrival_date is empty OR > today (cargo hasn't arrived yet)
+
+    Period filter (date_from / date_to) applies to departure_date so
+    the KPI reflects 'in-transit cargos that departed within the period'.
+
+    Returns {"count": int, "cbm": float, "configured": bool}.
+    """
+    from services import ombor_service
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    import database as _db
+
+    if override_url:
+        sheet_id, _gid = _db._parse_sheet_url(override_url.strip())
+        if not sheet_id:
+            sheet_id = main_sheet_id
+    else:
+        sheet_id = main_sheet_id
+
+    if not sheet_id or not sheet_name or not departure_col:
+        return {"count": 0, "cbm": 0.0, "configured": False}
+
+    try:
+        rows = ombor_service._fetch_csv(sheet_id, sheet_name)
+    except Exception:
+        return {"count": 0, "cbm": 0.0, "configured": True, "error": "fetch failed"}
+
+    try:
+        header_n = max(0, int(header_rows or 1))
+    except (TypeError, ValueError):
+        header_n = 1
+    data_rows = rows[header_n:]
+
+    dep_idx = ombor_service._col_to_index(departure_col)
+    arr_idx = ombor_service._col_to_index(arrival_col) if arrival_col else None
+    cbm_idx = ombor_service._col_to_index(cbm_col)     if cbm_col else None
+
+    today = datetime.now(ZoneInfo("Asia/Tashkent")).date()
+
+    count = 0
+    total_cbm = 0.0
+    for row in data_rows:
+        dep_cell = row[dep_idx].strip() if dep_idx < len(row) else ""
+        dep_date = ombor_service._parse_date(dep_cell)
+        if dep_date is None or dep_date > today:
+            continue  # not yet departed
+        # Arrival check: if set AND already passed, the cargo has arrived
+        if arr_idx is not None:
+            arr_cell = row[arr_idx].strip() if arr_idx < len(row) else ""
+            arr_date = ombor_service._parse_date(arr_cell)
+            if arr_date is not None and arr_date <= today:
+                continue
+        # Apply period filter on departure date
+        if date_from and dep_date < date_from:
+            continue
+        if date_to and dep_date > date_to:
+            continue
+        count += 1
+        if cbm_idx is not None:
+            cbm_cell = row[cbm_idx].strip() if cbm_idx < len(row) else ""
+            cbm = ombor_service._parse_float(cbm_cell)
+            if cbm > 0:
+                total_cbm += cbm
+
+    return {"count": count, "cbm": round(total_cbm, 2), "configured": True}
+
+
 def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     from services import ombor_service
 
@@ -3446,16 +3528,14 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     total_cbm = sum(w["cbm"] for w in warehouses)
     total_bl  = sum(w["bl"]  for w in warehouses)
 
-    # 4 configurable sub-metrics — each can point at its own sheet/tab
+    # 4 configurable sub-metrics — each points at its own sheet/tab.
+    # ortilgan / hajm → sum m³ by single date column
+    # yulda / bojxona → count rows currently in transit (departure passed,
+    #                   arrival empty/future), with m³ as subtitle.
     main_sheet_id = sheet_id
-    extra_specs = [
-        ("ortilgan", "Umumiy ortilgan yuklar"),
-        ("hajm",     "Umumiy hajm"),
-        ("yulda",    "Yo'ldagi yuklar"),
-        ("bojxona",  "Bojxonadagi yuklar"),
-    ]
     extra_kpis = []
-    for prefix, label in extra_specs:
+    for prefix, label in [("ortilgan", "Umumiy ortilgan yuklar"),
+                          ("hajm",     "Umumiy hajm")]:
         result = _director_ombor_metric(
             main_sheet_id=main_sheet_id,
             override_url=(cols.get(f"{prefix}_sheet_url") or "").strip(),
@@ -3469,8 +3549,30 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         extra_kpis.append({
             "key":   prefix,
             "label": label,
+            "mode":  "cbm",
             "cbm":   result["cbm"],
-            "rows":  result["rows"],
+            "count": result["rows"],
+            "configured": result["configured"],
+        })
+    for prefix, label in [("yulda",   "Yo'ldagi yuklar"),
+                          ("bojxona", "Bojxonadagi yuklar")]:
+        result = _director_ombor_transit_metric(
+            main_sheet_id=main_sheet_id,
+            override_url=(cols.get(f"{prefix}_sheet_url") or "").strip(),
+            sheet_name=(cols.get(f"{prefix}_sheet_name") or "").strip(),
+            departure_col=(cols.get(f"{prefix}_departure_col") or "").strip().upper(),
+            arrival_col=(cols.get(f"{prefix}_arrival_col") or "").strip().upper(),
+            cbm_col=(cols.get(f"{prefix}_cbm_col") or "").strip().upper(),
+            header_rows=cols.get(f"{prefix}_header_rows"),
+            date_from=date_from,
+            date_to=date_to,
+        )
+        extra_kpis.append({
+            "key":   prefix,
+            "label": label,
+            "mode":  "transit",
+            "cbm":   result["cbm"],
+            "count": result["count"],
             "configured": result["configured"],
         })
 
