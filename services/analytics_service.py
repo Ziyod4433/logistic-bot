@@ -2762,13 +2762,20 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             is_logistika = _norm_person_director(logist_name) in _DIRECTOR_LOGIST_SET
 
         date_key = row_date.strftime("%Y-%m-%d")
-        seller_key = (logist_name or "").strip()
+        raw_seller = (logist_name or "").strip()
+        # Use normalized key (case-fold + apostrophe-strip) so "Olimov ..."
+        # and "OLIMOV ..." merge into one bucket — same dedupe rule the
+        # Sales Monitor uses in get_monitor_month_breakdown.
+        seller_key = _norm_person_director(raw_seller) if raw_seller else ""
         if is_logistika:
             daily_logistika[date_key] = daily_logistika.get(date_key, 0.0) + trucks
             log_total += trucks
             log_bl += 1
             if seller_key:
-                bucket = by_log_seller.setdefault(seller_key, {"name": seller_key, "trucks": 0.0, "bl": 0})
+                bucket = by_log_seller.setdefault(seller_key, {"name": raw_seller, "trucks": 0.0, "bl": 0})
+                # Keep the longest variant as display name (matches Sales Monitor)
+                if len(raw_seller) > len(bucket["name"]):
+                    bucket["name"] = raw_seller
                 bucket["trucks"] += trucks
                 bucket["bl"] += 1
         else:
@@ -2776,7 +2783,9 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             savdo_total += trucks
             savdo_bl += 1
             if seller_key:
-                bucket = by_savdo_seller.setdefault(seller_key, {"name": seller_key, "trucks": 0.0, "bl": 0})
+                bucket = by_savdo_seller.setdefault(seller_key, {"name": raw_seller, "trucks": 0.0, "bl": 0})
+                if len(raw_seller) > len(bucket["name"]):
+                    bucket["name"] = raw_seller
                 bucket["trucks"] += trucks
                 bucket["bl"] += 1
 
