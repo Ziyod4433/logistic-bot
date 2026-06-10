@@ -3413,7 +3413,7 @@ def api_delete_file(file_id):
 # ─────────────────────────────────────────────────────────────────────────
 # Bulk Packing Lists upload: extract BL code from filename and auto-attach
 # ─────────────────────────────────────────────────────────────────────────
-_BL_CODE_RE = re.compile(r"BL[-_ ]?\d+[A-Z0-9]*")
+_BL_CODE_RE = re.compile(r"[A-Z]{2,4}[-_ ]?\d+[A-Z0-9]*")
 # Strip everything that is not a letter/digit (any script) — used for fuzzy
 # client-name matching: drops spaces, punctuation, parentheses, dashes, etc.
 _NON_ALNUM_RE = re.compile(r"[^\w]+", re.UNICODE)
@@ -3476,7 +3476,7 @@ def _tokenize_name(text: str) -> set[str]:
     """
     if not text:
         return set()
-    cleaned = re.sub(r"\bBL[-_ ]?\d+[A-Z0-9]*\b", " ", str(text), flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b[A-Z]{2,4}[-_ ]?\d+[A-Z0-9]*\b", " ", str(text), flags=re.IGNORECASE)
     tokens: set[str] = set()
     for word in _TOKEN_RE.findall(cleaned):
         norm = word.lower()
