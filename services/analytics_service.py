@@ -3051,7 +3051,7 @@ def _director_sborniy_weight_categories(
     if not sheet_id or not usable:
         return {"configured": False, "categories": [], "stages": []}
 
-    # cat_key -> seller_key -> {name, count, weight}
+    # cat_key -> seller_key -> {name, count, weight, bl_set}
     buckets: dict[str, dict[str, dict]] = {c["key"]: {} for c in DIRECTOR_WEIGHT_CATEGORIES}
     stage_stats: list[dict] = []
 
@@ -3072,23 +3072,46 @@ def _director_sborniy_weight_categories(
         weight_idx = ombor_service._col_to_index(st["weight_col"].strip())
         date_letter = (st.get("date_col") or "").strip()
         date_idx = ombor_service._col_to_index(date_letter) if date_letter else None
+        bl_letter = (st.get("bl_col") or "").strip()
+        bl_idx = ombor_service._col_to_index(bl_letter) if bl_letter else None
 
-        rows_used = 0
+        stat = {
+            "sheet": sheet_name,
+            "rows_total": len(data_rows),
+            "rows": 0,             # used
+            "no_seller": 0,
+            "no_weight": 0,
+            "bad_date": 0,
+            "outside": 0,
+            "no_date": 0,          # empty date cell — row still counted
+        }
         for row in data_rows:
             seller = (row[seller_idx].strip() if seller_idx < len(row) else "")
             if not seller:
+                stat["no_seller"] += 1
                 continue
             weight_cell = row[weight_idx].strip() if weight_idx < len(row) else ""
             weight = ombor_service._parse_float(weight_cell)
             if weight <= 0:
+                stat["no_weight"] += 1
                 continue
             if date_idx is not None:
                 raw_date = row[date_idx].strip() if date_idx < len(row) else ""
-                row_date = ombor_service._parse_date(raw_date)
-                if row_date is None:
-                    continue
-                if (date_from and row_date < date_from) or (date_to and row_date > date_to):
-                    continue
+                if raw_date:
+                    row_date = ombor_service._parse_date(raw_date)
+                    if row_date is None:
+                        # Non-empty but unparseable date — treat as data error,
+                        # skip so garbage rows don't pollute the ranking.
+                        stat["bad_date"] += 1
+                        continue
+                    if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+                        stat["outside"] += 1
+                        continue
+                else:
+                    # Empty date cell = cargo not yet scheduled (typical for
+                    # rows still sitting in Ombor). Count it as current so
+                    # in-progress sales don't vanish from the rating.
+                    stat["no_date"] += 1
 
             cat = None
             for c in DIRECTOR_WEIGHT_CATEGORIES:
@@ -3100,20 +3123,32 @@ def _director_sborniy_weight_categories(
                 continue
 
             key = _norm_person_director(seller)
-            bucket = buckets[cat["key"]].setdefault(key, {"name": seller, "count": 0, "weight": 0.0})
+            bucket = buckets[cat["key"]].setdefault(
+                key, {"name": seller, "count": 0, "weight": 0.0, "bl_set": set()}
+            )
             if len(seller) > len(bucket["name"]):
                 bucket["name"] = seller
             bucket["count"] += 1
             bucket["weight"] += weight
-            rows_used += 1
+            if bl_idx is not None:
+                bl_code = row[bl_idx].strip() if bl_idx < len(row) else ""
+                if bl_code:
+                    bucket["bl_set"].add(bl_code.upper())
+            stat["rows"] += 1
 
-        stage_stats.append({"sheet": sheet_name, "rows": rows_used})
+        stage_stats.append(stat)
 
     categories = []
     for c in DIRECTOR_WEIGHT_CATEGORIES:
         sellers = sorted(
             [
-                {"name": v["name"], "count": v["count"], "weight": round(v["weight"], 1)}
+                {
+                    "name":   v["name"],
+                    "count":  v["count"],
+                    "weight": round(v["weight"], 1),
+                    "bl":     len(v["bl_set"]),
+                    "bl_codes": sorted(v["bl_set"])[:20],
+                }
                 for v in buckets[c["key"]].values()
             ],
             key=lambda r: (r["count"], r["weight"]), reverse=True,
@@ -3126,6 +3161,7 @@ def _director_sborniy_weight_categories(
             "range_label":  range_label,
             "total_count":  sum(s["count"] for s in sellers),
             "total_weight": round(sum(s["weight"] for s in sellers), 1),
+            "total_bl":     sum(s["bl"] for s in sellers),
             "sellers":      sellers,
         })
 
@@ -3341,6 +3377,7 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
             "sheet_name":  (cols.get(f"{prefix}_sheet_name") or "").strip(),
             "seller_col":  (cols.get(f"{prefix}_seller_col") or "").strip().upper(),
             "weight_col":  (cols.get(f"{prefix}_weight_col") or "").strip().upper(),
+            "bl_col":      (cols.get(f"{prefix}_bl_col") or "").strip().upper(),
             "date_col":    (cols.get(f"{prefix}_date_col") or "").strip().upper(),
             "header_rows": cols.get(f"{prefix}_header_rows"),
         }
@@ -3385,11 +3422,22 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
             f"Vazn reytingi: "
             + (
                 " | ".join(
-                    f"{s['sheet']}: {s['rows']} qator" + (" (XATO)" if s.get("error") else "")
+                    (
+                        f"{s['sheet']}: XATO (o'qib bo'lmadi)"
+                        if s.get("error")
+                        else (
+                            f"{s['sheet']}: {s.get('rows', 0)}/{s.get('rows_total', 0)} qator"
+                            + (f", sotuvchisiz={s['no_seller']}" if s.get("no_seller") else "")
+                            + (f", vaznsiz={s['no_weight']}" if s.get("no_weight") else "")
+                            + (f", sanasi buzuq={s['bad_date']}" if s.get("bad_date") else "")
+                            + (f", davrdan tashqari={s['outside']}" if s.get("outside") else "")
+                            + (f", sanasiz={s['no_date']}" if s.get("no_date") else "")
+                        )
+                    )
                     for s in (weight_data.get("stages") or [])
                 )
                 if weight_data.get("configured") and weight_data.get("stages")
-                else "sozlanmagan (vazn ustunini kiriting)"
+                else "sozlanmagan (har bir varaq uchun vazn ustunini kiriting)"
             )
         ),
     }

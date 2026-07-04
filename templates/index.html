@@ -7012,16 +7012,19 @@ const DIRECTOR_COLUMN_LABELS = {
   vazn1_sheet_name:    "Varaq nomi",
   vazn1_seller_col:    "Sotuvchi ustuni",
   vazn1_weight_col:    "Vazn (kg) ustuni",
+  vazn1_bl_col:        "BL kodi ustuni",
   vazn1_date_col:      "Sana ustuni (ixtiyoriy)",
   vazn1_header_rows:   "Header qatorlari",
   vazn2_sheet_name:    "Varaq nomi",
   vazn2_seller_col:    "Sotuvchi ustuni",
   vazn2_weight_col:    "Vazn (kg) ustuni",
+  vazn2_bl_col:        "BL kodi ustuni",
   vazn2_date_col:      "Sana ustuni (ixtiyoriy)",
   vazn2_header_rows:   "Header qatorlari",
   vazn3_sheet_name:    "Varaq nomi",
   vazn3_seller_col:    "Sotuvchi ustuni",
   vazn3_weight_col:    "Vazn (kg) ustuni",
+  vazn3_bl_col:        "BL kodi ustuni",
   vazn3_date_col:      "Sana ustuni (ixtiyoriy)",
   vazn3_header_rows:   "Header qatorlari",
   // 4 sub-metrics on the Ombor page
@@ -7484,8 +7487,13 @@ function renderSborniyWeightCategories(data) {
     const maxCount = top.length ? Number(top[0].count || 0) || 1 : 1;
     const rowsHtml = top.length ? top.map((s, i) => {
       const share = Math.min(100, (Number(s.count || 0) / maxCount) * 100);
+      const blCount = Number(s.bl || 0);
+      const blCodes = Array.isArray(s.bl_codes) ? s.bl_codes : [];
+      const blTitle = blCodes.length ? ` title="BL: ${esc(blCodes.join(", "))}"` : "";
+      const subParts = [`${Number(s.weight || 0).toFixed(0)} kg`];
+      if (blCount) subParts.push(`${blCount} BL`);
       return `
-        <div style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:8px;background:rgba(255,255,255,.02)">
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:8px;background:rgba(255,255,255,.02)"${blTitle}>
           <div style="width:16px;font-size:11px;color:var(--muted2);text-align:center">${i+1}</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:12px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name || "—")}</div>
@@ -7493,17 +7501,19 @@ function renderSborniyWeightCategories(data) {
               <div style="position:absolute;left:0;top:0;bottom:0;width:${share.toFixed(1)}%;background:linear-gradient(90deg,var(--amber),#ff9540)"></div>
             </div>
           </div>
-          <div style="font-size:11px;color:var(--txt);font-weight:700;text-align:right;min-width:44px">${s.count} ta<div style="font-size:9px;color:var(--muted2);font-weight:400">${Number(s.weight || 0).toFixed(0)} kg</div></div>
+          <div style="font-size:11px;color:var(--txt);font-weight:700;text-align:right;min-width:56px">${s.count} ta<div style="font-size:9px;color:var(--muted2);font-weight:400">${subParts.join(" · ")}</div></div>
         </div>
       `;
     }).join("") : `<div style="font-size:11px;color:var(--muted2);text-align:center;padding:10px">Ma'lumot yo'q</div>`;
+    const headParts = [`${esc(c.range_label || "")}`, `${c.total_count} ta savdo`];
+    if (Number(c.total_bl || 0)) headParts.push(`${c.total_bl} BL`);
     return `
       <div style="border:1px solid var(--stroke);border-radius:14px;padding:12px;background:rgba(255,255,255,.02)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
           <span style="font-size:18px">${DIRECTOR_WEIGHT_CAT_ICONS[c.key] || "📦"}</span>
           <span style="font-size:13px;font-weight:700;color:var(--txt)">${esc(c.label || "")}</span>
         </div>
-        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">${esc(c.range_label || "")} · ${c.total_count} ta savdo</div>
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">${headParts.join(" · ")}</div>
         <div style="display:flex;flex-direction:column;gap:4px">${rowsHtml}</div>
       </div>
     `;
