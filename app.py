@@ -5146,14 +5146,29 @@ DIRECTOR_DEFAULT_COLUMNS = {
         "bl_col":        "E",
         "fura_agent_col": "B",
         "fura_date_col":  "",   # optional — leave blank to disable date filter on agents
-        # Weight-category leaderboard (Eng yengil … Eng og'ir). Points at a
-        # sheet with one row per sale: seller name + product weight (kg).
-        "vazn_sheet_url":   "",   # optional — blank = use the main sheet_url
-        "vazn_sheet_name":  "",
-        "vazn_seller_col":  "",
-        "vazn_weight_col":  "",
-        "vazn_date_col":    "",   # optional — blank = no date filter
-        "vazn_header_rows": "1",
+        # Weight-category leaderboard (Eng yengil … Eng og'ir). Sales rows
+        # move between 3 tabs during their lifecycle (Ombor → Ortilgan
+        # furalar → Yetib keldi), so all 3 are read and merged. Each tab
+        # has its own column layout.
+        "vazn_sheet_url":    "",   # optional — blank = use the main sheet_url
+        # ─── Vazn stage 1: Ombor ───
+        "vazn1_sheet_name":  "Ombor",
+        "vazn1_seller_col":  "AG",
+        "vazn1_weight_col":  "",
+        "vazn1_date_col":    "Z",
+        "vazn1_header_rows": "2",
+        # ─── Vazn stage 2: Ortilgan furalar ───
+        "vazn2_sheet_name":  "Ortilgan furalar",
+        "vazn2_seller_col":  "AF",
+        "vazn2_weight_col":  "",
+        "vazn2_date_col":    "Y",
+        "vazn2_header_rows": "1",
+        # ─── Vazn stage 3: Yetib keldi ───
+        "vazn3_sheet_name":  "Yetib keldi",
+        "vazn3_seller_col":  "AE",
+        "vazn3_weight_col":  "",
+        "vazn3_date_col":    "X",
+        "vazn3_header_rows": "1",
     },
     # OMBOR = warehouse fill. Aggregates CBM by warehouse name (matched
     # against YIWU/ZHONGSHAN/HORGOS substring). Capacity per warehouse

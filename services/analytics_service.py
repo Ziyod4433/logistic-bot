@@ -3017,18 +3017,20 @@ DIRECTOR_WEIGHT_CATEGORIES = (
 def _director_sborniy_weight_categories(
     main_sheet_id: str,
     override_url: str,
-    sheet_name: str,
-    seller_col: str,
-    weight_col: str,
-    date_col: str,
-    header_rows,
+    stages: list[dict],
     date_from,
     date_to,
 ) -> dict:
     """Group sales rows into 5 weight brackets, ranking sellers inside each.
 
-    Returns {"configured": bool, "categories": [{key, label, range_label,
-    total_count, total_weight, sellers: [{name, count, weight}]}]}.
+    `stages` is a list of tab configs ({sheet_name, seller_col, weight_col,
+    date_col, header_rows}) — sales rows physically move between the 3 tabs
+    (Ombor → Ortilgan furalar → Yetib keldi) during their lifecycle, so all
+    tabs are read and merged into shared buckets. A row lives in exactly one
+    tab at any moment, so summing does not double-count.
+
+    Returns {"configured": bool, "categories": [...], "stages": [{sheet,
+    rows} per tab]} — the per-stage row counts feed the diagnostic line.
     """
     from services import ombor_service
     import database as _db
@@ -3040,58 +3042,72 @@ def _director_sborniy_weight_categories(
     else:
         sheet_id = main_sheet_id
 
-    if not sheet_id or not sheet_name or not seller_col or not weight_col:
-        return {"configured": False, "categories": []}
-
-    try:
-        rows = ombor_service._fetch_csv(sheet_id, sheet_name)
-    except Exception:
-        return {"configured": True, "categories": [], "error": "fetch failed"}
-
-    try:
-        header_n = max(0, int(header_rows or 1))
-    except (TypeError, ValueError):
-        header_n = 1
-    data_rows = rows[header_n:]
-
-    seller_idx = ombor_service._col_to_index(seller_col)
-    weight_idx = ombor_service._col_to_index(weight_col)
-    date_idx   = ombor_service._col_to_index(date_col) if date_col else None
+    usable = [
+        st for st in stages
+        if (st.get("sheet_name") or "").strip()
+        and (st.get("seller_col") or "").strip()
+        and (st.get("weight_col") or "").strip()
+    ]
+    if not sheet_id or not usable:
+        return {"configured": False, "categories": [], "stages": []}
 
     # cat_key -> seller_key -> {name, count, weight}
     buckets: dict[str, dict[str, dict]] = {c["key"]: {} for c in DIRECTOR_WEIGHT_CATEGORIES}
+    stage_stats: list[dict] = []
 
-    for row in data_rows:
-        seller = (row[seller_idx].strip() if seller_idx < len(row) else "")
-        if not seller:
+    for st in usable:
+        sheet_name = st["sheet_name"].strip()
+        try:
+            rows = ombor_service._fetch_csv(sheet_id, sheet_name)
+        except Exception:
+            stage_stats.append({"sheet": sheet_name, "rows": 0, "error": "fetch failed"})
             continue
-        weight_cell = row[weight_idx].strip() if weight_idx < len(row) else ""
-        weight = ombor_service._parse_float(weight_cell)
-        if weight <= 0:
-            continue
-        if date_idx is not None:
-            raw_date = row[date_idx].strip() if date_idx < len(row) else ""
-            row_date = ombor_service._parse_date(raw_date)
-            if row_date is None:
+        try:
+            header_n = max(0, int(st.get("header_rows") or 1))
+        except (TypeError, ValueError):
+            header_n = 1
+        data_rows = rows[header_n:]
+
+        seller_idx = ombor_service._col_to_index(st["seller_col"].strip())
+        weight_idx = ombor_service._col_to_index(st["weight_col"].strip())
+        date_letter = (st.get("date_col") or "").strip()
+        date_idx = ombor_service._col_to_index(date_letter) if date_letter else None
+
+        rows_used = 0
+        for row in data_rows:
+            seller = (row[seller_idx].strip() if seller_idx < len(row) else "")
+            if not seller:
                 continue
-            if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+            weight_cell = row[weight_idx].strip() if weight_idx < len(row) else ""
+            weight = ombor_service._parse_float(weight_cell)
+            if weight <= 0:
+                continue
+            if date_idx is not None:
+                raw_date = row[date_idx].strip() if date_idx < len(row) else ""
+                row_date = ombor_service._parse_date(raw_date)
+                if row_date is None:
+                    continue
+                if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+                    continue
+
+            cat = None
+            for c in DIRECTOR_WEIGHT_CATEGORIES:
+                lo, hi = c["min"], c["max"]
+                if weight >= lo and (hi is None or weight < hi):
+                    cat = c
+                    break
+            if cat is None:
                 continue
 
-        cat = None
-        for c in DIRECTOR_WEIGHT_CATEGORIES:
-            lo, hi = c["min"], c["max"]
-            if weight >= lo and (hi is None or weight < hi):
-                cat = c
-                break
-        if cat is None:
-            continue
+            key = _norm_person_director(seller)
+            bucket = buckets[cat["key"]].setdefault(key, {"name": seller, "count": 0, "weight": 0.0})
+            if len(seller) > len(bucket["name"]):
+                bucket["name"] = seller
+            bucket["count"] += 1
+            bucket["weight"] += weight
+            rows_used += 1
 
-        key = _norm_person_director(seller)
-        bucket = buckets[cat["key"]].setdefault(key, {"name": seller, "count": 0, "weight": 0.0})
-        if len(seller) > len(bucket["name"]):
-            bucket["name"] = seller
-        bucket["count"] += 1
-        bucket["weight"] += weight
+        stage_stats.append({"sheet": sheet_name, "rows": rows_used})
 
     categories = []
     for c in DIRECTOR_WEIGHT_CATEGORIES:
@@ -3113,7 +3129,7 @@ def _director_sborniy_weight_categories(
             "sellers":      sellers,
         })
 
-    return {"configured": True, "categories": categories}
+    return {"configured": True, "categories": categories, "stages": stage_stats}
 
 
 # Per-stage daily aggregator for the Sborniy 'Kunlik dinamika' chart.
@@ -3316,15 +3332,30 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         date_to=date_to,
     )
 
-    # Weight-category seller leaderboard (Eng yengil … Eng og'ir)
+    # Weight-category seller leaderboard (Eng yengil … Eng og'ir).
+    # Reads all 3 lifecycle tabs — sales rows migrate Ombor → Ortilgan
+    # furalar → Yetib keldi, so a single-tab read misses everything that
+    # has already moved on.
+    def _vazn_stage(prefix: str) -> dict:
+        return {
+            "sheet_name":  (cols.get(f"{prefix}_sheet_name") or "").strip(),
+            "seller_col":  (cols.get(f"{prefix}_seller_col") or "").strip().upper(),
+            "weight_col":  (cols.get(f"{prefix}_weight_col") or "").strip().upper(),
+            "date_col":    (cols.get(f"{prefix}_date_col") or "").strip().upper(),
+            "header_rows": cols.get(f"{prefix}_header_rows"),
+        }
+
+    vazn_stages = [_vazn_stage("vazn1"), _vazn_stage("vazn2"), _vazn_stage("vazn3")]
+    # Backward compat: configs saved before the 3-tab split used vazn_* keys
+    if not any(s["sheet_name"] and s["seller_col"] and s["weight_col"] for s in vazn_stages):
+        legacy = _vazn_stage("vazn")
+        if legacy["sheet_name"]:
+            vazn_stages = [legacy]
+
     weight_data = _director_sborniy_weight_categories(
         main_sheet_id=sheet_id,
         override_url=(cols.get("vazn_sheet_url") or "").strip(),
-        sheet_name=(cols.get("vazn_sheet_name") or "").strip(),
-        seller_col=(cols.get("vazn_seller_col") or "").strip().upper(),
-        weight_col=(cols.get("vazn_weight_col") or "").strip().upper(),
-        date_col=(cols.get("vazn_date_col") or "").strip().upper(),
-        header_rows=cols.get("vazn_header_rows"),
+        stages=vazn_stages,
         date_from=date_from,
         date_to=date_to,
     )
@@ -3350,7 +3381,16 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
             f"Jami: {total_rows_used}/{total_rows_total} qator "
             f"({date_from or '∞'} → {date_to or '∞'}). "
             f"Bosqichlar bo'yicha: {stages_summary}. "
-            f"Agentlar (Fura statuslari): {len(agents_rows)} ta"
+            f"Agentlar (Fura statuslari): {len(agents_rows)} ta. "
+            f"Vazn reytingi: "
+            + (
+                " | ".join(
+                    f"{s['sheet']}: {s['rows']} qator" + (" (XATO)" if s.get("error") else "")
+                    for s in (weight_data.get("stages") or [])
+                )
+                if weight_data.get("configured") and weight_data.get("stages")
+                else "sozlanmagan (vazn ustunini kiriting)"
+            )
         ),
     }
 

@@ -7006,14 +7006,24 @@ const DIRECTOR_COLUMN_LABELS = {
   capacity_yiwu:      "YIWU sig'imi (m³)",
   capacity_zhongshan: "ZHONGSHAN sig'imi (m³)",
   capacity_horgos:    "HORGOS sig'imi (m³)",
-  fura_agent_col:     "Fura statuslari — Agent ustuni",
-  fura_date_col:      "Fura statuslari — Sana ustuni (ixtiyoriy)",
-  vazn_sheet_url:     "Vazn reytingi — Google Sheets URL (ixtiyoriy)",
-  vazn_sheet_name:    "Vazn reytingi — Varaq nomi",
-  vazn_seller_col:    "Vazn reytingi — Sotuvchi ustuni",
-  vazn_weight_col:    "Vazn reytingi — Vazn (kg) ustuni",
-  vazn_date_col:      "Vazn reytingi — Sana ustuni (ixtiyoriy)",
-  vazn_header_rows:   "Vazn reytingi — Header qatorlari",
+  fura_agent_col:     "Agent ustuni (Fura statuslari varag'i)",
+  fura_date_col:      "Sana ustuni (ixtiyoriy)",
+  vazn_sheet_url:      "Google Sheets URL (ixtiyoriy — bo'sh = asosiy)",
+  vazn1_sheet_name:    "Varaq nomi",
+  vazn1_seller_col:    "Sotuvchi ustuni",
+  vazn1_weight_col:    "Vazn (kg) ustuni",
+  vazn1_date_col:      "Sana ustuni (ixtiyoriy)",
+  vazn1_header_rows:   "Header qatorlari",
+  vazn2_sheet_name:    "Varaq nomi",
+  vazn2_seller_col:    "Sotuvchi ustuni",
+  vazn2_weight_col:    "Vazn (kg) ustuni",
+  vazn2_date_col:      "Sana ustuni (ixtiyoriy)",
+  vazn2_header_rows:   "Header qatorlari",
+  vazn3_sheet_name:    "Varaq nomi",
+  vazn3_seller_col:    "Sotuvchi ustuni",
+  vazn3_weight_col:    "Vazn (kg) ustuni",
+  vazn3_date_col:      "Sana ustuni (ixtiyoriy)",
+  vazn3_header_rows:   "Header qatorlari",
   // 4 sub-metrics on the Ombor page
   ortilgan_sheet_url:   "Google Sheets URL (ixtiyoriy)",
   ortilgan_sheet_name:  "Varaq nomi",
@@ -7039,12 +7049,22 @@ const DIRECTOR_COLUMN_LABELS = {
   bojxona_header_rows:   "Header qatorlari",
 };
 
-// Visual section headers for the Ombor settings modal — grouped by prefix.
-const DIRECTOR_OMBOR_GROUPS = {
-  ortilgan: "📥 UMUMIY ORTILGAN YUKLAR",
-  hajm:     "📊 UMUMIY HAJM",
-  yulda:    "🚛 YO'LDAGI YUKLAR",
-  bojxona:  "🛃 BOJXONADAGI YUKLAR",
+// Visual section headers for the settings modal — grouped by key prefix,
+// per director section.
+const DIRECTOR_SETTINGS_GROUPS = {
+  ombor: {
+    ortilgan: "📥 UMUMIY ORTILGAN YUKLAR",
+    hajm:     "📊 UMUMIY HAJM",
+    yulda:    "🚛 YO'LDAGI YUKLAR",
+    bojxona:  "🛃 BOJXONADAGI YUKLAR",
+  },
+  savdo_sborniy: {
+    fura:  "🧑‍💼 AGENTLAR REYTINGI (ixtiyoriy)",
+    vazn:  "⚖️ VAZN REYTINGI — UMUMIY",
+    vazn1: "⚖️ VAZN — 1) OMBOR",
+    vazn2: "⚖️ VAZN — 2) ORTILGAN FURALAR",
+    vazn3: "⚖️ VAZN — 3) YETIB KELDI",
+  },
 };
 
 function _directorSettingsIsCapacityKey(key) {
@@ -7653,9 +7673,10 @@ function openDirectorSettings(section) {
     return "col";  // column letter
   }
 
-  // Detect Ombor sub-metric prefix so we can inject visual group headers.
-  function _omborGroupOf(key) {
-    for (const prefix of Object.keys(DIRECTOR_OMBOR_GROUPS)) {
+  // Detect sub-metric prefix so we can inject visual group headers.
+  const sectionGroups = DIRECTOR_SETTINGS_GROUPS[section] || {};
+  function _groupOf(key) {
+    for (const prefix of Object.keys(sectionGroups)) {
       if (key.startsWith(prefix + "_")) return prefix;
     }
     return "";
@@ -7664,13 +7685,13 @@ function openDirectorSettings(section) {
   let html = "";
   let currentGroup = "";
   Object.keys(defaults).forEach(key => {
-    const grp = section === "ombor" ? _omborGroupOf(key) : "";
+    const grp = _groupOf(key);
     if (grp && grp !== currentGroup) {
       // Close previous nested grid + start a section header + new grid
       if (currentGroup) html += `</div></div>`;
       html += `
         <div class="dir-settings-group" style="grid-column:1/-1;margin-top:8px;padding:10px 12px;border-top:1px solid var(--stroke)">
-          <div style="font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">${esc(DIRECTOR_OMBOR_GROUPS[grp])}</div>
+          <div style="font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">${esc(sectionGroups[grp])}</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
       `;
       currentGroup = grp;
