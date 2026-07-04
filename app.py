@@ -5146,6 +5146,14 @@ DIRECTOR_DEFAULT_COLUMNS = {
         "bl_col":        "E",
         "fura_agent_col": "B",
         "fura_date_col":  "",   # optional — leave blank to disable date filter on agents
+        # Weight-category leaderboard (Eng yengil … Eng og'ir). Points at a
+        # sheet with one row per sale: seller name + product weight (kg).
+        "vazn_sheet_url":   "",   # optional — blank = use the main sheet_url
+        "vazn_sheet_name":  "",
+        "vazn_seller_col":  "",
+        "vazn_weight_col":  "",
+        "vazn_date_col":    "",   # optional — blank = no date filter
+        "vazn_header_rows": "1",
     },
     # OMBOR = warehouse fill. Aggregates CBM by warehouse name (matched
     # against YIWU/ZHONGSHAN/HORGOS substring). Capacity per warehouse

@@ -3003,6 +3003,119 @@ def _director_sborniy_agents(
     )
 
 
+# Weight categories for the Sborniy per-weight seller leaderboard.
+# (min_kg inclusive, max_kg exclusive; None = unbounded)
+DIRECTOR_WEIGHT_CATEGORIES = (
+    {"key": "eng_yengil", "label": "Eng yengil", "min": 0,   "max": 100},
+    {"key": "yengil",     "label": "Yengil",     "min": 100, "max": 250},
+    {"key": "orta",       "label": "O'rta",      "min": 250, "max": 400},
+    {"key": "ogir",       "label": "Og'ir",      "min": 400, "max": 500},
+    {"key": "eng_ogir",   "label": "Eng og'ir",  "min": 500, "max": None},
+)
+
+
+def _director_sborniy_weight_categories(
+    main_sheet_id: str,
+    override_url: str,
+    sheet_name: str,
+    seller_col: str,
+    weight_col: str,
+    date_col: str,
+    header_rows,
+    date_from,
+    date_to,
+) -> dict:
+    """Group sales rows into 5 weight brackets, ranking sellers inside each.
+
+    Returns {"configured": bool, "categories": [{key, label, range_label,
+    total_count, total_weight, sellers: [{name, count, weight}]}]}.
+    """
+    from services import ombor_service
+    import database as _db
+
+    if override_url:
+        sheet_id, _gid = _db._parse_sheet_url(override_url.strip())
+        if not sheet_id:
+            sheet_id = main_sheet_id
+    else:
+        sheet_id = main_sheet_id
+
+    if not sheet_id or not sheet_name or not seller_col or not weight_col:
+        return {"configured": False, "categories": []}
+
+    try:
+        rows = ombor_service._fetch_csv(sheet_id, sheet_name)
+    except Exception:
+        return {"configured": True, "categories": [], "error": "fetch failed"}
+
+    try:
+        header_n = max(0, int(header_rows or 1))
+    except (TypeError, ValueError):
+        header_n = 1
+    data_rows = rows[header_n:]
+
+    seller_idx = ombor_service._col_to_index(seller_col)
+    weight_idx = ombor_service._col_to_index(weight_col)
+    date_idx   = ombor_service._col_to_index(date_col) if date_col else None
+
+    # cat_key -> seller_key -> {name, count, weight}
+    buckets: dict[str, dict[str, dict]] = {c["key"]: {} for c in DIRECTOR_WEIGHT_CATEGORIES}
+
+    for row in data_rows:
+        seller = (row[seller_idx].strip() if seller_idx < len(row) else "")
+        if not seller:
+            continue
+        weight_cell = row[weight_idx].strip() if weight_idx < len(row) else ""
+        weight = ombor_service._parse_float(weight_cell)
+        if weight <= 0:
+            continue
+        if date_idx is not None:
+            raw_date = row[date_idx].strip() if date_idx < len(row) else ""
+            row_date = ombor_service._parse_date(raw_date)
+            if row_date is None:
+                continue
+            if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+                continue
+
+        cat = None
+        for c in DIRECTOR_WEIGHT_CATEGORIES:
+            lo, hi = c["min"], c["max"]
+            if weight >= lo and (hi is None or weight < hi):
+                cat = c
+                break
+        if cat is None:
+            continue
+
+        key = _norm_person_director(seller)
+        bucket = buckets[cat["key"]].setdefault(key, {"name": seller, "count": 0, "weight": 0.0})
+        if len(seller) > len(bucket["name"]):
+            bucket["name"] = seller
+        bucket["count"] += 1
+        bucket["weight"] += weight
+
+    categories = []
+    for c in DIRECTOR_WEIGHT_CATEGORIES:
+        sellers = sorted(
+            [
+                {"name": v["name"], "count": v["count"], "weight": round(v["weight"], 1)}
+                for v in buckets[c["key"]].values()
+            ],
+            key=lambda r: (r["count"], r["weight"]), reverse=True,
+        )
+        lo, hi = c["min"], c["max"]
+        range_label = f"{lo}–{hi} kg" if hi is not None else f"{lo}+ kg"
+        categories.append({
+            "key":          c["key"],
+            "label":        c["label"],
+            "range_label":  range_label,
+            "total_count":  sum(s["count"] for s in sellers),
+            "total_weight": round(sum(s["weight"] for s in sellers), 1),
+            "sellers":      sellers,
+        })
+
+    return {"configured": True, "categories": categories}
+
+
 # Per-stage daily aggregator for the Sborniy 'Kunlik dinamika' chart.
 # Reuses ombor_service's cached _fetch_csv and parsing helpers so the
 # 3 sheets aren't re-downloaded after fetch_combined_ltl_data already
@@ -3203,6 +3316,19 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         date_to=date_to,
     )
 
+    # Weight-category seller leaderboard (Eng yengil … Eng og'ir)
+    weight_data = _director_sborniy_weight_categories(
+        main_sheet_id=sheet_id,
+        override_url=(cols.get("vazn_sheet_url") or "").strip(),
+        sheet_name=(cols.get("vazn_sheet_name") or "").strip(),
+        seller_col=(cols.get("vazn_seller_col") or "").strip().upper(),
+        weight_col=(cols.get("vazn_weight_col") or "").strip().upper(),
+        date_col=(cols.get("vazn_date_col") or "").strip().upper(),
+        header_rows=cols.get("vazn_header_rows"),
+        date_from=date_from,
+        date_to=date_to,
+    )
+
     return {
         "configured": True,
         "kpis": [
@@ -3217,6 +3343,7 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         },
         "sellers": sellers_sorted,
         "agents":  agents_rows,
+        "weight_categories": weight_data,
         "diagnostics": diag,
         "message": (
             f"3 ta bosqich birlashtirildi (Ombor + Ortilgan furalar + Yetib keldi). "
