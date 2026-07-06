@@ -1,19 +1,33 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   SALES MONITOR — GLASS ORBIT DESIGN (redesign round 4, variant ★1)
+   Full rewrite: glassmorphism surfaces, violet/cyan palette, Inter and
+   Space Grotesk typography, drifting color blobs, spinning torus around
+   the progress ring.
+   The previous neon-green design is preserved byte-for-byte in
+   sales_monitor_legacy.css (+ monitor_legacy.html, live at
+   /analytics/monitor/legacy). To restore it: copy the legacy stylesheet
+   over this file and revert the gradient stops in monitor.html.
+   All selectors and functional mechanics (stroke-dashoffset transitions,
+   book-turn rotation, TV-mode scaling, badges, modals) are kept 1:1 so
+   sales_monitor.js works unchanged.
+   ═══════════════════════════════════════════════════════════════════ */
+
 :root {
-  --bg: #06080f;
-  --bg2: #0c0f1a;
-  --bg3: #111520;
-  --border: #1a2035;
-  --orange: #f5a623;
-  --orange-2: #ff7c1e;
-  --green: #00e676;
-  --red: #ff1744;
-  --blue: #2979ff;
-  --purple: #d500f9;
-  --text: #e8eaf0;
-  --muted: #4a5272;
-  --gold: #ffd600;
-  --silver: #b0bec5;
-  --bronze: #ff8f00;
+  --bg: #0b0d18;
+  --bg2: rgba(255, 255, 255, 0.06);
+  --bg3: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.13);
+  --orange: #8b5cf6;        /* accent 1 — violet  (legacy name kept: many rules read it) */
+  --orange-2: #38bdf8;      /* accent 2 — cyan */
+  --green: #38bdf8;         /* success/live reads cyan in this theme */
+  --red: #ff5b7f;
+  --blue: #38bdf8;
+  --purple: #a78bfa;
+  --text: #eef0ff;
+  --muted: #8b93c6;
+  --gold: #ffd75e;
+  --silver: #cbd5e1;
+  --bronze: #fba15e;
 }
 
 * {
@@ -31,20 +45,47 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: "Oswald", sans-serif;
+  font-family: "Inter", "Oswald", sans-serif;
   overflow-x: hidden;
 }
+
+/* Drifting color blobs — the signature Glass Orbit backdrop */
+@keyframes go-drift1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(60px,-40px) scale(1.15)} 100%{transform:translate(-30px,30px) scale(.95)} }
+@keyframes go-drift2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-70px,50px) scale(1.1)} 100%{transform:translate(40px,-30px) scale(1.05)} }
+@keyframes go-spin   { to { transform: rotate(360deg); } }
+@keyframes go-shimmer{ 0%{background-position:-500px 0} 100%{background-position:500px 0} }
+@keyframes go-sweep  { 0%{transform:translateX(-120%) skewX(-18deg)} 100%{transform:translateX(240%) skewX(-18deg)} }
 
 body::before {
   content: "";
   position: fixed;
-  inset: 0;
+  width: 620px;
+  height: 620px;
+  top: -180px;
+  left: -140px;
+  border-radius: 50%;
+  background: #6d28d9;
+  filter: blur(110px);
+  opacity: 0.36;
   z-index: 0;
   pointer-events: none;
-  background-image:
-    linear-gradient(rgba(245, 166, 35, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(245, 166, 35, 0.03) 1px, transparent 1px);
-  background-size: 40px 40px;
+  animation: go-drift1 18s ease-in-out infinite alternate;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  width: 540px;
+  height: 540px;
+  bottom: -160px;
+  right: -120px;
+  border-radius: 50%;
+  background: #0ea5e9;
+  filter: blur(110px);
+  opacity: 0.3;
+  z-index: 0;
+  pointer-events: none;
+  animation: go-drift2 22s ease-in-out infinite alternate;
 }
 
 .header,
@@ -57,27 +98,30 @@ body::before {
   z-index: 1;
 }
 
+/* ── Header (kept for markup compatibility) ─────────────────────────── */
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 14px 28px;
-  border-bottom: 1px solid var(--border);
-  background: rgba(12, 15, 26, 0.95);
-  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(11, 13, 24, 0.7);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
 .logo {
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 28px;
-  letter-spacing: 4px;
-  color: var(--orange);
-  text-shadow: 0 0 20px rgba(245, 166, 35, 0.35);
+  font-family: "Inter", sans-serif;
+  font-weight: 900;
+  font-size: 24px;
+  letter-spacing: 0.04em;
+  background: linear-gradient(90deg, #a78bfa, #38bdf8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
-.logo span {
-  color: var(--text);
-}
+.logo span { color: var(--text); -webkit-text-fill-color: var(--text); }
 
 .logo-sub {
   font-size: 12px;
@@ -86,27 +130,17 @@ body::before {
 }
 
 .header-center {
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 15px;
-  letter-spacing: 5px;
+  font-family: "Inter", sans-serif;
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.hr {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-
-.rinfo {
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.rinfo span {
-  color: var(--orange);
-  font-family: "JetBrains Mono", monospace;
-}
+.hr { display: flex; align-items: center; gap: 20px; }
+.rinfo { font-size: 11px; color: var(--muted); }
+.rinfo span { color: var(--purple); font-family: "JetBrains Mono", monospace; }
 
 .live {
   display: flex;
@@ -130,9 +164,10 @@ body::before {
 .clock {
   font-family: "JetBrains Mono", monospace;
   font-size: 16px;
-  color: var(--orange);
+  color: var(--purple);
 }
 
+/* ── Controls bar → glass chips ─────────────────────────────────────── */
 .controls {
   display: flex;
   align-items: end;
@@ -140,24 +175,19 @@ body::before {
   gap: 16px;
   flex-wrap: wrap;
   padding: 12px 28px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
-.control-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.control-actions {
-  display: flex;
-  gap: 10px;
-}
+.control-group { display: flex; flex-direction: column; gap: 6px; }
+.control-actions { display: flex; gap: 10px; }
 
 .cl {
-  font-size: 11px;
-  letter-spacing: 2px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -165,67 +195,57 @@ body::before {
 .source-box {
   min-width: 180px;
   padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg3);
-  color: var(--orange);
-  font-family: "JetBrains Mono", monospace;
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.ci {
-  outline: none;
-}
-
-.ci:focus {
-  border-color: var(--orange);
-}
-
-.ci-sm {
-  min-width: 120px;
-}
-
-.source-box {
-  min-width: 220px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text);
+  font-family: "Inter", sans-serif;
+  font-size: 13.5px;
+  font-weight: 600;
 }
+
+.ci { outline: none; }
+.ci option { background: #12142a; color: var(--text); }
+.ci:focus { border-color: var(--orange); }
+.ci-sm { min-width: 120px; }
+.source-box { min-width: 220px; }
 
 .cb {
   padding: 8px 18px;
   border: none;
-  border-radius: 8px;
-  background: var(--orange);
-  color: #000;
-  font-family: "Oswald", sans-serif;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #8b5cf6, #38bdf8);
+  color: #fff;
+  font-family: "Inter", sans-serif;
   font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 1px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   cursor: pointer;
+  box-shadow: 0 8px 22px rgba(124, 108, 255, 0.3);
 }
 
-.cb:hover {
-  background: var(--orange-2);
-}
+.cb:hover { filter: brightness(1.12); }
 
 .cb-ghost {
-  border: 1px solid var(--border);
-  background: var(--bg3);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text);
+  box-shadow: none;
 }
+.cb-ghost:hover { background: rgba(255, 255, 255, 0.13); filter: none; }
 
 .cb-create {
   padding: 6px 12px;
   font-size: 11px;
-  border: 1px solid var(--orange);
-  background: rgba(245,166,35,.12);
-  color: var(--orange);
+  border: 1px solid rgba(139, 92, 246, 0.5);
+  background: rgba(139, 92, 246, 0.14);
+  color: #c4b5fd;
   white-space: nowrap;
+  box-shadow: none;
 }
-.cb-create:hover {
-  background: rgba(245,166,35,.22);
-}
+.cb-create:hover { background: rgba(139, 92, 246, 0.26); filter: none; }
 
+/* ── Layout ─────────────────────────────────────────────────────────── */
 .main {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(340px, 1fr);
@@ -234,88 +254,50 @@ body::before {
   min-height: calc(100vh - 107px);
 }
 
-.lp {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
+.lp { display: flex; flex-direction: column; gap: 18px; }
+.lp-wide { min-width: 0; }
 
-.lp-wide {
-  min-width: 0;
-}
-
+/* ── Glass cards ────────────────────────────────────────────────────── */
 .card {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: var(--bg2);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
 }
 
-.card-accent {
-  position: relative;
-}
-
-.card-accent::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 1;
-  height: 3px;
-}
-
-.ca-o::before {
-  background: linear-gradient(90deg, #34d399, transparent);
-}
-
-.ca-b::before {
-  background: linear-gradient(90deg, var(--blue), transparent);
-}
-
-.ca-p::before {
-  background: linear-gradient(90deg, var(--purple), transparent);
-}
+.card-accent { position: relative; }
+.card-accent::before { display: none; }
+.ca-o::before, .ca-b::before, .ca-p::before { display: none; }
 
 .ch {
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .ct {
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 20px;
-  letter-spacing: 3px;
+  font-family: "Inter", sans-serif;
+  font-weight: 800;
+  font-size: 19px;
+  letter-spacing: 0.06em;
 }
 
-.ct.o { color: #34d399; }            /* UMUMIY PLAN — теперь зелёный под V24 NEON */
-.ct.b { color: var(--blue); }
-.ct.p { color: var(--purple); }
+.ct.o { color: #c4b5fd; }
+.ct.b { color: #7dd3fc; }
+.ct.p { color: #f0abfc; }
 
-.cs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 6px;
-}
+.cs { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 6px; }
+.csi { font-size: 11px; color: var(--muted); }
+.csi b { font-family: "Space Grotesk", "Inter", sans-serif; font-size: 12.5px; font-weight: 700; }
+.csi b.o { color: #c4b5fd; }
+.csi b.b { color: #7dd3fc; }
+.csi b.p { color: #f0abfc; }
 
-.csi {
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.csi b {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.csi b.o { color: var(--orange); }
-.csi b.b { color: var(--blue); }
-.csi b.p { color: var(--purple); }
-
+/* ── Progress ring — Glass Orbit ────────────────────────────────────── */
 .circwrap {
   display: flex;
   flex-direction: column;
@@ -327,6 +309,31 @@ body::before {
   position: relative;
   width: 370px;
   height: 370px;
+  animation: circle-breath 5s ease-in-out infinite;
+}
+
+@keyframes circle-breath {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.02); }
+}
+
+/* Decorative conic torus spinning around the ring assembly */
+.circc::before {
+  content: "";
+  position: absolute;
+  inset: -24px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    rgba(139, 92, 246, 0.55) 0%,
+    rgba(56, 189, 248, 0.5) 40%,
+    rgba(139, 92, 246, 0.06) 62%,
+    rgba(139, 92, 246, 0.06) 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 9px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 9px));
+  animation: go-spin 14s linear infinite;
+  filter: drop-shadow(0 0 18px rgba(124, 108, 255, 0.4));
+  pointer-events: none;
+  z-index: 0;
 }
 
 .circsvg {
@@ -335,64 +342,49 @@ body::before {
   transform: rotate(-90deg);
 }
 
-/* V24 NEON GLASS TUBE — 4-layer green progress ring (replaces orange) */
+/* 4-layer ring: track / soft glow / gradient main / white filament.
+   stroke-dasharray + dashoffset transitions are load-bearing — JS animates
+   the offset on data refresh. Do not remove. */
 .circbg, .tube-outer {
   fill: none;
-  stroke: #0a1c14;
-  stroke-width: 36;
+  stroke: rgba(255, 255, 255, 0.06);
+  stroke-width: 34;
 }
+
 .tube-glow {
   fill: none;
-  stroke: rgba(16,185,129,.4);
-  stroke-width: 32;
+  stroke: rgba(124, 108, 255, 0.45);
+  stroke-width: 30;
   stroke-linecap: round;
-  filter: blur(10px);
+  filter: blur(12px);
   stroke-dasharray: 855;
   stroke-dashoffset: 855;
   transition: stroke-dashoffset 1.1s cubic-bezier(0.4, 0, 0.2, 1);
 }
-/* Keep .circfill for backward compat — alias for the main tube layer */
+
 .circfill, .tube-main {
   fill: none;
   stroke-width: 16;
   stroke-linecap: round;
-  stroke: #34d399;
+  stroke: url(#monitor-orange);
   stroke-dasharray: 855;
   stroke-dashoffset: 855;
   transition: stroke-dashoffset 1.1s cubic-bezier(0.4, 0, 0.2, 1);
-  filter: url(#neon-glow);
-  animation: neon-flicker 5s ease-in-out infinite;
+  filter: drop-shadow(0 0 14px rgba(124, 108, 255, 0.65));
 }
+
 .tube-inner {
   fill: none;
   stroke: white;
-  stroke-width: 5;
+  stroke-width: 4;
   stroke-linecap: round;
-  opacity: .85;
+  opacity: 0.55;
   stroke-dasharray: 855;
   stroke-dashoffset: 855;
   transition: stroke-dashoffset 1.1s cubic-bezier(0.4, 0, 0.2, 1);
-  animation: neon-flicker 5s ease-in-out infinite;
 }
-@keyframes neon-flicker {
-  0%, 100% { opacity: 1; }
-  7%, 9%   { opacity: .45; }
-  8%       { opacity: 1; }
-  44%, 46% { opacity: .55; }
-  45%      { opacity: 1; }
-  77%, 79% { opacity: .65; }
-  78%      { opacity: 1; }
-}
-.tube-inner { opacity: .85; }
-.tube-inner.flicker-low { opacity: .45; }
-/* Subtle breathing of the entire circle assembly */
-.circc {
-  animation: circle-breath 5s ease-in-out infinite;
-}
-@keyframes circle-breath {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.025); }
-}
+
+.tube-inner.flicker-low { opacity: 0.4; }
 
 .circcenter {
   position: absolute;
@@ -405,23 +397,29 @@ body::before {
 }
 
 .circpct {
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 92px;
+  font-family: "Inter", sans-serif;
+  font-weight: 900;
+  font-size: 76px;
+  letter-spacing: -0.03em;
   line-height: 1;
-  color: #34d399;
-  text-shadow:
-    0 0 22px rgba(16, 185, 129, 0.7),
-    0 0 50px rgba(16, 185, 129, 0.35),
-    0 3px 6px rgba(0,0,0,.6);
+  color: transparent;
+  background: linear-gradient(90deg, #a78bfa, #38bdf8, #a78bfa);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: go-shimmer 5s linear infinite;
+  filter: drop-shadow(0 8px 26px rgba(124, 108, 255, 0.4));
 }
 
 .circsub {
   font-size: 11px;
-  letter-spacing: 3px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
   color: var(--muted);
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
+/* ── Plan badge ─────────────────────────────────────────────────────── */
 .plan-badge-row {
   display: flex;
   justify-content: center;
@@ -429,19 +427,22 @@ body::before {
 }
 
 .plan-badge {
-  padding: 6px 12px;
+  padding: 6px 14px;
   border-radius: 999px;
-  background: rgba(255, 183, 57, 0.14);
-  color: var(--orange);
+  background: rgba(139, 92, 246, 0.16);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  color: #c4b5fd;
   font-size: 11px;
-  letter-spacing: 1px;
+  letter-spacing: 0.08em;
 }
 
 .plan-badge.success {
-  background: rgba(0, 230, 118, 0.14);
-  color: var(--green);
+  background: rgba(56, 189, 248, 0.14);
+  border-color: rgba(56, 189, 248, 0.3);
+  color: #7dd3fc;
 }
 
+/* ── KPI boxes (PLAN / HOZIRGACHA / QOLDIQ / TOTAL BL) ──────────────── */
 .pgrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -450,30 +451,45 @@ body::before {
 }
 
 .pbox {
-  padding: 11px;
+  padding: 13px 11px;
   text-align: center;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg3);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+}
+
+.pbox::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  animation: go-sweep 4.5s ease-in-out infinite;
+  pointer-events: none;
 }
 
 .pv {
-  font-family: "Bebas Neue", sans-serif;
+  font-family: "Space Grotesk", "Inter", sans-serif;
+  font-weight: 700;
   font-size: 22px;
   line-height: 1;
 }
 
-.pv.o { color: var(--orange); }
-.pv.g { color: var(--green); }
+.pv.o { color: #c4b5fd; }
+.pv.g { color: #7dd3fc; }
 
 .pl {
-  margin-top: 4px;
+  margin-top: 5px;
   font-size: 9px;
-  letter-spacing: 1.5px;
+  letter-spacing: 0.16em;
   color: var(--muted);
   text-transform: uppercase;
 }
 
+/* ── Monthly bars ───────────────────────────────────────────────────── */
 .bars {
   display: flex;
   flex-direction: column;
@@ -481,194 +497,175 @@ body::before {
   padding: 16px;
 }
 
-.bar-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.bar-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.bar-name {
-  font-size: 10px;
-  color: var(--text);
-}
+.bar-item { display: flex; flex-direction: column; gap: 4px; }
+.bar-row { display: flex; justify-content: space-between; gap: 10px; }
+.bar-name { font-size: 10.5px; color: var(--text); }
 
 .bar-value {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  color: var(--orange);
+  font-family: "Space Grotesk", "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #7dd3fc;
 }
 
 .bar-track {
   height: 6px;
   overflow: hidden;
   border-radius: 4px;
-  background: var(--bg3);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .bar-fill {
   height: 100%;
   border-radius: 4px;
-  background: linear-gradient(90deg, var(--orange), var(--orange-2));
+  background: linear-gradient(90deg, #8b5cf6, #38bdf8);
+  box-shadow: 0 0 12px rgba(124, 108, 255, 0.45);
   transition: width 0.8s ease;
 }
 
-/* Clickable month bar — opens the per-month breakdown modal. */
 .bar-item--clickable {
   cursor: pointer;
   transition: background 0.15s ease;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 4px 6px;
   margin: 0 -6px;
 }
-.bar-item--clickable:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
+.bar-item--clickable:hover { background: rgba(255, 255, 255, 0.05); }
+
 .bar-name-hint {
   opacity: 0;
   margin-left: 4px;
   font-size: 11px;
   transition: opacity 0.15s ease;
-  color: var(--orange, #ffb547);
+  color: #c4b5fd;
 }
-.bar-item--clickable:hover .bar-name-hint {
-  opacity: 1;
-}
-.bar-trucks {
-  color: var(--blue, #38bdf8);
-  font-weight: 600;
-}
+.bar-item--clickable:hover .bar-name-hint { opacity: 1; }
 
-/* Month-breakdown modal — fired by openMonthBreakdown(ym). Overlay covers
-   the whole screen with a dimmed background; the modal is a centered
-   card with SAVDO + LOGISTIKA leaderboards stacked vertically. */
+.bar-trucks { color: #7dd3fc; font-weight: 600; }
+
+/* ── Month-breakdown modal → glass ──────────────────────────────────── */
 .month-breakdown-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(2, 8, 23, 0.78);
-  backdrop-filter: blur(6px);
+  background: rgba(4, 6, 18, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: none;
   align-items: center;
   justify-content: center;
   z-index: 9999;
   padding: 24px;
 }
-.month-breakdown-overlay.active {
-  display: flex;
-}
+.month-breakdown-overlay.active { display: flex; }
+
 .month-breakdown-modal {
   width: min(960px, 100%);
   max-height: calc(100vh - 48px);
   overflow-y: auto;
-  background: var(--surface, #0f172a);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  background: rgba(16, 19, 33, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 24px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
 }
+
 .mb-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 16px 22px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
+
 .mb-title {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: var(--orange, #ffb547);
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #c4b5fd;
 }
+
 .mb-close {
   background: none;
   border: none;
-  color: var(--muted, #94a3b8);
+  color: var(--muted);
   font-size: 28px;
   cursor: pointer;
   line-height: 1;
   padding: 0 6px;
 }
-.mb-close:hover {
-  color: var(--text, #fff);
-}
+.mb-close:hover { color: var(--text); }
+
 .mb-body {
   padding: 18px 22px 22px;
   display: flex;
   flex-direction: column;
   gap: 22px;
 }
+
 .mb-loading,
 .mb-empty {
   padding: 36px;
   text-align: center;
-  color: var(--muted2, #94a3b8);
+  color: var(--muted);
 }
-.mb-empty-small {
-  padding: 14px;
-}
-.mb-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+.mb-empty-small { padding: 14px; }
+
+.mb-section { display: flex; flex-direction: column; gap: 10px; }
+
 .mb-section-h {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 1.2px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text);
 }
+
 .mb-section-h .dot {
   width: 9px;
   height: 9px;
   border-radius: 50%;
   display: inline-block;
 }
-.mb-section-h .dot.blue   { background: var(--blue,   #38bdf8); box-shadow: 0 0 8px var(--blue, #38bdf8); }
-.mb-section-h .dot.purple { background: var(--purple, #a78bfa); box-shadow: 0 0 8px var(--purple, #a78bfa); }
+.mb-section-h .dot.blue   { background: #38bdf8; box-shadow: 0 0 8px #38bdf8; }
+.mb-section-h .dot.purple { background: #a78bfa; box-shadow: 0 0 8px #a78bfa; }
+
 .mb-totals {
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
   font-size: 13px;
-  color: var(--muted, #cbd5e1);
+  color: var(--muted);
 }
 .mb-totals-hint {
   margin-left: 10px;
   font-size: 11px;
-  color: var(--muted2, #94a3b8);
+  color: var(--muted);
   font-style: italic;
 }
-.mb-leaderboard {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
+
+.mb-leaderboard { display: flex; flex-direction: column; gap: 8px; }
+
 .mb-extra {
   display: inline-block;
   margin-left: 6px;
   padding: 1px 7px;
   border-radius: 999px;
   background: rgba(56, 189, 248, 0.12);
-  color: var(--blue, #38bdf8);
+  color: #7dd3fc;
   font-size: 11px;
   font-weight: 600;
 }
 
-.lb {
-  flex: 1;
-  overflow: hidden;
-}
+/* ── Leaderboard ────────────────────────────────────────────────────── */
+.lb { flex: 1; overflow: hidden; transition: opacity 0.22s ease; }
+.lb.is-fading { opacity: 0.35; }
 
 .lr {
   position: relative;
@@ -676,23 +673,21 @@ body::before {
   align-items: center;
   gap: 12px;
   padding: 12px 18px;
-  border-bottom: 1px solid rgba(26, 32, 53, 0.55);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
+.lr:nth-child(odd) { background: rgba(255, 255, 255, 0.03); }
 
 .lrank {
   width: 30px;
   flex-shrink: 0;
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 24px;
+  font-family: "Space Grotesk", "Inter", sans-serif;
+  font-weight: 700;
+  font-size: 22px;
   line-height: 1;
   text-align: center;
 }
 
-.r1 {
-  color: var(--gold);
-  text-shadow: 0 0 12px rgba(255, 214, 0, 0.55);
-}
-
+.r1 { color: var(--gold); text-shadow: 0 0 12px rgba(255, 215, 94, 0.55); }
 .r2 { color: var(--silver); }
 .r3 { color: var(--bronze); }
 .rn { color: var(--muted); }
@@ -704,24 +699,24 @@ body::before {
   width: 40px;
   height: 40px;
   flex-shrink: 0;
-  border-radius: 50%;
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 14px;
+  border-radius: 13px;
+  font-family: "Inter", sans-serif;
+  font-weight: 800;
+  font-size: 13px;
   color: #fff;
+  background: linear-gradient(135deg, #8b5cf6, #38bdf8);
+  box-shadow: 0 6px 18px rgba(124, 108, 255, 0.35);
 }
 
-.lav.blue { background: rgba(41, 121, 255, 0.75); }
-.lav.purple { background: rgba(213, 0, 249, 0.75); }
+.lav.blue   { background: linear-gradient(135deg, #38bdf8, #0ea5e9); }
+.lav.purple { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
 
-.li {
-  min-width: 0;
-  flex: 1;
-}
+.li { min-width: 0; flex: 1; }
 
 .lname {
   overflow: hidden;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 13.5px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -733,26 +728,21 @@ body::before {
   color: var(--muted);
 }
 
-.lsc {
-  flex-shrink: 0;
-  text-align: right;
-}
+.lsc { flex-shrink: 0; text-align: right; }
 
 .lscv {
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 24px;
+  font-family: "Space Grotesk", "Inter", sans-serif;
+  font-weight: 700;
+  font-size: 22px;
   line-height: 1;
+  color: #dbe6ff;
 }
 .lscv-unit {
-  font-size: .55em;
-  opacity: .7;
+  font-size: 0.55em;
+  opacity: 0.7;
   margin-left: 4px;
   letter-spacing: 1px;
 }
-
-/* When SAVDO sub-view flips LTL↔FTL: fade leaderboard cells, panel layout stays */
-.lb { transition: opacity .22s ease; }
-.lb.is-fading { opacity: .35; }
 
 .lscs {
   font-family: "JetBrains Mono", monospace;
@@ -766,17 +756,14 @@ body::before {
   left: 68px;
   right: 0;
   height: 2px;
-  background: var(--bg3);
+  background: rgba(255, 255, 255, 0.06);
 }
 
-.lbf {
-  height: 100%;
-  transition: width 0.8s ease;
-}
+.lbf { height: 100%; transition: width 0.8s ease; background: linear-gradient(90deg, #8b5cf6, #38bdf8); }
+.lbf.blue   { background: linear-gradient(90deg, #38bdf8, #7dd3fc); }
+.lbf.purple { background: linear-gradient(90deg, #8b5cf6, #c4b5fd); }
 
-.lbf.blue { background: var(--blue); }
-.lbf.purple { background: var(--purple); }
-
+/* ── Bottom row ─────────────────────────────────────────────────────── */
 .bottom {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
@@ -784,9 +771,10 @@ body::before {
   padding: 0 28px 18px;
 }
 
+/* ── Department monitor (rotating SOTUVCHILAR / LOGISTIKA panel) ────── */
 .dept-monitor {
   min-height: 100%;
-  perspective: 1600px;          /* enables 3D book-page-turn for .dept-body */
+  perspective: 1600px;
 }
 
 .dept-header-row {
@@ -807,65 +795,68 @@ body::before {
   flex: 1;
   min-height: 0;
   transform-style: preserve-3d;
-  transform-origin: right center;     /* книжная страница «крепится» к правому краю */
+  transform-origin: right center;
   backface-visibility: hidden;
 }
 
-/* LTL / FTL pill — sits at the END of the Jami / Plan ulushi / BL row */
+/* LTL / FTL pill */
 .dept-mode-badge {
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 22px;
+  font-family: "Space Grotesk", "Inter", sans-serif;
+  font-weight: 700;
+  font-size: 20px;
   line-height: 1;
-  letter-spacing: 4px;
-  padding: 8px 18px;
-  border-radius: 10px;
-  background: rgba(110, 231, 183, 0.16);
-  color: var(--green2, #34d399);
-  border: 1.5px solid rgba(110, 231, 183, 0.55);
+  letter-spacing: 0.18em;
+  padding: 9px 18px;
+  border-radius: 12px;
+  background: rgba(56, 189, 248, 0.14);
+  color: #7dd3fc;
+  border: 1.5px solid rgba(56, 189, 248, 0.45);
   margin-left: auto;
   align-self: center;
-  text-shadow: 0 0 12px rgba(16,185,129,.5);
-  box-shadow: 0 0 18px rgba(16,185,129,.18);
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.16);
   transition: opacity 0.24s ease, transform 0.24s ease, background 0.24s ease, color 0.24s ease, border-color 0.24s ease;
 }
 .dept-mode-badge[data-mode="FTL"] {
-  background: rgba(251, 191, 36, 0.16);
-  color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.55);
-  text-shadow: 0 0 12px rgba(251,191,36,.55);
-  box-shadow: 0 0 18px rgba(251,191,36,.2);
+  background: rgba(167, 139, 250, 0.16);
+  color: #c4b5fd;
+  border-color: rgba(167, 139, 250, 0.55);
+  text-shadow: 0 0 12px rgba(167, 139, 250, 0.55);
+  box-shadow: 0 0 18px rgba(167, 139, 250, 0.2);
 }
 .dept-mode-badge.is-flip { transform: rotateY(85deg); opacity: 0; }
 
-/* TV mode — bump pill larger for 50" readability */
 body.tv-mode .dept-mode-badge {
   font-size: 32px;
   letter-spacing: 6px;
   padding: 12px 26px;
   border-radius: 14px;
 }
+
 [hidden] { display: none !important; }
 
-/* Book-page-turn: страница уходит вправо (rotateY вокруг правого края),
-   контент меняется в середине, затем «новая страница» открывается оттуда же. */
+/* Book-page-turn rotation (load-bearing for dept rotation) */
 .dept-body.is-animating {
   animation: book-turn-right 0.55s cubic-bezier(.55,.05,.4,1) both;
 }
 @keyframes book-turn-right {
   0%   { transform: rotateY(0deg);   opacity: 1; }
   45%  { transform: rotateY(-92deg); opacity: 0; }
-  55%  { transform: rotateY(92deg);  opacity: 0; }     /* контент сменился, «новая страница» с другой стороны */
+  55%  { transform: rotateY(92deg);  opacity: 0; }
   100% { transform: rotateY(0deg);   opacity: 1; }
 }
 
+/* ── Share cards (bottom) ───────────────────────────────────────────── */
 .sc {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg2);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
 .sc-title {
@@ -875,16 +866,15 @@ body.tv-mode .dept-mode-badge {
 }
 
 .share-title {
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 13px;
-  letter-spacing: 3px;
+  font-family: "Inter", sans-serif;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.share-subtitle {
-  font-size: 11px;
-  color: var(--muted);
-}
+.share-subtitle { font-size: 11px; color: var(--muted); }
 
 .sl {
   min-width: 80px;
@@ -898,28 +888,25 @@ body.tv-mode .dept-mode-badge {
   flex: 1;
   overflow: hidden;
   border-radius: 4px;
-  background: var(--bg3);
+  background: rgba(255, 255, 255, 0.07);
 }
 
-.sf {
-  height: 100%;
-  border-radius: 4px;
-  transition: width 0.8s ease;
-}
-
-.sf-blue { background: var(--blue); }
-.sf-purple { background: var(--purple); }
+.sf { height: 100%; border-radius: 4px; transition: width 0.8s ease; }
+.sf-blue   { background: linear-gradient(90deg, #38bdf8, #7dd3fc); }
+.sf-purple { background: linear-gradient(90deg, #8b5cf6, #c4b5fd); }
 
 .sp {
   min-width: 56px;
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 22px;
+  font-family: "Space Grotesk", "Inter", sans-serif;
+  font-weight: 700;
+  font-size: 20px;
   text-align: right;
 }
 
-.sp-blue { color: var(--blue); }
-.sp-purple { color: var(--purple); }
+.sp-blue { color: #7dd3fc; }
+.sp-purple { color: #c4b5fd; }
 
+/* ── Empty state ────────────────────────────────────────────────────── */
 .monitor-empty {
   display: flex;
   align-items: center;
@@ -927,17 +914,16 @@ body.tv-mode .dept-mode-badge {
   min-height: 220px;
   margin: 18px 28px 0;
   padding: 32px;
-  border: 1px dashed var(--border);
-  border-radius: 16px;
-  background: rgba(12, 15, 26, 0.88);
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   color: var(--muted);
   font-size: 20px;
   text-align: center;
 }
-
-.monitor-empty.active {
-  display: flex;
-}
+.monitor-empty.active { display: flex; }
 
 .main.is-empty,
 .bottom.is-empty {
@@ -945,17 +931,16 @@ body.tv-mode .dept-mode-badge {
   pointer-events: none;
 }
 
-/* "Why is the active plan empty?" banner — shown inside the UMUMIY PLAN
-   card when the configured plan period contains no rows from the sheet.
-   Operators were getting confused when they created a plan whose date
-   range didn't overlap with where their data was actually entered. */
+/* ── Plan status banner (functional warning colors kept) ───────────── */
 .plan-status-banner {
   margin: 12px 18px 0;
   padding: 12px 14px;
-  border-radius: 10px;
+  border-radius: 14px;
   border: 1px solid rgba(255, 181, 71, 0.35);
-  background: rgba(255, 181, 71, 0.10);
-  color: var(--amber, #ffb547);
+  background: rgba(255, 181, 71, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #ffb547;
   font-size: 13px;
   line-height: 1.4;
   display: flex;
@@ -963,18 +948,12 @@ body.tv-mode .dept-mode-badge {
   gap: 10px;
 }
 .plan-status-banner[data-state="sheet_empty"] {
-  border-color: rgba(231, 76, 60, 0.45);
-  background: rgba(231, 76, 60, 0.10);
-  color: var(--red, #e74c3c);
+  border-color: rgba(255, 91, 127, 0.45);
+  background: rgba(255, 91, 127, 0.1);
+  color: var(--red);
 }
-.plan-status-banner .psb-icon {
-  font-size: 18px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-.plan-status-banner .psb-body {
-  flex: 1;
-}
+.plan-status-banner .psb-icon { font-size: 18px; line-height: 1; flex-shrink: 0; }
+.plan-status-banner .psb-body { flex: 1; }
 .plan-status-banner .psb-hint {
   margin-top: 4px;
   font-size: 11px;
@@ -982,26 +961,20 @@ body.tv-mode .dept-mode-badge {
   opacity: 0.75;
 }
 
+/* ── Fullscreen mode ────────────────────────────────────────────────── */
 body.monitor-fullscreen .controls,
 body.monitor-fullscreen .monthly-card,
 body.monitor-fullscreen .bottom {
   display: none;
 }
 
-/* Kiosk profile (login `sales` / `sales123`) — hide the OYLIK DINAMIKA
-   monthly-dynamics card. Per-request: that block is operationally noisy
-   on the wall TV and not useful for the floor team. Other roles continue
-   to see it. We also collapse the grid so the remaining left-column
-   doesn't leave a gap where the card used to sit. */
+/* Kiosk profile: hide OYLIK DINAMIKA */
 body.role-kiosk .monthly-card { display: none !important; }
 body.role-kiosk .main {
   grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
 }
 
-/* ── Kiosk plan switcher ─────────────────────────────────────────────
-   Small chip fixed to the top-right corner of the TV. Mostly transparent
-   so it doesn't distract on the wall display; brightens on hover/focus
-   for the operator with a mouse. "Aktiv plan (avto)" = auto-follow. */
+/* ── Kiosk plan switcher ────────────────────────────────────────────── */
 .kiosk-plan-switcher {
   position: fixed;
   top: 10px;
@@ -1011,25 +984,27 @@ body.role-kiosk .main {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 10px;
-  background: rgba(10, 12, 16, .6);
-  border: 1px solid rgba(255, 255, 255, .08);
-  opacity: .35;
-  transition: opacity .2s ease;
+  border-radius: 12px;
+  background: rgba(11, 13, 24, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  opacity: 0.35;
+  transition: opacity 0.2s ease;
 }
 .kiosk-plan-switcher:hover,
 .kiosk-plan-switcher:focus-within { opacity: 1; }
 .kiosk-plan-switcher label {
   font-size: 10px;
-  letter-spacing: .14em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, .55);
+  color: rgba(255, 255, 255, 0.55);
   cursor: pointer;
 }
 .kiosk-plan-switcher select {
-  background: rgba(255, 255, 255, .06);
+  background: rgba(255, 255, 255, 0.06);
   color: #e5e7eb;
-  border: 1px solid rgba(255, 255, 255, .14);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 13px;
@@ -1038,51 +1013,27 @@ body.role-kiosk .main {
   cursor: pointer;
   max-width: 260px;
 }
-.kiosk-plan-switcher select option {
-  background: #0d0f13;
-  color: #e5e7eb;
-}
+.kiosk-plan-switcher select:focus { border-color: #8b5cf6; }
+.kiosk-plan-switcher select option { background: #12142a; color: #e5e7eb; }
 
 body.monitor-fullscreen .main {
   grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
   min-height: calc(100vh - 20px);
 }
-
-body.monitor-fullscreen .overall-card {
-  min-height: calc(100vh - 60px);
-}
-
-body.monitor-fullscreen .circwrap {
-  padding: 38px 0 20px;
-}
-
+body.monitor-fullscreen .overall-card { min-height: calc(100vh - 60px); }
+body.monitor-fullscreen .circwrap { padding: 38px 0 20px; }
 body.monitor-fullscreen .circc,
 body.monitor-fullscreen .circsvg {
   width: 530px;
   height: 530px;
 }
+body.monitor-fullscreen .circpct { font-size: 118px; }
+body.monitor-fullscreen .circsub { font-size: 14px; letter-spacing: 4px; }
+body.monitor-fullscreen .pgrid { gap: 18px; }
+body.monitor-fullscreen .pv { font-size: 28px; }
+body.monitor-fullscreen .dept-monitor { min-height: calc(100vh - 60px); }
 
-body.monitor-fullscreen .circpct {
-  font-size: 132px;
-}
-
-body.monitor-fullscreen .circsub {
-  font-size: 14px;
-  letter-spacing: 4px;
-}
-
-body.monitor-fullscreen .pgrid {
-  gap: 18px;
-}
-
-body.monitor-fullscreen .pv {
-  font-size: 28px;
-}
-
-body.monitor-fullscreen .dept-monitor {
-  min-height: calc(100vh - 60px);
-}
-
+/* ── Bottom rotation progress bar ───────────────────────────────────── */
 .tbar {
   position: fixed;
   right: 0;
@@ -1090,23 +1041,24 @@ body.monitor-fullscreen .dept-monitor {
   left: 0;
   z-index: 10;
   height: 3px;
-  background: var(--border);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .tf {
   height: 100%;
   width: 100%;
-  background: linear-gradient(90deg, var(--blue), var(--purple), var(--orange));
+  background: linear-gradient(90deg, #38bdf8, #8b5cf6, #f0abfc);
   transition: width 1s linear;
 }
 
-/* Config modal */
+/* ── Config modal → glass ───────────────────────────────────────────── */
 .cfg-overlay {
   position: fixed;
   inset: 0;
   z-index: 200;
-  background: rgba(6, 8, 15, 0.82);
-  backdrop-filter: blur(6px);
+  background: rgba(4, 6, 18, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1117,32 +1069,34 @@ body.monitor-fullscreen .dept-monitor {
 .cfg-modal {
   width: 480px;
   max-width: 95vw;
-  max-height: calc(100vh - 48px);   /* fits viewport with 24px margin top/bottom */
-  overflow-y: auto;                 /* scroll if content taller than viewport */
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  background: var(--bg2);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 24px;
+  background: rgba(16, 19, 33, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   padding: 28px;
   display: flex;
   flex-direction: column;
   gap: 18px;
-  /* slim scrollbar inside the modal */
   scrollbar-width: thin;
-  scrollbar-color: rgba(110,231,183,.35) transparent;
+  scrollbar-color: rgba(139, 92, 246, 0.35) transparent;
 }
 .cfg-modal::-webkit-scrollbar { width: 6px; }
 .cfg-modal::-webkit-scrollbar-track { background: transparent; }
 .cfg-modal::-webkit-scrollbar-thumb {
-  background: rgba(110,231,183,.35);
+  background: rgba(139, 92, 246, 0.35);
   border-radius: 3px;
 }
 
 .cfg-title {
-  font-family: "Bebas Neue", sans-serif;
-  font-size: 20px;
-  letter-spacing: 3px;
-  color: var(--orange);
+  font-family: "Inter", sans-serif;
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  color: #c4b5fd;
 }
 
 .cfg-grid {
@@ -1151,12 +1105,7 @@ body.monitor-fullscreen .dept-monitor {
   gap: 12px;
 }
 
-.cfg-field {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
+.cfg-field { display: flex; flex-direction: column; gap: 5px; }
 .cfg-field.full { grid-column: 1 / -1; }
 
 .cfg-label {
@@ -1168,23 +1117,18 @@ body.monitor-fullscreen .dept-monitor {
 
 .cfg-input {
   padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg3);
-  color: var(--orange);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #dbe6ff;
   font-family: "JetBrains Mono", monospace;
   font-size: 13px;
   font-weight: 700;
   outline: none;
 }
+.cfg-input:focus { border-color: #8b5cf6; }
 
-.cfg-input:focus { border-color: var(--orange); }
-
-.cfg-hint {
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 2px;
-}
+.cfg-hint { font-size: 10px; color: var(--muted); margin-top: 2px; }
 
 .cfg-actions {
   display: flex;
@@ -1197,10 +1141,9 @@ body.monitor-fullscreen .dept-monitor {
   color: var(--green);
   min-height: 16px;
 }
-
 .cfg-status.error { color: var(--red); }
 
-/* Live badge on source-box */
+/* ── LIVE badge + stale chip (functional) ───────────────────────────── */
 .source-live {
   display: inline-flex;
   align-items: center;
@@ -1225,20 +1168,15 @@ body.monitor-fullscreen .dept-monitor {
   50% { opacity: 0.35; }
 }
 
-/* Stale state — fires when the monitor's last successful fetch is older
-   than 2× refresh interval (≈250 sec). Replaces the green LIVE dot with a
-   warning chip so the TV operator can spot a stuck feed at a glance. */
 #source-name[data-stale="1"] {
-  color: var(--amber, #ffb547);
+  color: #ffb547;
   position: relative;
   padding-right: 22px;
 }
-#source-name[data-stale="1"] .source-live {
-  color: var(--amber, #ffb547);
-}
+#source-name[data-stale="1"] .source-live { color: #ffb547; }
 #source-name[data-stale="1"] .source-live::before {
-  background: var(--amber, #ffb547);
-  box-shadow: 0 0 8px var(--amber, #ffb547);
+  background: #ffb547;
+  box-shadow: 0 0 8px #ffb547;
 }
 #source-name[data-stale="1"]::after {
   content: "⚠ обновление зависло";
@@ -1249,7 +1187,7 @@ body.monitor-fullscreen .dept-monitor {
   padding: 2px 8px;
   border-radius: 999px;
   background: rgba(255, 181, 71, 0.18);
-  color: var(--amber, #ffb547);
+  color: #ffb547;
   font-size: 11px;
   letter-spacing: 0.5px;
   font-weight: 600;
@@ -1270,29 +1208,26 @@ body.monitor-fullscreen .dept-monitor {
 
 /* ════════════════════════════════════════════════════════════
    TV-MODE — kiosk profile on 50-inch monitor (login: sales)
-   Bigger fonts, hidden controls, single fullscreen card view
+   Bigger everything, hidden controls. Same scale rules as the
+   legacy design — only the fonts/colors follow Glass Orbit.
    ════════════════════════════════════════════════════════════ */
 body.tv-mode .controls { display: none !important; }
 
-/* Remove "So'nggi sync" line — last .csi inside UMUMIY PLAN header */
 body.tv-mode .overall-card .cs .csi:nth-child(3) { display: none !important; }
 
 body.tv-mode {
   padding: 0;
   overflow: hidden;
-  cursor: none;                  /* hide mouse cursor on TV */
-  user-select: none;             /* no accidental text selection */
+  cursor: none;
+  user-select: none;
   -webkit-user-select: none;
 }
 
-/* Live indicator bar (countdown) — keep at bottom, but thinner */
 body.tv-mode .tbar {
   height: 4px !important;
   bottom: 0;
 }
 
-/* Grid: shrink UMUMIY PLAN, expand SOTUVCHILAR to the left  */
-/* Was 2fr 1fr. Now 1.25fr 1fr — SOTUVCHILAR gets ~45% of width */
 body.tv-mode .main {
   min-height: 100vh;
   padding: 20px 28px 12px 28px;
@@ -1300,9 +1235,8 @@ body.tv-mode .main {
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) !important;
 }
 
-/* PLAN / HOZIRGACHA / QOLDIQ / TOTAL BL — single row of 4 boxes */
 body.tv-mode .pgrid {
-  grid-template-columns: 1fr 1fr 1fr 1fr !important;   /* 4 in one row, not 2×2 */
+  grid-template-columns: 1fr 1fr 1fr 1fr !important;
   gap: 12px !important;
   padding: 0 16px 18px !important;
 }
@@ -1310,7 +1244,6 @@ body.tv-mode .pbox {
   padding: 16px 10px !important;
 }
 
-/* Circle: massively scale up — was 370px, now 600px (~62% bigger) */
 body.tv-mode .circc,
 body.tv-mode .circsvg {
   width: 600px !important;
@@ -1321,7 +1254,7 @@ body.tv-mode .circfill {
   stroke-width: 42 !important;
 }
 body.tv-mode .circpct {
-  font-size: 170px !important;
+  font-size: 150px !important;
   line-height: 1;
 }
 body.tv-mode .circsub {
@@ -1330,30 +1263,22 @@ body.tv-mode .circsub {
   margin-top: 12px;
 }
 
-/* "UMUMIY PLAN" / "SOTUVCHILAR" titles */
 body.tv-mode .ct {
-  font-size: 56px !important;
-  letter-spacing: 4px !important;
-  font-weight: 700;
+  font-size: 50px !important;
+  letter-spacing: 0.04em !important;
+  font-weight: 900;
 }
 
-/* Plan info (name, period, last sync) + Jami/Plan ulushi/BL */
-body.tv-mode .csi {
-  font-size: 24px !important;
-}
-body.tv-mode .csi b {
-  font-size: 26px !important;
-}
+body.tv-mode .csi { font-size: 24px !important; }
+body.tv-mode .csi b { font-size: 26px !important; }
 
-/* Plan badge ("Plan bajarilish jarayonida") */
 body.tv-mode .plan-badge {
   font-size: 22px !important;
   padding: 10px 26px !important;
 }
 
-/* Stat box values — fit "211,86 M³" comfortably in 4-column row */
 body.tv-mode .pv {
-  font-size: 46px !important;
+  font-size: 42px !important;
   line-height: 1.0;
   font-weight: 700;
   white-space: nowrap;
@@ -1365,18 +1290,16 @@ body.tv-mode .pl {
   font-weight: 600;
 }
 
-/* OYLIK DINAMIKA bar values */
 body.tv-mode .bar-v { font-size: 22px !important; }
 body.tv-mode .bar-l { font-size: 14px !important; }
 
-/* SOTUVCHILAR leaderboard — REAL class names (.lr/.lrank/.lav/.lname/.lsub/.lscv/.lscs) */
 body.tv-mode .lr {
   padding: 24px 24px !important;
   gap: 22px !important;
   border-bottom-width: 2px !important;
 }
 body.tv-mode .lrank {
-  font-size: 64px !important;
+  font-size: 56px !important;
   width: 76px !important;
   min-width: 76px;
 }
@@ -1384,19 +1307,20 @@ body.tv-mode .lav {
   width: 84px !important;
   height: 84px !important;
   font-size: 30px !important;
+  border-radius: 22px;
 }
 body.tv-mode .lname {
   font-size: 38px !important;
   line-height: 1.15;
-  font-weight: 600;
-  white-space: normal !important;     /* allow long names to wrap */
+  font-weight: 700;
+  white-space: normal !important;
 }
 body.tv-mode .lsub {
   font-size: 22px !important;
   margin-top: 8px !important;
 }
 body.tv-mode .lscv {
-  font-size: 56px !important;
+  font-size: 52px !important;
   font-weight: 700;
 }
 body.tv-mode .lscs {
@@ -1405,237 +1329,15 @@ body.tv-mode .lscs {
 }
 body.tv-mode .lbar { height: 4px !important; }
 
-/* Bottom share bar */
 body.tv-mode .share-title { font-size: 22px !important; }
 body.tv-mode .share-subtitle { font-size: 14px !important; }
 body.tv-mode .sl { font-size: 18px !important; }
 body.tv-mode .sp { font-size: 22px !important; }
 
-/* Card headers */
 body.tv-mode .ch { padding: 22px 26px !important; }
 body.tv-mode .bottom { padding: 18px 28px !important; gap: 22px; }
 body.tv-mode .sc { padding: 14px 18px !important; }
 
-/* Cards: thicker borders / glow for TV visibility */
 body.tv-mode .card-accent {
   border-width: 2px !important;
 }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   GLASS ORBIT THEME — redesign round 4, variant ★1 — START
-   Pure override layer: no selector below introduces new layout logic,
-   it only re-skins the existing neon-green design (glassmorphism,
-   violet/cyan palette, animated blobs, spinning torus around the ring).
-   TO RESTORE THE OLD DESIGN:
-     1) delete everything between START/END markers (or copy
-        sales_monitor_legacy.css over this file), and
-     2) revert the gradient stops + font link in monitor.html
-        (see monitor_legacy.html for the original markup).
-   Live preview of the old design: /analytics/monitor/legacy
-   ═══════════════════════════════════════════════════════════════════ */
-
-/* Palette swap — most components read these vars, so one redefinition
-   re-skins badges, accents, logos and TV-mode in one go. */
-:root {
-  --bg: #0b0d18;
-  --bg2: #10131f;
-  --bg3: #141828;
-  --border: #232a44;
-  --orange: #8b5cf6;      /* accent 1: violet (was amber) */
-  --orange-2: #38bdf8;    /* accent 2: cyan (was orange)  */
-  --green: #38bdf8;       /* success reads as cyan now    */
-  --muted: #8b93c6;
-}
-
-body {
-  background: #0b0d18;
-  font-family: "Inter", "Oswald", sans-serif;
-}
-
-/* Animated color blobs (replaces the old amber grid overlay) */
-@keyframes go-drift1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(60px,-40px) scale(1.15)} 100%{transform:translate(-30px,30px) scale(.95)} }
-@keyframes go-drift2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-70px,50px) scale(1.1)} 100%{transform:translate(40px,-30px) scale(1.05)} }
-body::before {
-  content: "";
-  position: fixed;
-  width: 620px; height: 620px;
-  top: -180px; left: -140px;
-  inset: auto;
-  border-radius: 50%;
-  background: #6d28d9;
-  filter: blur(110px);
-  opacity: .38;
-  z-index: 0;
-  pointer-events: none;
-  background-image: none;
-  animation: go-drift1 18s ease-in-out infinite alternate;
-}
-body::after {
-  content: "";
-  position: fixed;
-  width: 540px; height: 540px;
-  bottom: -160px; right: -120px;
-  border-radius: 50%;
-  background: #0ea5e9;
-  filter: blur(110px);
-  opacity: .32;
-  z-index: 0;
-  pointer-events: none;
-  animation: go-drift2 22s ease-in-out infinite alternate;
-}
-
-/* Glass cards */
-.card {
-  background: rgba(255, 255, 255, .06);
-  border: 1px solid rgba(255, 255, 255, .13);
-  border-radius: 26px;
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, .45);
-}
-.card-accent::before { display: none; }  /* old top accent strip — off */
-
-/* Controls bar → glass chips */
-.ci, .source-box {
-  background: rgba(255, 255, 255, .06);
-  border: 1px solid rgba(255, 255, 255, .14);
-  border-radius: 10px;
-  color: var(--text);
-}
-.cb {
-  background: rgba(255, 255, 255, .07);
-  border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 10px;
-  color: var(--text);
-}
-.cb:hover { background: rgba(255, 255, 255, .13); }
-.cb-create {
-  background: linear-gradient(135deg, #8b5cf6, #38bdf8);
-  border: none;
-  color: #fff;
-}
-
-/* Progress ring → Glass Orbit: violet→cyan gradient stroke, no flicker,
-   decorative conic torus spinning around the assembly. */
-.circbg, .tube-outer { stroke: rgba(255, 255, 255, .06); }
-.tube-glow {
-  stroke: rgba(124, 108, 255, .45);
-  filter: blur(12px);
-}
-.circfill, .tube-main {
-  stroke: url(#monitor-orange);
-  animation: none;
-  filter: drop-shadow(0 0 14px rgba(124, 108, 255, .65));
-}
-.tube-inner { animation: none; opacity: .55; stroke-width: 4; }
-@keyframes go-spin { to { transform: rotate(360deg); } }
-.circc { position: relative; }
-.circc::before {
-  content: "";
-  position: absolute;
-  inset: -26px;
-  border-radius: 50%;
-  background: conic-gradient(from 0deg,
-    rgba(139, 92, 246, .55) 0%,
-    rgba(56, 189, 248, .5) 40%,
-    rgba(139, 92, 246, .06) 62%,
-    rgba(139, 92, 246, .06) 100%);
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 9px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 calc(100% - 9px));
-  animation: go-spin 14s linear infinite;
-  filter: drop-shadow(0 0 18px rgba(124, 108, 255, .4));
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* Big percentage → shimmer gradient text */
-@keyframes go-shimmer { 0%{background-position:-500px 0} 100%{background-position:500px 0} }
-.circpct {
-  font-family: "Inter", sans-serif;
-  font-weight: 900;
-  font-size: 78px;
-  letter-spacing: -.03em;
-  color: transparent;
-  background: linear-gradient(90deg, #a78bfa, #38bdf8, #a78bfa);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  text-shadow: none;
-  animation: go-shimmer 5s linear infinite;
-  filter: drop-shadow(0 8px 26px rgba(124, 108, 255, .4));
-}
-
-/* KPI boxes (PLAN / HOZIRGACHA / QOLDIQ / TOTAL BL) → glass tiles with
-   the same light sweep the mock had */
-@keyframes go-sweep { 0%{transform:translateX(-120%) skewX(-18deg)} 100%{transform:translateX(240%) skewX(-18deg)} }
-.pbox {
-  background: rgba(255, 255, 255, .05);
-  border: 1px solid rgba(255, 255, 255, .11);
-  border-radius: 16px;
-  position: relative;
-  overflow: hidden;
-}
-.pbox::after {
-  content: "";
-  position: absolute;
-  top: 0; bottom: 0;
-  width: 40%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .08), transparent);
-  animation: go-sweep 4.5s ease-in-out infinite;
-  pointer-events: none;
-}
-.pv { font-family: "Space Grotesk", "Inter", sans-serif; }
-.pv.o { color: #a78bfa; }
-.pv.g { color: #38bdf8; }
-
-/* Section titles / accents */
-.ct.o, .csi b.o { color: #a78bfa; }
-.ct.b, .csi b.b { color: #7dd3fc; }
-.ct.p, .csi b.p { color: #f0abfc; }
-
-/* Monthly bars + leaderboard fills → violet/cyan gradients */
-.bar-fill { background: linear-gradient(90deg, #8b5cf6, #38bdf8); box-shadow: 0 0 12px rgba(124, 108, 255, .45); }
-.bar-value { color: #7dd3fc; }
-.lbf { background: linear-gradient(90deg, #8b5cf6, #38bdf8); }
-.lbf.blue { background: linear-gradient(90deg, #38bdf8, #7dd3fc); }
-.lbf.purple { background: linear-gradient(90deg, #8b5cf6, #c4b5fd); }
-.sf { background: linear-gradient(90deg, #8b5cf6, #38bdf8); }
-.sf-blue { background: linear-gradient(90deg, #38bdf8, #7dd3fc); }
-.sf-purple { background: linear-gradient(90deg, #8b5cf6, #c4b5fd); }
-
-/* Leaderboard avatars → gradient squares like the mock */
-.lav {
-  background: linear-gradient(135deg, #8b5cf6, #38bdf8);
-  border-radius: 13px;
-  box-shadow: 0 6px 18px rgba(124, 108, 255, .35);
-  color: #fff;
-}
-.lav.blue { background: linear-gradient(135deg, #38bdf8, #0ea5e9); }
-.lav.purple { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
-
-/* Leaderboard rows → soft glass zebra */
-.lr { border-radius: 14px; }
-.lr:nth-child(odd) { background: rgba(255, 255, 255, .04); }
-
-/* Month-breakdown modal → glass */
-.month-breakdown-modal {
-  background: rgba(16, 19, 33, .92);
-  border: 1px solid rgba(255, 255, 255, .14);
-  border-radius: 24px;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-}
-
-/* Plan status banner keeps its warning palette — just glassier */
-.plan-status-banner {
-  border-radius: 14px;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-/* Kiosk corner plan switcher already glass — align accent */
-.kiosk-plan-switcher select:focus { border-color: #8b5cf6; }
-
-/* ═══════════════════════════════════════════════════════════════════════
-   GLASS ORBIT THEME — END
-   ═══════════════════════════════════════════════════════════════════ */
