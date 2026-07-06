@@ -3141,8 +3141,7 @@ def _director_sborniy_weight_categories(
 
             ov = overall.setdefault(
                 key,
-                {"name": seller, "count": 0, "weight": 0.0, "bl_set": set(),
-                 "per_cat": {c["key"]: {"count": 0, "weight": 0.0} for c in DIRECTOR_WEIGHT_CATEGORIES}},
+                {"name": seller, "count": 0, "weight": 0.0, "bl_set": set(), "sales": []},
             )
             if len(seller) > len(ov["name"]):
                 ov["name"] = seller
@@ -3150,8 +3149,15 @@ def _director_sborniy_weight_categories(
             ov["weight"] += weight
             if bl_code:
                 ov["bl_set"].add(bl_code.upper())
-            ov["per_cat"][cat["key"]]["count"] += 1
-            ov["per_cat"][cat["key"]]["weight"] += weight
+            # Individual sale record for the click-popup (weight + client
+            # brand/BL + bracket). Capped so a mega-seller can't bloat the
+            # JSON payload.
+            if len(ov["sales"]) < 300:
+                ov["sales"].append({
+                    "w":   round(weight, 1),
+                    "bl":  bl_code.upper() if bl_code else "",
+                    "cat": cat["key"],
+                })
             stat["rows"] += 1
 
         stage_stats.append(stat)
@@ -3183,18 +3189,16 @@ def _director_sborniy_weight_categories(
             "sellers":      sellers,
         })
 
-    # Overall seller leaderboard with per-category breakdown
+    # Per-seller detail for the click-popup: totals + every sale sorted
+    # from lightest to heaviest (weight asc), client = BL/brand code.
     sellers_overall = sorted(
         [
             {
-                "name":   v["name"],
-                "count":  v["count"],
-                "weight": round(v["weight"], 1),
-                "bl":     len(v["bl_set"]),
-                "categories": {
-                    ck: {"count": cv["count"], "weight": round(cv["weight"], 1)}
-                    for ck, cv in v["per_cat"].items() if cv["count"] > 0
-                },
+                "name":    v["name"],
+                "count":   v["count"],
+                "weight":  round(v["weight"], 1),
+                "clients": len(v["bl_set"]),
+                "sales":   sorted(v["sales"], key=lambda s: s["w"]),
             }
             for v in overall.values()
         ],
