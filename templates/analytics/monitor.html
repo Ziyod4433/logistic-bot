@@ -28,10 +28,10 @@
 
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
-      <!-- Glass Orbit theme: progress arc gradient (was neon green) -->
+      <!-- Liquid theme: progress arc gradient (cyan water) -->
       <linearGradient id="monitor-orange" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#8b5cf6"></stop>
-        <stop offset="100%" stop-color="#38bdf8"></stop>
+        <stop offset="0%" stop-color="#38bdf8"></stop>
+        <stop offset="100%" stop-color="#7dd3fc"></stop>
       </linearGradient>
       <!-- V24 NEON GLASS TUBE — soft Gaussian glow for the main green stroke -->
       <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
@@ -88,7 +88,17 @@
         <div id="plan-status-banner" class="plan-status-banner" hidden></div>
         <div class="circwrap">
           <div class="circc">
-            <!-- V24 NEON GLASS TUBE: 4 layers (dark casing, soft halo, neon green, white filament) -->
+            <!-- LIQUID: round tank — the water level tracks plan completion.
+                 #tank-water height is synced by renderArc() alongside the ring. -->
+            <div class="tank-clip" aria-hidden="true">
+              <div class="tank-water" id="tank-water">
+                <svg class="tank-wave" viewBox="0 0 1200 26" preserveAspectRatio="none">
+                  <path d="M0 13 Q 75 0 150 13 T 300 13 T 450 13 T 600 13 T 750 13 T 900 13 T 1050 13 T 1200 13 V 26 H 0 Z"></path>
+                </svg>
+                <div class="tank-waterbody"></div>
+              </div>
+            </div>
+            <!-- Progress ring doubles as the tank rim (same IDs the JS animates) -->
             <svg class="circsvg" width="320" height="320" viewBox="0 0 320 320" aria-hidden="true">
               <circle class="circbg"   cx="160" cy="160" r="136"></circle>
               <circle class="tube-glow" id="progress-glow"  cx="160" cy="160" r="136"></circle>

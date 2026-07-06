@@ -293,13 +293,16 @@
     const circumference = 2 * Math.PI * CIRCLE_RADIUS;
     const normalized = Math.max(0, Math.min(100, Number(percent || 0)));
     const offset = circumference - (normalized / 100) * circumference;
-    // V24 NEON GLASS TUBE — sync all 3 progress layers (halo glow, main neon, inner white filament)
+    // Sync all 3 ring layers (halo glow, main stroke, inner filament)
     ["progress-arc", "progress-glow", "progress-inner"].forEach((id) => {
       const node = document.getElementById(id);
       if (!node) return;
       node.style.strokeDasharray = String(circumference);
       node.style.strokeDashoffset = String(offset);
     });
+    // LIQUID design: the water level inside the tank mirrors the ring.
+    const water = document.getElementById("tank-water");
+    if (water) water.style.height = normalized + "%";
   }
 
   function renderMonthly(rows, metric, label) {
