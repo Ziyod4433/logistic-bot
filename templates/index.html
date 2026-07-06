@@ -7515,11 +7515,14 @@ const DIRECTOR_WEIGHT_CAT_LABELS = {
 // without an extra server round trip.
 let __sborniyWeightData = null;
 
-// Click on a seller row inside any weight-category column → popup with the
-// number of clients and every sale sorted from lightest to heaviest.
-function openSborniyWeightSellerDetail(sellerName) {
+// Click on a seller row inside ONE weight-category column → popup scoped to
+// THAT bracket: clients + every sale in this category, lightest → heaviest.
+function openSborniyWeightSellerDetail(sellerName, catKey) {
   const data = __sborniyWeightData || {};
-  const seller = (Array.isArray(data.sellers) ? data.sellers : [])
+  const cats = Array.isArray(data.categories) ? data.categories : [];
+  const cat = cats.find(c => (c.key || "") === catKey);
+  if (!cat) { toast("Kategoriya topilmadi", "err"); return; }
+  const seller = (Array.isArray(cat.sellers) ? cat.sellers : [])
     .find(s => (s.name || "") === sellerName);
   if (!seller) { toast("Sotuvchi topilmadi", "err"); return; }
 
@@ -7528,18 +7531,27 @@ function openSborniyWeightSellerDetail(sellerName) {
   const metaEl  = document.getElementById("director-seller-detail-meta");
   const labelEl = document.getElementById("director-seller-detail-listlabel");
   const listEl  = document.getElementById("director-seller-detail-clients");
-  if (iconEl) iconEl.textContent = "⚖️";
+  const catIcon  = DIRECTOR_WEIGHT_CAT_ICONS[catKey] || "⚖️";
+  const catLabel = DIRECTOR_WEIGHT_CAT_LABELS[catKey] || cat.label || "";
+  const clients  = Number(seller.clients != null ? seller.clients : seller.bl || 0);
+  if (iconEl) iconEl.textContent = catIcon;
   if (nameEl) nameEl.textContent = seller.name || "—";
   if (metaEl) metaEl.textContent =
-    `${seller.count} ta savdo · ${Number(seller.weight || 0).toFixed(0)} kg · ${seller.clients || 0} ta mijoz`;
-  if (labelEl) labelEl.textContent = "Savdolar — yengildan og'irgacha";
+    `${catLabel} (${cat.range_label || ""}) · ${seller.count} ta savdo · ${Number(seller.weight || 0).toFixed(0)} kg · ${clients} ta mijoz`;
 
   const sales = Array.isArray(seller.sales) ? seller.sales : [];
+  if (labelEl) {
+    let lbl = `${catLabel} — savdolar (yengildan og'irgacha)`;
+    if (sales.length && Number(seller.count || 0) > sales.length) {
+      lbl += ` · ${sales.length}/${seller.count} ko'rsatilgan`;
+    }
+    labelEl.textContent = lbl;
+  }
   if (listEl) {
     listEl.innerHTML = sales.length ? sales.map((s, i) => `
       <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:10px;background:rgba(255,255,255,.02)">
         <div style="width:22px;font-size:11px;color:var(--muted2);text-align:center">${i+1}</div>
-        <div style="font-size:16px" title="${esc(DIRECTOR_WEIGHT_CAT_LABELS[s.cat] || "")}">${DIRECTOR_WEIGHT_CAT_ICONS[s.cat] || "📦"}</div>
+        <div style="font-size:16px" title="${esc(catLabel)}">${catIcon}</div>
         <div style="flex:1;min-width:0;font-size:13px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.bl ? esc(s.bl) : `<span style="color:var(--muted2)">mijoz ko'rsatilmagan</span>`}</div>
         <div style="font-size:13px;font-weight:700;color:var(--txt);white-space:nowrap">${Number(s.w || 0).toFixed(1)} kg</div>
       </div>
@@ -7549,13 +7561,14 @@ function openSborniyWeightSellerDetail(sellerName) {
 }
 
 // Delegated click for weight-category seller rows (apostrophes in names are
-// safe because the name travels via a data attribute, not inline JS).
+// safe because the name + category travel via data attributes, not inline JS).
 if (!window.__sborniyWeightClickBound) {
   document.addEventListener("click", function (ev) {
     const row = ev.target && ev.target.closest && ev.target.closest("[data-vazn-seller]");
     if (!row) return;
     const name = row.getAttribute("data-vazn-seller") || "";
-    if (name) openSborniyWeightSellerDetail(name);
+    const cat  = row.getAttribute("data-vazn-cat") || "";
+    if (name && cat) openSborniyWeightSellerDetail(name, cat);
   });
   window.__sborniyWeightClickBound = true;
 }
@@ -7583,7 +7596,7 @@ function renderSborniyWeightCategories(data) {
       const subParts = [`${Number(s.weight || 0).toFixed(0)} kg`];
       if (blCount) subParts.push(`${blCount} BL`);
       return `
-        <div class="dir-leaderboard-row--clickable" data-vazn-seller="${esc(s.name || "")}" style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:8px;background:rgba(255,255,255,.02);cursor:pointer;border:1px solid transparent;transition:background .15s,border-color .15s">
+        <div class="dir-leaderboard-row--clickable" data-vazn-seller="${esc(s.name || "")}" data-vazn-cat="${esc(c.key || "")}" style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:8px;background:rgba(255,255,255,.02);cursor:pointer;border:1px solid transparent;transition:background .15s,border-color .15s">
           <div style="width:16px;font-size:11px;color:var(--muted2);text-align:center">${i+1}</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:12px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px">

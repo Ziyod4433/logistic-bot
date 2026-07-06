@@ -3143,11 +3143,11 @@ def _director_sborniy_weight_categories(
     if not sheet_id or not usable:
         return {"configured": False, "categories": [], "stages": []}
 
-    # cat_key -> seller_key -> {name, count, weight, bl_set}
+    # cat_key -> seller_key -> {name, count, weight, bl_set, sales}
+    # Each sale is stored INSIDE its weight bracket so the click-popup for a
+    # seller in "Yengil (100–250)" lists only that bracket's sales — not the
+    # seller's sales in every other category.
     buckets: dict[str, dict[str, dict]] = {c["key"]: {} for c in DIRECTOR_WEIGHT_CATEGORIES}
-    # Overall per-seller totals with a per-category breakdown — feeds the
-    # summary leaderboard under the 5 category columns.
-    overall: dict[str, dict] = {}
     stage_stats: list[dict] = []
 
     for st in usable:
@@ -3218,37 +3218,26 @@ def _director_sborniy_weight_categories(
                 continue
 
             key = _norm_person_director(seller)
+            bl_code = ""
+            if bl_idx is not None:
+                bl_code = row[bl_idx].strip() if bl_idx < len(row) else ""
+
             bucket = buckets[cat["key"]].setdefault(
-                key, {"name": seller, "count": 0, "weight": 0.0, "bl_set": set()}
+                key, {"name": seller, "count": 0, "weight": 0.0, "bl_set": set(), "sales": []}
             )
             if len(seller) > len(bucket["name"]):
                 bucket["name"] = seller
             bucket["count"] += 1
             bucket["weight"] += weight
-            bl_code = ""
-            if bl_idx is not None:
-                bl_code = row[bl_idx].strip() if bl_idx < len(row) else ""
-                if bl_code:
-                    bucket["bl_set"].add(bl_code.upper())
-
-            ov = overall.setdefault(
-                key,
-                {"name": seller, "count": 0, "weight": 0.0, "bl_set": set(), "sales": []},
-            )
-            if len(seller) > len(ov["name"]):
-                ov["name"] = seller
-            ov["count"] += 1
-            ov["weight"] += weight
             if bl_code:
-                ov["bl_set"].add(bl_code.upper())
-            # Individual sale record for the click-popup (weight + client
-            # brand/BL + bracket). Capped so a mega-seller can't bloat the
-            # JSON payload.
-            if len(ov["sales"]) < 300:
-                ov["sales"].append({
-                    "w":   round(weight, 1),
-                    "bl":  bl_code.upper() if bl_code else "",
-                    "cat": cat["key"],
+                bucket["bl_set"].add(bl_code.upper())
+            # Individual sale for the click-popup — kept PER CATEGORY so the
+            # seller's popup only lists sales inside the clicked bracket.
+            # Capped so a mega-seller can't bloat the JSON payload.
+            if len(bucket["sales"]) < 500:
+                bucket["sales"].append({
+                    "w":  round(weight, 1),
+                    "bl": bl_code.upper() if bl_code else "",
                 })
             stat["rows"] += 1
 
@@ -3263,7 +3252,10 @@ def _director_sborniy_weight_categories(
                     "count":  v["count"],
                     "weight": round(v["weight"], 1),
                     "bl":     len(v["bl_set"]),
+                    "clients": len(v["bl_set"]),
                     "bl_codes": sorted(v["bl_set"])[:20],
+                    # Sales in THIS bracket only, lightest → heaviest.
+                    "sales":  sorted(v["sales"], key=lambda s: s["w"]),
                 }
                 for v in buckets[c["key"]].values()
             ],
@@ -3281,23 +3273,7 @@ def _director_sborniy_weight_categories(
             "sellers":      sellers,
         })
 
-    # Per-seller detail for the click-popup: totals + every sale sorted
-    # from lightest to heaviest (weight asc), client = BL/brand code.
-    sellers_overall = sorted(
-        [
-            {
-                "name":    v["name"],
-                "count":   v["count"],
-                "weight":  round(v["weight"], 1),
-                "clients": len(v["bl_set"]),
-                "sales":   sorted(v["sales"], key=lambda s: s["w"]),
-            }
-            for v in overall.values()
-        ],
-        key=lambda r: (r["count"], r["weight"]), reverse=True,
-    )
-
-    return {"configured": True, "categories": categories, "sellers": sellers_overall, "stages": stage_stats}
+    return {"configured": True, "categories": categories, "stages": stage_stats}
 
 
 # Per-stage daily aggregator for the Sborniy 'Kunlik dinamika' chart.
