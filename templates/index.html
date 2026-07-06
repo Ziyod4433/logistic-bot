@@ -604,12 +604,27 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   max-width: 100%;
   overflow: hidden;
 }
+/* Hard cap on the BL-code column: a long duplicate-batch badge used to
+   stretch this cell so wide the action buttons scrolled out of view. */
+#bl-table td:has(.bl-code-wrap) {
+  max-width: 300px;
+}
+#bl-table .bl-code-wrap { max-width: 280px; }
 #bl-table .bl-code-meta {
   display:flex;
   gap:6px;
   flex-wrap:wrap;
   margin-top:6px;
   max-width:100%;
+}
+/* Badge that may carry a long list: truncate with … instead of stretching
+   the table. Full list stays available via the title tooltip. */
+.badge-clamp {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  vertical-align: middle;
 }
 #bl-table .bl-code-aliases,
 #bl-table .bl-code-sent-at {
@@ -3688,6 +3703,22 @@ async function bulkDeleteSelectedBL() {
   }
 }
 
+// Compact duplicate-batch badge: long batch lists used to stretch the BL
+// column so far that the action buttons scrolled out of view. Show at most
+// 2 batch names; the rest collapse into "+N", full list in the tooltip.
+function buildDuplicateBatchBadge(duplicateBatchNames) {
+  const batchNames = Array.isArray(duplicateBatchNames) ? duplicateBatchNames.filter(Boolean) : [];
+  if (!batchNames.length) {
+    return `<span class="badge badge-amber">🔁 дубликат в другой партии</span>`;
+  }
+  const MAX_SHOWN = 2;
+  const shown = batchNames.slice(0, MAX_SHOWN);
+  const rest = batchNames.length - shown.length;
+  const label = `ещё в ${esc(shown.join(", "))}${rest > 0 ? ` +${rest}` : ""}`;
+  const title = batchNames.length > MAX_SHOWN ? ` title="Ещё в партиях: ${esc(batchNames.join(", "))}"` : "";
+  return `<span class="badge badge-amber badge-clamp"${title}>🔁 ${label}</span>`;
+}
+
 function renderBatchBLCodeCell(bl) {
   const sentNow = !!bl.tracking_sent_current;
   const excluded = !!bl.send_excluded;
@@ -3705,9 +3736,7 @@ function renderBatchBLCodeCell(bl) {
     badges.push(`<span class="badge badge-blue">через ${esc(bl.tracking_sent_via_batch_name)}</span>`);
   }
   if (bl.has_cross_batch_duplicate) {
-    const batchNames = Array.isArray(bl.duplicate_batch_names) ? bl.duplicate_batch_names.filter(Boolean) : [];
-    const duplicateLabel = batchNames.length ? `ещё в ${esc(batchNames.join(", "))}` : `дубликат в другой партии`;
-    badges.push(`<span class="badge badge-amber">🔁 ${duplicateLabel}</span>`);
+    badges.push(buildDuplicateBatchBadge(bl.duplicate_batch_names));
   }
   if (excluded) {
     badges.push(`<span class="badge badge-red">⛔ исключён</span>`);
@@ -5145,9 +5174,7 @@ function renderSendBatchSelection() {
       statusParts.push(`<span class="badge badge-blue">через ${esc(b.tracking_sent_via_batch_name)}</span>`);
     }
     if (b.has_cross_batch_duplicate) {
-      const batchNames = Array.isArray(b.duplicate_batch_names) ? b.duplicate_batch_names.filter(Boolean) : [];
-      const duplicateLabel = batchNames.length ? `ещё в ${esc(batchNames.join(", "))}` : `дубликат в другой партии`;
-      statusParts.push(`<span class="badge badge-amber">🔁 ${duplicateLabel}</span>`);
+      statusParts.push(buildDuplicateBatchBadge(b.duplicate_batch_names));
     }
     if (b.send_excluded) statusParts.push(`<span class="badge badge-red">исключён</span>`);
     if (!statusParts.length) statusParts.push(`<span class="badge badge-amber">новый</span>`);
