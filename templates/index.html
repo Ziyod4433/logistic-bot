@@ -7033,8 +7033,10 @@ const DIRECTOR_COLUMN_LABELS = {
   capacity_yiwu:      "YIWU sig'imi (m³)",
   capacity_zhongshan: "ZHONGSHAN sig'imi (m³)",
   capacity_horgos:    "HORGOS sig'imi (m³)",
+  fura_sheet_name:    "Varaq nomi (Fura statuslari)",
+  fura_header_rows:   "Header qatorlari",
   fura_agent_col:     "Agent ustuni (Fura statuslari varag'i)",
-  fura_date_col:      "Sana ustuni (ixtiyoriy)",
+  fura_date_col:      "Sana ustuni (bo'sh = avto-aniqlash)",
   vazn_sheet_url:      "Google Sheets URL (ixtiyoriy — bo'sh = asosiy)",
   vazn1_sheet_name:    "Varaq nomi",
   vazn1_seller_col:    "Sotuvchi ustuni",
@@ -7483,7 +7485,10 @@ function renderDirectorPayload(section, payload) {
     if (agentsEl) agentsEl.innerHTML = buildLeaderboardHtml(agents, "trucks", "fura");
     if (agentsMetaEl) {
       const totalFura = agents.reduce((s, r) => s + Number(r.trucks || 0), 0);
-      agentsMetaEl.textContent = `${agents.length} ta agent · ${totalFura} fura`;
+      // Prefer the backend meta — it spells out the date-filter state so a
+      // "numbers don't move with the date picker" situation is never silent.
+      agentsMetaEl.textContent = payload.agents_meta
+        || `${agents.length} ta agent · ${totalFura} fura`;
     }
 
     renderSborniyWeightCategories(payload.weight_categories || {});

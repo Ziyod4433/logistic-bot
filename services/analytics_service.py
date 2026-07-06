@@ -2947,6 +2947,26 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     }
 
 
+def _col_letter(idx: int) -> str:
+    """0-based column index → spreadsheet letters (0→A, 25→Z, 26→AA)."""
+    idx = int(idx)
+    letters = ""
+    idx += 1
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+# Header cells that mark a date column in the 'Fura statuslari' tab. Used to
+# auto-detect the fura date column when the user hasn't configured one, so the
+# agent ranking still reacts to the period filter out of the box.
+_FURA_DATE_HEADER_HINTS = ("sana", "date", "дата")
+# Header labels that should never be counted as an agent name (a title/header
+# row that slipped past header_rows, or a totals line).
+_FURA_AGENT_SKIP = ("agent", "agentlar", "агент", "jami", "итого", "total")
+
+
 def _director_sborniy_agents(
     sheet_id: str,
     agent_col: str,
@@ -2955,52 +2975,124 @@ def _director_sborniy_agents(
     date_to,
     sheet_name: str = "Fura statuslari",
     header_rows: int = 1,
-) -> list[dict]:
+) -> dict:
     """Build agent ranking from a separate 'Fura statuslari' tab.
 
-    Each row in that sheet represents one fura; we group by the agent
-    name in column `agent_col` and count rows. If `date_col` is set
-    AND parses, we also apply the same date filter as the rest of
-    Sborniy so the leaderboard reflects the chosen period.
+    Each data row = one fura; grouped by the agent name in `agent_col`. The
+    ranking is date-filtered the SAME way as the trusted seller leaderboard
+    (fetch_ombor_data): a row is counted only if its date parses AND falls
+    inside [date_from, date_to]. Rows with an empty/unparseable date, or a
+    date outside the period, are skipped — so the leaderboard tracks the
+    chosen month instead of showing all-time totals.
+
+    Date column resolution: explicit `date_col` wins; if blank we auto-detect
+    it from the header row (any header cell containing "sana"/"date"/"дата").
+    If none is found, no date filter is applied (all-time) and this is flagged
+    in the returned diagnostic so the UI can prompt the user to set it.
+
+    If an auto-detected column turns out not to hold dates (every row fails to
+    parse → the leaderboard would be empty), we fall back to all-time counting
+    rather than showing nothing.
+
+    Returns {"agents": [...], "diag": {...}}.
     """
     from services import ombor_service
 
+    diag = {
+        "sheet": sheet_name,
+        "rows_total": 0, "rows_counted": 0,
+        "rows_no_agent": 0, "rows_bad_date": 0, "rows_outside_period": 0,
+        "date_col": "", "date_auto": False, "date_active": False,
+    }
     if not sheet_id or not agent_col:
-        return []
+        return {"agents": [], "diag": diag}
     try:
         rows = ombor_service._fetch_csv(sheet_id, sheet_name)
-    except Exception:
-        return []
+    except Exception as exc:
+        diag["error"] = str(exc)
+        return {"agents": [], "diag": diag}
 
+    header_n = max(0, int(header_rows or 0))
     agent_idx = ombor_service._col_to_index(agent_col)
-    date_idx  = ombor_service._col_to_index(date_col) if date_col else None
-    data_rows = rows[max(0, int(header_rows)):]
 
-    by_agent: dict[str, dict] = {}
-    for row in data_rows:
-        agent = (row[agent_idx].strip() if agent_idx < len(row) else "")
-        if not agent:
-            continue
-        if date_idx is not None:
-            raw_date = row[date_idx].strip() if date_idx < len(row) else ""
-            row_date = ombor_service._parse_date(raw_date)
-            if row_date is None:
-                continue
-            if (date_from and row_date < date_from) or (date_to and row_date > date_to):
-                continue
-        # Normalize key (case-fold + apostrophe-strip) so 'Aliyev' /
-        # 'ALIYEV' / 'aliyev' merge into one row, like everywhere else.
-        key = _norm_person_director(agent)
-        bucket = by_agent.setdefault(key, {"name": agent, "trucks": 0, "bl": 0})
-        if len(agent) > len(bucket["name"]):
-            bucket["name"] = agent
-        bucket["trucks"] += 1
-        bucket["bl"] += 1
+    # Resolve the date column.
+    date_idx = None
+    if date_col:
+        date_idx = ombor_service._col_to_index(date_col)
+        diag["date_col"] = date_col.upper()
+    else:
+        header_cells = rows[:max(1, header_n)]
+        for col_i in range(0, 60):
+            hit = False
+            for hr in header_cells:
+                cell = (hr[col_i].strip().lower() if col_i < len(hr) else "")
+                if cell and any(h in cell for h in _FURA_DATE_HEADER_HINTS):
+                    hit = True
+                    break
+            if hit:
+                date_idx = col_i
+                diag["date_col"] = _col_letter(col_i)
+                diag["date_auto"] = True
+                break
 
-    return sorted(
+    period_set = (date_from is not None) or (date_to is not None)
+    data_rows = rows[header_n:]
+    diag["rows_total"] = len(data_rows)
+
+    def _aggregate(use_date_idx):
+        d = {"counted": 0, "no_agent": 0, "bad_date": 0, "outside": 0}
+        by_agent: dict[str, dict] = {}
+        for row in data_rows:
+            agent = (row[agent_idx].strip() if agent_idx < len(row) else "")
+            if not agent:
+                d["no_agent"] += 1
+                continue
+            if agent.strip().lower() in _FURA_AGENT_SKIP:
+                continue
+            if use_date_idx is not None:
+                raw_date = row[use_date_idx].strip() if use_date_idx < len(row) else ""
+                row_date = ombor_service._parse_date(raw_date)
+                if row_date is None:
+                    d["bad_date"] += 1
+                    continue
+                if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+                    d["outside"] += 1
+                    continue
+            # Normalize key (case-fold + apostrophe-strip) so 'Aliyev' /
+            # 'ALIYEV' / 'aliyev' merge into one row, like everywhere else.
+            key = _norm_person_director(agent)
+            bucket = by_agent.setdefault(key, {"name": agent, "trucks": 0, "bl": 0})
+            if len(agent) > len(bucket["name"]):
+                bucket["name"] = agent
+            bucket["trucks"] += 1
+            bucket["bl"] += 1
+            d["counted"] += 1
+        return by_agent, d
+
+    by_agent, d = _aggregate(date_idx)
+
+    # Auto-detected column that parsed as dates for nobody → it isn't really a
+    # date column. Fall back to all-time so the user still sees the ranking.
+    if (
+        date_idx is not None and diag["date_auto"]
+        and d["counted"] == 0 and d["bad_date"] > 0
+    ):
+        date_idx = None
+        diag["date_col"] = ""
+        diag["date_auto"] = False
+        by_agent, d = _aggregate(None)
+
+    diag["rows_counted"]        = d["counted"]
+    diag["rows_no_agent"]       = d["no_agent"]
+    diag["rows_bad_date"]       = d["bad_date"]
+    diag["rows_outside_period"] = d["outside"]
+    diag["date_active"]         = date_idx is not None and period_set
+
+    agents = sorted(
         [{"name": v["name"], "trucks": v["trucks"], "bl": v["bl"]} for v in by_agent.values()],
         key=lambda r: r["trucks"], reverse=True,
     )
+    return {"agents": agents, "diag": diag}
 
 
 # Weight categories for the Sborniy per-weight seller leaderboard.
@@ -3288,8 +3380,13 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
     # logist leaderboard for Sborniy), but the combined fetcher needs it.
     logist_col = (cols.get("logist_col") or "AH").strip().upper() or "AH"
     # Fura statuslari tab — for agent ranking
-    fura_agent_col = (cols.get("fura_agent_col") or "B").strip().upper() or "B"
-    fura_date_col  = (cols.get("fura_date_col")  or "").strip().upper()
+    fura_agent_col  = (cols.get("fura_agent_col") or "B").strip().upper() or "B"
+    fura_date_col   = (cols.get("fura_date_col")  or "").strip().upper()
+    fura_sheet_name = (cols.get("fura_sheet_name") or "Fura statuslari").strip() or "Fura statuslari"
+    try:
+        fura_header_rows = max(0, int(cols.get("fura_header_rows") or 1))
+    except (ValueError, TypeError):
+        fura_header_rows = 1
 
     date_from = _parse_iso_date(date_from_str)
     date_to   = _parse_iso_date(date_to_str)
@@ -3400,13 +3497,40 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
     stages_summary = " | ".join(stage_summaries) or "—"
 
     # Agent ranking from the 'Fura statuslari' tab in the same spreadsheet
-    agents_rows = _director_sborniy_agents(
+    agents_result = _director_sborniy_agents(
         sheet_id=sheet_id,
         agent_col=fura_agent_col,
         date_col=fura_date_col,
         date_from=date_from,
         date_to=date_to,
+        sheet_name=fura_sheet_name,
+        header_rows=fura_header_rows,
     )
+    agents_rows = agents_result["agents"]
+    agents_diag = agents_result["diag"]
+    total_fura  = sum(int(a.get("trucks") or 0) for a in agents_rows)
+
+    # Meta line under the agents leaderboard — makes the date-filter state
+    # explicit so "the numbers don't move with the date picker" is never a
+    # silent mystery again.
+    if agents_diag.get("error"):
+        agents_meta = f"Fura statuslari o'qilmadi: {agents_diag['error']}"
+    elif agents_diag.get("date_active"):
+        _src = " (avto)" if agents_diag.get("date_auto") else ""
+        agents_meta = (
+            f"{len(agents_rows)} ta agent · {total_fura} fura · "
+            f"sana ustuni {agents_diag.get('date_col', '')}{_src} · "
+            f"{date_from or '∞'} → {date_to or '∞'}"
+        )
+    elif agents_diag.get("date_col"):
+        # A date column exists but no period is selected → all-time is expected.
+        agents_meta = f"{len(agents_rows)} ta agent · {total_fura} fura · butun davr"
+    else:
+        # No date column found → cannot filter. Tell the user how to fix it.
+        agents_meta = (
+            f"{len(agents_rows)} ta agent · {total_fura} fura · butun davr — "
+            f"sana bo'yicha filtr uchun ⚙ da «Sana ustuni»ni kiriting"
+        )
 
     # Weight-category seller leaderboard (Eng yengil … Eng og'ir).
     # Reads all 3 lifecycle tabs — sales rows migrate Ombor → Ortilgan
@@ -3451,6 +3575,8 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         },
         "sellers": sellers_sorted,
         "agents":  agents_rows,
+        "agents_meta": agents_meta,
+        "agents_diag": agents_diag,
         "weight_categories": weight_data,
         "diagnostics": diag,
         "message": (
@@ -3458,7 +3584,17 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
             f"Jami: {total_rows_used}/{total_rows_total} qator "
             f"({date_from or '∞'} → {date_to or '∞'}). "
             f"Bosqichlar bo'yicha: {stages_summary}. "
-            f"Agentlar (Fura statuslari): {len(agents_rows)} ta. "
+            f"Agentlar (Fura statuslari): {len(agents_rows)} ta, "
+            f"{agents_diag.get('rows_counted', 0)}/{agents_diag.get('rows_total', 0)} qator"
+            + (
+                f", sana={agents_diag.get('date_col')}"
+                f"{'(avto)' if agents_diag.get('date_auto') else ''}"
+                f", davrdan tashqari={agents_diag.get('rows_outside_period', 0)}"
+                f", sanasiz={agents_diag.get('rows_bad_date', 0)}"
+                if agents_diag.get("date_active")
+                else " (sana filtri o'chiq)"
+            )
+            + ". "
             f"Vazn reytingi: "
             + (
                 " | ".join(

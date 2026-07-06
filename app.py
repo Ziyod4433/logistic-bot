@@ -5198,8 +5198,10 @@ DIRECTOR_DEFAULT_COLUMNS = {
         "seller_col":    "AG",
         "cbm_col":       "V",
         "bl_col":        "E",
+        "fura_sheet_name": "Fura statuslari",
+        "fura_header_rows": "1",
         "fura_agent_col": "B",
-        "fura_date_col":  "",   # optional — leave blank to disable date filter on agents
+        "fura_date_col":  "",   # optional — blank = auto-detect date column from the header ("sana"/"date"/"дата")
         # Weight-category leaderboard (Eng yengil … Eng og'ir). Sales rows
         # move between 3 tabs during their lifecycle (Ombor → Ortilgan
         # furalar → Yetib keldi), so all 3 are read and merged. Each tab
