@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sales Monitor — Redesign v2 (3D + Motion)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=Space+Grotesk:wght@400;600;700&family=Archivo+Black&family=JetBrains+Mono:wght@400;700&family=Oswald:wght@400;600&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { min-height:100%; }
+body { background:#07080c; font-family:'Inter',sans-serif; overflow-x:hidden; }
+
+/* ── Switcher ── */
+.switcher { position:fixed; top:0; left:0; right:0; z-index:1000; display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+  padding:10px 14px; background:rgba(6,7,10,.92); backdrop-filter:blur(10px); border-bottom:1px solid rgba(255,255,255,.08); }
+.sw-title { font-size:11px; color:#777; margin-right:8px; letter-spacing:.14em; text-transform:uppercase; }
+.sw-btn { padding:7px 12px; border-radius:8px; font-size:12px; font-weight:600; background:rgba(255,255,255,.05);
+  color:#aaa; border:1px solid rgba(255,255,255,.09); cursor:pointer; transition:all .15s; }
+.sw-btn:hover { color:#fff; border-color:rgba(255,255,255,.3); }
+.sw-btn.active { background:#7c6cff; color:#fff; border-color:#7c6cff; }
+.variant { display:none; min-height:100vh; padding:70px 26px 26px; position:relative; overflow:hidden; }
+.variant.active { display:block; }
+
+/* shared keyframes */
+@keyframes drift1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(60px,-40px) scale(1.15)} 100%{transform:translate(-30px,30px) scale(.95)} }
+@keyframes drift2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-70px,50px) scale(1.1)} 100%{transform:translate(40px,-30px) scale(1.05)} }
+@keyframes floaty { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+@keyframes spin360 { to { transform:rotate(360deg); } }
+@keyframes shimmer { 0%{background-position:-500px 0} 100%{background-position:500px 0} }
+@keyframes pulseGlow { 0%,100%{opacity:.55} 50%{opacity:1} }
+@keyframes sweep { 0%{transform:translateX(-120%) skewX(-18deg)} 100%{transform:translateX(240%) skewX(-18deg)} }
+@keyframes barGrow { from { transform:scaleY(0); } to { transform:scaleY(1); } }
+@keyframes rise { from { opacity:0; transform:translateY(18px);} to { opacity:1; transform:translateY(0);} }
+@keyframes waveMove { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
+@keyframes orbitA { from{transform:rotate(0deg) translateX(150px) rotate(0deg)} to{transform:rotate(360deg) translateX(150px) rotate(-360deg)} }
+@keyframes orbitB { from{transform:rotate(120deg) translateX(170px) rotate(-120deg)} to{transform:rotate(480deg) translateX(170px) rotate(-480deg)} }
+@keyframes orbitC { from{transform:rotate(240deg) translateX(130px) rotate(-240deg)} to{transform:rotate(600deg) translateX(130px) rotate(-600deg)} }
+@keyframes tickerMove { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
+@keyframes gridScroll { from{background-position:0 0} to{background-position:0 44px} }
+@keyframes tilt3d { 0%,100%{transform:rotateX(8deg) rotateY(-4deg)} 50%{transform:rotateX(4deg) rotateY(4deg)} }
+@keyframes hueShift { 0%,100%{filter:hue-rotate(0deg)} 50%{filter:hue-rotate(28deg)} }
+
+/* count-up target styling hook */
+.count { font-variant-numeric:tabular-nums; }
+
+/* ═════════ W1 · GLASS ORBIT 3D ═════════ */
+.w1 { background:#0b0d18; color:#eef; }
+.w1 .blob { position:absolute; border-radius:50%; filter:blur(110px); opacity:.5; z-index:0; }
+.w1 .b1 { width:620px; height:620px; background:#6d28d9; top:-180px; left:-140px; animation:drift1 18s ease-in-out infinite alternate; }
+.w1 .b2 { width:540px; height:540px; background:#0ea5e9; bottom:-160px; right:-120px; animation:drift2 22s ease-in-out infinite alternate; }
+.w1 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1.1fr .9fr; gap:24px; max-width:1480px; margin:0 auto; }
+.w1 .card { background:rgba(255,255,255,.07); backdrop-filter:blur(24px); border:1px solid rgba(255,255,255,.15); border-radius:28px; padding:30px;
+  box-shadow:0 30px 80px rgba(0,0,0,.5); animation:rise .7s ease both; }
+.w1 .card:nth-child(2) { animation-delay:.12s; }
+.w1 h1 { font-weight:800; font-size:26px; letter-spacing:-.02em; }
+.w1 .sub { color:#a8b0d8; font-size:13px; margin-top:4px; }
+.w1 .scene { perspective:900px; display:flex; justify-content:center; margin:26px 0 8px; }
+.w1 .ring3d { position:relative; width:280px; height:280px; transform-style:preserve-3d; animation:tilt3d 9s ease-in-out infinite; }
+.w1 .torus { position:absolute; inset:0; border-radius:50%;
+  background:conic-gradient(from 0deg, #8b5cf6 0%, #38bdf8 62%, rgba(255,255,255,.06) 62% 100%);
+  -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 30px), #000 calc(100% - 29px));
+  mask:radial-gradient(farthest-side, transparent calc(100% - 30px), #000 calc(100% - 29px));
+  animation:spin360 14s linear infinite; filter:drop-shadow(0 0 22px rgba(124,108,255,.5)); }
+.w1 .ringcore { position:absolute; inset:34px; border-radius:50%; background:rgba(10,12,24,.8); backdrop-filter:blur(6px);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.1); }
+.w1 .pct { font-size:58px; font-weight:900; letter-spacing:-.03em;
+  background:linear-gradient(90deg,#a78bfa,#38bdf8,#a78bfa); background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation:shimmer 5s linear infinite; }
+.w1 .cap { font-size:11px; color:#a8b0d8; letter-spacing:.2em; text-transform:uppercase; margin-top:4px; }
+.w1 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:22px; }
+.w1 .kpi { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:18px; padding:16px; position:relative; overflow:hidden; }
+.w1 .kpi::after { content:""; position:absolute; top:0; bottom:0; width:40%; background:linear-gradient(90deg,transparent,rgba(255,255,255,.09),transparent);
+  animation:sweep 4.5s ease-in-out infinite; }
+.w1 .kv { font-size:24px; font-weight:800; }
+.w1 .kl { font-size:10px; color:#a8b0d8; letter-spacing:.16em; text-transform:uppercase; margin-top:4px; }
+.w1 .lb-row { display:flex; align-items:center; gap:14px; padding:12px 12px; border-radius:16px; animation:rise .6s ease both; }
+.w1 .lb-row:nth-child(1){animation-delay:.15s} .w1 .lb-row:nth-child(2){animation-delay:.25s} .w1 .lb-row:nth-child(3){animation-delay:.35s}
+.w1 .lb-row:nth-child(4){animation-delay:.45s} .w1 .lb-row:nth-child(5){animation-delay:.55s}
+.w1 .lb-row:nth-child(odd) { background:rgba(255,255,255,.05); }
+.w1 .ava { width:40px; height:40px; border-radius:13px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px;
+  background:linear-gradient(135deg,#8b5cf6,#38bdf8); box-shadow:0 6px 18px rgba(124,108,255,.35); }
+.w1 .nm { flex:1; font-weight:600; font-size:14.5px; }
+.w1 .vl { font-weight:800; color:#7dd3fc; }
+.w1 .track { height:5px; border-radius:3px; background:rgba(255,255,255,.08); overflow:hidden; margin-top:6px; }
+.w1 .fill { height:100%; border-radius:3px; background:linear-gradient(90deg,#8b5cf6,#38bdf8); transform-origin:left; animation:barGrowX 1.4s cubic-bezier(.2,.8,.2,1) both .3s; }
+@keyframes barGrowX { from{transform:scaleX(0)} to{transform:scaleX(1)} }
+
+/* ═════════ W2 · AURORA FLOW ═════════ */
+.w2 { background:#060812; color:#e8ecff; }
+.w2 .aur { position:absolute; inset:-25%; z-index:0; filter:blur(90px); opacity:.6;
+  background:radial-gradient(560px 320px at 22% 30%, #0d9488 0%, transparent 70%),
+             radial-gradient(640px 360px at 76% 22%, #7c3aed 0%, transparent 70%),
+             radial-gradient(560px 340px at 55% 82%, #2563eb 0%, transparent 70%);
+  animation:drift1 14s ease-in-out infinite alternate, hueShift 20s ease-in-out infinite; }
+.w2 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1fr 1fr; gap:24px; max-width:1440px; margin:0 auto; }
+.w2 .card { background:rgba(10,13,26,.6); border:1px solid rgba(148,163,255,.16); border-radius:26px; padding:30px; backdrop-filter:blur(12px);
+  animation:rise .7s ease both; }
+.w2 .card:nth-child(3) { animation-delay:.15s; }
+.w2 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.w2 .sub { color:#8b93c6; font-size:13px; margin-top:4px; }
+.w2 .gaugewrap { position:relative; width:340px; margin:26px auto 0; animation:floaty 6s ease-in-out infinite; }
+.w2 svg path.bg { fill:none; stroke:rgba(255,255,255,.08); stroke-width:22; stroke-linecap:round; }
+.w2 svg path.fg { fill:none; stroke:url(#w2grad); stroke-width:22; stroke-linecap:round;
+  stroke-dasharray:408; stroke-dashoffset:408; animation:w2draw 1.8s cubic-bezier(.3,.8,.3,1) both .3s; filter:drop-shadow(0 0 14px rgba(124,58,237,.55)); }
+@keyframes w2draw { to { stroke-dashoffset:117; } }
+.w2 .needle { position:absolute; left:50%; bottom:20px; width:4px; height:120px; background:linear-gradient(#fff,rgba(255,255,255,0));
+  border-radius:2px; transform-origin:bottom center; transform:rotate(-90deg); animation:w2needle 1.8s cubic-bezier(.3,.8,.3,1) both .3s; }
+@keyframes w2needle { to { transform:rotate(38.5deg); } }
+.w2 .pct { position:absolute; left:0; right:0; bottom:4px; text-align:center; font-family:'Space Grotesk'; font-size:58px; font-weight:700;
+  text-shadow:0 0 30px rgba(124,58,237,.5); }
+.w2 .kpis { display:flex; gap:12px; margin-top:28px; }
+.w2 .kpi { flex:1; text-align:center; padding:16px; border-radius:18px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.07);
+  animation:floaty 7s ease-in-out infinite; }
+.w2 .kpi:nth-child(2){animation-delay:.6s} .w2 .kpi:nth-child(3){animation-delay:1.2s} .w2 .kpi:nth-child(4){animation-delay:1.8s}
+.w2 .kv { font-family:'Space Grotesk'; font-size:24px; font-weight:700; }
+.w2 .kl { font-size:10px; letter-spacing:.16em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.w2 .lb-row { display:flex; align-items:center; gap:12px; padding:13px 8px; border-bottom:1px solid rgba(255,255,255,.06); animation:rise .6s ease both; }
+.w2 .lb-row:nth-child(2){animation-delay:.2s} .w2 .lb-row:nth-child(3){animation-delay:.3s} .w2 .lb-row:nth-child(4){animation-delay:.4s}
+.w2 .lb-row:nth-child(5){animation-delay:.5s} .w2 .lb-row:nth-child(6){animation-delay:.6s}
+.w2 .nm { flex:1; font-size:14.5px; }
+.w2 .vl { font-family:'Space Grotesk'; font-weight:700; color:#93c5fd; }
+.w2 .spark { width:120px; height:7px; border-radius:4px; background:rgba(255,255,255,.08); overflow:hidden; }
+.w2 .spark i { display:block; height:100%; background:linear-gradient(90deg,#0d9488,#7c3aed); background-size:200% 100%;
+  animation:shimmer 3.5s linear infinite; transform-origin:left; }
+
+/* ═════════ W3 · SPLIT MOTION ═════════ */
+.w3 { padding:56px 0 0 !important; background:#0e0e11; color:#fff; }
+.w3 .split { display:grid; grid-template-columns:44% 56%; min-height:calc(100vh - 56px); }
+.w3 .left { background:linear-gradient(160deg,#ff5b35,#ff7a1f); color:#0e0e11; display:flex; flex-direction:column; justify-content:center; padding:54px;
+  position:relative; overflow:hidden; }
+.w3 .left::before { content:""; position:absolute; inset:-40%; opacity:.14;
+  background:repeating-linear-gradient(45deg,#000 0 34px,transparent 34px 68px); animation:w3stripes 22s linear infinite; }
+@keyframes w3stripes { to { transform:translateX(96px); } }
+.w3 .left::after { content:""; position:absolute; top:0; bottom:0; width:36%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent); animation:sweep 5.5s ease-in-out infinite; }
+.w3 .cap { font-weight:800; letter-spacing:.24em; text-transform:uppercase; font-size:13px; margin-bottom:18px; position:relative; z-index:1; }
+.w3 .giant { font-family:'Archivo Black'; font-size:190px; line-height:.85; letter-spacing:-.04em; position:relative; z-index:1; }
+.w3 .meta { margin-top:26px; font-weight:700; font-size:16px; position:relative; z-index:1; }
+.w3 .meta b { display:block; font-size:26px; }
+.w3 .right { padding:44px 48px; display:flex; flex-direction:column; gap:26px; }
+.w3 h2 { font-family:'Archivo Black'; font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:#ff5b35; }
+.w3 .lb-row { display:grid; grid-template-columns:52px 1fr 130px; align-items:center; padding:15px 0; border-bottom:2px solid #1e1e24;
+  animation:rise .55s ease both; position:relative; overflow:hidden; }
+.w3 .lb-row:nth-child(2){animation-delay:.15s} .w3 .lb-row:nth-child(3){animation-delay:.28s}
+.w3 .lb-row:nth-child(4){animation-delay:.41s} .w3 .lb-row:nth-child(5){animation-delay:.54s}
+.w3 .lb-row::after { content:""; position:absolute; top:0; bottom:0; width:30%;
+  background:linear-gradient(90deg,transparent,rgba(255,91,53,.07),transparent); animation:sweep 6s ease-in-out infinite; }
+.w3 .rk { font-family:'Archivo Black'; font-size:24px; color:#2c2c35; }
+.w3 .lb-row:first-child .rk { color:#ff5b35; }
+.w3 .nm { font-weight:800; font-size:18px; }
+.w3 .vl { text-align:right; font-family:'JetBrains Mono'; font-weight:700; font-size:17px; color:#ff5b35; }
+.w3 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+.w3 .kpi { background:#16161b; border-radius:16px; padding:18px; transform-style:preserve-3d; transition:transform .3s; animation:floaty 6.5s ease-in-out infinite; }
+.w3 .kpi:nth-child(2){animation-delay:.5s} .w3 .kpi:nth-child(3){animation-delay:1s} .w3 .kpi:nth-child(4){animation-delay:1.5s}
+.w3 .kv { font-family:'Archivo Black'; font-size:26px; }
+.w3 .kl { font-size:10px; letter-spacing:.2em; color:#71717c; text-transform:uppercase; margin-top:4px; }
+
+/* ═════════ W4 · DEPTH CARDS ═════════ */
+.w4 { background:radial-gradient(1100px 700px at 60% -10%, #131629 0%, #08090f 60%); color:#eef; }
+.w4 .stage { perspective:1400px; max-width:1480px; margin:0 auto; display:grid; grid-template-columns:1.1fr .9fr; gap:28px; }
+.w4 .card { background:linear-gradient(150deg, rgba(30,34,60,.9), rgba(14,16,30,.95)); border:1px solid rgba(124,108,255,.2); border-radius:26px; padding:30px;
+  box-shadow:0 40px 90px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.03) inset; transform-style:preserve-3d; animation:tilt3d 11s ease-in-out infinite; }
+.w4 .card:nth-child(2) { animation-delay:1.4s; }
+.w4 h1 { font-size:24px; font-weight:800; }
+.w4 .sub { color:#8d93bd; font-size:13px; margin-top:4px; }
+.w4 .bigwrap { transform:translateZ(50px); margin:26px 0; }
+.w4 .big { font-size:110px; font-weight:900; letter-spacing:-.05em; line-height:1;
+  background:linear-gradient(90deg,#7c6cff,#38bdf8,#7c6cff); background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation:shimmer 6s linear infinite; filter:drop-shadow(0 18px 30px rgba(124,108,255,.35)); }
+.w4 .track { height:16px; border-radius:9px; background:rgba(255,255,255,.07); overflow:hidden; transform:translateZ(30px); }
+.w4 .fill { height:100%; border-radius:9px; background:linear-gradient(90deg,#7c6cff,#38bdf8); transform-origin:left;
+  animation:barGrowX 1.6s cubic-bezier(.2,.8,.2,1) both .25s; box-shadow:0 0 18px rgba(124,108,255,.7); }
+.w4 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-top:24px; }
+.w4 .kpi { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:16px; transform:translateZ(22px); }
+.w4 .kv { font-size:23px; font-weight:800; }
+.w4 .kl { font-size:10px; color:#8d93bd; letter-spacing:.16em; text-transform:uppercase; margin-top:4px; }
+.w4 .lb-row { display:flex; align-items:center; gap:14px; padding:13px 10px; border-radius:14px; transform:translateZ(18px); animation:rise .6s ease both; }
+.w4 .lb-row:nth-child(2){animation-delay:.2s} .w4 .lb-row:nth-child(3){animation-delay:.3s}
+.w4 .lb-row:nth-child(4){animation-delay:.4s} .w4 .lb-row:nth-child(5){animation-delay:.5s} .w4 .lb-row:nth-child(6){animation-delay:.6s}
+.w4 .lb-row:nth-child(odd) { background:rgba(255,255,255,.04); }
+.w4 .rk { width:30px; font-weight:900; font-size:18px; color:#7c6cff; }
+.w4 .nm { flex:1; font-weight:600; font-size:14.5px; }
+.w4 .vl { font-weight:800; color:#8ea9ff; }
+
+/* ═════════ W5 · LIQUID FILL ═════════ */
+.w5 { background:#081018; color:#e6f6ff; }
+.w5 .grid { display:grid; grid-template-columns:1fr 1fr; gap:26px; max-width:1400px; margin:0 auto; position:relative; z-index:1; }
+.w5 .card { background:rgba(12,22,34,.75); border:1px solid rgba(56,189,248,.18); border-radius:26px; padding:30px; backdrop-filter:blur(8px);
+  animation:rise .7s ease both; }
+.w5 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.w5 .sub { color:#7fa8c4; font-size:13px; margin-top:4px; }
+.w5 .tank { position:relative; width:300px; height:300px; border-radius:50%; margin:26px auto 8px; overflow:hidden;
+  border:3px solid rgba(56,189,248,.35); box-shadow:0 0 50px rgba(56,189,248,.2), 0 0 40px rgba(56,189,248,.12) inset; animation:floaty 7s ease-in-out infinite; }
+.w5 .water { position:absolute; left:-50%; right:-50%; bottom:0; height:71.4%; }
+.w5 .water svg { position:absolute; top:-22px; left:0; width:200%; height:26px; animation:waveMove 5s linear infinite; }
+.w5 .waterbody { position:absolute; inset:0; top:2px; background:linear-gradient(180deg, rgba(56,189,248,.85), rgba(14,116,144,.9)); }
+.w5 .tanklabel { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:2; }
+.w5 .pct { font-family:'Space Grotesk'; font-size:62px; font-weight:700; text-shadow:0 2px 18px rgba(3,20,30,.7); }
+.w5 .cap { font-size:11px; letter-spacing:.24em; text-transform:uppercase; color:#d9f3ff; opacity:.85; }
+.w5 .kpis { display:flex; gap:12px; margin-top:24px; }
+.w5 .kpi { flex:1; text-align:center; padding:15px; border-radius:16px; background:rgba(56,189,248,.07); border:1px solid rgba(56,189,248,.14); }
+.w5 .kv { font-family:'Space Grotesk'; font-size:23px; font-weight:700; color:#7dd3fc; }
+.w5 .kl { font-size:10px; letter-spacing:.16em; color:#7fa8c4; text-transform:uppercase; margin-top:4px; }
+.w5 .lb-row { display:flex; align-items:center; gap:12px; padding:13px 8px; border-bottom:1px solid rgba(255,255,255,.06); animation:rise .6s ease both; }
+.w5 .lb-row:nth-child(2){animation-delay:.2s} .w5 .lb-row:nth-child(3){animation-delay:.3s}
+.w5 .lb-row:nth-child(4){animation-delay:.4s} .w5 .lb-row:nth-child(5){animation-delay:.5s} .w5 .lb-row:nth-child(6){animation-delay:.6s}
+.w5 .nm { flex:1; font-size:14.5px; }
+.w5 .vl { font-family:'Space Grotesk'; font-weight:700; color:#7dd3fc; }
+.w5 .mini { width:120px; height:26px; display:flex; align-items:flex-end; gap:3px; }
+.w5 .mini i { flex:1; background:linear-gradient(180deg,#38bdf8,#0e7490); border-radius:2px 2px 0 0; transform-origin:bottom;
+  animation:barGrow 1s cubic-bezier(.2,.8,.2,1) both; }
+
+/* ═════════ W6 · ORBITAL ═════════ */
+.w6 { background:radial-gradient(900px 600px at 50% 40%, #101426 0%, #05060c 70%); color:#eef; text-align:center; }
+.w6 .sys { position:relative; width:460px; height:460px; margin:10px auto 0; }
+.w6 .orbitring { position:absolute; inset:0; border-radius:50%; border:1px dashed rgba(255,255,255,.1); }
+.w6 .orbitring.r2 { inset:24px; } .w6 .orbitring.r3 { inset:60px; }
+.w6 .planet { position:absolute; top:50%; left:50%; width:16px; height:16px; margin:-8px; border-radius:50%; }
+.w6 .pA { background:#38bdf8; box-shadow:0 0 16px #38bdf8; animation:orbitA 12s linear infinite; }
+.w6 .pB { background:#a78bfa; box-shadow:0 0 16px #a78bfa; animation:orbitB 19s linear infinite; }
+.w6 .pC { background:#34d399; box-shadow:0 0 16px #34d399; animation:orbitC 8.5s linear infinite; }
+.w6 .core { position:absolute; inset:110px; border-radius:50%; background:radial-gradient(circle at 35% 30%, #1c2340, #0a0d1c 70%);
+  border:1px solid rgba(148,163,255,.25); display:flex; flex-direction:column; align-items:center; justify-content:center;
+  box-shadow:0 0 70px rgba(124,108,255,.25), 0 0 40px rgba(56,189,248,.12) inset; animation:pulseGlow 4.5s ease-in-out infinite; }
+.w6 .pct { font-family:'Space Grotesk'; font-size:64px; font-weight:700; }
+.w6 .cap { font-size:10px; letter-spacing:.3em; text-transform:uppercase; color:#8b93c6; margin-top:4px; }
+.w6 .kpis { display:flex; justify-content:center; gap:44px; margin:26px 0 8px; }
+.w6 .kv { font-family:'Space Grotesk'; font-size:28px; font-weight:700; color:#93c5fd; }
+.w6 .kl { font-size:10px; letter-spacing:.24em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.w6 .lb { max-width:660px; margin:14px auto 0; text-align:left; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);
+  border-radius:20px; padding:10px 20px; }
+.w6 .lb-row { display:flex; align-items:center; gap:12px; padding:11px 4px; border-bottom:1px solid rgba(255,255,255,.06); }
+.w6 .lb-row:last-child { border-bottom:none; }
+.w6 .nm { flex:1; font-size:14.5px; }
+.w6 .vl { font-family:'Space Grotesk'; font-weight:700; color:#93c5fd; }
+
+/* ═════════ W7 · NEO CUBES ═════════ */
+.w7 { background:#0a0c14; color:#eef; }
+.w7 .wrap { max-width:1460px; margin:0 auto; }
+.w7 h1 { font-size:26px; font-weight:800; margin-bottom:4px; }
+.w7 .sub { color:#8b93c6; font-size:13px; margin-bottom:26px; }
+.w7 .cubes { display:flex; gap:34px; perspective:1100px; margin-bottom:34px; }
+.w7 .cube { flex:1; height:150px; position:relative; transform-style:preserve-3d; transform:rotateX(14deg) rotateY(-16deg); animation:floaty 6s ease-in-out infinite; }
+.w7 .cube:nth-child(2){animation-delay:.5s} .w7 .cube:nth-child(3){animation-delay:1s} .w7 .cube:nth-child(4){animation-delay:1.5s}
+.w7 .face { position:absolute; inset:0; border-radius:14px; background:linear-gradient(150deg,#141a30,#0d1120); border:1px solid rgba(124,108,255,.25);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; box-shadow:0 24px 50px rgba(0,0,0,.5); }
+.w7 .side { position:absolute; top:6px; bottom:-6px; right:-12px; width:12px; border-radius:3px; background:#090c18; transform:skewY(45deg); opacity:.9; }
+.w7 .bott { position:absolute; left:6px; right:-6px; bottom:-12px; height:12px; border-radius:3px; background:#070a13; transform:skewX(45deg); opacity:.9; }
+.w7 .kv { font-size:30px; font-weight:900; background:linear-gradient(90deg,#a78bfa,#38bdf8); -webkit-background-clip:text; background-clip:text; color:transparent; }
+.w7 .kl { font-size:10px; letter-spacing:.2em; color:#8b93c6; text-transform:uppercase; margin-top:6px; }
+.w7 .row2 { display:grid; grid-template-columns:1.1fr .9fr; gap:26px; }
+.w7 .panel { background:#0e1220; border:1px solid rgba(124,108,255,.18); border-radius:22px; padding:26px; }
+.w7 .track { height:14px; border-radius:8px; background:rgba(255,255,255,.06); overflow:hidden; margin-top:18px; }
+.w7 .fill { height:100%; background:linear-gradient(90deg,#7c6cff,#38bdf8); background-size:200% 100%; animation:shimmer 4s linear infinite, barGrowX 1.5s cubic-bezier(.2,.8,.2,1) both; transform-origin:left; border-radius:8px; }
+.w7 .bigpct { font-size:84px; font-weight:900; letter-spacing:-.04em; }
+.w7 .lb-row { display:flex; align-items:center; gap:12px; padding:12px 8px; border-bottom:1px solid rgba(255,255,255,.06); }
+.w7 .nm { flex:1; font-size:14.5px; font-weight:600; }
+.w7 .vl { font-weight:800; color:#8ea9ff; }
+
+/* ═════════ W8 · RIBBON SPIN ═════════ */
+.w8 { background:#0b0d18; color:#eef; text-align:center; }
+.w8 .blob { position:absolute; border-radius:50%; filter:blur(120px); opacity:.4; z-index:0; }
+.w8 .b1 { width:520px; height:520px; background:#7c3aed; top:-140px; right:-100px; animation:drift2 20s ease-in-out infinite alternate; }
+.w8 .scene { position:relative; z-index:1; perspective:1000px; width:400px; height:400px; margin:6px auto 0; }
+.w8 .disc { position:absolute; inset:0; transform-style:preserve-3d; transform:rotateX(58deg); }
+.w8 .ribbon { position:absolute; inset:0; border-radius:50%;
+  background:conic-gradient(from 0deg, #8b5cf6, #38bdf8, #34d399, #8b5cf6);
+  -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 42px), #000 calc(100% - 41px));
+  mask:radial-gradient(farthest-side, transparent calc(100% - 42px), #000 calc(100% - 41px));
+  animation:spin360 10s linear infinite; filter:drop-shadow(0 30px 40px rgba(124,108,255,.35)); }
+.w8 .ribbon.r2 { inset:52px; animation-duration:16s; animation-direction:reverse; opacity:.6;
+  -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 22px), #000 calc(100% - 21px));
+  mask:radial-gradient(farthest-side, transparent calc(100% - 22px), #000 calc(100% - 21px)); }
+.w8 .label { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:2; }
+.w8 .pct { font-size:88px; font-weight:900; letter-spacing:-.04em;
+  background:linear-gradient(90deg,#a78bfa,#7dd3fc); -webkit-background-clip:text; background-clip:text; color:transparent;
+  filter:drop-shadow(0 8px 26px rgba(124,108,255,.45)); }
+.w8 .cap { font-size:11px; letter-spacing:.3em; text-transform:uppercase; color:#8b93c6; }
+.w8 .kpis { display:flex; justify-content:center; gap:48px; margin:20px 0; position:relative; z-index:1; }
+.w8 .kv { font-size:28px; font-weight:800; }
+.w8 .kl { font-size:10px; letter-spacing:.24em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.w8 .lb { max-width:640px; margin:0 auto; text-align:left; position:relative; z-index:1;
+  background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:20px; padding:8px 20px; backdrop-filter:blur(14px); }
+.w8 .lb-row { display:flex; align-items:center; gap:12px; padding:11px 4px; border-bottom:1px solid rgba(255,255,255,.06); }
+.w8 .lb-row:last-child { border-bottom:none; }
+.w8 .nm { flex:1; font-size:14.5px; }
+.w8 .vl { font-weight:800; color:#7dd3fc; }
+
+/* ═════════ W9 · PULSE GRID ═════════ */
+.w9 { background:#070810; color:#eef; }
+.w9 .floor { position:absolute; left:-20%; right:-20%; bottom:-12%; height:60%; z-index:0; transform:perspective(600px) rotateX(62deg);
+  background:linear-gradient(rgba(124,108,255,.16) 1px, transparent 1px), linear-gradient(90deg, rgba(124,108,255,.16) 1px, transparent 1px);
+  background-size:44px 44px; animation:gridScroll 2.4s linear infinite; -webkit-mask:linear-gradient(180deg,transparent, #000 40%);
+  mask:linear-gradient(180deg,transparent, #000 40%); }
+.w9 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1fr 1fr; gap:26px; max-width:1420px; margin:0 auto; }
+.w9 .card { background:rgba(12,14,26,.82); border:1px solid rgba(124,108,255,.22); border-radius:22px; padding:28px; backdrop-filter:blur(6px); }
+.w9 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.w9 .sub { color:#8b93c6; font-size:13px; margin-top:4px; }
+.w9 .big { font-size:104px; font-weight:900; letter-spacing:-.04em; line-height:1.05; margin:16px 0 6px; color:#c4b5fd;
+  text-shadow:0 0 40px rgba(124,108,255,.55); animation:pulseGlow 3.6s ease-in-out infinite; }
+.w9 .track { height:14px; border-radius:8px; background:rgba(255,255,255,.07); overflow:hidden; }
+.w9 .fill { height:100%; border-radius:8px; background:linear-gradient(90deg,#7c6cff,#38bdf8); transform-origin:left; animation:barGrowX 1.5s ease both .2s; }
+.w9 .kpis { display:flex; gap:12px; margin-top:22px; }
+.w9 .kpi { flex:1; text-align:center; padding:14px; border-radius:14px; background:rgba(124,108,255,.08); border:1px solid rgba(124,108,255,.16); }
+.w9 .kv { font-family:'Space Grotesk'; font-size:23px; font-weight:700; }
+.w9 .kl { font-size:10px; letter-spacing:.18em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.w9 .bars { display:flex; align-items:flex-end; gap:14px; height:200px; margin-top:20px; }
+.w9 .bcol { flex:1; display:flex; flex-direction:column; justify-content:flex-end; height:100%; }
+.w9 .b { border-radius:6px 6px 0 0; background:linear-gradient(180deg,#8b5cf6,#312e81); transform-origin:bottom;
+  animation:barGrow 1.2s cubic-bezier(.2,.8,.2,1) both; box-shadow:0 0 22px rgba(124,108,255,.35); }
+.w9 .bcol span { text-align:center; font-size:11px; color:#8b93c6; margin-top:8px; }
+.w9 .bcol:nth-child(2) .b{animation-delay:.1s} .w9 .bcol:nth-child(3) .b{animation-delay:.2s}
+.w9 .bcol:nth-child(4) .b{animation-delay:.3s} .w9 .bcol:nth-child(5) .b{animation-delay:.4s} .w9 .bcol:nth-child(6) .b{animation-delay:.5s}
+
+/* ═════════ W10 · CINEMA TICKER ═════════ */
+.w10 { padding:56px 0 0 !important; background:#0a0a0d; color:#fff; display:flex; flex-direction:column; min-height:100vh; }
+.w10 .hero { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; position:relative; overflow:hidden; }
+.w10 .glow { position:absolute; width:900px; height:500px; border-radius:50%; filter:blur(130px); opacity:.35;
+  background:radial-gradient(circle, #7c3aed, transparent 70%); animation:pulseGlow 6s ease-in-out infinite; }
+.w10 .cap { font-size:12px; letter-spacing:.4em; text-transform:uppercase; color:#8b93c6; position:relative; }
+.w10 .mega { position:relative; font-size:240px; font-weight:900; letter-spacing:-.05em; line-height:1;
+  background:linear-gradient(90deg,#c4b5fd 20%, #7dd3fc 45%, #fff 50%, #7dd3fc 55%, #c4b5fd 80%); background-size:300% 100%;
+  -webkit-background-clip:text; background-clip:text; color:transparent; animation:shimmer 7s linear infinite;
+  filter:drop-shadow(0 20px 60px rgba(124,108,255,.35)); }
+.w10 .meta { position:relative; display:flex; gap:56px; margin-top:24px; }
+.w10 .kv { font-size:30px; font-weight:800; }
+.w10 .kl { font-size:10px; letter-spacing:.3em; color:#8b93c6; text-transform:uppercase; margin-top:6px; }
+.w10 .tickerwrap { border-top:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.03); overflow:hidden; padding:18px 0; }
+.w10 .ticker { display:flex; gap:64px; width:max-content; animation:tickerMove 26s linear infinite; }
+.w10 .titem { display:flex; align-items:center; gap:14px; font-size:17px; white-space:nowrap; }
+.w10 .titem .rk { font-weight:900; color:#7c6cff; font-size:20px; }
+.w10 .titem .vl { color:#7dd3fc; font-weight:800; font-family:'JetBrains Mono'; }
+</style>
+</head>
+<body>
+
+<div class="switcher">
+  <span class="sw-title">Redesign·2 — 3D + Motion</span>
+  <button class="sw-btn active" data-v="w1">1 · Glass Orbit</button>
+  <button class="sw-btn" data-v="w2">2 · Aurora Flow</button>
+  <button class="sw-btn" data-v="w3">3 · Split Motion</button>
+  <button class="sw-btn" data-v="w4">4 · Depth 3D</button>
+  <button class="sw-btn" data-v="w5">5 · Liquid</button>
+  <button class="sw-btn" data-v="w6">6 · Orbital</button>
+  <button class="sw-btn" data-v="w7">7 · Neo Cubes</button>
+  <button class="sw-btn" data-v="w8">8 · Ribbon Spin</button>
+  <button class="sw-btn" data-v="w9">9 · Pulse Grid</button>
+  <button class="sw-btn" data-v="w10">10 · Cinema</button>
+</div>
+
+<!-- W1 GLASS ORBIT 3D -->
+<section class="variant w1 active" id="w1">
+  <div class="blob b1"></div><div class="blob b2"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 · Sales Plan</h1>
+      <div class="sub">Ombor sheet · yangilandi 18:42</div>
+      <div class="scene">
+        <div class="ring3d">
+          <div class="torus"></div>
+          <div class="ringcore">
+            <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+            <div class="cap">Plan bajarilishi</div>
+          </div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:20px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:12px">Live · LTL + FTL</div>
+      <div class="lb-row"><div class="ava">R</div><div class="nm">Retention<div class="track"><div class="fill" style="width:100%"></div></div></div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="ava">OS</div><div class="nm">Olimov Sirojiddin<div class="track"><div class="fill" style="width:22%"></div></div></div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="ava">XB</div><div class="nm">Xakimov Boburmirzo<div class="track"><div class="fill" style="width:15%"></div></div></div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="ava">RM</div><div class="nm">Rizayev Muhammad Ali<div class="track"><div class="fill" style="width:12%"></div></div></div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="ava">SA</div><div class="nm">Sobirov Azamatxo'ja<div class="track"><div class="fill" style="width:3%"></div></div></div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W2 AURORA FLOW -->
+<section class="variant w2" id="w2">
+  <div class="aur"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Buraq Logistics · Sales Monitor</div>
+      <div class="gaugewrap">
+        <svg width="340" height="200" viewBox="0 0 340 200">
+          <defs><linearGradient id="w2grad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#0d9488"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#7c3aed"/>
+          </linearGradient></defs>
+          <path class="bg" d="M 40 180 A 130 130 0 0 1 300 180"/>
+          <path class="fg" d="M 40 180 A 130 130 0 0 1 300 180"/>
+        </svg>
+        <div class="needle"></div>
+        <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Sotuvchilar reytingi</h1>
+      <div class="sub" style="margin-bottom:8px">Live</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="spark"><i style="width:100%"></i></div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="spark"><i style="width:22%"></i></div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="spark"><i style="width:15%"></i></div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="spark"><i style="width:12%"></i></div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="spark"><i style="width:3%"></i></div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W3 SPLIT MOTION -->
+<section class="variant w3" id="w3">
+  <div class="split">
+    <div class="left">
+      <div class="cap">Iyun 2026 · Plan bajarilishi</div>
+      <div class="giant count" data-target="71" data-suffix="%">0%</div>
+      <div class="meta">2 854 / 4 000 m³ <b>1 146 m³ qoldi</b></div>
+    </div>
+    <div class="right">
+      <div>
+        <h2>Top sotuvchilar</h2>
+        <div class="lb-row"><div class="rk">01</div><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+        <div class="lb-row"><div class="rk">02</div><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+        <div class="lb-row"><div class="rk">03</div><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+        <div class="lb-row"><div class="rk">04</div><div class="nm">Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- W4 DEPTH 3D -->
+<section class="variant w4" id="w4">
+  <div class="stage">
+    <div class="card">
+      <h1>Umumiy plan — Iyun 2026</h1>
+      <div class="sub">Ombor sheet · 18:42</div>
+      <div class="bigwrap"><div class="big count" data-target="71.4" data-suffix="%">0%</div></div>
+      <div class="track"><div class="fill" style="width:71.4%"></div></div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:20px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:10px">Live</div>
+      <div class="lb-row"><div class="rk">1</div><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="rk">2</div><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="rk">3</div><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="rk">4</div><div class="nm">Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="rk">5</div><div class="nm">Sobirov Azamatxo'ja</div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W5 LIQUID -->
+<section class="variant w5" id="w5">
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Suv sathi = bajarilish darajasi</div>
+      <div class="tank">
+        <div class="water">
+          <svg viewBox="0 0 1200 26" preserveAspectRatio="none">
+            <path d="M0 13 Q 75 0 150 13 T 300 13 T 450 13 T 600 13 T 750 13 T 900 13 T 1050 13 T 1200 13 V 26 H 0 Z" fill="rgba(56,189,248,.85)"/>
+          </svg>
+          <div class="waterbody"></div>
+        </div>
+        <div class="tanklabel">
+          <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+          <div class="cap">Bajarildi</div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:8px">Oy bo'yicha taqsimot</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="mini"><i style="height:40%"></i><i style="height:70%"></i><i style="height:55%"></i><i style="height:100%"></i><i style="height:80%"></i></div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="mini"><i style="height:30%"></i><i style="height:45%"></i><i style="height:60%"></i><i style="height:38%"></i><i style="height:52%"></i></div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="mini"><i style="height:25%"></i><i style="height:55%"></i><i style="height:35%"></i><i style="height:48%"></i><i style="height:30%"></i></div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="mini"><i style="height:45%"></i><i style="height:28%"></i><i style="height:52%"></i><i style="height:33%"></i><i style="height:40%"></i></div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="mini"><i style="height:15%"></i><i style="height:22%"></i><i style="height:12%"></i><i style="height:25%"></i><i style="height:18%"></i></div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W6 ORBITAL -->
+<section class="variant w6" id="w6">
+  <div class="sys">
+    <div class="orbitring"></div><div class="orbitring r2"></div><div class="orbitring r3"></div>
+    <div class="planet pA"></div><div class="planet pB"></div><div class="planet pC"></div>
+    <div class="core">
+      <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="cap">Iyun 2026 · Plan</div>
+    </div>
+  </div>
+  <div class="kpis">
+    <div><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+    <div><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+    <div><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+    <div><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+  </div>
+  <div class="lb">
+    <div class="lb-row"><div class="nm">1 · Retention</div><div class="vl">951 m³</div></div>
+    <div class="lb-row"><div class="nm">2 · Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+    <div class="lb-row"><div class="nm">3 · Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+    <div class="lb-row"><div class="nm">4 · Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+  </div>
+</section>
+
+<!-- W7 NEO CUBES -->
+<section class="variant w7" id="w7">
+  <div class="wrap">
+    <h1>Sales Monitor — Iyun 2026</h1>
+    <div class="sub">Buraq Logistics · live</div>
+    <div class="cubes">
+      <div class="cube"><div class="face"><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div><div class="side"></div><div class="bott"></div></div>
+      <div class="cube"><div class="face"><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div><div class="side"></div><div class="bott"></div></div>
+      <div class="cube"><div class="face"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div><div class="side"></div><div class="bott"></div></div>
+      <div class="cube"><div class="face"><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div><div class="side"></div><div class="bott"></div></div>
+    </div>
+    <div class="row2">
+      <div class="panel">
+        <h1 style="font-size:18px">Plan bajarilishi</h1>
+        <div class="bigpct count" data-target="71.4" data-suffix="%">0%</div>
+        <div class="track"><div class="fill" style="width:71.4%"></div></div>
+      </div>
+      <div class="panel">
+        <h1 style="font-size:18px;margin-bottom:8px">Top sotuvchilar</h1>
+        <div class="lb-row"><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+        <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+        <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+        <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- W8 RIBBON SPIN -->
+<section class="variant w8" id="w8">
+  <div class="blob b1"></div>
+  <div class="scene">
+    <div class="disc">
+      <div class="ribbon"></div>
+      <div class="ribbon r2"></div>
+    </div>
+    <div class="label">
+      <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="cap">Iyun plan</div>
+    </div>
+  </div>
+  <div class="kpis">
+    <div><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+    <div><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+    <div><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+    <div><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+  </div>
+  <div class="lb">
+    <div class="lb-row"><div class="nm">1 · Retention</div><div class="vl">951 m³</div></div>
+    <div class="lb-row"><div class="nm">2 · Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+    <div class="lb-row"><div class="nm">3 · Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+    <div class="lb-row"><div class="nm">4 · Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+  </div>
+</section>
+
+<!-- W9 PULSE GRID -->
+<section class="variant w9" id="w9">
+  <div class="floor"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Buraq Logistics</div>
+      <div class="big count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="track"><div class="fill" style="width:71.4%"></div></div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Oylik dinamika</h1>
+      <div class="sub">m³ bo'yicha</div>
+      <div class="bars">
+        <div class="bcol"><div class="b" style="height:38%"></div><span>Yan</span></div>
+        <div class="bcol"><div class="b" style="height:52%"></div><span>Fev</span></div>
+        <div class="bcol"><div class="b" style="height:47%"></div><span>Mar</span></div>
+        <div class="bcol"><div class="b" style="height:66%"></div><span>Apr</span></div>
+        <div class="bcol"><div class="b" style="height:84%"></div><span>May</span></div>
+        <div class="bcol"><div class="b" style="height:71%"></div><span>Iyun</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- W10 CINEMA TICKER -->
+<section class="variant w10" id="w10">
+  <div class="hero">
+    <div class="glow"></div>
+    <div class="cap">Iyun 2026 · Plan bajarilishi</div>
+    <div class="mega count" data-target="71.4" data-suffix="%">0%</div>
+    <div class="meta">
+      <div><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+      <div><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+      <div><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+      <div><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+    </div>
+  </div>
+  <div class="tickerwrap">
+    <div class="ticker">
+      <div class="titem"><span class="rk">01</span> Retention <span class="vl">951 m³</span></div>
+      <div class="titem"><span class="rk">02</span> Olimov Sirojiddin <span class="vl">205 m³</span></div>
+      <div class="titem"><span class="rk">03</span> Xakimov Boburmirzo <span class="vl">139 m³</span></div>
+      <div class="titem"><span class="rk">04</span> Rizayev Muhammad Ali <span class="vl">111 m³</span></div>
+      <div class="titem"><span class="rk">05</span> Sobirov Azamatxo'ja <span class="vl">20 m³</span></div>
+      <div class="titem"><span class="rk">01</span> Retention <span class="vl">951 m³</span></div>
+      <div class="titem"><span class="rk">02</span> Olimov Sirojiddin <span class="vl">205 m³</span></div>
+      <div class="titem"><span class="rk">03</span> Xakimov Boburmirzo <span class="vl">139 m³</span></div>
+      <div class="titem"><span class="rk">04</span> Rizayev Muhammad Ali <span class="vl">111 m³</span></div>
+      <div class="titem"><span class="rk">05</span> Sobirov Azamatxo'ja <span class="vl">20 m³</span></div>
+    </div>
+  </div>
+</section>
+
+<script>
+  // Variant switcher
+  document.querySelectorAll(".sw-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.querySelectorAll(".sw-btn").forEach(function (b) { b.classList.remove("active"); });
+      document.querySelectorAll(".variant").forEach(function (v) { v.classList.remove("active"); });
+      btn.classList.add("active");
+      var section = document.getElementById(btn.dataset.v);
+      section.classList.add("active");
+      runCountUps(section);
+      restartAnimations(section);
+    });
+  });
+
+  // Smooth count-up for .count elements (runs on activate)
+  function runCountUps(scope) {
+    scope.querySelectorAll(".count").forEach(function (el) {
+      var target = parseFloat(el.dataset.target || "0");
+      var suffix = el.dataset.suffix || "";
+      var decimals = (String(el.dataset.target).split(".")[1] || "").length;
+      var t0 = null;
+      var DUR = 1400;
+      function step(ts) {
+        if (!t0) t0 = ts;
+        var p = Math.min(1, (ts - t0) / DUR);
+        var eased = 1 - Math.pow(1 - p, 3);
+        var val = target * eased;
+        el.textContent = val.toLocaleString("ru-RU", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).replace(",", ".") + suffix;
+        if (p < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  // Restart CSS entry animations when a variant becomes visible
+  function restartAnimations(scope) {
+    scope.querySelectorAll("*").forEach(function (el) {
+      var anims = getComputedStyle(el).animationName;
+      if (anims && anims !== "none") {
+        el.style.animation = "none";
+        void el.offsetWidth;   // reflow
+        el.style.animation = "";
+      }
+    });
+  }
+
+  runCountUps(document.querySelector(".variant.active"));
+</script>
+</body>
+</html>

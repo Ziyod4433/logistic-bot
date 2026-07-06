@@ -2733,6 +2733,15 @@ def analytics_monitor_redesign():
     return render_template("analytics/monitor_redesign.html")
 
 
+@app.route("/analytics/monitor/redesign2")
+def analytics_monitor_redesign2():
+    """Round 2: 10 variants built on the user's picks from round 1
+    (Glass / Aurora / Split Bold) with 3D depth and smooth motion —
+    animated blobs, spinning conic rings, liquid fill, orbiting
+    particles, count-up numbers, ticker. Public — no login required."""
+    return render_template("analytics/monitor_redesign2.html")
+
+
 @app.route("/analytics/monitor/preview2")
 def analytics_monitor_preview2():
     """Round 2 of preview ideas — 8 fresh scenes with enhanced breathing.
