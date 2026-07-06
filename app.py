@@ -2718,6 +2718,25 @@ def analytics_monitor_page():
     )
 
 
+@app.route("/analytics/monitor/legacy")
+@login_required
+def analytics_monitor_legacy():
+    """Frozen snapshot of the pre-redesign (neon-green) Sales Monitor.
+    Uses sales_monitor_legacy.css — a byte-for-byte copy of the stylesheet
+    taken before the Glass Orbit theme landed — with the same live JS, so
+    it still shows real data. To fully restore the old design: copy
+    sales_monitor_legacy.css over sales_monitor.css and revert the
+    gradient stops + font link in monitor.html."""
+    plans = analytics_service.list_sales_plans()
+    active_plan = next((plan for plan in plans if int(plan.get("is_active") or 0) == 1), None)
+    return render_template(
+        "analytics/monitor_legacy.html",
+        sales_plans=plans,
+        active_plan_id=(active_plan or {}).get("id"),
+        is_kiosk=(session.get("role") == ROLE_KIOSK),
+    )
+
+
 @app.route("/analytics/monitor/preview")
 def analytics_monitor_preview():
     """Side-by-side preview of 10 candidate 3D circle styles for the Sales Monitor.

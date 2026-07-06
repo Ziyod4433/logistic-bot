@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BURAQ Logistics - Sales Monitor</title>
+  <title>BURAQ Logistics - Sales Monitor (Legacy design)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;800;900&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/sales_monitor.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/sales_monitor_legacy.css') }}">
 </head>
 <body{% if is_kiosk %} class="tv-mode role-kiosk"{% endif %}>
   <!-- hidden: JS targets these IDs for countdown/clock logic -->
@@ -28,10 +28,9 @@
 
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
-      <!-- Glass Orbit theme: progress arc gradient (was neon green) -->
       <linearGradient id="monitor-orange" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#8b5cf6"></stop>
-        <stop offset="100%" stop-color="#38bdf8"></stop>
+        <stop offset="0%" stop-color="#34d399"></stop>
+        <stop offset="100%" stop-color="#6ee7b7"></stop>
       </linearGradient>
       <!-- V24 NEON GLASS TUBE — soft Gaussian glow for the main green stroke -->
       <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
