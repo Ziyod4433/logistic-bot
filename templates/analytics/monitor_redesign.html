@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sales Monitor — 10 redesign variants</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;800;900&family=Playfair+Display:wght@500;700;900&family=Space+Grotesk:wght@400;600;700&family=Archivo+Black&family=VT323&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { min-height:100%; }
+  body { background:#0a0b0e; font-family:'Inter',sans-serif; }
+
+  /* ── Variant switcher bar ── */
+  .switcher {
+    position:fixed; top:0; left:0; right:0; z-index:1000;
+    display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+    padding:10px 14px;
+    background:rgba(8,9,12,.92); backdrop-filter:blur(8px);
+    border-bottom:1px solid rgba(255,255,255,.08);
+  }
+  .switcher .sw-title { font-size:12px; color:#888; margin-right:10px; letter-spacing:.1em; text-transform:uppercase; }
+  .sw-btn {
+    padding:7px 13px; border-radius:8px; font-size:12.5px; font-weight:600;
+    background:rgba(255,255,255,.05); color:#aaa; border:1px solid rgba(255,255,255,.09);
+    cursor:pointer; transition:all .15s;
+  }
+  .sw-btn:hover { color:#fff; border-color:rgba(255,255,255,.25); }
+  .sw-btn.active { background:#f5a623; color:#0a0905; border-color:#f5a623; }
+
+  .variant { display:none; min-height:100vh; padding:74px 26px 26px; }
+  .variant.active { display:block; }
+
+  /* ══════════ V1 · NEON PULSE ══════════ */
+  .v1 { background:radial-gradient(1200px 700px at 70% -10%, #0d2818 0%, #07090c 55%); color:#e8fff3; font-family:'Oswald',sans-serif; }
+  .v1 .grid { display:grid; grid-template-columns: 1.2fr .9fr; gap:22px; max-width:1500px; margin:0 auto; }
+  .v1 .card { background:rgba(10,14,12,.75); border:1px solid rgba(52,211,153,.18); border-radius:22px; padding:26px; box-shadow:0 0 60px rgba(52,211,153,.05) inset; }
+  .v1 h1 { font-family:'Bebas Neue'; font-size:44px; letter-spacing:.06em; color:#34d399; text-shadow:0 0 24px rgba(52,211,153,.5); }
+  .v1 .sub { color:#7ea896; font-size:13px; margin-top:2px; }
+  .v1 .ringwrap { display:flex; align-items:center; gap:36px; margin-top:22px; }
+  .v1 svg circle.bg { fill:none; stroke:rgba(255,255,255,.06); stroke-width:16; }
+  .v1 svg circle.fg { fill:none; stroke:#34d399; stroke-width:16; stroke-linecap:round; filter:drop-shadow(0 0 10px rgba(52,211,153,.8)); }
+  .v1 .pct { font-family:'Bebas Neue'; font-size:74px; line-height:1; color:#fff; text-shadow:0 0 30px rgba(52,211,153,.6); }
+  .v1 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:26px; }
+  .v1 .kpi { border:1px solid rgba(52,211,153,.15); border-radius:14px; padding:14px; text-align:center; background:rgba(52,211,153,.04); }
+  .v1 .kv { font-family:'Bebas Neue'; font-size:30px; color:#34d399; }
+  .v1 .kl { font-size:10px; letter-spacing:.2em; color:#6b8f7e; margin-top:2px; }
+  .v1 .lb-row { display:flex; align-items:center; gap:12px; padding:11px 4px; border-bottom:1px solid rgba(255,255,255,.05); }
+  .v1 .lb-rank { width:26px; font-family:'Bebas Neue'; font-size:22px; color:#34d399; }
+  .v1 .lb-name { flex:1; font-size:15px; }
+  .v1 .lb-val { font-family:'JetBrains Mono'; font-size:15px; color:#34d399; font-weight:700; }
+  .v1 .lb-bar { height:4px; background:rgba(255,255,255,.06); border-radius:2px; margin-top:6px; overflow:hidden; }
+  .v1 .lb-fill { height:100%; background:linear-gradient(90deg,#059669,#34d399); box-shadow:0 0 8px rgba(52,211,153,.9); }
+
+  /* ══════════ V2 · GLASS ══════════ */
+  .v2 { position:relative; background:#0b0d18; color:#eef; overflow:hidden; }
+  .v2::before, .v2::after {
+    content:""; position:absolute; border-radius:50%; filter:blur(110px); opacity:.5; z-index:0;
+  }
+  .v2::before { width:600px; height:600px; background:#6d28d9; top:-160px; left:-120px; }
+  .v2::after  { width:520px; height:520px; background:#0ea5e9; bottom:-140px; right:-100px; }
+  .v2 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1.1fr .9fr; gap:22px; max-width:1480px; margin:0 auto; }
+  .v2 .card { background:rgba(255,255,255,.07); backdrop-filter:blur(22px); border:1px solid rgba(255,255,255,.14); border-radius:26px; padding:28px; }
+  .v2 h1 { font-weight:800; font-size:30px; letter-spacing:-.02em; }
+  .v2 .sub { color:#a8b0d8; font-size:13px; margin-top:4px; }
+  .v2 .bignum { font-size:96px; font-weight:900; letter-spacing:-.04em; line-height:1; margin:18px 0 8px;
+    background:linear-gradient(90deg,#a78bfa,#38bdf8); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .v2 .track { height:18px; border-radius:10px; background:rgba(255,255,255,.09); overflow:hidden; margin-top:14px; }
+  .v2 .fill { height:100%; border-radius:10px; background:linear-gradient(90deg,#8b5cf6,#38bdf8); }
+  .v2 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:24px; }
+  .v2 .kpi { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:18px; padding:16px; }
+  .v2 .kv { font-size:24px; font-weight:800; }
+  .v2 .kl { font-size:10.5px; color:#a8b0d8; letter-spacing:.14em; text-transform:uppercase; margin-top:4px; }
+  .v2 .lb-row { display:flex; align-items:center; gap:14px; padding:12px 10px; border-radius:14px; }
+  .v2 .lb-row:nth-child(odd) { background:rgba(255,255,255,.05); }
+  .v2 .lb-ava { width:38px; height:38px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px;
+    background:linear-gradient(135deg,#8b5cf6,#38bdf8); }
+  .v2 .lb-name { flex:1; font-size:14.5px; font-weight:600; }
+  .v2 .lb-val { font-weight:800; font-size:15px; color:#7dd3fc; }
+
+  /* ══════════ V3 · SWISS LIGHT ══════════ */
+  .v3 { background:#f6f5f1; color:#111; font-family:'Inter',sans-serif; }
+  .v3 .wrap { max-width:1460px; margin:0 auto; }
+  .v3 .head { display:flex; justify-content:space-between; align-items:baseline; border-bottom:3px solid #111; padding-bottom:14px; }
+  .v3 h1 { font-size:26px; font-weight:900; letter-spacing:-.02em; text-transform:uppercase; }
+  .v3 .head .date { font-size:13px; color:#666; }
+  .v3 .hero { display:grid; grid-template-columns:1.3fr 1fr; gap:40px; padding:40px 0; border-bottom:1px solid #ddd; }
+  .v3 .giant { font-size:180px; font-weight:900; letter-spacing:-.06em; line-height:.9; }
+  .v3 .giant small { font-size:60px; color:#e11d48; }
+  .v3 .hero .cap { font-size:13px; color:#666; text-transform:uppercase; letter-spacing:.18em; margin-bottom:8px; }
+  .v3 .track { height:10px; background:#e5e2da; margin-top:20px; }
+  .v3 .fill { height:100%; background:#111; }
+  .v3 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:0; margin-top:26px; border-top:1px solid #ddd; }
+  .v3 .kpi { padding:18px 14px; border-right:1px solid #ddd; }
+  .v3 .kpi:last-child { border-right:none; }
+  .v3 .kv { font-size:32px; font-weight:900; letter-spacing:-.02em; }
+  .v3 .kv.red { color:#e11d48; }
+  .v3 .kl { font-size:10px; color:#888; text-transform:uppercase; letter-spacing:.2em; margin-top:4px; }
+  .v3 .lb-row { display:grid; grid-template-columns:44px 1fr 120px; align-items:center; padding:14px 0; border-bottom:1px solid #ddd; }
+  .v3 .lb-rank { font-size:20px; font-weight:900; color:#e11d48; }
+  .v3 .lb-name { font-size:16px; font-weight:600; }
+  .v3 .lb-val { text-align:right; font-size:17px; font-weight:900; }
+  .v3 h2 { font-size:13px; text-transform:uppercase; letter-spacing:.2em; margin:34px 0 6px; color:#111; }
+
+  /* ══════════ V4 · TERMINAL ══════════ */
+  .v4 { background:#000; color:#ffb000; font-family:'JetBrains Mono',monospace; }
+  .v4 .wrap { max-width:1350px; margin:0 auto; border:1px solid #3a2a00; padding:22px; }
+  .v4 .titlebar { display:flex; justify-content:space-between; border-bottom:1px solid #3a2a00; padding-bottom:10px; margin-bottom:18px; font-size:13px; }
+  .v4 .titlebar b { color:#ffd75e; }
+  .v4 .row { display:grid; grid-template-columns:1.1fr .9fr; gap:26px; }
+  .v4 h2 { font-size:12px; color:#805800; margin-bottom:10px; letter-spacing:.1em; }
+  .v4 .bigpct { font-size:64px; font-weight:700; color:#ffd75e; line-height:1; }
+  .v4 .ascii { font-size:15px; letter-spacing:1px; margin:14px 0; color:#ffb000; }
+  .v4 table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  .v4 th { text-align:left; color:#805800; font-weight:400; border-bottom:1px solid #3a2a00; padding:5px 8px; }
+  .v4 td { padding:7px 8px; border-bottom:1px dotted #241a00; }
+  .v4 td.num { text-align:right; color:#ffd75e; }
+  .v4 .pos { color:#5eff8f; }
+  .v4 .blink { animation:v4blink 1.2s steps(1) infinite; }
+  @keyframes v4blink { 50% { opacity:0; } }
+  .v4 .statline { margin-top:18px; padding-top:10px; border-top:1px solid #3a2a00; font-size:12px; color:#805800; }
+
+  /* ══════════ V5 · AURORA ══════════ */
+  .v5 { position:relative; background:#060812; color:#e8ecff; overflow:hidden; }
+  .v5 .aurora { position:absolute; inset:-20%; z-index:0; filter:blur(80px); opacity:.55;
+    background:
+      radial-gradient(500px 300px at 20% 30%, #0d9488 0%, transparent 70%),
+      radial-gradient(600px 340px at 75% 20%, #7c3aed 0%, transparent 70%),
+      radial-gradient(520px 320px at 55% 80%, #2563eb 0%, transparent 70%);
+    animation:v5move 16s ease-in-out infinite alternate; }
+  @keyframes v5move { to { transform:translate(4%, -5%) scale(1.08); } }
+  .v5 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1fr 1fr; gap:22px; max-width:1440px; margin:0 auto; }
+  .v5 .card { background:rgba(10,13,26,.62); border:1px solid rgba(148,163,255,.14); border-radius:24px; padding:28px; backdrop-filter:blur(10px); }
+  .v5 h1 { font-family:'Space Grotesk'; font-size:28px; font-weight:700; }
+  .v5 .sub { color:#8b93c6; font-size:13px; margin-top:4px; }
+  .v5 .gauge { position:relative; width:320px; margin:20px auto 0; }
+  .v5 .gauge .pct { position:absolute; left:0; right:0; bottom:8px; text-align:center; font-family:'Space Grotesk'; font-size:56px; font-weight:700; }
+  .v5 svg path.bg { fill:none; stroke:rgba(255,255,255,.08); stroke-width:20; stroke-linecap:round; }
+  .v5 svg path.fg { fill:none; stroke:url(#v5grad); stroke-width:20; stroke-linecap:round; }
+  .v5 .kpis { display:flex; gap:12px; margin-top:24px; }
+  .v5 .kpi { flex:1; text-align:center; padding:14px; border-radius:16px; background:rgba(255,255,255,.05); }
+  .v5 .kv { font-family:'Space Grotesk'; font-size:24px; font-weight:700; }
+  .v5 .kl { font-size:10px; letter-spacing:.16em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+  .v5 .lb-row { display:flex; align-items:center; gap:12px; padding:12px 8px; border-bottom:1px solid rgba(255,255,255,.06); }
+  .v5 .lb-name { flex:1; font-size:14.5px; }
+  .v5 .lb-val { font-family:'Space Grotesk'; font-weight:700; color:#93c5fd; }
+  .v5 .lb-spark { width:110px; height:6px; border-radius:3px; background:rgba(255,255,255,.08); overflow:hidden; }
+  .v5 .lb-spark i { display:block; height:100%; background:linear-gradient(90deg,#0d9488,#7c3aed); }
+
+  /* ══════════ V6 · CARGO ══════════ */
+  .v6 { background:#151412; color:#f2efe6; font-family:'Oswald',sans-serif; }
+  .v6 .hazard { height:16px; background:repeating-linear-gradient(45deg,#f7c600 0 24px,#151412 24px 48px); border-radius:4px; }
+  .v6 .wrap { max-width:1460px; margin:0 auto; }
+  .v6 .head { display:flex; align-items:center; gap:18px; margin:18px 0; }
+  .v6 h1 { font-family:'Archivo Black'; font-size:34px; text-transform:uppercase; letter-spacing:.02em; color:#f7c600; }
+  .v6 .stamp { border:3px solid #f7c600; color:#f7c600; padding:4px 12px; font-weight:700; letter-spacing:.2em; font-size:12px; transform:rotate(-3deg); }
+  .v6 .grid { display:grid; grid-template-columns:1.2fr .8fr; gap:20px; margin-top:8px; }
+  .v6 .card { background:#1d1b17; border:2px solid #2c2a24; border-radius:6px; padding:24px; }
+  .v6 .bigpct { font-family:'Archivo Black'; font-size:120px; line-height:1; color:#f7c600; }
+  .v6 .track { height:26px; background:#0d0c0a; border:2px solid #2c2a24; margin-top:16px; position:relative; }
+  .v6 .fill { height:100%; background:repeating-linear-gradient(45deg,#f7c600 0 16px,#d9ad00 16px 32px); }
+  .v6 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:20px; }
+  .v6 .kpi { background:#0d0c0a; border:2px solid #2c2a24; padding:12px; text-align:center; }
+  .v6 .kv { font-family:'Archivo Black'; font-size:26px; color:#f7c600; }
+  .v6 .kl { font-size:10px; letter-spacing:.2em; color:#8d887b; margin-top:2px; }
+  .v6 .lb-row { display:flex; align-items:center; gap:12px; padding:11px 8px; border-bottom:2px solid #2c2a24; }
+  .v6 .lb-rank { font-family:'Archivo Black'; width:34px; font-size:20px; color:#f7c600; }
+  .v6 .lb-name { flex:1; font-size:16px; text-transform:uppercase; letter-spacing:.04em; }
+  .v6 .lb-val { font-family:'JetBrains Mono'; font-weight:700; color:#f7c600; }
+
+  /* ══════════ V7 · CARBON ══════════ */
+  .v7 { background:#161616; color:#f4f4f4; font-family:'Inter',sans-serif; }
+  .v7 .wrap { max-width:1500px; margin:0 auto; }
+  .v7 .toolbar { display:flex; justify-content:space-between; align-items:center; padding-bottom:14px; border-bottom:1px solid #393939; }
+  .v7 h1 { font-size:20px; font-weight:600; }
+  .v7 .tag { font-size:11px; background:#0f62fe; padding:3px 10px; border-radius:12px; }
+  .v7 .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:1px; background:#393939; border:1px solid #393939; margin-top:18px; }
+  .v7 .tile { background:#212121; padding:22px; }
+  .v7 .t-span4 { grid-column:span 4; } .v7 .t-span8 { grid-column:span 8; } .v7 .t-span6 { grid-column:span 6; } .v7 .t-span12 { grid-column:span 12; }
+  .v7 .tl { font-size:11.5px; color:#a8a8a8; margin-bottom:10px; }
+  .v7 .tv { font-size:34px; font-weight:300; letter-spacing:-.01em; }
+  .v7 .tv b { font-weight:600; }
+  .v7 .blue { color:#78a9ff; }
+  .v7 .track { height:8px; background:#393939; margin-top:14px; }
+  .v7 .fill { height:100%; background:#0f62fe; }
+  .v7 .lb-row { display:grid; grid-template-columns:30px 1fr 110px; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid #333; font-size:13.5px; }
+  .v7 .lb-rank { color:#78a9ff; font-weight:600; }
+  .v7 .lb-val { text-align:right; font-weight:600; color:#78a9ff; }
+  .v7 .mini-bars { display:flex; gap:8px; align-items:flex-end; height:120px; margin-top:12px; }
+  .v7 .mb { flex:1; background:#0f62fe; opacity:.85; }
+  .v7 .mb span { display:block; text-align:center; font-size:10px; color:#a8a8a8; margin-top:6px; }
+
+  /* ══════════ V8 · LUX GOLD ══════════ */
+  .v8 { background:radial-gradient(1000px 600px at 50% -10%, #17130a 0%, #0a0805 60%); color:#efe6d2; font-family:'Playfair Display',serif; }
+  .v8 .wrap { max-width:1380px; margin:0 auto; text-align:center; }
+  .v8 h1 { font-size:30px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:#d8b45c; }
+  .v8 .rule { width:120px; height:1px; margin:14px auto 30px; background:linear-gradient(90deg,transparent,#d8b45c,transparent); }
+  .v8 .ringwrap { position:relative; width:340px; height:340px; margin:0 auto; }
+  .v8 svg circle.bg { fill:none; stroke:rgba(216,180,92,.14); stroke-width:2; }
+  .v8 svg circle.fg { fill:none; stroke:#d8b45c; stroke-width:6; stroke-linecap:round; }
+  .v8 .center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .v8 .pct { font-size:84px; font-weight:900; color:#f4e3b8; line-height:1; }
+  .v8 .cap { font-family:'Inter'; font-size:10px; letter-spacing:.4em; color:#9a8459; text-transform:uppercase; margin-top:8px; }
+  .v8 .kpis { display:flex; justify-content:center; gap:60px; margin:36px 0 40px; }
+  .v8 .kv { font-size:34px; font-weight:700; color:#d8b45c; }
+  .v8 .kl { font-family:'Inter'; font-size:10px; letter-spacing:.3em; color:#9a8459; text-transform:uppercase; margin-top:6px; }
+  .v8 .lb { max-width:640px; margin:0 auto; text-align:left; }
+  .v8 .lb-row { display:flex; align-items:baseline; gap:16px; padding:13px 4px; border-bottom:1px solid rgba(216,180,92,.15); }
+  .v8 .lb-rank { font-size:15px; color:#d8b45c; width:26px; }
+  .v8 .lb-name { flex:1; font-size:18px; }
+  .v8 .lb-dots { flex:2; border-bottom:1px dotted rgba(216,180,92,.35); transform:translateY(-4px); }
+  .v8 .lb-val { font-family:'Inter'; font-weight:600; color:#f4e3b8; }
+
+  /* ══════════ V9 · CRT RETRO ══════════ */
+  .v9 { background:#020a02; color:#22ff55; font-family:'VT323',monospace; position:relative; }
+  .v9::after { content:""; position:fixed; inset:0; pointer-events:none; z-index:5;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,.28) 0 2px, transparent 2px 4px); }
+  .v9 .wrap { max-width:1250px; margin:0 auto; font-size:22px; text-shadow:0 0 8px rgba(34,255,85,.6); }
+  .v9 .frame { border:2px solid #0d5a1f; padding:24px; border-radius:8px; box-shadow:0 0 40px rgba(34,255,85,.12) inset; }
+  .v9 h1 { font-size:34px; margin-bottom:6px; }
+  .v9 .line { color:#0f8f2f; }
+  .v9 .bigpct { font-size:110px; line-height:1; margin:12px 0; }
+  .v9 .bar { font-size:26px; letter-spacing:2px; }
+  .v9 table { width:100%; border-collapse:collapse; margin-top:14px; font-size:22px; }
+  .v9 td { padding:4px 8px; }
+  .v9 td.num { text-align:right; }
+  .v9 .dim { color:#0f8f2f; }
+  .v9 .cursor { animation:v9blink 1s steps(1) infinite; }
+  @keyframes v9blink { 50% { opacity:0; } }
+
+  /* ══════════ V10 · SPLIT BOLD ══════════ */
+  .v10 { padding:56px 0 0 !important; background:#0e0e11; color:#fff; }
+  .v10 .split { display:grid; grid-template-columns:44% 56%; min-height:calc(100vh - 56px); }
+  .v10 .left { background:#ff5b35; color:#0e0e11; display:flex; flex-direction:column; justify-content:center; padding:50px; position:relative; overflow:hidden; }
+  .v10 .left .giant { font-family:'Archivo Black'; font-size:190px; line-height:.85; letter-spacing:-.04em; }
+  .v10 .left .cap { font-weight:800; letter-spacing:.24em; text-transform:uppercase; font-size:13px; margin-bottom:18px; }
+  .v10 .left .meta { margin-top:26px; font-weight:700; font-size:16px; }
+  .v10 .left .meta b { display:block; font-size:26px; }
+  .v10 .right { padding:44px 48px; display:flex; flex-direction:column; gap:26px; }
+  .v10 h2 { font-family:'Archivo Black'; font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:#ff5b35; }
+  .v10 .lb-row { display:grid; grid-template-columns:52px 1fr 130px; align-items:center; padding:15px 0; border-bottom:2px solid #1e1e24; }
+  .v10 .lb-rank { font-family:'Archivo Black'; font-size:24px; color:#2c2c35; }
+  .v10 .lb-row:first-child .lb-rank { color:#ff5b35; }
+  .v10 .lb-name { font-weight:800; font-size:18px; }
+  .v10 .lb-val { text-align:right; font-family:'JetBrains Mono'; font-weight:700; font-size:17px; color:#ff5b35; }
+  .v10 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+  .v10 .kpi { background:#16161b; border-radius:14px; padding:16px; }
+  .v10 .kv { font-family:'Archivo Black'; font-size:26px; }
+  .v10 .kl { font-size:10px; letter-spacing:.2em; color:#71717c; text-transform:uppercase; margin-top:4px; }
+</style>
+</head>
+<body>
+
+<div class="switcher">
+  <span class="sw-title">Redesign</span>
+  <button class="sw-btn active" data-v="v1">1 · Neon Pulse</button>
+  <button class="sw-btn" data-v="v2">2 · Glass</button>
+  <button class="sw-btn" data-v="v3">3 · Swiss Light</button>
+  <button class="sw-btn" data-v="v4">4 · Terminal</button>
+  <button class="sw-btn" data-v="v5">5 · Aurora</button>
+  <button class="sw-btn" data-v="v6">6 · Cargo</button>
+  <button class="sw-btn" data-v="v7">7 · Carbon</button>
+  <button class="sw-btn" data-v="v8">8 · Lux Gold</button>
+  <button class="sw-btn" data-v="v9">9 · CRT Retro</button>
+  <button class="sw-btn" data-v="v10">10 · Split Bold</button>
+</div>
+
+<!-- V1 NEON PULSE -->
+<section class="variant v1 active" id="v1">
+  <div class="grid">
+    <div class="card">
+      <h1>UMUMIY PLAN — IYUN 2026</h1>
+      <div class="sub">Manba: Ombor sheet · So'nggi sync: 18:42:07</div>
+      <div class="ringwrap">
+        <svg width="230" height="230" viewBox="0 0 230 230">
+          <circle class="bg" cx="115" cy="115" r="96"/>
+          <circle class="fg" cx="115" cy="115" r="96" stroke-dasharray="603" stroke-dashoffset="172" transform="rotate(-90 115 115)"/>
+        </svg>
+        <div>
+          <div class="pct">71.4%</div>
+          <div class="sub" style="font-size:15px">2 854 / 4 000 m³ bajarildi</div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv">4 000</div><div class="kl">PLAN m³</div></div>
+        <div class="kpi"><div class="kv">2 854</div><div class="kl">HOZIRGACHA</div></div>
+        <div class="kpi"><div class="kv">1 146</div><div class="kl">QOLDIQ</div></div>
+        <div class="kpi"><div class="kv">118</div><div class="kl">TOTAL BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:30px">SOTUVCHILAR</h1>
+      <div class="sub">Live · LTL + FTL</div>
+      <div style="margin-top:14px">
+        <div class="lb-row"><div class="lb-rank">1</div><div class="lb-name">Retention<div class="lb-bar"><div class="lb-fill" style="width:100%"></div></div></div><div class="lb-val">951 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">2</div><div class="lb-name">Olimov Sirojiddin<div class="lb-bar"><div class="lb-fill" style="width:22%"></div></div></div><div class="lb-val">205 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">3</div><div class="lb-name">Xakimov Boburmirzo<div class="lb-bar"><div class="lb-fill" style="width:15%"></div></div></div><div class="lb-val">139 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">4</div><div class="lb-name">Rizayev Muhammad Ali<div class="lb-bar"><div class="lb-fill" style="width:12%"></div></div></div><div class="lb-val">111 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">5</div><div class="lb-name">Sobirov Azamatxo'ja<div class="lb-bar"><div class="lb-fill" style="width:3%"></div></div></div><div class="lb-val">20 m³</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- V2 GLASS -->
+<section class="variant v2" id="v2">
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 · Sales Plan</h1>
+      <div class="sub">Ombor sheet · yangilandi 18:42</div>
+      <div class="bignum">71.4%</div>
+      <div class="sub">2 854 m³ / 4 000 m³</div>
+      <div class="track"><div class="fill" style="width:71.4%"></div></div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv">4 000</div><div class="kl">Plan m³</div></div>
+        <div class="kpi"><div class="kv">2 854</div><div class="kl">Bajarildi</div></div>
+        <div class="kpi"><div class="kv">1 146</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv">118</div><div class="kl">Total BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:22px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:14px">Iyun bo'yicha</div>
+      <div class="lb-row"><div class="lb-ava">R</div><div class="lb-name">Retention</div><div class="lb-val">951 m³</div></div>
+      <div class="lb-row"><div class="lb-ava">OS</div><div class="lb-name">Olimov Sirojiddin</div><div class="lb-val">205 m³</div></div>
+      <div class="lb-row"><div class="lb-ava">XB</div><div class="lb-name">Xakimov Boburmirzo</div><div class="lb-val">139 m³</div></div>
+      <div class="lb-row"><div class="lb-ava">RM</div><div class="lb-name">Rizayev Muhammad Ali</div><div class="lb-val">111 m³</div></div>
+      <div class="lb-row"><div class="lb-ava">SA</div><div class="lb-name">Sobirov Azamatxo'ja</div><div class="lb-val">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- V3 SWISS LIGHT -->
+<section class="variant v3" id="v3">
+  <div class="wrap">
+    <div class="head">
+      <h1>Buraq Logistics — Sales Plan</h1>
+      <div class="date">Iyun 2026 · 04.06 · 18:42</div>
+    </div>
+    <div class="hero">
+      <div>
+        <div class="cap">Plan bajarilishi</div>
+        <div class="giant">71<small>.4%</small></div>
+        <div class="track"><div class="fill" style="width:71.4%"></div></div>
+      </div>
+      <div>
+        <h2>Top Sotuvchilar</h2>
+        <div class="lb-row"><div class="lb-rank">01</div><div class="lb-name">Retention</div><div class="lb-val">951 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">02</div><div class="lb-name">Olimov Sirojiddin</div><div class="lb-val">205 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">03</div><div class="lb-name">Xakimov Boburmirzo</div><div class="lb-val">139 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">04</div><div class="lb-name">Rizayev Muhammad Ali</div><div class="lb-val">111 m³</div></div>
+      </div>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="kv">4 000</div><div class="kl">Plan m³</div></div>
+      <div class="kpi"><div class="kv">2 854</div><div class="kl">Bajarildi</div></div>
+      <div class="kpi"><div class="kv red">1 146</div><div class="kl">Qoldiq</div></div>
+      <div class="kpi"><div class="kv">118</div><div class="kl">Total BL</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- V4 TERMINAL -->
+<section class="variant v4" id="v4">
+  <div class="wrap">
+    <div class="titlebar"><span><b>BURAQ.MONITOR</b> v2.6 — SALES/IYUN-2026</span><span>04-06-2026 18:42:07 UTC+5 <span class="blink">▊</span></span></div>
+    <div class="row">
+      <div>
+        <h2>PLAN COMPLETION</h2>
+        <div class="bigpct">71.4%</div>
+        <div class="ascii">[████████████████████░░░░░░░░] 2854/4000 m³</div>
+        <table>
+          <tr><th>METRIC</th><th style="text-align:right">VALUE</th></tr>
+          <tr><td>PLAN_M3</td><td class="num">4 000.00</td></tr>
+          <tr><td>DONE_M3</td><td class="num pos">2 854.30</td></tr>
+          <tr><td>REMAIN_M3</td><td class="num">1 145.70</td></tr>
+          <tr><td>TOTAL_BL</td><td class="num">118</td></tr>
+        </table>
+      </div>
+      <div>
+        <h2>TOP_SELLERS / LTL+FTL</h2>
+        <table>
+          <tr><th>#</th><th>NAME</th><th style="text-align:right">M3</th><th style="text-align:right">SHARE</th></tr>
+          <tr><td>1</td><td>RETENTION</td><td class="num">951.1</td><td class="num pos">54.9%</td></tr>
+          <tr><td>2</td><td>OLIMOV S.</td><td class="num">205.3</td><td class="num">19.8%</td></tr>
+          <tr><td>3</td><td>XAKIMOV B.</td><td class="num">139.2</td><td class="num">13.4%</td></tr>
+          <tr><td>4</td><td>RIZAYEV M.</td><td class="num">110.9</td><td class="num">9.4%</td></tr>
+          <tr><td>5</td><td>SOBIROV A.</td><td class="num">20.5</td><td class="num">1.8%</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="statline">SRC: GOOGLE_SHEETS/OMBOR · SYNC: OK · CACHE: 30s · NEXT_ROTATE: 00:17</div>
+  </div>
+</section>
+
+<!-- V5 AURORA -->
+<section class="variant v5" id="v5">
+  <div class="aurora"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Buraq Logistics · Sales Monitor</div>
+      <div class="gauge">
+        <svg width="320" height="190" viewBox="0 0 320 190">
+          <defs><linearGradient id="v5grad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#0d9488"/><stop offset="100%" stop-color="#7c3aed"/>
+          </linearGradient></defs>
+          <path class="bg" d="M 30 170 A 130 130 0 0 1 290 170"/>
+          <path class="fg" d="M 30 170 A 130 130 0 0 1 290 170" stroke-dasharray="408" stroke-dashoffset="117"/>
+        </svg>
+        <div class="pct">71.4%</div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv">4 000</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv">2 854</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv">1 146</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv">118</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:22px">Sotuvchilar reytingi</h1>
+      <div class="sub" style="margin-bottom:10px">Live</div>
+      <div class="lb-row"><div class="lb-name">Retention</div><div class="lb-spark"><i style="width:100%"></i></div><div class="lb-val">951 m³</div></div>
+      <div class="lb-row"><div class="lb-name">Olimov Sirojiddin</div><div class="lb-spark"><i style="width:22%"></i></div><div class="lb-val">205 m³</div></div>
+      <div class="lb-row"><div class="lb-name">Xakimov Boburmirzo</div><div class="lb-spark"><i style="width:15%"></i></div><div class="lb-val">139 m³</div></div>
+      <div class="lb-row"><div class="lb-name">Rizayev Muhammad Ali</div><div class="lb-spark"><i style="width:12%"></i></div><div class="lb-val">111 m³</div></div>
+      <div class="lb-row"><div class="lb-name">Sobirov Azamatxo'ja</div><div class="lb-spark"><i style="width:3%"></i></div><div class="lb-val">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- V6 CARGO -->
+<section class="variant v6" id="v6">
+  <div class="wrap">
+    <div class="hazard"></div>
+    <div class="head">
+      <h1>Buraq · Sales Plan</h1>
+      <div class="stamp">IYUN 2026</div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="bigpct">71.4%</div>
+        <div style="font-size:15px;color:#8d887b;letter-spacing:.1em">2 854 / 4 000 m³ ORTILDI</div>
+        <div class="track"><div class="fill" style="width:71.4%"></div></div>
+        <div class="kpis">
+          <div class="kpi"><div class="kv">4000</div><div class="kl">PLAN</div></div>
+          <div class="kpi"><div class="kv">2854</div><div class="kl">FAKT</div></div>
+          <div class="kpi"><div class="kv">1146</div><div class="kl">QOLDIQ</div></div>
+          <div class="kpi"><div class="kv">118</div><div class="kl">BL</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h1 style="font-size:20px;margin-bottom:8px">SOTUVCHILAR</h1>
+        <div class="lb-row"><div class="lb-rank">1</div><div class="lb-name">Retention</div><div class="lb-val">951 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">2</div><div class="lb-name">Olimov S.</div><div class="lb-val">205 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">3</div><div class="lb-name">Xakimov B.</div><div class="lb-val">139 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">4</div><div class="lb-name">Rizayev M.</div><div class="lb-val">111 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">5</div><div class="lb-name">Sobirov A.</div><div class="lb-val">20 m³</div></div>
+      </div>
+    </div>
+    <div class="hazard" style="margin-top:20px"></div>
+  </div>
+</section>
+
+<!-- V7 CARBON -->
+<section class="variant v7" id="v7">
+  <div class="wrap">
+    <div class="toolbar">
+      <h1>Sales Monitor — Iyun 2026</h1>
+      <span class="tag">LIVE</span>
+    </div>
+    <div class="grid">
+      <div class="tile t-span4"><div class="tl">Plan bajarilishi</div><div class="tv"><b class="blue">71.4%</b></div><div class="track"><div class="fill" style="width:71.4%"></div></div></div>
+      <div class="tile t-span4"><div class="tl">Bajarildi / Plan</div><div class="tv"><b>2 854</b> / 4 000 m³</div></div>
+      <div class="tile t-span4"><div class="tl">Total BL</div><div class="tv"><b>118</b></div></div>
+      <div class="tile t-span6">
+        <div class="tl">Top sotuvchilar</div>
+        <div class="lb-row"><div class="lb-rank">1</div><div>Retention</div><div class="lb-val">951 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">2</div><div>Olimov Sirojiddin</div><div class="lb-val">205 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">3</div><div>Xakimov Boburmirzo</div><div class="lb-val">139 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">4</div><div>Rizayev Muhammad Ali</div><div class="lb-val">111 m³</div></div>
+      </div>
+      <div class="tile t-span6">
+        <div class="tl">Oylik dinamika (m³)</div>
+        <div class="mini-bars">
+          <div style="flex:1"><div class="mb" style="height:38%"></div><span>Yan</span></div>
+          <div style="flex:1"><div class="mb" style="height:52%"></div><span>Fev</span></div>
+          <div style="flex:1"><div class="mb" style="height:47%"></div><span>Mar</span></div>
+          <div style="flex:1"><div class="mb" style="height:66%"></div><span>Apr</span></div>
+          <div style="flex:1"><div class="mb" style="height:84%"></div><span>May</span></div>
+          <div style="flex:1"><div class="mb" style="height:71%"></div><span>Iyun</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- V8 LUX GOLD -->
+<section class="variant v8" id="v8">
+  <div class="wrap">
+    <h1>Buraq Logistics</h1>
+    <div class="rule"></div>
+    <div class="ringwrap">
+      <svg width="340" height="340" viewBox="0 0 340 340">
+        <circle class="bg" cx="170" cy="170" r="150"/>
+        <circle class="fg" cx="170" cy="170" r="150" stroke-dasharray="942" stroke-dashoffset="269" transform="rotate(-90 170 170)"/>
+      </svg>
+      <div class="center">
+        <div class="pct">71.4</div>
+        <div class="cap">Plan bajarilishi · Iyun</div>
+      </div>
+    </div>
+    <div class="kpis">
+      <div><div class="kv">4 000</div><div class="kl">Plan m³</div></div>
+      <div><div class="kv">2 854</div><div class="kl">Bajarildi</div></div>
+      <div><div class="kv">1 146</div><div class="kl">Qoldiq</div></div>
+      <div><div class="kv">118</div><div class="kl">Total BL</div></div>
+    </div>
+    <div class="lb">
+      <div class="lb-row"><div class="lb-rank">I</div><div class="lb-name">Retention</div><div class="lb-dots"></div><div class="lb-val">951 m³</div></div>
+      <div class="lb-row"><div class="lb-rank">II</div><div class="lb-name">Olimov Sirojiddin</div><div class="lb-dots"></div><div class="lb-val">205 m³</div></div>
+      <div class="lb-row"><div class="lb-rank">III</div><div class="lb-name">Xakimov Boburmirzo</div><div class="lb-dots"></div><div class="lb-val">139 m³</div></div>
+      <div class="lb-row"><div class="lb-rank">IV</div><div class="lb-name">Rizayev Muhammad Ali</div><div class="lb-dots"></div><div class="lb-val">111 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- V9 CRT RETRO -->
+<section class="variant v9" id="v9">
+  <div class="wrap">
+    <div class="frame">
+      <h1>BURAQ SALES MONITOR <span class="dim">// IYUN 2026</span></h1>
+      <div class="line">──────────────────────────────────────────────</div>
+      <div class="bigpct">71.4%</div>
+      <div class="bar">[■■■■■■■■■■■■■■■■■■■■■■□□□□□□□□] 2854/4000 M3</div>
+      <table>
+        <tr><td class="dim">01</td><td>RETENTION</td><td class="num">951 M3</td><td class="num dim">54.9%</td></tr>
+        <tr><td class="dim">02</td><td>OLIMOV S.</td><td class="num">205 M3</td><td class="num dim">19.8%</td></tr>
+        <tr><td class="dim">03</td><td>XAKIMOV B.</td><td class="num">139 M3</td><td class="num dim">13.4%</td></tr>
+        <tr><td class="dim">04</td><td>RIZAYEV M.</td><td class="num">111 M3</td><td class="num dim">9.4%</td></tr>
+        <tr><td class="dim">05</td><td>SOBIROV A.</td><td class="num">20 M3</td><td class="num dim">1.8%</td></tr>
+      </table>
+      <div class="line" style="margin-top:10px">SYNC OK · 18:42:07 <span class="cursor">▊</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- V10 SPLIT BOLD -->
+<section class="variant v10" id="v10">
+  <div class="split">
+    <div class="left">
+      <div class="cap">Iyun 2026 · Plan bajarilishi</div>
+      <div class="giant">71%</div>
+      <div class="meta">2 854 / 4 000 m³ <b>1 146 m³ qoldi</b></div>
+    </div>
+    <div class="right">
+      <div>
+        <h2>Top sotuvchilar</h2>
+        <div class="lb-row"><div class="lb-rank">01</div><div class="lb-name">Retention</div><div class="lb-val">951 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">02</div><div class="lb-name">Olimov Sirojiddin</div><div class="lb-val">205 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">03</div><div class="lb-name">Xakimov Boburmirzo</div><div class="lb-val">139 m³</div></div>
+        <div class="lb-row"><div class="lb-rank">04</div><div class="lb-name">Rizayev Muhammad Ali</div><div class="lb-val">111 m³</div></div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv">4 000</div><div class="kl">Plan m³</div></div>
+        <div class="kpi"><div class="kv">2 854</div><div class="kl">Bajarildi</div></div>
+        <div class="kpi"><div class="kv">1 146</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv">118</div><div class="kl">Total BL</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  document.querySelectorAll(".sw-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.querySelectorAll(".sw-btn").forEach(function (b) { b.classList.remove("active"); });
+      document.querySelectorAll(".variant").forEach(function (v) { v.classList.remove("active"); });
+      btn.classList.add("active");
+      document.getElementById(btn.dataset.v).classList.add("active");
+    });
+  });
+</script>
+</body>
+</html>

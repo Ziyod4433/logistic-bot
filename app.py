@@ -2725,6 +2725,14 @@ def analytics_monitor_preview():
     return render_template("analytics/monitor_preview.html")
 
 
+@app.route("/analytics/monitor/redesign")
+def analytics_monitor_redesign():
+    """10 full-page redesign variants for the Sales Monitor with a style
+    switcher. Static mock data only — safe to share for design review.
+    Public — no login required."""
+    return render_template("analytics/monitor_redesign.html")
+
+
 @app.route("/analytics/monitor/preview2")
 def analytics_monitor_preview2():
     """Round 2 of preview ideas — 8 fresh scenes with enhanced breathing.
