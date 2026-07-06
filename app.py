@@ -2742,6 +2742,15 @@ def analytics_monitor_redesign2():
     return render_template("analytics/monitor_redesign2.html")
 
 
+@app.route("/analytics/monitor/redesign3")
+def analytics_monitor_redesign3():
+    """Round 3: the 4 finalists the user picked from round 2 (Glass Orbit,
+    Aurora Flow, Liquid, Pulse Grid — marked with a star) plus 6 new
+    variants in the same 3D/motion family (Hologram, Wave Horizon,
+    Crystal, Starfield, Infinity, Nebula). Public — no login required."""
+    return render_template("analytics/monitor_redesign3.html")
+
+
 @app.route("/analytics/monitor/preview2")
 def analytics_monitor_preview2():
     """Round 2 of preview ideas — 8 fresh scenes with enhanced breathing.

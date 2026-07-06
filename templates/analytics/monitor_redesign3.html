@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sales Monitor — Redesign v3 (finalists + 6 new)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { min-height:100%; }
+body { background:#07080c; font-family:'Inter',sans-serif; overflow-x:hidden; }
+
+/* ── Switcher ── */
+.switcher { position:fixed; top:0; left:0; right:0; z-index:1000; display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+  padding:10px 14px; background:rgba(6,7,10,.92); backdrop-filter:blur(10px); border-bottom:1px solid rgba(255,255,255,.08); }
+.sw-title { font-size:11px; color:#777; margin-right:8px; letter-spacing:.14em; text-transform:uppercase; }
+.sw-btn { padding:7px 12px; border-radius:8px; font-size:12px; font-weight:600; background:rgba(255,255,255,.05);
+  color:#aaa; border:1px solid rgba(255,255,255,.09); cursor:pointer; transition:all .15s; }
+.sw-btn:hover { color:#fff; border-color:rgba(255,255,255,.3); }
+.sw-btn.active { background:#7c6cff; color:#fff; border-color:#7c6cff; }
+.sw-btn .fav { color:#ffd75e; }
+.variant { display:none; min-height:100vh; padding:70px 26px 26px; position:relative; overflow:hidden; }
+.variant.active { display:block; }
+.count { font-variant-numeric:tabular-nums; }
+
+/* shared keyframes */
+@keyframes drift1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(60px,-40px) scale(1.15)} 100%{transform:translate(-30px,30px) scale(.95)} }
+@keyframes drift2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-70px,50px) scale(1.1)} 100%{transform:translate(40px,-30px) scale(1.05)} }
+@keyframes floaty { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+@keyframes spin360 { to { transform:rotate(360deg); } }
+@keyframes shimmer { 0%{background-position:-500px 0} 100%{background-position:500px 0} }
+@keyframes pulseGlow { 0%,100%{opacity:.55} 50%{opacity:1} }
+@keyframes sweep { 0%{transform:translateX(-120%) skewX(-18deg)} 100%{transform:translateX(240%) skewX(-18deg)} }
+@keyframes barGrow { from { transform:scaleY(0); } to { transform:scaleY(1); } }
+@keyframes barGrowX { from{transform:scaleX(0)} to{transform:scaleX(1)} }
+@keyframes rise { from { opacity:0; transform:translateY(18px);} to { opacity:1; transform:translateY(0);} }
+@keyframes waveMove { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
+@keyframes gridScroll { from{background-position:0 0} to{background-position:0 44px} }
+@keyframes tilt3d { 0%,100%{transform:rotateX(8deg) rotateY(-4deg)} 50%{transform:rotateX(4deg) rotateY(4deg)} }
+@keyframes hueShift { 0%,100%{filter:hue-rotate(0deg)} 50%{filter:hue-rotate(28deg)} }
+
+/* ═════════ W1 · GLASS ORBIT (finalist) ═════════ */
+.w1 { background:#0b0d18; color:#eef; }
+.w1 .blob { position:absolute; border-radius:50%; filter:blur(110px); opacity:.5; z-index:0; }
+.w1 .b1 { width:620px; height:620px; background:#6d28d9; top:-180px; left:-140px; animation:drift1 18s ease-in-out infinite alternate; }
+.w1 .b2 { width:540px; height:540px; background:#0ea5e9; bottom:-160px; right:-120px; animation:drift2 22s ease-in-out infinite alternate; }
+.w1 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1.1fr .9fr; gap:24px; max-width:1480px; margin:0 auto; }
+.w1 .card { background:rgba(255,255,255,.07); backdrop-filter:blur(24px); border:1px solid rgba(255,255,255,.15); border-radius:28px; padding:30px;
+  box-shadow:0 30px 80px rgba(0,0,0,.5); animation:rise .7s ease both; }
+.w1 .card:nth-child(2) { animation-delay:.12s; }
+.w1 h1 { font-weight:800; font-size:26px; letter-spacing:-.02em; }
+.w1 .sub { color:#a8b0d8; font-size:13px; margin-top:4px; }
+.w1 .scene { perspective:900px; display:flex; justify-content:center; margin:26px 0 8px; }
+.w1 .ring3d { position:relative; width:280px; height:280px; transform-style:preserve-3d; animation:tilt3d 9s ease-in-out infinite; }
+.w1 .torus { position:absolute; inset:0; border-radius:50%;
+  background:conic-gradient(from 0deg, #8b5cf6 0%, #38bdf8 62%, rgba(255,255,255,.06) 62% 100%);
+  -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 30px), #000 calc(100% - 29px));
+  mask:radial-gradient(farthest-side, transparent calc(100% - 30px), #000 calc(100% - 29px));
+  animation:spin360 14s linear infinite; filter:drop-shadow(0 0 22px rgba(124,108,255,.5)); }
+.w1 .ringcore { position:absolute; inset:34px; border-radius:50%; background:rgba(10,12,24,.8); backdrop-filter:blur(6px);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.1); }
+.w1 .pct { font-size:58px; font-weight:900; letter-spacing:-.03em;
+  background:linear-gradient(90deg,#a78bfa,#38bdf8,#a78bfa); background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation:shimmer 5s linear infinite; }
+.w1 .cap { font-size:11px; color:#a8b0d8; letter-spacing:.2em; text-transform:uppercase; margin-top:4px; }
+.w1 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:22px; }
+.w1 .kpi { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:18px; padding:16px; position:relative; overflow:hidden; }
+.w1 .kpi::after { content:""; position:absolute; top:0; bottom:0; width:40%; background:linear-gradient(90deg,transparent,rgba(255,255,255,.09),transparent);
+  animation:sweep 4.5s ease-in-out infinite; }
+.w1 .kv { font-size:24px; font-weight:800; }
+.w1 .kl { font-size:10px; color:#a8b0d8; letter-spacing:.16em; text-transform:uppercase; margin-top:4px; }
+.w1 .lb-row { display:flex; align-items:center; gap:14px; padding:12px 12px; border-radius:16px; animation:rise .6s ease both; }
+.w1 .lb-row:nth-child(1){animation-delay:.15s} .w1 .lb-row:nth-child(2){animation-delay:.25s} .w1 .lb-row:nth-child(3){animation-delay:.35s}
+.w1 .lb-row:nth-child(4){animation-delay:.45s} .w1 .lb-row:nth-child(5){animation-delay:.55s}
+.w1 .lb-row:nth-child(odd) { background:rgba(255,255,255,.05); }
+.w1 .ava { width:40px; height:40px; border-radius:13px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px;
+  background:linear-gradient(135deg,#8b5cf6,#38bdf8); box-shadow:0 6px 18px rgba(124,108,255,.35); }
+.w1 .nm { flex:1; font-weight:600; font-size:14.5px; }
+.w1 .vl { font-weight:800; color:#7dd3fc; }
+.w1 .track { height:5px; border-radius:3px; background:rgba(255,255,255,.08); overflow:hidden; margin-top:6px; }
+.w1 .fill { height:100%; border-radius:3px; background:linear-gradient(90deg,#8b5cf6,#38bdf8); transform-origin:left; animation:barGrowX 1.4s cubic-bezier(.2,.8,.2,1) both .3s; }
+
+/* ═════════ W2 · AURORA FLOW (finalist) ═════════ */
+.w2 { background:#060812; color:#e8ecff; }
+.w2 .aur { position:absolute; inset:-25%; z-index:0; filter:blur(90px); opacity:.6;
+  background:radial-gradient(560px 320px at 22% 30%, #0d9488 0%, transparent 70%),
+             radial-gradient(640px 360px at 76% 22%, #7c3aed 0%, transparent 70%),
+             radial-gradient(560px 340px at 55% 82%, #2563eb 0%, transparent 70%);
+  animation:drift1 14s ease-in-out infinite alternate, hueShift 20s ease-in-out infinite; }
+.w2 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1fr 1fr; gap:24px; max-width:1440px; margin:0 auto; }
+.w2 .card { background:rgba(10,13,26,.6); border:1px solid rgba(148,163,255,.16); border-radius:26px; padding:30px; backdrop-filter:blur(12px);
+  animation:rise .7s ease both; }
+.w2 .card:nth-child(3) { animation-delay:.15s; }
+.w2 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.w2 .sub { color:#8b93c6; font-size:13px; margin-top:4px; }
+.w2 .gaugewrap { position:relative; width:340px; margin:26px auto 0; animation:floaty 6s ease-in-out infinite; }
+.w2 svg path.bg { fill:none; stroke:rgba(255,255,255,.08); stroke-width:22; stroke-linecap:round; }
+.w2 svg path.fg { fill:none; stroke:url(#w2grad); stroke-width:22; stroke-linecap:round;
+  stroke-dasharray:408; stroke-dashoffset:408; animation:w2draw 1.8s cubic-bezier(.3,.8,.3,1) both .3s; filter:drop-shadow(0 0 14px rgba(124,58,237,.55)); }
+@keyframes w2draw { to { stroke-dashoffset:117; } }
+.w2 .needle { position:absolute; left:50%; bottom:20px; width:4px; height:120px; background:linear-gradient(#fff,rgba(255,255,255,0));
+  border-radius:2px; transform-origin:bottom center; transform:rotate(-90deg); animation:w2needle 1.8s cubic-bezier(.3,.8,.3,1) both .3s; }
+@keyframes w2needle { to { transform:rotate(38.5deg); } }
+.w2 .pct { position:absolute; left:0; right:0; bottom:4px; text-align:center; font-family:'Space Grotesk'; font-size:58px; font-weight:700;
+  text-shadow:0 0 30px rgba(124,58,237,.5); }
+.w2 .kpis { display:flex; gap:12px; margin-top:28px; }
+.w2 .kpi { flex:1; text-align:center; padding:16px; border-radius:18px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.07);
+  animation:floaty 7s ease-in-out infinite; }
+.w2 .kpi:nth-child(2){animation-delay:.6s} .w2 .kpi:nth-child(3){animation-delay:1.2s} .w2 .kpi:nth-child(4){animation-delay:1.8s}
+.w2 .kv { font-family:'Space Grotesk'; font-size:24px; font-weight:700; }
+.w2 .kl { font-size:10px; letter-spacing:.16em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.w2 .lb-row { display:flex; align-items:center; gap:12px; padding:13px 8px; border-bottom:1px solid rgba(255,255,255,.06); animation:rise .6s ease both; }
+.w2 .lb-row:nth-child(2){animation-delay:.2s} .w2 .lb-row:nth-child(3){animation-delay:.3s} .w2 .lb-row:nth-child(4){animation-delay:.4s}
+.w2 .lb-row:nth-child(5){animation-delay:.5s} .w2 .lb-row:nth-child(6){animation-delay:.6s}
+.w2 .nm { flex:1; font-size:14.5px; }
+.w2 .vl { font-family:'Space Grotesk'; font-weight:700; color:#93c5fd; }
+.w2 .spark { width:120px; height:7px; border-radius:4px; background:rgba(255,255,255,.08); overflow:hidden; }
+.w2 .spark i { display:block; height:100%; background:linear-gradient(90deg,#0d9488,#7c3aed); background-size:200% 100%; animation:shimmer 3.5s linear infinite; }
+
+/* ═════════ W3 · LIQUID (finalist, ex-5) ═════════ */
+.w3 { background:#081018; color:#e6f6ff; }
+.w3 .grid { display:grid; grid-template-columns:1fr 1fr; gap:26px; max-width:1400px; margin:0 auto; position:relative; z-index:1; }
+.w3 .card { background:rgba(12,22,34,.75); border:1px solid rgba(56,189,248,.18); border-radius:26px; padding:30px; backdrop-filter:blur(8px);
+  animation:rise .7s ease both; }
+.w3 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.w3 .sub { color:#7fa8c4; font-size:13px; margin-top:4px; }
+.w3 .tank { position:relative; width:300px; height:300px; border-radius:50%; margin:26px auto 8px; overflow:hidden;
+  border:3px solid rgba(56,189,248,.35); box-shadow:0 0 50px rgba(56,189,248,.2), 0 0 40px rgba(56,189,248,.12) inset; animation:floaty 7s ease-in-out infinite; }
+.w3 .water { position:absolute; left:-50%; right:-50%; bottom:0; height:71.4%; }
+.w3 .water svg { position:absolute; top:-22px; left:0; width:200%; height:26px; animation:waveMove 5s linear infinite; }
+.w3 .waterbody { position:absolute; inset:0; top:2px; background:linear-gradient(180deg, rgba(56,189,248,.85), rgba(14,116,144,.9)); }
+.w3 .tanklabel { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:2; }
+.w3 .pct { font-family:'Space Grotesk'; font-size:62px; font-weight:700; text-shadow:0 2px 18px rgba(3,20,30,.7); }
+.w3 .cap { font-size:11px; letter-spacing:.24em; text-transform:uppercase; color:#d9f3ff; opacity:.85; }
+.w3 .kpis { display:flex; gap:12px; margin-top:24px; }
+.w3 .kpi { flex:1; text-align:center; padding:15px; border-radius:16px; background:rgba(56,189,248,.07); border:1px solid rgba(56,189,248,.14); }
+.w3 .kv { font-family:'Space Grotesk'; font-size:23px; font-weight:700; color:#7dd3fc; }
+.w3 .kl { font-size:10px; letter-spacing:.16em; color:#7fa8c4; text-transform:uppercase; margin-top:4px; }
+.w3 .lb-row { display:flex; align-items:center; gap:12px; padding:13px 8px; border-bottom:1px solid rgba(255,255,255,.06); animation:rise .6s ease both; }
+.w3 .lb-row:nth-child(2){animation-delay:.2s} .w3 .lb-row:nth-child(3){animation-delay:.3s}
+.w3 .lb-row:nth-child(4){animation-delay:.4s} .w3 .lb-row:nth-child(5){animation-delay:.5s} .w3 .lb-row:nth-child(6){animation-delay:.6s}
+.w3 .nm { flex:1; font-size:14.5px; }
+.w3 .vl { font-family:'Space Grotesk'; font-weight:700; color:#7dd3fc; }
+.w3 .mini { width:120px; height:26px; display:flex; align-items:flex-end; gap:3px; }
+.w3 .mini i { flex:1; background:linear-gradient(180deg,#38bdf8,#0e7490); border-radius:2px 2px 0 0; transform-origin:bottom;
+  animation:barGrow 1s cubic-bezier(.2,.8,.2,1) both; }
+
+/* ═════════ W4 · PULSE GRID (finalist, ex-9) ═════════ */
+.w4 { background:#070810; color:#eef; }
+.w4 .floor { position:absolute; left:-20%; right:-20%; bottom:-12%; height:60%; z-index:0; transform:perspective(600px) rotateX(62deg);
+  background:linear-gradient(rgba(124,108,255,.16) 1px, transparent 1px), linear-gradient(90deg, rgba(124,108,255,.16) 1px, transparent 1px);
+  background-size:44px 44px; animation:gridScroll 2.4s linear infinite;
+  -webkit-mask:linear-gradient(180deg,transparent, #000 40%); mask:linear-gradient(180deg,transparent, #000 40%); }
+.w4 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1fr 1fr; gap:26px; max-width:1420px; margin:0 auto; }
+.w4 .card { background:rgba(12,14,26,.82); border:1px solid rgba(124,108,255,.22); border-radius:22px; padding:28px; backdrop-filter:blur(6px); }
+.w4 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.w4 .sub { color:#8b93c6; font-size:13px; margin-top:4px; }
+.w4 .big { font-size:104px; font-weight:900; letter-spacing:-.04em; line-height:1.05; margin:16px 0 6px; color:#c4b5fd;
+  text-shadow:0 0 40px rgba(124,108,255,.55); animation:pulseGlow 3.6s ease-in-out infinite; }
+.w4 .track { height:14px; border-radius:8px; background:rgba(255,255,255,.07); overflow:hidden; }
+.w4 .fill { height:100%; border-radius:8px; background:linear-gradient(90deg,#7c6cff,#38bdf8); transform-origin:left; animation:barGrowX 1.5s ease both .2s; }
+.w4 .kpis { display:flex; gap:12px; margin-top:22px; }
+.w4 .kpi { flex:1; text-align:center; padding:14px; border-radius:14px; background:rgba(124,108,255,.08); border:1px solid rgba(124,108,255,.16); }
+.w4 .kv { font-family:'Space Grotesk'; font-size:23px; font-weight:700; }
+.w4 .kl { font-size:10px; letter-spacing:.18em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.w4 .bars { display:flex; align-items:flex-end; gap:14px; height:200px; margin-top:20px; }
+.w4 .bcol { flex:1; display:flex; flex-direction:column; justify-content:flex-end; height:100%; }
+.w4 .b { border-radius:6px 6px 0 0; background:linear-gradient(180deg,#8b5cf6,#312e81); transform-origin:bottom;
+  animation:barGrow 1.2s cubic-bezier(.2,.8,.2,1) both; box-shadow:0 0 22px rgba(124,108,255,.35); }
+.w4 .bcol span { text-align:center; font-size:11px; color:#8b93c6; margin-top:8px; }
+.w4 .bcol:nth-child(2) .b{animation-delay:.1s} .w4 .bcol:nth-child(3) .b{animation-delay:.2s}
+.w4 .bcol:nth-child(4) .b{animation-delay:.3s} .w4 .bcol:nth-child(5) .b{animation-delay:.4s} .w4 .bcol:nth-child(6) .b{animation-delay:.5s}
+
+/* ═════════ N5 · HOLOGRAM ═════════ */
+.n5 { background:radial-gradient(1000px 640px at 50% 0%, #062430 0%, #04070c 62%); color:#d7fbff; text-align:center; }
+.n5 .holo { position:relative; width:420px; height:420px; margin:0 auto; perspective:900px; }
+.n5 .hring { position:absolute; left:50%; top:50%; border:2px solid rgba(45,212,235,.5); border-radius:50%;
+  transform-style:preserve-3d; box-shadow:0 0 18px rgba(45,212,235,.35); }
+.n5 .hr1 { width:340px; height:340px; margin:-170px; transform:rotateX(72deg); animation:spin360 11s linear infinite; }
+.n5 .hr2 { width:260px; height:260px; margin:-130px; transform:rotateX(72deg) rotateY(14deg); animation:spin360 8s linear infinite reverse; opacity:.7; }
+.n5 .hr3 { width:180px; height:180px; margin:-90px;  transform:rotateX(72deg) rotateY(-10deg); animation:spin360 6s linear infinite; opacity:.5; }
+.n5 .beam { position:absolute; left:50%; top:-8%; width:2px; height:116%; margin-left:-1px;
+  background:linear-gradient(180deg, transparent, rgba(45,212,235,.8), transparent); filter:blur(1px);
+  animation:n5beam 4.5s ease-in-out infinite; }
+@keyframes n5beam { 0%,100%{transform:translateX(-140px); opacity:.25} 50%{transform:translateX(140px); opacity:.9} }
+.n5 .core { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.n5 .pct { font-family:'Space Grotesk'; font-size:86px; font-weight:700; color:#7ff3ff;
+  text-shadow:0 0 26px rgba(45,212,235,.8), 0 0 60px rgba(45,212,235,.4); animation:n5flicker 7s linear infinite; }
+@keyframes n5flicker { 0%,94%,96%,100%{opacity:1} 95%{opacity:.66} }
+.n5 .cap { font-size:11px; letter-spacing:.34em; text-transform:uppercase; color:#5db8c6; margin-top:4px; }
+.n5 .scan { position:absolute; inset:0; pointer-events:none; opacity:.16;
+  background:repeating-linear-gradient(0deg, rgba(45,212,235,.5) 0 1px, transparent 1px 5px); }
+.n5 .kpis { display:flex; justify-content:center; gap:46px; margin:18px 0 22px; }
+.n5 .kv { font-family:'Space Grotesk'; font-size:27px; font-weight:700; color:#7ff3ff; }
+.n5 .kl { font-size:10px; letter-spacing:.26em; color:#5db8c6; text-transform:uppercase; margin-top:4px; }
+.n5 .lb { max-width:640px; margin:0 auto; text-align:left; border:1px solid rgba(45,212,235,.25); border-radius:16px; padding:8px 20px;
+  background:rgba(6,26,34,.55); backdrop-filter:blur(8px); box-shadow:0 0 34px rgba(45,212,235,.1); }
+.n5 .lb-row { display:flex; align-items:center; gap:12px; padding:11px 4px; border-bottom:1px solid rgba(45,212,235,.12); }
+.n5 .lb-row:last-child { border-bottom:none; }
+.n5 .nm { flex:1; font-size:14.5px; }
+.n5 .vl { font-family:'JetBrains Mono'; font-weight:700; color:#7ff3ff; }
+
+/* ═════════ N6 · WAVE HORIZON ═════════ */
+.n6 { background:linear-gradient(180deg,#0a1020 0%, #0c1c33 55%, #0e2742 100%); color:#e8f4ff; display:flex; flex-direction:column; }
+.n6 .sky { position:relative; z-index:2; max-width:1400px; margin:0 auto; width:100%; display:grid; grid-template-columns:1fr 1fr; gap:26px; }
+.n6 .card { background:rgba(10,22,40,.55); border:1px solid rgba(125,211,252,.18); border-radius:24px; padding:28px; backdrop-filter:blur(12px);
+  animation:floaty 7.5s ease-in-out infinite; }
+.n6 .card:nth-child(2) { animation-delay:1.4s; }
+.n6 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.n6 .sub { color:#7fa8cc; font-size:13px; margin-top:4px; }
+.n6 .big { font-size:100px; font-weight:900; letter-spacing:-.04em; line-height:1.05; margin:14px 0 4px;
+  background:linear-gradient(180deg,#e0f2fe,#38bdf8); -webkit-background-clip:text; background-clip:text; color:transparent;
+  filter:drop-shadow(0 12px 30px rgba(56,189,248,.35)); }
+.n6 .kpis { display:flex; gap:12px; margin-top:18px; }
+.n6 .kpi { flex:1; text-align:center; padding:13px; border-radius:14px; background:rgba(125,211,252,.08); border:1px solid rgba(125,211,252,.14); }
+.n6 .kv { font-family:'Space Grotesk'; font-size:22px; font-weight:700; }
+.n6 .kl { font-size:10px; letter-spacing:.16em; color:#7fa8cc; text-transform:uppercase; margin-top:4px; }
+.n6 .lb-row { display:flex; align-items:center; gap:12px; padding:12px 8px; border-bottom:1px solid rgba(255,255,255,.07); }
+.n6 .nm { flex:1; font-size:14.5px; }
+.n6 .vl { font-family:'Space Grotesk'; font-weight:700; color:#7dd3fc; }
+.n6 .ocean { position:absolute; left:0; right:0; bottom:0; height:38%; z-index:1; pointer-events:none; }
+.n6 .wv { position:absolute; left:-100%; right:-100%; bottom:0; height:100%; opacity:.55; }
+.n6 .wv svg { position:absolute; bottom:0; left:0; width:200%; height:100%; }
+.n6 .wv1 { animation:waveMove 11s linear infinite; opacity:.35; }
+.n6 .wv2 { animation:waveMove 7s linear infinite reverse; opacity:.5; bottom:-4%; }
+.n6 .wv3 { animation:waveMove 5s linear infinite; opacity:.85; bottom:-8%; }
+.n6 .wavelabel { position:absolute; left:50%; bottom:9%; transform:translateX(-50%); z-index:2; text-align:center;
+  font-size:12px; letter-spacing:.3em; text-transform:uppercase; color:rgba(224,242,254,.75); }
+
+/* ═════════ N7 · CRYSTAL ═════════ */
+.n7 { background:radial-gradient(900px 600px at 50% 20%, #140f2c 0%, #08060f 65%); color:#f0ecff; text-align:center; }
+.n7 .prismwrap { position:relative; width:380px; height:340px; margin:4px auto 0; perspective:1000px; }
+.n7 .gem { position:absolute; left:50%; top:50%; width:200px; height:200px; margin:-100px; transform-style:preserve-3d;
+  animation:n7spin 12s linear infinite; }
+@keyframes n7spin { from{transform:rotateY(0) rotateX(12deg)} to{transform:rotateY(360deg) rotateX(12deg)} }
+.n7 .facet { position:absolute; inset:0; clip-path:polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  background:linear-gradient(135deg, rgba(167,139,250,.9), rgba(56,189,248,.65)); border:1px solid rgba(255,255,255,.25); }
+.n7 .f1 { transform:translateZ(30px); }
+.n7 .f2 { transform:rotateY(90deg) translateZ(30px); background:linear-gradient(135deg, rgba(56,189,248,.85), rgba(52,211,153,.6)); }
+.n7 .f3 { transform:rotateY(180deg) translateZ(30px); background:linear-gradient(135deg, rgba(124,58,237,.9), rgba(167,139,250,.6)); }
+.n7 .f4 { transform:rotateY(270deg) translateZ(30px); background:linear-gradient(135deg, rgba(34,211,238,.8), rgba(124,108,255,.65)); }
+.n7 .gemglow { position:absolute; left:50%; top:50%; width:280px; height:280px; margin:-140px; border-radius:50%;
+  background:radial-gradient(circle, rgba(139,92,246,.35), transparent 70%); filter:blur(18px); animation:pulseGlow 5s ease-in-out infinite; }
+.n7 .sparkle { position:absolute; width:5px; height:5px; border-radius:50%; background:#fff; box-shadow:0 0 10px #fff; opacity:0;
+  animation:n7spark 4s ease-in-out infinite; }
+.n7 .s1 { top:20%; left:24%; animation-delay:0s; } .n7 .s2 { top:32%; right:20%; animation-delay:1.3s; } .n7 .s3 { bottom:22%; left:38%; animation-delay:2.6s; }
+@keyframes n7spark { 0%,100%{opacity:0; transform:scale(.4)} 8%,14%{opacity:1; transform:scale(1.15)} 22%{opacity:0; transform:scale(.4)} }
+.n7 .pct { font-size:84px; font-weight:900; letter-spacing:-.04em; margin-top:-8px;
+  background:linear-gradient(90deg,#c4b5fd,#7dd3fc,#c4b5fd); background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation:shimmer 6s linear infinite; }
+.n7 .cap { font-size:11px; letter-spacing:.3em; text-transform:uppercase; color:#9a90cf; }
+.n7 .kpis { display:flex; justify-content:center; gap:48px; margin:22px 0; }
+.n7 .kv { font-size:27px; font-weight:800; }
+.n7 .kl { font-size:10px; letter-spacing:.24em; color:#9a90cf; text-transform:uppercase; margin-top:4px; }
+.n7 .lb { max-width:640px; margin:0 auto; text-align:left; background:rgba(255,255,255,.05); border:1px solid rgba(167,139,250,.22);
+  border-radius:18px; padding:8px 20px; backdrop-filter:blur(12px); }
+.n7 .lb-row { display:flex; align-items:center; gap:12px; padding:11px 4px; border-bottom:1px solid rgba(255,255,255,.07); }
+.n7 .lb-row:last-child { border-bottom:none; }
+.n7 .nm { flex:1; font-size:14.5px; }
+.n7 .vl { font-weight:800; color:#c4b5fd; }
+
+/* ═════════ N8 · STARFIELD ═════════ */
+.n8 { background:#05060d; color:#eef; text-align:center; }
+.n8 .stars, .n8 .stars2 { position:absolute; inset:0; z-index:0; background-repeat:repeat; }
+.n8 .stars { background-image:radial-gradient(1px 1px at 20px 30px, #fff, transparent), radial-gradient(1px 1px at 90px 120px, #cbd5ff, transparent),
+  radial-gradient(1.5px 1.5px at 160px 60px, #fff, transparent), radial-gradient(1px 1px at 240px 160px, #a5b4fc, transparent),
+  radial-gradient(1.5px 1.5px at 310px 90px, #fff, transparent);
+  background-size:380px 200px; animation:n8drift 60s linear infinite; opacity:.7; }
+.n8 .stars2 { background-image:radial-gradient(1px 1px at 40px 80px, #93c5fd, transparent), radial-gradient(1px 1px at 130px 40px, #fff, transparent),
+  radial-gradient(1.5px 1.5px at 220px 120px, #ddd6fe, transparent);
+  background-size:300px 170px; animation:n8drift 100s linear infinite reverse; opacity:.5; }
+@keyframes n8drift { from{background-position:0 0} to{background-position:1000px 400px} }
+.n8 .content { position:relative; z-index:1; }
+.n8 .arcwrap { position:relative; width:360px; height:360px; margin:0 auto; }
+.n8 svg circle.bgc { fill:none; stroke:rgba(255,255,255,.07); stroke-width:6; }
+.n8 svg circle.fgc { fill:none; stroke:url(#n8grad); stroke-width:6; stroke-linecap:round; stroke-dasharray:980; stroke-dashoffset:980;
+  animation:n8draw 2s cubic-bezier(.3,.8,.3,1) both .2s; filter:drop-shadow(0 0 12px rgba(147,197,253,.7)); }
+@keyframes n8draw { to { stroke-dashoffset:280; } }
+.n8 .comet { position:absolute; inset:14px; animation:spin360 9s linear infinite; }
+.n8 .comet::before { content:""; position:absolute; top:-5px; left:50%; width:10px; height:10px; margin-left:-5px; border-radius:50%;
+  background:#fff; box-shadow:0 0 16px 5px rgba(147,197,253,.85); }
+.n8 .core { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.n8 .pct { font-family:'Space Grotesk'; font-size:82px; font-weight:700; text-shadow:0 0 40px rgba(147,197,253,.45); }
+.n8 .cap { font-size:11px; letter-spacing:.3em; text-transform:uppercase; color:#8b93c6; margin-top:2px; }
+.n8 .kpis { display:flex; justify-content:center; gap:48px; margin:22px 0; }
+.n8 .kv { font-family:'Space Grotesk'; font-size:27px; font-weight:700; color:#bfdbfe; }
+.n8 .kl { font-size:10px; letter-spacing:.24em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.n8 .lb { max-width:640px; margin:0 auto; text-align:left; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1);
+  border-radius:18px; padding:8px 20px; backdrop-filter:blur(10px); }
+.n8 .lb-row { display:flex; align-items:center; gap:12px; padding:11px 4px; border-bottom:1px solid rgba(255,255,255,.07); }
+.n8 .lb-row:last-child { border-bottom:none; }
+.n8 .nm { flex:1; font-size:14.5px; }
+.n8 .vl { font-family:'Space Grotesk'; font-weight:700; color:#93c5fd; }
+
+/* ═════════ N9 · INFINITY ═════════ */
+.n9 { background:#0a0c16; color:#eef; }
+.n9 .grid { display:grid; grid-template-columns:1.15fr .85fr; gap:26px; max-width:1440px; margin:0 auto; position:relative; z-index:1; }
+.n9 .card { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.1); border-radius:26px; padding:30px; backdrop-filter:blur(14px); }
+.n9 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.n9 .sub { color:#8b93c6; font-size:13px; margin-top:4px; }
+.n9 .loopwrap { position:relative; display:flex; justify-content:center; margin:14px 0 4px; }
+.n9 svg .loopbg { fill:none; stroke:rgba(255,255,255,.07); stroke-width:26; stroke-linecap:round; }
+.n9 svg .loopfg { fill:none; stroke:url(#n9grad); stroke-width:26; stroke-linecap:round;
+  stroke-dasharray:120 1040; animation:n9flow 5s linear infinite; filter:drop-shadow(0 0 16px rgba(124,108,255,.5)); }
+@keyframes n9flow { to { stroke-dashoffset:-1160; } }
+.n9 .looplabel { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.n9 .pct { font-family:'Space Grotesk'; font-size:66px; font-weight:700;
+  background:linear-gradient(90deg,#a78bfa,#38bdf8); -webkit-background-clip:text; background-clip:text; color:transparent; }
+.n9 .cap { font-size:10px; letter-spacing:.3em; text-transform:uppercase; color:#8b93c6; }
+.n9 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:20px; }
+.n9 .kpi { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09); border-radius:16px; padding:15px; text-align:center; }
+.n9 .kv { font-family:'Space Grotesk'; font-size:23px; font-weight:700; }
+.n9 .kl { font-size:10px; letter-spacing:.16em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.n9 .lb-row { display:flex; align-items:center; gap:12px; padding:12.5px 8px; border-bottom:1px solid rgba(255,255,255,.07); }
+.n9 .nm { flex:1; font-size:14.5px; }
+.n9 .vl { font-family:'Space Grotesk'; font-weight:700; color:#93c5fd; }
+
+/* ═════════ N10 · NEBULA ═════════ */
+.n10 { background:#070512; color:#f2edff; }
+.n10 .cloud { position:absolute; border-radius:50%; filter:blur(70px); z-index:0; }
+.n10 .c1 { width:700px; height:420px; background:radial-gradient(ellipse, rgba(124,58,237,.4), transparent 70%); top:-6%; left:-8%;
+  animation:drift1 24s ease-in-out infinite alternate; }
+.n10 .c2 { width:640px; height:400px; background:radial-gradient(ellipse, rgba(37,99,235,.35), transparent 70%); bottom:-10%; right:-6%;
+  animation:drift2 30s ease-in-out infinite alternate; }
+.n10 .c3 { width:420px; height:300px; background:radial-gradient(ellipse, rgba(217,70,239,.22), transparent 70%); top:40%; left:36%;
+  animation:drift1 20s ease-in-out infinite alternate-reverse; }
+.n10 .isles { position:relative; z-index:1; max-width:1420px; margin:0 auto; display:grid; grid-template-columns:1.05fr .95fr; gap:30px; }
+.n10 .isle { background:rgba(20,14,40,.55); border:1px solid rgba(196,181,253,.2); border-radius:30px; padding:32px; backdrop-filter:blur(18px);
+  box-shadow:0 40px 90px rgba(0,0,0,.55); animation:floaty 8s ease-in-out infinite; }
+.n10 .isle:nth-child(2) { animation-delay:2s; }
+.n10 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.n10 .sub { color:#a294d6; font-size:13px; margin-top:4px; }
+.n10 .planet { position:relative; width:270px; height:270px; margin:26px auto 6px; }
+.n10 .planetbody { position:absolute; inset:22px; border-radius:50%;
+  background:radial-gradient(circle at 32% 28%, #4c3a8f, #1c1440 68%); border:1px solid rgba(196,181,253,.3);
+  box-shadow:0 0 60px rgba(139,92,246,.35), 0 0 34px rgba(139,92,246,.28) inset; }
+.n10 .orbitarc { position:absolute; inset:0; border-radius:50%; border:2px solid transparent;
+  border-top-color:#c4b5fd; border-right-color:#c4b5fd; transform:rotate(-45deg); animation:spin360 7s linear infinite;
+  filter:drop-shadow(0 0 8px rgba(196,181,253,.7)); }
+.n10 .planetlabel { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:2; }
+.n10 .pct { font-family:'Space Grotesk'; font-size:56px; font-weight:700; text-shadow:0 0 30px rgba(139,92,246,.6); }
+.n10 .cap { font-size:10px; letter-spacing:.28em; text-transform:uppercase; color:#a294d6; margin-top:2px; }
+.n10 .kpis { display:flex; gap:12px; margin-top:20px; }
+.n10 .kpi { flex:1; text-align:center; padding:14px; border-radius:16px; background:rgba(196,181,253,.07); border:1px solid rgba(196,181,253,.15);
+  animation:floaty 7s ease-in-out infinite; }
+.n10 .kpi:nth-child(2){animation-delay:.7s} .n10 .kpi:nth-child(3){animation-delay:1.4s} .n10 .kpi:nth-child(4){animation-delay:2.1s}
+.n10 .kv { font-family:'Space Grotesk'; font-size:22px; font-weight:700; }
+.n10 .kl { font-size:10px; letter-spacing:.16em; color:#a294d6; text-transform:uppercase; margin-top:4px; }
+.n10 .lb-row { display:flex; align-items:center; gap:12px; padding:12.5px 8px; border-bottom:1px solid rgba(255,255,255,.07); }
+.n10 .nm { flex:1; font-size:14.5px; }
+.n10 .vl { font-family:'Space Grotesk'; font-weight:700; color:#c4b5fd; }
+</style>
+</head>
+<body>
+
+<div class="switcher">
+  <span class="sw-title">Redesign·3 — finalists + 6 new</span>
+  <button class="sw-btn active" data-v="w1"><span class="fav">★</span> 1 · Glass Orbit</button>
+  <button class="sw-btn" data-v="w2"><span class="fav">★</span> 2 · Aurora Flow</button>
+  <button class="sw-btn" data-v="w3"><span class="fav">★</span> 3 · Liquid</button>
+  <button class="sw-btn" data-v="w4"><span class="fav">★</span> 4 · Pulse Grid</button>
+  <button class="sw-btn" data-v="n5">5 · Hologram</button>
+  <button class="sw-btn" data-v="n6">6 · Wave Horizon</button>
+  <button class="sw-btn" data-v="n7">7 · Crystal</button>
+  <button class="sw-btn" data-v="n8">8 · Starfield</button>
+  <button class="sw-btn" data-v="n9">9 · Infinity</button>
+  <button class="sw-btn" data-v="n10">10 · Nebula</button>
+</div>
+
+<!-- W1 GLASS ORBIT -->
+<section class="variant w1 active" id="w1">
+  <div class="blob b1"></div><div class="blob b2"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 · Sales Plan</h1>
+      <div class="sub">Ombor sheet · yangilandi 18:42</div>
+      <div class="scene">
+        <div class="ring3d">
+          <div class="torus"></div>
+          <div class="ringcore">
+            <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+            <div class="cap">Plan bajarilishi</div>
+          </div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:20px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:12px">Live · LTL + FTL</div>
+      <div class="lb-row"><div class="ava">R</div><div class="nm">Retention<div class="track"><div class="fill" style="width:100%"></div></div></div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="ava">OS</div><div class="nm">Olimov Sirojiddin<div class="track"><div class="fill" style="width:22%"></div></div></div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="ava">XB</div><div class="nm">Xakimov Boburmirzo<div class="track"><div class="fill" style="width:15%"></div></div></div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="ava">RM</div><div class="nm">Rizayev Muhammad Ali<div class="track"><div class="fill" style="width:12%"></div></div></div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="ava">SA</div><div class="nm">Sobirov Azamatxo'ja<div class="track"><div class="fill" style="width:3%"></div></div></div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W2 AURORA FLOW -->
+<section class="variant w2" id="w2">
+  <div class="aur"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Buraq Logistics · Sales Monitor</div>
+      <div class="gaugewrap">
+        <svg width="340" height="200" viewBox="0 0 340 200">
+          <defs><linearGradient id="w2grad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#0d9488"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#7c3aed"/>
+          </linearGradient></defs>
+          <path class="bg" d="M 40 180 A 130 130 0 0 1 300 180"/>
+          <path class="fg" d="M 40 180 A 130 130 0 0 1 300 180"/>
+        </svg>
+        <div class="needle"></div>
+        <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Sotuvchilar reytingi</h1>
+      <div class="sub" style="margin-bottom:8px">Live</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="spark"><i style="width:100%"></i></div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="spark"><i style="width:22%"></i></div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="spark"><i style="width:15%"></i></div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="spark"><i style="width:12%"></i></div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="spark"><i style="width:3%"></i></div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W3 LIQUID -->
+<section class="variant w3" id="w3">
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Suv sathi = bajarilish darajasi</div>
+      <div class="tank">
+        <div class="water">
+          <svg viewBox="0 0 1200 26" preserveAspectRatio="none">
+            <path d="M0 13 Q 75 0 150 13 T 300 13 T 450 13 T 600 13 T 750 13 T 900 13 T 1050 13 T 1200 13 V 26 H 0 Z" fill="rgba(56,189,248,.85)"/>
+          </svg>
+          <div class="waterbody"></div>
+        </div>
+        <div class="tanklabel">
+          <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+          <div class="cap">Bajarildi</div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:8px">Oy bo'yicha taqsimot</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="mini"><i style="height:40%"></i><i style="height:70%"></i><i style="height:55%"></i><i style="height:100%"></i><i style="height:80%"></i></div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="mini"><i style="height:30%"></i><i style="height:45%"></i><i style="height:60%"></i><i style="height:38%"></i><i style="height:52%"></i></div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="mini"><i style="height:25%"></i><i style="height:55%"></i><i style="height:35%"></i><i style="height:48%"></i><i style="height:30%"></i></div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="mini"><i style="height:45%"></i><i style="height:28%"></i><i style="height:52%"></i><i style="height:33%"></i><i style="height:40%"></i></div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="mini"><i style="height:15%"></i><i style="height:22%"></i><i style="height:12%"></i><i style="height:25%"></i><i style="height:18%"></i></div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W4 PULSE GRID -->
+<section class="variant w4" id="w4">
+  <div class="floor"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Buraq Logistics</div>
+      <div class="big count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="track"><div class="fill" style="width:71.4%"></div></div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Oylik dinamika</h1>
+      <div class="sub">m³ bo'yicha</div>
+      <div class="bars">
+        <div class="bcol"><div class="b" style="height:38%"></div><span>Yan</span></div>
+        <div class="bcol"><div class="b" style="height:52%"></div><span>Fev</span></div>
+        <div class="bcol"><div class="b" style="height:47%"></div><span>Mar</span></div>
+        <div class="bcol"><div class="b" style="height:66%"></div><span>Apr</span></div>
+        <div class="bcol"><div class="b" style="height:84%"></div><span>May</span></div>
+        <div class="bcol"><div class="b" style="height:71%"></div><span>Iyun</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- N5 HOLOGRAM -->
+<section class="variant n5" id="n5">
+  <div class="scan"></div>
+  <div class="holo">
+    <div class="hring hr1"></div>
+    <div class="hring hr2"></div>
+    <div class="hring hr3"></div>
+    <div class="beam"></div>
+    <div class="core">
+      <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="cap">Iyun 2026 · Plan</div>
+    </div>
+  </div>
+  <div class="kpis">
+    <div><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+    <div><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+    <div><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+    <div><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+  </div>
+  <div class="lb">
+    <div class="lb-row"><div class="nm">1 · Retention</div><div class="vl">951 m³</div></div>
+    <div class="lb-row"><div class="nm">2 · Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+    <div class="lb-row"><div class="nm">3 · Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+    <div class="lb-row"><div class="nm">4 · Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+  </div>
+</section>
+
+<!-- N6 WAVE HORIZON -->
+<section class="variant n6" id="n6">
+  <div class="sky">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Buraq Logistics · Sales Monitor</div>
+      <div class="big count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="sub">2 854 / 4 000 m³ bajarildi</div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:8px">Live</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+  <div class="ocean">
+    <div class="wv wv1"><svg viewBox="0 0 1200 320" preserveAspectRatio="none"><path d="M0 80 Q 150 20 300 80 T 600 80 T 900 80 T 1200 80 V 320 H 0 Z" fill="#173a5e"/></svg></div>
+    <div class="wv wv2"><svg viewBox="0 0 1200 320" preserveAspectRatio="none"><path d="M0 110 Q 150 50 300 110 T 600 110 T 900 110 T 1200 110 V 320 H 0 Z" fill="#1e4f7d"/></svg></div>
+    <div class="wv wv3"><svg viewBox="0 0 1200 320" preserveAspectRatio="none"><path d="M0 140 Q 150 85 300 140 T 600 140 T 900 140 T 1200 140 V 320 H 0 Z" fill="#2a6ca3"/></svg></div>
+    <div class="wavelabel">Plan to'lishi · 71.4%</div>
+  </div>
+</section>
+
+<!-- N7 CRYSTAL -->
+<section class="variant n7" id="n7">
+  <div class="prismwrap">
+    <div class="gemglow"></div>
+    <div class="gem">
+      <div class="facet f1"></div><div class="facet f2"></div><div class="facet f3"></div><div class="facet f4"></div>
+    </div>
+    <div class="sparkle s1"></div><div class="sparkle s2"></div><div class="sparkle s3"></div>
+  </div>
+  <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+  <div class="cap">Iyun 2026 · Plan bajarilishi</div>
+  <div class="kpis">
+    <div><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+    <div><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+    <div><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+    <div><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+  </div>
+  <div class="lb">
+    <div class="lb-row"><div class="nm">1 · Retention</div><div class="vl">951 m³</div></div>
+    <div class="lb-row"><div class="nm">2 · Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+    <div class="lb-row"><div class="nm">3 · Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+    <div class="lb-row"><div class="nm">4 · Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+  </div>
+</section>
+
+<!-- N8 STARFIELD -->
+<section class="variant n8" id="n8">
+  <div class="stars"></div><div class="stars2"></div>
+  <div class="content">
+    <div class="arcwrap">
+      <svg width="360" height="360" viewBox="0 0 360 360">
+        <defs><linearGradient id="n8grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#93c5fd"/><stop offset="100%" stop-color="#c4b5fd"/>
+        </linearGradient></defs>
+        <circle class="bgc" cx="180" cy="180" r="156"/>
+        <circle class="fgc" cx="180" cy="180" r="156" transform="rotate(-90 180 180)"/>
+      </svg>
+      <div class="comet"></div>
+      <div class="core">
+        <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+        <div class="cap">Iyun 2026 · Plan</div>
+      </div>
+    </div>
+    <div class="kpis">
+      <div><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+      <div><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+      <div><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+      <div><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+    </div>
+    <div class="lb">
+      <div class="lb-row"><div class="nm">1 · Retention</div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">2 · Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">3 · Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">4 · Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- N9 INFINITY -->
+<section class="variant n9" id="n9">
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 · Sales Plan</h1>
+      <div class="sub">Oqim to'xtamaydi — plan bajarilmoqda</div>
+      <div class="loopwrap">
+        <svg width="480" height="240" viewBox="0 0 480 240">
+          <defs><linearGradient id="n9grad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#38bdf8"/>
+          </linearGradient></defs>
+          <path class="loopbg" d="M120 120 C 120 60, 200 60, 240 120 C 280 180, 360 180, 360 120 C 360 60, 280 60, 240 120 C 200 180, 120 180, 120 120 Z"/>
+          <path class="loopfg" d="M120 120 C 120 60, 200 60, 240 120 C 280 180, 360 180, 360 120 C 360 60, 280 60, 240 120 C 200 180, 120 180, 120 120 Z"/>
+        </svg>
+        <div class="looplabel">
+          <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+          <div class="cap">Plan bajarilishi</div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:8px">Live</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- N10 NEBULA -->
+<section class="variant n10" id="n10">
+  <div class="cloud c1"></div><div class="cloud c2"></div><div class="cloud c3"></div>
+  <div class="isles">
+    <div class="isle">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Buraq Logistics · Sales Monitor</div>
+      <div class="planet">
+        <div class="orbitarc"></div>
+        <div class="planetbody"></div>
+        <div class="planetlabel">
+          <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+          <div class="cap">Bajarildi</div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="isle">
+      <h1 style="font-size:21px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:8px">Live</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<script>
+  document.querySelectorAll(".sw-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.querySelectorAll(".sw-btn").forEach(function (b) { b.classList.remove("active"); });
+      document.querySelectorAll(".variant").forEach(function (v) { v.classList.remove("active"); });
+      btn.classList.add("active");
+      var section = document.getElementById(btn.dataset.v);
+      section.classList.add("active");
+      runCountUps(section);
+      restartAnimations(section);
+    });
+  });
+
+  function runCountUps(scope) {
+    scope.querySelectorAll(".count").forEach(function (el) {
+      var target = parseFloat(el.dataset.target || "0");
+      var suffix = el.dataset.suffix || "";
+      var decimals = (String(el.dataset.target).split(".")[1] || "").length;
+      var t0 = null;
+      var DUR = 1400;
+      function step(ts) {
+        if (!t0) t0 = ts;
+        var p = Math.min(1, (ts - t0) / DUR);
+        var eased = 1 - Math.pow(1 - p, 3);
+        var val = target * eased;
+        el.textContent = val.toLocaleString("ru-RU", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).replace(",", ".") + suffix;
+        if (p < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  function restartAnimations(scope) {
+    scope.querySelectorAll("*").forEach(function (el) {
+      var anims = getComputedStyle(el).animationName;
+      if (anims && anims !== "none") {
+        el.style.animation = "none";
+        void el.offsetWidth;
+        el.style.animation = "";
+      }
+    });
+  }
+
+  runCountUps(document.querySelector(".variant.active"));
+</script>
+</body>
+</html>
