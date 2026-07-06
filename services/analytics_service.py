@@ -3053,6 +3053,9 @@ def _director_sborniy_weight_categories(
 
     # cat_key -> seller_key -> {name, count, weight, bl_set}
     buckets: dict[str, dict[str, dict]] = {c["key"]: {} for c in DIRECTOR_WEIGHT_CATEGORIES}
+    # Overall per-seller totals with a per-category breakdown — feeds the
+    # summary leaderboard under the 5 category columns.
+    overall: dict[str, dict] = {}
     stage_stats: list[dict] = []
 
     for st in usable:
@@ -3130,10 +3133,25 @@ def _director_sborniy_weight_categories(
                 bucket["name"] = seller
             bucket["count"] += 1
             bucket["weight"] += weight
+            bl_code = ""
             if bl_idx is not None:
                 bl_code = row[bl_idx].strip() if bl_idx < len(row) else ""
                 if bl_code:
                     bucket["bl_set"].add(bl_code.upper())
+
+            ov = overall.setdefault(
+                key,
+                {"name": seller, "count": 0, "weight": 0.0, "bl_set": set(),
+                 "per_cat": {c["key"]: {"count": 0, "weight": 0.0} for c in DIRECTOR_WEIGHT_CATEGORIES}},
+            )
+            if len(seller) > len(ov["name"]):
+                ov["name"] = seller
+            ov["count"] += 1
+            ov["weight"] += weight
+            if bl_code:
+                ov["bl_set"].add(bl_code.upper())
+            ov["per_cat"][cat["key"]]["count"] += 1
+            ov["per_cat"][cat["key"]]["weight"] += weight
             stat["rows"] += 1
 
         stage_stats.append(stat)
@@ -3165,7 +3183,25 @@ def _director_sborniy_weight_categories(
             "sellers":      sellers,
         })
 
-    return {"configured": True, "categories": categories, "stages": stage_stats}
+    # Overall seller leaderboard with per-category breakdown
+    sellers_overall = sorted(
+        [
+            {
+                "name":   v["name"],
+                "count":  v["count"],
+                "weight": round(v["weight"], 1),
+                "bl":     len(v["bl_set"]),
+                "categories": {
+                    ck: {"count": cv["count"], "weight": round(cv["weight"], 1)}
+                    for ck, cv in v["per_cat"].items() if cv["count"] > 0
+                },
+            }
+            for v in overall.values()
+        ],
+        key=lambda r: (r["count"], r["weight"]), reverse=True,
+    )
+
+    return {"configured": True, "categories": categories, "sellers": sellers_overall, "stages": stage_stats}
 
 
 # Per-stage daily aggregator for the Sborniy 'Kunlik dinamika' chart.

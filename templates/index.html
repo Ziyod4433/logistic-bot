@@ -1718,6 +1718,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               <div id="dir-sborniy-weight-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px">
                 <!-- 5 category columns injected -->
               </div>
+              <!-- Overall seller ranking with per-category breakdown -->
+              <div id="dir-sborniy-weight-overall" style="margin-top:18px"></div>
             </div>
           </div>
 
@@ -7348,6 +7350,8 @@ function renderDirectorPayload(section, payload) {
       if (weightGrid) weightGrid.innerHTML = "";
       const weightMetaEl = document.getElementById("dir-sborniy-weight-meta");
       if (weightMetaEl) weightMetaEl.textContent = "—";
+      const weightOverallEl = document.getElementById("dir-sborniy-weight-overall");
+      if (weightOverallEl) weightOverallEl.innerHTML = "";
     }
     if (section === "ombor") {
       ["YIWU","ZHONGSHAN","HORGOS"].forEach(n => {
@@ -7496,16 +7500,69 @@ const DIRECTOR_WEIGHT_CAT_ICONS = {
   eng_ogir:   "🗿",
 };
 
+const DIRECTOR_WEIGHT_CAT_LABELS = {
+  eng_yengil: "Eng yengil",
+  yengil:     "Yengil",
+  orta:       "O'rta",
+  ogir:       "Og'ir",
+  eng_ogir:   "Eng og'ir",
+};
+
+// Overall seller ranking under the 5 category columns: each row shows the
+// seller's totals plus per-category chips (which weight brackets they sold
+// in and how much).
+function buildSborniyWeightOverallHtml(data) {
+  const sellers = Array.isArray(data.sellers) ? data.sellers : [];
+  if (!sellers.length) return "";
+  const maxCount = Number(sellers[0].count || 0) || 1;
+  const rowsHtml = sellers.slice(0, 10).map((s, i) => {
+    const share = Math.min(100, (Number(s.count || 0) / maxCount) * 100);
+    const cats = s.categories || {};
+    const chips = Object.keys(DIRECTOR_WEIGHT_CAT_LABELS)
+      .filter(k => cats[k] && Number(cats[k].count || 0) > 0)
+      .map(k => `
+        <span title="${esc(DIRECTOR_WEIGHT_CAT_LABELS[k])}: ${cats[k].count} ta savdo · ${Number(cats[k].weight || 0).toFixed(0)} kg"
+              style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:rgba(245,166,35,.08);border:1px solid var(--stroke);font-size:11px;color:var(--muted2);white-space:nowrap">
+          ${DIRECTOR_WEIGHT_CAT_ICONS[k]} ${esc(DIRECTOR_WEIGHT_CAT_LABELS[k])} · <b style="color:var(--txt)">${cats[k].count} ta</b> · ${Number(cats[k].weight || 0).toFixed(0)} kg
+        </span>
+      `).join("");
+    const subParts = [`${Number(s.weight || 0).toFixed(0)} kg`];
+    if (Number(s.bl || 0)) subParts.push(`${s.bl} BL`);
+    return `
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-radius:12px;background:rgba(255,255,255,.02)">
+        <div style="width:20px;font-size:12px;color:var(--muted2);text-align:center;padding-top:2px">${i+1}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:baseline;gap:10px">
+            <div style="font-size:13px;color:var(--txt);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name || "—")}</div>
+            <div style="font-size:12px;color:var(--txt);font-weight:700;white-space:nowrap;margin-left:auto">${s.count} ta<span style="font-size:10px;color:var(--muted2);font-weight:400"> · ${subParts.join(" · ")}</span></div>
+          </div>
+          <div style="position:relative;height:3px;background:rgba(255,255,255,.05);border-radius:2px;margin-top:5px;overflow:hidden">
+            <div style="position:absolute;left:0;top:0;bottom:0;width:${share.toFixed(1)}%;background:linear-gradient(90deg,var(--amber),#ff9540)"></div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">${chips}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+  return `
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.14em;margin-bottom:10px;padding-top:14px;border-top:1px solid var(--stroke)">🏆 Sotuvchilar bo'yicha jami (vazn kesimida)</div>
+    <div style="display:flex;flex-direction:column;gap:6px">${rowsHtml}</div>
+  `;
+}
+
 function renderSborniyWeightCategories(data) {
   const grid = document.getElementById("dir-sborniy-weight-grid");
   const metaEl = document.getElementById("dir-sborniy-weight-meta");
+  const overallEl = document.getElementById("dir-sborniy-weight-overall");
   if (!grid) return;
   const cats = Array.isArray(data.categories) ? data.categories : [];
   if (!data.configured || !cats.length) {
     grid.innerHTML = `<div style="grid-column:1/-1;font-size:12px;color:var(--muted2);text-align:center;padding:14px">Vazn reytingi manbasi sozlanmagan (⚙ Manba → Vazn reytingi maydonlari)</div>`;
     if (metaEl) metaEl.textContent = "manba ulanmagan";
+    if (overallEl) overallEl.innerHTML = "";
     return;
   }
+  if (overallEl) overallEl.innerHTML = buildSborniyWeightOverallHtml(data);
   const totalSales = cats.reduce((s, c) => s + Number(c.total_count || 0), 0);
   if (metaEl) metaEl.textContent = `${totalSales} ta savdo`;
   grid.innerHTML = cats.map(c => {
