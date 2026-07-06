@@ -998,6 +998,51 @@ body.role-kiosk .main {
   grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
 }
 
+/* ── Kiosk plan switcher ─────────────────────────────────────────────
+   Small chip fixed to the top-right corner of the TV. Mostly transparent
+   so it doesn't distract on the wall display; brightens on hover/focus
+   for the operator with a mouse. "Aktiv plan (avto)" = auto-follow. */
+.kiosk-plan-switcher {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(10, 12, 16, .6);
+  border: 1px solid rgba(255, 255, 255, .08);
+  opacity: .35;
+  transition: opacity .2s ease;
+}
+.kiosk-plan-switcher:hover,
+.kiosk-plan-switcher:focus-within { opacity: 1; }
+.kiosk-plan-switcher label {
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, .55);
+  cursor: pointer;
+}
+.kiosk-plan-switcher select {
+  background: rgba(255, 255, 255, .06);
+  color: #e5e7eb;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  max-width: 260px;
+}
+.kiosk-plan-switcher select option {
+  background: #0d0f13;
+  color: #e5e7eb;
+}
+
 body.monitor-fullscreen .main {
   grid-template-columns: minmax(0, 2fr) minmax(380px, 1fr);
   min-height: calc(100vh - 20px);

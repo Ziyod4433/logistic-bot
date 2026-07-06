@@ -11,6 +11,20 @@
   const isKiosk = !!bootstrap.isKiosk
     || (typeof document !== "undefined" && document.body && document.body.classList.contains("role-kiosk"));
 
+  // Kiosk plan pin: the TV can still switch monthly plans via the corner
+  // switcher. Empty value = auto-follow the admin-activated plan (old
+  // behavior). Persisted in localStorage so it survives page reloads.
+  const KIOSK_PLAN_STORAGE_KEY = "buraq_kiosk_plan_id";
+  function readKioskPinnedPlan() {
+    try { return localStorage.getItem(KIOSK_PLAN_STORAGE_KEY) || ""; } catch (e) { return ""; }
+  }
+  function writeKioskPinnedPlan(planId) {
+    try {
+      if (planId) localStorage.setItem(KIOSK_PLAN_STORAGE_KEY, planId);
+      else localStorage.removeItem(KIOSK_PLAN_STORAGE_KEY);
+    } catch (e) { /* storage blocked — pin just won't survive reload */ }
+  }
+
   // ── Rotation segments (one full cycle = 50 sec) ──────────────────
   // The bottom progress bar tracks the CURRENT segment's duration so it
   // visually fills/empties in sync with each transition (LTL→FTL, FTL→LOGISTIKA, LOGISTIKA→LTL).
@@ -22,12 +36,13 @@
 
   const state = {
     plans: Array.isArray(bootstrap.salesPlans) ? bootstrap.salesPlans : [],
-    // Kiosk: leave planId empty so /analytics/api/monitor always falls
-    // through to the backend's current active plan. Admin/editor users
+    // Kiosk: planId empty = auto-follow the backend's current active plan.
+    // If the operator pinned a specific monthly plan via the corner
+    // switcher, that pin is restored from localStorage. Admin/editor users
     // keep the URL-pinned-or-bootstrap-active behavior so they can
     // switch via the dropdown.
     planId: isKiosk
-      ? ""
+      ? readKioskPinnedPlan()
       : (query.get("sales_plan_id") || bootstrap.activePlanId || ""),
     metric: query.get("metric") || "cbm",
     segmentIndex: 0,                       // pointer into SEGMENTS
@@ -51,6 +66,7 @@
 
   const els = {
     planSelect: byId("plan-select"),
+    kioskPlanSelect: byId("kiosk-plan-select"),
     metricSelect: byId("metric-select"),
     refreshBtn: byId("refresh-btn"),
     fullscreenBtn: byId("fullscreen-btn"),
@@ -218,6 +234,33 @@
           .join("")
       : '<option value="">Plan tanlanmagan</option>';
     els.planSelect.innerHTML = planOptions;
+
+    if (isKiosk) {
+      // Kiosk: corner switcher with an explicit "auto" option. IMPORTANT:
+      // skip the admin fallback below — it would pin plans[0] and silently
+      // break auto-follow of the active plan.
+      if (els.kioskPlanSelect) {
+        els.kioskPlanSelect.innerHTML =
+          '<option value="">Aktiv plan (avto)</option>' +
+          state.plans
+            .map((plan) => `<option value="${escapeHtml(plan.id)}">${escapeHtml(plan.name || `Plan #${plan.id}`)}</option>`)
+            .join("");
+        els.kioskPlanSelect.value = state.planId || "";
+        if (els.kioskPlanSelect.value !== String(state.planId || "")) {
+          // Pinned plan no longer exists (deleted) — fall back to auto.
+          state.planId = "";
+          writeKioskPinnedPlan("");
+          els.kioskPlanSelect.value = "";
+        }
+      }
+      const pinned = currentPlan();
+      if (pinned && pinned.target_metric && !query.get("metric")) {
+        state.metric = pinned.target_metric;
+      }
+      els.metricSelect.value = state.metric;
+      return;
+    }
+
     if (state.planId) {
       els.planSelect.value = String(state.planId);
     } else if (state.plans[0]) {
@@ -651,6 +694,17 @@
     fetchMonitor(true, false).catch((error) => renderEmpty(error.message));
   }
 
+  function onKioskPlanChange() {
+    state.planId = els.kioskPlanSelect ? (els.kioskPlanSelect.value || "") : "";
+    writeKioskPinnedPlan(state.planId);
+    const selected = currentPlan();
+    if (selected && selected.target_metric) {
+      state.metric = selected.target_metric;
+      els.metricSelect.value = state.metric;
+    }
+    fetchMonitor(true, false).catch((error) => renderEmpty(error.message));
+  }
+
   function onMetricChange() {
     state.metric = els.metricSelect.value;
     const nextUrl = new URL(window.location.href);
@@ -748,6 +802,7 @@
 
   function bindEvents() {
     els.planSelect.addEventListener("change", onPlanChange);
+    if (els.kioskPlanSelect) els.kioskPlanSelect.addEventListener("change", onKioskPlanChange);
     els.metricSelect.addEventListener("change", onMetricChange);
     els.refreshBtn.addEventListener("click", () => {
       fetchMonitor(true, true).catch((error) => renderEmpty(error.message));
