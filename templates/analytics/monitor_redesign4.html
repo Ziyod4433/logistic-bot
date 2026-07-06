@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sales Monitor — Redesign v4 (5 finalists + 5 new)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { min-height:100%; }
+body { background:#07080c; font-family:'Inter',sans-serif; overflow-x:hidden; }
+
+/* ── Switcher ── */
+.switcher { position:fixed; top:0; left:0; right:0; z-index:1000; display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+  padding:10px 14px; background:rgba(6,7,10,.92); backdrop-filter:blur(10px); border-bottom:1px solid rgba(255,255,255,.08); }
+.sw-title { font-size:11px; color:#777; margin-right:8px; letter-spacing:.14em; text-transform:uppercase; }
+.sw-btn { padding:7px 12px; border-radius:8px; font-size:12px; font-weight:600; background:rgba(255,255,255,.05);
+  color:#aaa; border:1px solid rgba(255,255,255,.09); cursor:pointer; transition:all .15s; }
+.sw-btn:hover { color:#fff; border-color:rgba(255,255,255,.3); }
+.sw-btn.active { background:#7c6cff; color:#fff; border-color:#7c6cff; }
+.sw-btn .fav { color:#ffd75e; }
+.variant { display:none; min-height:100vh; padding:70px 26px 26px; position:relative; overflow:hidden; }
+.variant.active { display:block; }
+.count { font-variant-numeric:tabular-nums; }
+
+/* shared keyframes */
+@keyframes drift1 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(60px,-40px) scale(1.15)} 100%{transform:translate(-30px,30px) scale(.95)} }
+@keyframes drift2 { 0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-70px,50px) scale(1.1)} 100%{transform:translate(40px,-30px) scale(1.05)} }
+@keyframes floaty { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+@keyframes spin360 { to { transform:rotate(360deg); } }
+@keyframes shimmer { 0%{background-position:-500px 0} 100%{background-position:500px 0} }
+@keyframes pulseGlow { 0%,100%{opacity:.55} 50%{opacity:1} }
+@keyframes sweep { 0%{transform:translateX(-120%) skewX(-18deg)} 100%{transform:translateX(240%) skewX(-18deg)} }
+@keyframes barGrow { from { transform:scaleY(0); } to { transform:scaleY(1); } }
+@keyframes barGrowX { from{transform:scaleX(0)} to{transform:scaleX(1)} }
+@keyframes rise { from { opacity:0; transform:translateY(18px);} to { opacity:1; transform:translateY(0);} }
+@keyframes waveMove { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
+@keyframes gridScroll { from{background-position:0 0} to{background-position:0 44px} }
+@keyframes tilt3d { 0%,100%{transform:rotateX(8deg) rotateY(-4deg)} 50%{transform:rotateX(4deg) rotateY(4deg)} }
+@keyframes hueShift { 0%,100%{filter:hue-rotate(0deg)} 50%{filter:hue-rotate(28deg)} }
+
+/* ═════════ W1 · GLASS ORBIT (finalist) ═════════ */
+.w1 { background:#0b0d18; color:#eef; }
+.w1 .blob { position:absolute; border-radius:50%; filter:blur(110px); opacity:.5; z-index:0; }
+.w1 .b1 { width:620px; height:620px; background:#6d28d9; top:-180px; left:-140px; animation:drift1 18s ease-in-out infinite alternate; }
+.w1 .b2 { width:540px; height:540px; background:#0ea5e9; bottom:-160px; right:-120px; animation:drift2 22s ease-in-out infinite alternate; }
+.w1 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1.1fr .9fr; gap:24px; max-width:1480px; margin:0 auto; }
+.w1 .card { background:rgba(255,255,255,.07); backdrop-filter:blur(24px); border:1px solid rgba(255,255,255,.15); border-radius:28px; padding:30px;
+  box-shadow:0 30px 80px rgba(0,0,0,.5); animation:rise .7s ease both; }
+.w1 .card:nth-child(2) { animation-delay:.12s; }
+.w1 h1 { font-weight:800; font-size:26px; letter-spacing:-.02em; }
+.w1 .sub { color:#a8b0d8; font-size:13px; margin-top:4px; }
+.w1 .scene { perspective:900px; display:flex; justify-content:center; margin:26px 0 8px; }
+.w1 .ring3d { position:relative; width:280px; height:280px; transform-style:preserve-3d; animation:tilt3d 9s ease-in-out infinite; }
+.w1 .torus { position:absolute; inset:0; border-radius:50%;
+  background:conic-gradient(from 0deg, #8b5cf6 0%, #38bdf8 62%, rgba(255,255,255,.06) 62% 100%);
+  -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 30px), #000 calc(100% - 29px));
+  mask:radial-gradient(farthest-side, transparent calc(100% - 30px), #000 calc(100% - 29px));
+  animation:spin360 14s linear infinite; filter:drop-shadow(0 0 22px rgba(124,108,255,.5)); }
+.w1 .ringcore { position:absolute; inset:34px; border-radius:50%; background:rgba(10,12,24,.8); backdrop-filter:blur(6px);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.1); }
+.w1 .pct { font-size:58px; font-weight:900; letter-spacing:-.03em;
+  background:linear-gradient(90deg,#a78bfa,#38bdf8,#a78bfa); background-size:200% 100%; -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation:shimmer 5s linear infinite; }
+.w1 .cap { font-size:11px; color:#a8b0d8; letter-spacing:.2em; text-transform:uppercase; margin-top:4px; }
+.w1 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:22px; }
+.w1 .kpi { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:18px; padding:16px; position:relative; overflow:hidden; }
+.w1 .kpi::after { content:""; position:absolute; top:0; bottom:0; width:40%; background:linear-gradient(90deg,transparent,rgba(255,255,255,.09),transparent);
+  animation:sweep 4.5s ease-in-out infinite; }
+.w1 .kv { font-size:24px; font-weight:800; }
+.w1 .kl { font-size:10px; color:#a8b0d8; letter-spacing:.16em; text-transform:uppercase; margin-top:4px; }
+.w1 .lb-row { display:flex; align-items:center; gap:14px; padding:12px 12px; border-radius:16px; animation:rise .6s ease both; }
+.w1 .lb-row:nth-child(1){animation-delay:.15s} .w1 .lb-row:nth-child(2){animation-delay:.25s} .w1 .lb-row:nth-child(3){animation-delay:.35s}
+.w1 .lb-row:nth-child(4){animation-delay:.45s} .w1 .lb-row:nth-child(5){animation-delay:.55s}
+.w1 .lb-row:nth-child(odd) { background:rgba(255,255,255,.05); }
+.w1 .ava { width:40px; height:40px; border-radius:13px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px;
+  background:linear-gradient(135deg,#8b5cf6,#38bdf8); box-shadow:0 6px 18px rgba(124,108,255,.35); }
+.w1 .nm { flex:1; font-weight:600; font-size:14.5px; }
+.w1 .vl { font-weight:800; color:#7dd3fc; }
+.w1 .track { height:5px; border-radius:3px; background:rgba(255,255,255,.08); overflow:hidden; margin-top:6px; }
+.w1 .fill { height:100%; border-radius:3px; background:linear-gradient(90deg,#8b5cf6,#38bdf8); transform-origin:left; animation:barGrowX 1.4s cubic-bezier(.2,.8,.2,1) both .3s; }
+
+/* ═════════ W2 · AURORA FLOW (finalist) ═════════ */
+.w2 { background:#060812; color:#e8ecff; }
+.w2 .aur { position:absolute; inset:-25%; z-index:0; filter:blur(90px); opacity:.6;
+  background:radial-gradient(560px 320px at 22% 30%, #0d9488 0%, transparent 70%),
+             radial-gradient(640px 360px at 76% 22%, #7c3aed 0%, transparent 70%),
+             radial-gradient(560px 340px at 55% 82%, #2563eb 0%, transparent 70%);
+  animation:drift1 14s ease-in-out infinite alternate, hueShift 20s ease-in-out infinite; }
+.w2 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1fr 1fr; gap:24px; max-width:1440px; margin:0 auto; }
+.w2 .card { background:rgba(10,13,26,.6); border:1px solid rgba(148,163,255,.16); border-radius:26px; padding:30px; backdrop-filter:blur(12px);
+  animation:rise .7s ease both; }
+.w2 .card:nth-child(3) { animation-delay:.15s; }
+.w2 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.w2 .sub { color:#8b93c6; font-size:13px; margin-top:4px; }
+.w2 .gaugewrap { position:relative; width:340px; margin:26px auto 0; animation:floaty 6s ease-in-out infinite; }
+.w2 svg path.bg { fill:none; stroke:rgba(255,255,255,.08); stroke-width:22; stroke-linecap:round; }
+.w2 svg path.fg { fill:none; stroke:url(#w2grad); stroke-width:22; stroke-linecap:round;
+  stroke-dasharray:408; stroke-dashoffset:408; animation:w2draw 1.8s cubic-bezier(.3,.8,.3,1) both .3s; filter:drop-shadow(0 0 14px rgba(124,58,237,.55)); }
+@keyframes w2draw { to { stroke-dashoffset:117; } }
+.w2 .needle { position:absolute; left:50%; bottom:20px; width:4px; height:120px; background:linear-gradient(#fff,rgba(255,255,255,0));
+  border-radius:2px; transform-origin:bottom center; transform:rotate(-90deg); animation:w2needle 1.8s cubic-bezier(.3,.8,.3,1) both .3s; }
+@keyframes w2needle { to { transform:rotate(38.5deg); } }
+.w2 .pct { position:absolute; left:0; right:0; bottom:4px; text-align:center; font-family:'Space Grotesk'; font-size:58px; font-weight:700;
+  text-shadow:0 0 30px rgba(124,58,237,.5); }
+.w2 .kpis { display:flex; gap:12px; margin-top:28px; }
+.w2 .kpi { flex:1; text-align:center; padding:16px; border-radius:18px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.07);
+  animation:floaty 7s ease-in-out infinite; }
+.w2 .kpi:nth-child(2){animation-delay:.6s} .w2 .kpi:nth-child(3){animation-delay:1.2s} .w2 .kpi:nth-child(4){animation-delay:1.8s}
+.w2 .kv { font-family:'Space Grotesk'; font-size:24px; font-weight:700; }
+.w2 .kl { font-size:10px; letter-spacing:.16em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.w2 .lb-row { display:flex; align-items:center; gap:12px; padding:13px 8px; border-bottom:1px solid rgba(255,255,255,.06); animation:rise .6s ease both; }
+.w2 .lb-row:nth-child(2){animation-delay:.2s} .w2 .lb-row:nth-child(3){animation-delay:.3s} .w2 .lb-row:nth-child(4){animation-delay:.4s}
+.w2 .lb-row:nth-child(5){animation-delay:.5s} .w2 .lb-row:nth-child(6){animation-delay:.6s}
+.w2 .nm { flex:1; font-size:14.5px; }
+.w2 .vl { font-family:'Space Grotesk'; font-weight:700; color:#93c5fd; }
+.w2 .spark { width:120px; height:7px; border-radius:4px; background:rgba(255,255,255,.08); overflow:hidden; }
+.w2 .spark i { display:block; height:100%; background:linear-gradient(90deg,#0d9488,#7c3aed); background-size:200% 100%; animation:shimmer 3.5s linear infinite; }
+
+/* ═════════ W3 · LIQUID (finalist, ex-5) ═════════ */
+.w3 { background:#081018; color:#e6f6ff; }
+.w3 .grid { display:grid; grid-template-columns:1fr 1fr; gap:26px; max-width:1400px; margin:0 auto; position:relative; z-index:1; }
+.w3 .card { background:rgba(12,22,34,.75); border:1px solid rgba(56,189,248,.18); border-radius:26px; padding:30px; backdrop-filter:blur(8px);
+  animation:rise .7s ease both; }
+.w3 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.w3 .sub { color:#7fa8c4; font-size:13px; margin-top:4px; }
+.w3 .tank { position:relative; width:300px; height:300px; border-radius:50%; margin:26px auto 8px; overflow:hidden;
+  border:3px solid rgba(56,189,248,.35); box-shadow:0 0 50px rgba(56,189,248,.2), 0 0 40px rgba(56,189,248,.12) inset; animation:floaty 7s ease-in-out infinite; }
+.w3 .water { position:absolute; left:-50%; right:-50%; bottom:0; height:71.4%; }
+.w3 .water svg { position:absolute; top:-22px; left:0; width:200%; height:26px; animation:waveMove 5s linear infinite; }
+.w3 .waterbody { position:absolute; inset:0; top:2px; background:linear-gradient(180deg, rgba(56,189,248,.85), rgba(14,116,144,.9)); }
+.w3 .tanklabel { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:2; }
+.w3 .pct { font-family:'Space Grotesk'; font-size:62px; font-weight:700; text-shadow:0 2px 18px rgba(3,20,30,.7); }
+.w3 .cap { font-size:11px; letter-spacing:.24em; text-transform:uppercase; color:#d9f3ff; opacity:.85; }
+.w3 .kpis { display:flex; gap:12px; margin-top:24px; }
+.w3 .kpi { flex:1; text-align:center; padding:15px; border-radius:16px; background:rgba(56,189,248,.07); border:1px solid rgba(56,189,248,.14); }
+.w3 .kv { font-family:'Space Grotesk'; font-size:23px; font-weight:700; color:#7dd3fc; }
+.w3 .kl { font-size:10px; letter-spacing:.16em; color:#7fa8c4; text-transform:uppercase; margin-top:4px; }
+.w3 .lb-row { display:flex; align-items:center; gap:12px; padding:13px 8px; border-bottom:1px solid rgba(255,255,255,.06); animation:rise .6s ease both; }
+.w3 .lb-row:nth-child(2){animation-delay:.2s} .w3 .lb-row:nth-child(3){animation-delay:.3s}
+.w3 .lb-row:nth-child(4){animation-delay:.4s} .w3 .lb-row:nth-child(5){animation-delay:.5s} .w3 .lb-row:nth-child(6){animation-delay:.6s}
+.w3 .nm { flex:1; font-size:14.5px; }
+.w3 .vl { font-family:'Space Grotesk'; font-weight:700; color:#7dd3fc; }
+.w3 .mini { width:120px; height:26px; display:flex; align-items:flex-end; gap:3px; }
+.w3 .mini i { flex:1; background:linear-gradient(180deg,#38bdf8,#0e7490); border-radius:2px 2px 0 0; transform-origin:bottom;
+  animation:barGrow 1s cubic-bezier(.2,.8,.2,1) both; }
+
+/* ═════════ W4 · PULSE GRID (finalist, ex-9) ═════════ */
+.w4 { background:#070810; color:#eef; }
+.w4 .floor { position:absolute; left:-20%; right:-20%; bottom:-12%; height:60%; z-index:0; transform:perspective(600px) rotateX(62deg);
+  background:linear-gradient(rgba(124,108,255,.16) 1px, transparent 1px), linear-gradient(90deg, rgba(124,108,255,.16) 1px, transparent 1px);
+  background-size:44px 44px; animation:gridScroll 2.4s linear infinite;
+  -webkit-mask:linear-gradient(180deg,transparent, #000 40%); mask:linear-gradient(180deg,transparent, #000 40%); }
+.w4 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1fr 1fr; gap:26px; max-width:1420px; margin:0 auto; }
+.w4 .card { background:rgba(12,14,26,.82); border:1px solid rgba(124,108,255,.22); border-radius:22px; padding:28px; backdrop-filter:blur(6px); }
+.w4 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.w4 .sub { color:#8b93c6; font-size:13px; margin-top:4px; }
+.w4 .big { font-size:104px; font-weight:900; letter-spacing:-.04em; line-height:1.05; margin:16px 0 6px; color:#c4b5fd;
+  text-shadow:0 0 40px rgba(124,108,255,.55); animation:pulseGlow 3.6s ease-in-out infinite; }
+.w4 .track { height:14px; border-radius:8px; background:rgba(255,255,255,.07); overflow:hidden; }
+.w4 .fill { height:100%; border-radius:8px; background:linear-gradient(90deg,#7c6cff,#38bdf8); transform-origin:left; animation:barGrowX 1.5s ease both .2s; }
+.w4 .kpis { display:flex; gap:12px; margin-top:22px; }
+.w4 .kpi { flex:1; text-align:center; padding:14px; border-radius:14px; background:rgba(124,108,255,.08); border:1px solid rgba(124,108,255,.16); }
+.w4 .kv { font-family:'Space Grotesk'; font-size:23px; font-weight:700; }
+.w4 .kl { font-size:10px; letter-spacing:.18em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.w4 .bars { display:flex; align-items:flex-end; gap:14px; height:200px; margin-top:20px; }
+.w4 .bcol { flex:1; display:flex; flex-direction:column; justify-content:flex-end; height:100%; }
+.w4 .b { border-radius:6px 6px 0 0; background:linear-gradient(180deg,#8b5cf6,#312e81); transform-origin:bottom;
+  animation:barGrow 1.2s cubic-bezier(.2,.8,.2,1) both; box-shadow:0 0 22px rgba(124,108,255,.35); }
+.w4 .bcol span { text-align:center; font-size:11px; color:#8b93c6; margin-top:8px; }
+.w4 .bcol:nth-child(2) .b{animation-delay:.1s} .w4 .bcol:nth-child(3) .b{animation-delay:.2s}
+.w4 .bcol:nth-child(4) .b{animation-delay:.3s} .w4 .bcol:nth-child(5) .b{animation-delay:.4s} .w4 .bcol:nth-child(6) .b{animation-delay:.5s}
+
+/* ═════════ N9 · INFINITY ═════════ */
+.n9 { background:#0a0c16; color:#eef; }
+.n9 .grid { display:grid; grid-template-columns:1.15fr .85fr; gap:26px; max-width:1440px; margin:0 auto; position:relative; z-index:1; }
+.n9 .card { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.1); border-radius:26px; padding:30px; backdrop-filter:blur(14px); }
+.n9 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.n9 .sub { color:#8b93c6; font-size:13px; margin-top:4px; }
+.n9 .loopwrap { position:relative; display:flex; justify-content:center; margin:14px 0 4px; }
+.n9 svg .loopbg { fill:none; stroke:rgba(255,255,255,.07); stroke-width:26; stroke-linecap:round; }
+.n9 svg .loopfg { fill:none; stroke:url(#n9grad); stroke-width:26; stroke-linecap:round;
+  stroke-dasharray:120 1040; animation:n9flow 5s linear infinite; filter:drop-shadow(0 0 16px rgba(124,108,255,.5)); }
+@keyframes n9flow { to { stroke-dashoffset:-1160; } }
+.n9 .looplabel { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.n9 .pct { font-family:'Space Grotesk'; font-size:66px; font-weight:700;
+  background:linear-gradient(90deg,#a78bfa,#38bdf8); -webkit-background-clip:text; background-clip:text; color:transparent; }
+.n9 .cap { font-size:10px; letter-spacing:.3em; text-transform:uppercase; color:#8b93c6; }
+.n9 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:20px; }
+.n9 .kpi { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09); border-radius:16px; padding:15px; text-align:center; }
+.n9 .kv { font-family:'Space Grotesk'; font-size:23px; font-weight:700; }
+.n9 .kl { font-size:10px; letter-spacing:.16em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.n9 .lb-row { display:flex; align-items:center; gap:12px; padding:12.5px 8px; border-bottom:1px solid rgba(255,255,255,.07); }
+.n9 .nm { flex:1; font-size:14.5px; }
+.n9 .vl { font-family:'Space Grotesk'; font-weight:700; color:#93c5fd; }
+
+/* ═════════ Q6 · RADAR ═════════ */
+.q6 { background:radial-gradient(1000px 640px at 50% 10%, #06231a 0%, #040907 62%); color:#d9ffe f; color:#d9ffef; text-align:center; }
+.q6 .radar { position:relative; width:400px; height:400px; margin:0 auto; border-radius:50%;
+  background:radial-gradient(circle, rgba(52,211,153,.05), transparent 70%); }
+.q6 .rring { position:absolute; border-radius:50%; border:1px solid rgba(52,211,153,.25); }
+.q6 .rr1 { inset:0; } .q6 .rr2 { inset:52px; } .q6 .rr3 { inset:104px; } .q6 .rr4 { inset:156px; }
+.q6 .cross { position:absolute; background:rgba(52,211,153,.15); }
+.q6 .cx { left:0; right:0; top:50%; height:1px; } .q6 .cy { top:0; bottom:0; left:50%; width:1px; }
+.q6 .sweep { position:absolute; inset:0; border-radius:50%;
+  background:conic-gradient(from 0deg, rgba(52,211,153,.45), transparent 26%);
+  animation:spin360 4.2s linear infinite; }
+.q6 .blip { position:absolute; width:10px; height:10px; border-radius:50%; background:#34d399; box-shadow:0 0 14px #34d399;
+  animation:q6blip 4.2s ease-out infinite; }
+.q6 .bp1 { top:26%; left:60%; animation-delay:.6s; } .q6 .bp2 { top:56%; left:30%; animation-delay:1.8s; }
+.q6 .bp3 { top:66%; left:64%; animation-delay:2.9s; } .q6 .bp4 { top:38%; left:42%; animation-delay:3.6s; }
+@keyframes q6blip { 0%,8%{opacity:1; transform:scale(1)} 45%{opacity:.25; transform:scale(.7)} 100%{opacity:.2; transform:scale(.6)} }
+.q6 .core { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:none; }
+.q6 .pct { font-family:'Space Grotesk'; font-size:74px; font-weight:700; color:#6ee7b7; text-shadow:0 0 30px rgba(52,211,153,.6); }
+.q6 .cap { font-size:10px; letter-spacing:.3em; text-transform:uppercase; color:#4f9e7f; margin-top:2px; }
+.q6 .kpis { display:flex; justify-content:center; gap:46px; margin:20px 0; }
+.q6 .kv { font-family:'Space Grotesk'; font-size:27px; font-weight:700; color:#6ee7b7; }
+.q6 .kl { font-size:10px; letter-spacing:.24em; color:#4f9e7f; text-transform:uppercase; margin-top:4px; }
+.q6 .lb { max-width:640px; margin:0 auto; text-align:left; background:rgba(8,32,24,.6); border:1px solid rgba(52,211,153,.25);
+  border-radius:16px; padding:8px 20px; backdrop-filter:blur(8px); }
+.q6 .lb-row { display:flex; align-items:center; gap:12px; padding:11px 4px; border-bottom:1px solid rgba(52,211,153,.12); }
+.q6 .lb-row:last-child { border-bottom:none; }
+.q6 .nm { flex:1; font-size:14.5px; }
+.q6 .vl { font-family:'JetBrains Mono'; font-weight:700; color:#6ee7b7; }
+
+/* ═════════ Q7 · PULSE LINE (EKG) ═════════ */
+.q7 { background:#0a0c16; color:#eef; }
+.q7 .grid { display:grid; grid-template-columns:1.15fr .85fr; gap:26px; max-width:1440px; margin:0 auto; }
+.q7 .card { background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.1); border-radius:26px; padding:30px; backdrop-filter:blur(14px); }
+.q7 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.q7 .sub { color:#8b93c6; font-size:13px; margin-top:4px; }
+.q7 .big { font-size:96px; font-weight:900; letter-spacing:-.04em; line-height:1; margin:16px 0 4px;
+  background:linear-gradient(90deg,#f0abfc,#38bdf8); -webkit-background-clip:text; background-clip:text; color:transparent;
+  filter:drop-shadow(0 10px 32px rgba(240,171,252,.3)); }
+.q7 .ekgwrap { position:relative; margin-top:16px; border:1px solid rgba(240,171,252,.18); border-radius:16px; overflow:hidden;
+  background:rgba(240,171,252,.04); }
+.q7 .ekgwrap svg { display:block; width:100%; height:120px; }
+.q7 .ekg { fill:none; stroke:url(#q7grad); stroke-width:3; stroke-linejoin:round;
+  stroke-dasharray:140 1400; animation:q7flow 3.2s linear infinite; filter:drop-shadow(0 0 8px rgba(240,171,252,.8)); }
+@keyframes q7flow { to { stroke-dashoffset:-1540; } }
+.q7 .ekggrid { position:absolute; inset:0; opacity:.12;
+  background:linear-gradient(rgba(240,171,252,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(240,171,252,.5) 1px, transparent 1px);
+  background-size:22px 22px; }
+.q7 .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:20px; }
+.q7 .kpi { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09); border-radius:16px; padding:15px; text-align:center; }
+.q7 .kv { font-family:'Space Grotesk'; font-size:23px; font-weight:700; }
+.q7 .kl { font-size:10px; letter-spacing:.16em; color:#8b93c6; text-transform:uppercase; margin-top:4px; }
+.q7 .lb-row { display:flex; align-items:center; gap:12px; padding:12.5px 8px; border-bottom:1px solid rgba(255,255,255,.07); }
+.q7 .nm { flex:1; font-size:14.5px; }
+.q7 .vl { font-family:'Space Grotesk'; font-weight:700; color:#f0abfc; }
+
+/* ═════════ Q8 · BUBBLES ═════════ */
+.q8 { background:linear-gradient(180deg,#071422 0%, #0a2436 100%); color:#e6f6ff; }
+.q8 .bubble { position:absolute; bottom:-60px; border-radius:50%; z-index:0;
+  background:radial-gradient(circle at 32% 30%, rgba(125,211,252,.5), rgba(56,189,248,.08) 70%);
+  border:1px solid rgba(125,211,252,.35); animation:q8rise linear infinite; }
+@keyframes q8rise {
+  0%   { transform:translateY(0) translateX(0); opacity:0; }
+  8%   { opacity:.9; }
+  50%  { transform:translateY(-56vh) translateX(26px); }
+  100% { transform:translateY(-112vh) translateX(-16px); opacity:0; }
+}
+.q8 .bb1 { left:8%;  width:26px; height:26px; animation-duration:11s; animation-delay:0s; }
+.q8 .bb2 { left:22%; width:14px; height:14px; animation-duration:9s;  animation-delay:2.4s; }
+.q8 .bb3 { left:38%; width:34px; height:34px; animation-duration:13s; animation-delay:1.1s; }
+.q8 .bb4 { left:57%; width:18px; height:18px; animation-duration:8.5s; animation-delay:3.4s; }
+.q8 .bb5 { left:72%; width:28px; height:28px; animation-duration:12s; animation-delay:.6s; }
+.q8 .bb6 { left:87%; width:16px; height:16px; animation-duration:10s; animation-delay:4.2s; }
+.q8 .bb7 { left:48%; width:12px; height:12px; animation-duration:7.5s; animation-delay:5.1s; }
+.q8 .grid { position:relative; z-index:1; display:grid; grid-template-columns:1fr 1fr; gap:26px; max-width:1400px; margin:0 auto; }
+.q8 .card { background:rgba(10,26,42,.62); border:1px solid rgba(125,211,252,.2); border-radius:26px; padding:30px; backdrop-filter:blur(12px); }
+.q8 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.q8 .sub { color:#7fa8c4; font-size:13px; margin-top:4px; }
+.q8 .pctwrap { position:relative; width:280px; height:280px; margin:22px auto 4px; border-radius:50%;
+  border:2px solid rgba(125,211,252,.3); display:flex; flex-direction:column; align-items:center; justify-content:center;
+  box-shadow:0 0 46px rgba(56,189,248,.18), 0 0 30px rgba(56,189,248,.12) inset; animation:floaty 7s ease-in-out infinite; overflow:hidden; }
+.q8 .pctwrap::before { content:""; position:absolute; left:-20%; right:-20%; bottom:0; height:71.4%;
+  background:linear-gradient(180deg, rgba(56,189,248,.35), rgba(14,116,144,.5)); }
+.q8 .pct { position:relative; font-family:'Space Grotesk'; font-size:60px; font-weight:700; }
+.q8 .cap { position:relative; font-size:10px; letter-spacing:.26em; text-transform:uppercase; color:#bfe8ff; }
+.q8 .kpis { display:flex; gap:12px; margin-top:22px; }
+.q8 .kpi { flex:1; text-align:center; padding:14px; border-radius:16px; background:rgba(125,211,252,.08); border:1px solid rgba(125,211,252,.16); }
+.q8 .kv { font-family:'Space Grotesk'; font-size:22px; font-weight:700; color:#7dd3fc; }
+.q8 .kl { font-size:10px; letter-spacing:.16em; color:#7fa8c4; text-transform:uppercase; margin-top:4px; }
+.q8 .lb-row { display:flex; align-items:center; gap:12px; padding:12.5px 8px; border-bottom:1px solid rgba(255,255,255,.07); }
+.q8 .nm { flex:1; font-size:14.5px; }
+.q8 .vl { font-family:'Space Grotesk'; font-weight:700; color:#7dd3fc; }
+
+/* ═════════ Q9 · HIGHWAY ═════════ */
+.q9 { background:#0b0d13; color:#f4f1ea; }
+.q9 .road { position:absolute; left:50%; bottom:-4%; width:900px; height:64%; margin-left:-450px; z-index:0;
+  transform:perspective(500px) rotateX(55deg); transform-origin:bottom center;
+  background:linear-gradient(90deg, transparent 0 8%, #16181f 8% 92%, transparent 92%); }
+.q9 .lane { position:absolute; left:50%; top:0; bottom:0; width:10px; margin-left:-5px;
+  background:repeating-linear-gradient(180deg, #f7c948 0 42px, transparent 42px 84px);
+  animation:q9dash 1.2s linear infinite; }
+@keyframes q9dash { to { background-position:0 84px; } }
+.q9 .edge { position:absolute; top:0; bottom:0; width:6px; background:#3d4152; }
+.q9 .eL { left:8%; } .q9 .eR { right:8%; }
+.q9 .truck { position:absolute; left:50%; bottom:16%; transform:translateX(-50%); font-size:96px; z-index:2;
+  filter:drop-shadow(0 18px 24px rgba(0,0,0,.6)); animation:q9bob 2.6s ease-in-out infinite; }
+@keyframes q9bob { 0%,100%{transform:translateX(-50%) translateY(0) rotate(-.6deg)} 50%{transform:translateX(-50%) translateY(-7px) rotate(.6deg)} }
+.q9 .hud { position:relative; z-index:3; max-width:1400px; margin:0 auto; display:grid; grid-template-columns:1fr 1fr; gap:26px; }
+.q9 .card { background:rgba(16,18,26,.78); border:1px solid rgba(247,201,72,.22); border-radius:22px; padding:28px; backdrop-filter:blur(8px); }
+.q9 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.q9 .sub { color:#9b968a; font-size:13px; margin-top:4px; }
+.q9 .big { font-size:92px; font-weight:900; letter-spacing:-.04em; line-height:1; margin:14px 0 8px; color:#f7c948;
+  text-shadow:0 0 34px rgba(247,201,72,.35); }
+.q9 .route { position:relative; height:12px; border-radius:7px; background:rgba(255,255,255,.08); margin-top:10px; }
+.q9 .routefill { position:absolute; left:0; top:0; bottom:0; width:71.4%; border-radius:7px;
+  background:linear-gradient(90deg,#f7c948,#ff9540); transform-origin:left; animation:barGrowX 1.6s cubic-bezier(.2,.8,.2,1) both .2s; }
+.q9 .routedot { position:absolute; top:50%; left:71.4%; width:22px; height:22px; margin:-11px; border-radius:50%;
+  background:#f7c948; box-shadow:0 0 18px rgba(247,201,72,.9); animation:pulseGlow 2.4s ease-in-out infinite; }
+.q9 .routelabels { display:flex; justify-content:space-between; font-size:11px; color:#9b968a; margin-top:8px; letter-spacing:.1em; }
+.q9 .kpis { display:flex; gap:12px; margin-top:20px; }
+.q9 .kpi { flex:1; text-align:center; padding:14px; border-radius:14px; background:rgba(247,201,72,.07); border:1px solid rgba(247,201,72,.16); }
+.q9 .kv { font-family:'Space Grotesk'; font-size:22px; font-weight:700; color:#f7c948; }
+.q9 .kl { font-size:10px; letter-spacing:.18em; color:#9b968a; text-transform:uppercase; margin-top:4px; }
+.q9 .lb-row { display:flex; align-items:center; gap:12px; padding:12.5px 8px; border-bottom:1px solid rgba(255,255,255,.07); }
+.q9 .nm { flex:1; font-size:14.5px; }
+.q9 .vl { font-family:'JetBrains Mono'; font-weight:700; color:#f7c948; }
+
+/* ═════════ Q10 · EQUALIZER ═════════ */
+.q10 { background:#0a0916; color:#f2edff; }
+.q10 .grid { display:grid; grid-template-columns:.9fr 1.1fr; gap:26px; max-width:1440px; margin:0 auto; position:relative; z-index:1; }
+.q10 .card { background:rgba(255,255,255,.05); border:1px solid rgba(167,139,250,.2); border-radius:26px; padding:30px; backdrop-filter:blur(14px); }
+.q10 h1 { font-family:'Space Grotesk'; font-size:26px; font-weight:700; }
+.q10 .sub { color:#a294d6; font-size:13px; margin-top:4px; }
+.q10 .big { font-size:100px; font-weight:900; letter-spacing:-.04em; line-height:1; margin:16px 0 6px;
+  background:linear-gradient(90deg,#a78bfa,#f0abfc); -webkit-background-clip:text; background-clip:text; color:transparent;
+  filter:drop-shadow(0 12px 36px rgba(167,139,250,.35)); }
+.q10 .kpis { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; margin-top:20px; }
+.q10 .kpi { background:rgba(167,139,250,.08); border:1px solid rgba(167,139,250,.18); border-radius:16px; padding:15px; text-align:center; }
+.q10 .kv { font-family:'Space Grotesk'; font-size:24px; font-weight:700; }
+.q10 .kl { font-size:10px; letter-spacing:.16em; color:#a294d6; text-transform:uppercase; margin-top:4px; }
+.q10 .eq { display:flex; align-items:flex-end; gap:10px; height:260px; margin-top:16px; }
+.q10 .eqcol { flex:1; display:flex; flex-direction:column; justify-content:flex-end; height:100%; }
+.q10 .eqbar { border-radius:7px 7px 0 0; background:linear-gradient(180deg,#f0abfc,#7c3aed);
+  box-shadow:0 0 22px rgba(167,139,250,.35); transform-origin:bottom; animation:q10dance ease-in-out infinite alternate; }
+@keyframes q10dance { from { transform:scaleY(.72); } to { transform:scaleY(1.06); } }
+.q10 .eqcol span { text-align:center; font-size:11px; color:#a294d6; margin-top:8px; }
+.q10 .eqcol:nth-child(1) .eqbar { animation-duration:1.5s; } .q10 .eqcol:nth-child(2) .eqbar { animation-duration:1.1s; animation-delay:.2s; }
+.q10 .eqcol:nth-child(3) .eqbar { animation-duration:1.7s; animation-delay:.4s; } .q10 .eqcol:nth-child(4) .eqbar { animation-duration:1.2s; animation-delay:.1s; }
+.q10 .eqcol:nth-child(5) .eqbar { animation-duration:1.6s; animation-delay:.3s; } .q10 .eqcol:nth-child(6) .eqbar { animation-duration:1.3s; animation-delay:.5s; }
+.q10 .lb-row { display:flex; align-items:center; gap:12px; padding:12px 8px; border-bottom:1px solid rgba(255,255,255,.07); }
+.q10 .nm { flex:1; font-size:14.5px; }
+.q10 .vl { font-family:'Space Grotesk'; font-weight:700; color:#f0abfc; }
+
+</style>
+</head>
+<body>
+
+<div class="switcher">
+  <span class="sw-title">Redesign·4 — 5 finalists + 5 new</span>
+  <button class="sw-btn active" data-v="w1"><span class="fav">★</span> 1 · Glass Orbit</button>
+  <button class="sw-btn" data-v="w2"><span class="fav">★</span> 2 · Aurora Flow</button>
+  <button class="sw-btn" data-v="w3"><span class="fav">★</span> 3 · Liquid</button>
+  <button class="sw-btn" data-v="w4"><span class="fav">★</span> 4 · Pulse Grid</button>
+  <button class="sw-btn" data-v="n9"><span class="fav">★</span> 5 · Infinity</button>
+  <button class="sw-btn" data-v="q6">6 · Radar</button>
+  <button class="sw-btn" data-v="q7">7 · Pulse Line</button>
+  <button class="sw-btn" data-v="q8">8 · Bubbles</button>
+  <button class="sw-btn" data-v="q9">9 · Highway</button>
+  <button class="sw-btn" data-v="q10">10 · Equalizer</button>
+</div>
+
+<!-- W1 GLASS ORBIT -->
+<section class="variant w1 active" id="w1">
+  <div class="blob b1"></div><div class="blob b2"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 · Sales Plan</h1>
+      <div class="sub">Ombor sheet · yangilandi 18:42</div>
+      <div class="scene">
+        <div class="ring3d">
+          <div class="torus"></div>
+          <div class="ringcore">
+            <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+            <div class="cap">Plan bajarilishi</div>
+          </div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:20px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:12px">Live · LTL + FTL</div>
+      <div class="lb-row"><div class="ava">R</div><div class="nm">Retention<div class="track"><div class="fill" style="width:100%"></div></div></div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="ava">OS</div><div class="nm">Olimov Sirojiddin<div class="track"><div class="fill" style="width:22%"></div></div></div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="ava">XB</div><div class="nm">Xakimov Boburmirzo<div class="track"><div class="fill" style="width:15%"></div></div></div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="ava">RM</div><div class="nm">Rizayev Muhammad Ali<div class="track"><div class="fill" style="width:12%"></div></div></div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="ava">SA</div><div class="nm">Sobirov Azamatxo'ja<div class="track"><div class="fill" style="width:3%"></div></div></div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W2 AURORA FLOW -->
+<section class="variant w2" id="w2">
+  <div class="aur"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Buraq Logistics · Sales Monitor</div>
+      <div class="gaugewrap">
+        <svg width="340" height="200" viewBox="0 0 340 200">
+          <defs><linearGradient id="w2grad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#0d9488"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#7c3aed"/>
+          </linearGradient></defs>
+          <path class="bg" d="M 40 180 A 130 130 0 0 1 300 180"/>
+          <path class="fg" d="M 40 180 A 130 130 0 0 1 300 180"/>
+        </svg>
+        <div class="needle"></div>
+        <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Sotuvchilar reytingi</h1>
+      <div class="sub" style="margin-bottom:8px">Live</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="spark"><i style="width:100%"></i></div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="spark"><i style="width:22%"></i></div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="spark"><i style="width:15%"></i></div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="spark"><i style="width:12%"></i></div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="spark"><i style="width:3%"></i></div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W3 LIQUID -->
+<section class="variant w3" id="w3">
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Suv sathi = bajarilish darajasi</div>
+      <div class="tank">
+        <div class="water">
+          <svg viewBox="0 0 1200 26" preserveAspectRatio="none">
+            <path d="M0 13 Q 75 0 150 13 T 300 13 T 450 13 T 600 13 T 750 13 T 900 13 T 1050 13 T 1200 13 V 26 H 0 Z" fill="rgba(56,189,248,.85)"/>
+          </svg>
+          <div class="waterbody"></div>
+        </div>
+        <div class="tanklabel">
+          <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+          <div class="cap">Bajarildi</div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:8px">Oy bo'yicha taqsimot</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="mini"><i style="height:40%"></i><i style="height:70%"></i><i style="height:55%"></i><i style="height:100%"></i><i style="height:80%"></i></div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="mini"><i style="height:30%"></i><i style="height:45%"></i><i style="height:60%"></i><i style="height:38%"></i><i style="height:52%"></i></div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="mini"><i style="height:25%"></i><i style="height:55%"></i><i style="height:35%"></i><i style="height:48%"></i><i style="height:30%"></i></div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="mini"><i style="height:45%"></i><i style="height:28%"></i><i style="height:52%"></i><i style="height:33%"></i><i style="height:40%"></i></div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="mini"><i style="height:15%"></i><i style="height:22%"></i><i style="height:12%"></i><i style="height:25%"></i><i style="height:18%"></i></div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- W4 PULSE GRID -->
+<section class="variant w4" id="w4">
+  <div class="floor"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Buraq Logistics</div>
+      <div class="big count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="track"><div class="fill" style="width:71.4%"></div></div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Oylik dinamika</h1>
+      <div class="sub">m³ bo'yicha</div>
+      <div class="bars">
+        <div class="bcol"><div class="b" style="height:38%"></div><span>Yan</span></div>
+        <div class="bcol"><div class="b" style="height:52%"></div><span>Fev</span></div>
+        <div class="bcol"><div class="b" style="height:47%"></div><span>Mar</span></div>
+        <div class="bcol"><div class="b" style="height:66%"></div><span>Apr</span></div>
+        <div class="bcol"><div class="b" style="height:84%"></div><span>May</span></div>
+        <div class="bcol"><div class="b" style="height:71%"></div><span>Iyun</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+
+
+
+
+
+
+
+<!-- N9 INFINITY -->
+<section class="variant n9" id="n9">
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 · Sales Plan</h1>
+      <div class="sub">Oqim to'xtamaydi — plan bajarilmoqda</div>
+      <div class="loopwrap">
+        <svg width="480" height="240" viewBox="0 0 480 240">
+          <defs><linearGradient id="n9grad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#38bdf8"/>
+          </linearGradient></defs>
+          <path class="loopbg" d="M120 120 C 120 60, 200 60, 240 120 C 280 180, 360 180, 360 120 C 360 60, 280 60, 240 120 C 200 180, 120 180, 120 120 Z"/>
+          <path class="loopfg" d="M120 120 C 120 60, 200 60, 240 120 C 280 180, 360 180, 360 120 C 360 60, 280 60, 240 120 C 200 180, 120 180, 120 120 Z"/>
+        </svg>
+        <div class="looplabel">
+          <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+          <div class="cap">Plan bajarilishi</div>
+        </div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:8px">Live</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+
+
+<!-- Q6 RADAR -->
+<section class="variant q6" id="q6">
+  <div class="radar">
+    <div class="rring rr1"></div><div class="rring rr2"></div><div class="rring rr3"></div><div class="rring rr4"></div>
+    <div class="cross cx"></div><div class="cross cy"></div>
+    <div class="sweep"></div>
+    <div class="blip bp1"></div><div class="blip bp2"></div><div class="blip bp3"></div><div class="blip bp4"></div>
+    <div class="core">
+      <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="cap">Iyun 2026 · Plan</div>
+    </div>
+  </div>
+  <div class="kpis">
+    <div><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+    <div><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+    <div><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+    <div><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+  </div>
+  <div class="lb">
+    <div class="lb-row"><div class="nm">1 · Retention</div><div class="vl">951 m³</div></div>
+    <div class="lb-row"><div class="nm">2 · Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+    <div class="lb-row"><div class="nm">3 · Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+    <div class="lb-row"><div class="nm">4 · Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+  </div>
+</section>
+
+<!-- Q7 PULSE LINE -->
+<section class="variant q7" id="q7">
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 · Sales Plan</h1>
+      <div class="sub">Plan pulsi — jonli</div>
+      <div class="big count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="sub">2 854 / 4 000 m³ bajarildi</div>
+      <div class="ekgwrap">
+        <div class="ekggrid"></div>
+        <svg viewBox="0 0 700 120" preserveAspectRatio="none">
+          <defs><linearGradient id="q7grad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#f0abfc"/><stop offset="100%" stop-color="#38bdf8"/>
+          </linearGradient></defs>
+          <path class="ekg" d="M0 60 L80 60 L100 60 L112 26 L124 92 L136 60 L220 60 L240 60 L252 30 L264 88 L276 60 L380 60 L400 60 L412 22 L424 94 L436 60 L540 60 L560 60 L572 32 L584 86 L596 60 L700 60"/>
+        </svg>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:8px">Live</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- Q8 BUBBLES -->
+<section class="variant q8" id="q8">
+  <div class="bubble bb1"></div><div class="bubble bb2"></div><div class="bubble bb3"></div><div class="bubble bb4"></div>
+  <div class="bubble bb5"></div><div class="bubble bb6"></div><div class="bubble bb7"></div>
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Chuqurlikdan yuqoriga — 71.4%</div>
+      <div class="pctwrap">
+        <div class="pct count" data-target="71.4" data-suffix="%">0%</div>
+        <div class="cap">Bajarildi</div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Hozir</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:8px">Live</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- Q9 HIGHWAY -->
+<section class="variant q9" id="q9">
+  <div class="road">
+    <div class="edge eL"></div><div class="edge eR"></div>
+    <div class="lane"></div>
+  </div>
+  <div class="truck">🚛</div>
+  <div class="hud">
+    <div class="card">
+      <h1>Iyun 2026 · Yo'l xaritasi</h1>
+      <div class="sub">Plan sari harakat</div>
+      <div class="big count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="route">
+        <div class="routefill"></div>
+        <div class="routedot"></div>
+      </div>
+      <div class="routelabels"><span>START · 0 m³</span><span>FINISH · 4 000 m³</span></div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Bosib o'tildi</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldi</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">BL</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Top sotuvchilar</h1>
+      <div class="sub" style="margin-bottom:8px">Live</div>
+      <div class="lb-row"><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+      <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+      <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+      <div class="lb-row"><div class="nm">Rizayev Muhammad Ali</div><div class="vl">111 m³</div></div>
+      <div class="lb-row"><div class="nm">Sobirov Azamatxo'ja</div><div class="vl">20 m³</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- Q10 EQUALIZER -->
+<section class="variant q10" id="q10">
+  <div class="grid">
+    <div class="card">
+      <h1>Iyun 2026 plan</h1>
+      <div class="sub">Buraq Logistics · Sales Monitor</div>
+      <div class="big count" data-target="71.4" data-suffix="%">0%</div>
+      <div class="sub">2 854 / 4 000 m³ bajarildi</div>
+      <div class="kpis">
+        <div class="kpi"><div class="kv count" data-target="4000">0</div><div class="kl">Plan m³</div></div>
+        <div class="kpi"><div class="kv count" data-target="2854">0</div><div class="kl">Bajarildi</div></div>
+        <div class="kpi"><div class="kv count" data-target="1146">0</div><div class="kl">Qoldiq</div></div>
+        <div class="kpi"><div class="kv count" data-target="118">0</div><div class="kl">Total BL</div></div>
+      </div>
+      <div style="margin-top:20px">
+        <div class="lb-row"><div class="nm">Retention</div><div class="vl">951 m³</div></div>
+        <div class="lb-row"><div class="nm">Olimov Sirojiddin</div><div class="vl">205 m³</div></div>
+        <div class="lb-row"><div class="nm">Xakimov Boburmirzo</div><div class="vl">139 m³</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:21px">Oylik dinamika</h1>
+      <div class="sub">Har oy o'z ritmida</div>
+      <div class="eq">
+        <div class="eqcol"><div class="eqbar" style="height:38%"></div><span>Yan</span></div>
+        <div class="eqcol"><div class="eqbar" style="height:52%"></div><span>Fev</span></div>
+        <div class="eqcol"><div class="eqbar" style="height:47%"></div><span>Mar</span></div>
+        <div class="eqcol"><div class="eqbar" style="height:66%"></div><span>Apr</span></div>
+        <div class="eqcol"><div class="eqbar" style="height:84%"></div><span>May</span></div>
+        <div class="eqcol"><div class="eqbar" style="height:71%"></div><span>Iyun</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  document.querySelectorAll(".sw-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.querySelectorAll(".sw-btn").forEach(function (b) { b.classList.remove("active"); });
+      document.querySelectorAll(".variant").forEach(function (v) { v.classList.remove("active"); });
+      btn.classList.add("active");
+      var section = document.getElementById(btn.dataset.v);
+      section.classList.add("active");
+      runCountUps(section);
+      restartAnimations(section);
+    });
+  });
+
+  function runCountUps(scope) {
+    scope.querySelectorAll(".count").forEach(function (el) {
+      var target = parseFloat(el.dataset.target || "0");
+      var suffix = el.dataset.suffix || "";
+      var decimals = (String(el.dataset.target).split(".")[1] || "").length;
+      var t0 = null;
+      var DUR = 1400;
+      function step(ts) {
+        if (!t0) t0 = ts;
+        var p = Math.min(1, (ts - t0) / DUR);
+        var eased = 1 - Math.pow(1 - p, 3);
+        var val = target * eased;
+        el.textContent = val.toLocaleString("ru-RU", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).replace(",", ".") + suffix;
+        if (p < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  function restartAnimations(scope) {
+    scope.querySelectorAll("*").forEach(function (el) {
+      var anims = getComputedStyle(el).animationName;
+      if (anims && anims !== "none") {
+        el.style.animation = "none";
+        void el.offsetWidth;
+        el.style.animation = "";
+      }
+    });
+  }
+
+  runCountUps(document.querySelector(".variant.active"));
+</script>
+</body>
+</html>

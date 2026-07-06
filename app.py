@@ -2751,6 +2751,15 @@ def analytics_monitor_redesign3():
     return render_template("analytics/monitor_redesign3.html")
 
 
+@app.route("/analytics/monitor/redesign4")
+def analytics_monitor_redesign4():
+    """Round 4: 5 finalists (Glass Orbit, Aurora Flow, Liquid, Pulse Grid,
+    Infinity) plus 5 new animation mechanics (Radar sweep, EKG pulse line,
+    rising bubbles, highway with driving truck, dancing equalizer bars).
+    Public — no login required."""
+    return render_template("analytics/monitor_redesign4.html")
+
+
 @app.route("/analytics/monitor/preview2")
 def analytics_monitor_preview2():
     """Round 2 of preview ideas — 8 fresh scenes with enhanced breathing.
