@@ -3183,8 +3183,11 @@ def _director_sborniy_weight_categories(
         for row in data_rows:
             seller = (row[seller_idx].strip() if seller_idx < len(row) else "")
             if not seller:
+                # Same rule as everywhere else (fetch_ombor_data): a row
+                # without a seller name belongs to "Retention" — it must
+                # still count in the weight brackets, not be dropped.
+                seller = ombor_service.RETENTION_SELLER
                 stat["no_seller"] += 1
-                continue
             weight_cell = row[weight_idx].strip() if weight_idx < len(row) else ""
             weight = ombor_service._parse_float(weight_cell)
             if weight <= 0:
@@ -3579,7 +3582,7 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
                         if s.get("error")
                         else (
                             f"{s['sheet']}: {s.get('rows', 0)}/{s.get('rows_total', 0)} qator"
-                            + (f", sotuvchisiz={s['no_seller']}" if s.get("no_seller") else "")
+                            + (f", Retention={s['no_seller']}" if s.get("no_seller") else "")
                             + (f", vaznsiz={s['no_weight']}" if s.get("no_weight") else "")
                             + (f", sanasi buzuq={s['bad_date']}" if s.get("bad_date") else "")
                             + (f", davrdan tashqari={s['outside']}" if s.get("outside") else "")
