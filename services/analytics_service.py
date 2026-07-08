@@ -3804,13 +3804,17 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
 
     by_wh: dict[str, dict] = {n: {"cbm": 0.0, "bl_set": set(), "rows": 0} for n in DIRECTOR_WAREHOUSES}
     daily: dict[str, float] = {}
+    total_bl_set: set[str] = set()
     diag = {
         "rows_total": len(data_rows),
-        "rows_used": 0,
+        "rows_used": 0,            # rows counted into the fill gauges (snapshot)
+        "rows_chart": 0,           # rows counted into the daily-flow chart (period)
         "rows_no_cbm": 0,
-        "rows_bad_date": 0,
-        "rows_outside_period": 0,
+        "rows_no_date": 0,         # empty date — in gauges, not in chart
+        "rows_bad_date": 0,        # unparseable date — in gauges, not in chart
+        "rows_outside_period": 0,  # dated outside period — in gauges, not in chart
         "rows_no_warehouse": 0,
+        "gauge_mode": "snapshot",
     }
 
     def safe_cell(row: list[str], idx) -> str:
@@ -3818,19 +3822,19 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             return ""
         return row[idx].strip() if idx < len(row) else ""
 
+    # The Ombor tab holds only cargo CURRENTLY in a warehouse — rows migrate
+    # to "Ortilgan furalar" when loaded. So warehouse fill is a SNAPSHOT of
+    # the whole tab and must NOT be date-filtered: filtering by receipt date
+    # hid stock received before the selected period (YIWU showed 0% while
+    # physically holding cargo). The date filter applies only to the
+    # "Kunlik harakat" flow chart.
     for row in data_rows:
         cbm = ombor_service._parse_float(safe_cell(row, cbm_idx))
         if cbm <= 0:
             diag["rows_no_cbm"] += 1
             continue
-        row_date = ombor_service._parse_date(safe_cell(row, date_idx))
-        if row_date is None:
-            diag["rows_bad_date"] += 1
-            continue
-        if (date_from and row_date < date_from) or (date_to and row_date > date_to):
-            diag["rows_outside_period"] += 1
-            continue
 
+        # ── fill gauges: every stocked row counts, date-independent ──
         wh_raw = safe_cell(row, wh_idx).upper()
         matched: str | None = None
         if wh_raw:
@@ -3845,12 +3849,26 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             bl_id = safe_cell(row, bl_idx) if bl_idx is not None else f"__row_{diag['rows_used']}__"
             if bl_id:
                 bucket["bl_set"].add(bl_id)
+                total_bl_set.add(bl_id)
         else:
             diag["rows_no_warehouse"] += 1
+        diag["rows_used"] += 1
 
+        # ── daily flow chart: needs a parseable date inside the period ──
+        raw_date = safe_cell(row, date_idx)
+        if not raw_date:
+            diag["rows_no_date"] += 1
+            continue
+        row_date = ombor_service._parse_date(raw_date)
+        if row_date is None:
+            diag["rows_bad_date"] += 1
+            continue
+        if (date_from and row_date < date_from) or (date_to and row_date > date_to):
+            diag["rows_outside_period"] += 1
+            continue
         day_key = row_date.strftime("%Y-%m-%d")
         daily[day_key] = daily.get(day_key, 0.0) + cbm
-        diag["rows_used"] += 1
+        diag["rows_chart"] += 1
 
     def _r(v: float) -> float:
         return round(float(v or 0), 2)
@@ -3896,7 +3914,9 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     }
 
     total_cbm = sum(w["cbm"] for w in warehouses)
-    total_bl  = sum(w["bl"]  for w in warehouses)
+    # Union, not per-warehouse sum — the same BL split across warehouses
+    # counts once.
+    total_bl  = len(total_bl_set)
 
     # 4 configurable sub-metrics — each points at its own sheet/tab.
     # ortilgan / hajm → sum m³ by single date column
@@ -3946,23 +3966,30 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             "configured": result["configured"],
         })
 
+    period_cbm = round(sum(daily.values()), 2)
+
     return {
         "configured": True,
         "kpis": [
-            {"label": "Jami m³", "value": f"{_r(total_cbm)}"},
+            {"label": "Omborda hozir (m³)", "value": f"{_r(total_cbm)}",
+             "hint": "joriy holat — sana filtriga bog'liq emas"},
             {"label": "Jami BL", "value": str(total_bl)},
             {"label": "Faol omborlar", "value": str(len(active_warehouses))},
+            {"label": "Davr harakati (m³)", "value": f"{_r(period_cbm)}",
+             "hint": f"{date_from or '∞'} → {date_to or '∞'}"},
         ],
         "warehouses": warehouses,
         "extra_kpis": extra_kpis,
         "charts": {"chart1": daily_chart, "chart2": dist_chart},
         "diagnostics": diag,
         "message": (
-            f"Yangilangan: {diag['rows_used']} / {diag['rows_total']} qator "
-            f"({date_from or '∞'} → {date_to or '∞'}). "
-            f"Ombor topilmadi: {diag['rows_no_warehouse']}, "
-            f"CBM={diag['rows_no_cbm']}, sana={diag['rows_bad_date']}, "
-            f"davrdan tashqari={diag['rows_outside_period']}"
+            f"To'ldirilganlik — joriy holat (butun varaq): "
+            f"{diag['rows_used']} / {diag['rows_total']} qator, "
+            f"CBM bo'sh: {diag['rows_no_cbm']}, ombor topilmadi: {diag['rows_no_warehouse']}. "
+            f"Kunlik harakat ({date_from or '∞'} → {date_to or '∞'}): {diag['rows_chart']} qator"
+            + (f", sanasiz={diag['rows_no_date']}" if diag["rows_no_date"] else "")
+            + (f", sanasi buzuq={diag['rows_bad_date']}" if diag["rows_bad_date"] else "")
+            + (f", davrdan tashqari={diag['rows_outside_period']}" if diag["rows_outside_period"] else "")
         ),
     }
 
