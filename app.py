@@ -1,4 +1,5 @@
-﻿import html
+﻿import hmac
+import html
 import os
 import secrets
 import re
@@ -5384,6 +5385,182 @@ def api_director_section_data(section: str):
     except Exception as exc:
         app.logger.exception("director section data failed: %s", section)
         return jsonify({"error": f"Server error: {str(exc)[:300]}"}), 500
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Agent API — read-only JSON endpoints for the Claude-powered Telegram
+# agent. Auth: static bearer token from the AGENT_API_TOKEN env var
+# (send as "Authorization: Bearer <token>" or "X-API-Key: <token>").
+# These endpoints reuse the exact aggregation functions the admin panel
+# uses (get_monitor / get_director_*), so the agent's numbers always
+# match the dashboards — the panel stays the single source of truth.
+# See docs/AGENT_API.md for the Claude tool definitions + system prompt.
+# ──────────────────────────────────────────────────────────────────────────
+AGENT_API_TOKEN = os.getenv("AGENT_API_TOKEN", "").strip()
+
+# Agent-facing section slugs → internal director section keys.
+AGENT_DIRECTOR_SECTIONS = {
+    "seliy":   "savdo_seliy",
+    "sborniy": "savdo_sborniy",
+    "ombor":   "ombor",
+}
+
+
+def agent_token_required(func):
+    @wraps(func)
+    def decorated(*args, **kwargs):
+        if not AGENT_API_TOKEN:
+            return jsonify({
+                "error": "Agent API o'chirilgan: serverda AGENT_API_TOKEN env o'zgaruvchisini o'rnating."
+            }), 503
+        auth = request.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            supplied = auth[7:].strip()
+        else:
+            supplied = (request.headers.get("X-API-Key") or "").strip()
+        if not supplied or not hmac.compare_digest(supplied, AGENT_API_TOKEN):
+            return jsonify({"error": "Invalid or missing API token"}), 401
+        return func(*args, **kwargs)
+
+    return decorated
+
+
+def _agent_scrub_charts(obj):
+    """Recursively drop nested Chart.js specs ("chart" keys) — UI-only noise
+    for an LLM consumer. Top-level "charts" is converted to plain series by
+    the caller before this runs."""
+    if isinstance(obj, dict):
+        obj.pop("chart", None)
+        for v in obj.values():
+            _agent_scrub_charts(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            _agent_scrub_charts(v)
+
+
+def _agent_charts_to_series(payload: dict) -> dict:
+    """Replace the top-level Chart.js "charts" object with agent-friendly
+    {title: {labels, values}} series (keeps the daily/top-N data, drops
+    colors and rendering options)."""
+    charts = payload.pop("charts", None)
+    if isinstance(charts, dict):
+        series = {}
+        for key, spec in charts.items():
+            if not isinstance(spec, dict):
+                continue
+            datasets = spec.get("datasets") or []
+            first = datasets[0] if datasets and isinstance(datasets[0], dict) else {}
+            series[spec.get("title") or key] = {
+                "labels": spec.get("labels") or [],
+                "values": first.get("data") or [],
+            }
+        payload["series"] = series
+    return payload
+
+
+@app.route("/api/agent/v1/overview")
+@agent_token_required
+def agent_api_overview():
+    """Entry point for the agent: what data exists and how to ask for it."""
+    try:
+        plans = analytics_service.list_sales_plans()
+    except Exception:
+        plans = []
+    plans_out = [
+        {
+            "id": int(p.get("id") or 0),
+            "name": p.get("name") or "",
+            "period_start": p.get("period_start") or "",
+            "period_end": p.get("period_end") or "",
+            "target_value": p.get("target_value") or p.get("target_amount_usd") or 0,
+            "is_active": bool(int(p.get("is_active") or 0)),
+        }
+        for p in plans
+    ]
+    sections = {}
+    for slug, internal in AGENT_DIRECTOR_SECTIONS.items():
+        try:
+            cfg = db.get_director_config(internal)
+            sections[slug] = {"configured": bool(cfg.get("sheet_id"))}
+        except Exception:
+            sections[slug] = {"configured": False}
+    return jsonify({
+        "server_date": datetime.now().date().isoformat(),
+        "sales_plans": plans_out,
+        "director_sections": sections,
+        "endpoints": {
+            "sales_monitor": "/api/agent/v1/sales-monitor?plan_id=<id, optional>",
+            "director":      "/api/agent/v1/director/<seliy|sborniy|ombor>?from=YYYY-MM-DD&to=YYYY-MM-DD",
+        },
+    })
+
+
+@app.route("/api/agent/v1/sales-monitor")
+@agent_token_required
+def agent_api_sales_monitor():
+    """Sales Monitor payload: plan progress, department leaderboards,
+    monthly dynamics. Same function the TV monitor calls."""
+    try:
+        payload = monitor_service.get_monitor_payload(request.args)
+    except Exception as exc:
+        app.logger.exception("agent sales-monitor failed")
+        return jsonify({"error": f"Server error: {str(exc)[:300]}"}), 500
+    if request.args.get("detail") != "full":
+        for key in ("diagnostics", "ftl_diagnostics", "history_diagnostics",
+                    "ombor_config", "plan_data_status"):
+            payload.pop(key, None)
+    return jsonify(payload)
+
+
+@app.route("/api/agent/v1/director/<section>")
+@agent_token_required
+def agent_api_director(section: str):
+    """Director-panel section data (seliy / sborniy / ombor) for a date
+    range. Empty from/to = all time. detail=full keeps per-sale lists
+    and diagnostics; default response is compact for LLM consumption."""
+    internal = AGENT_DIRECTOR_SECTIONS.get((section or "").strip().lower())
+    if not internal:
+        return jsonify({
+            "error": f"Unknown section '{section}'. Use one of: {', '.join(AGENT_DIRECTOR_SECTIONS)}"
+        }), 400
+    date_from = (request.args.get("from") or "").strip()
+    date_to   = (request.args.get("to") or "").strip()
+    for label, val in (("from", date_from), ("to", date_to)):
+        if val and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", val):
+            return jsonify({"error": f"Invalid '{label}' date '{val}': use YYYY-MM-DD"}), 400
+    try:
+        cfg = db.get_director_config(internal)
+        if not cfg.get("sheet_id"):
+            return jsonify({
+                "section": section,
+                "configured": False,
+                "message": "Bo'lim manbasi admin panelda sozlanmagan (⚙).",
+            })
+        if internal == "savdo_seliy":
+            payload = analytics_service.get_director_seliy(cfg, date_from, date_to)
+        elif internal == "savdo_sborniy":
+            payload = analytics_service.get_director_sborniy(cfg, date_from, date_to)
+        else:
+            payload = analytics_service.get_director_ombor(cfg, date_from, date_to)
+    except Exception as exc:
+        app.logger.exception("agent director section failed: %s", section)
+        return jsonify({"error": f"Server error: {str(exc)[:300]}"}), 500
+
+    payload = _agent_charts_to_series(payload)
+    if request.args.get("detail") != "full":
+        payload.pop("diagnostics", None)
+        _agent_scrub_charts(payload)
+        # Weight-category drill-down lists are large; keep the aggregates.
+        wc = payload.get("weight_categories")
+        if isinstance(wc, dict):
+            for cat in wc.get("categories") or []:
+                for s in cat.get("sellers") or []:
+                    s.pop("sales", None)
+                    s.pop("bl_codes", None)
+    payload["section"] = section
+    payload["from"] = date_from
+    payload["to"] = date_to
+    return jsonify(payload)
 
 
 @app.route("/analytics/api/plans/<int:plan_id>/ombor-config", methods=["POST"])
