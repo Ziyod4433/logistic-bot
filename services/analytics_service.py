@@ -3095,14 +3095,21 @@ def _director_sborniy_agents(
     return {"agents": agents, "diag": diag}
 
 
-# Weight categories for the Sborniy per-weight seller leaderboard.
+# Weight categories for the Sborniy / Ombor weight breakdowns.
+# The 10 brackets mirror the company's delivery tariff table ("1 kubdagi
+# og'irlik", May 2026): 0-100 ... 700-1000, 1000+.
 # (min_kg inclusive, max_kg exclusive; None = unbounded)
 DIRECTOR_WEIGHT_CATEGORIES = (
-    {"key": "eng_yengil", "label": "Eng yengil", "min": 0,   "max": 100},
-    {"key": "yengil",     "label": "Yengil",     "min": 100, "max": 250},
-    {"key": "orta",       "label": "O'rta",      "min": 250, "max": 400},
-    {"key": "ogir",       "label": "Og'ir",      "min": 400, "max": 500},
-    {"key": "eng_ogir",   "label": "Eng og'ir",  "min": 500, "max": None},
+    {"key": "w0_100",     "label": "0–100 kg",     "min": 0,    "max": 100},
+    {"key": "w100_150",   "label": "100–150 kg",   "min": 100,  "max": 150},
+    {"key": "w150_200",   "label": "150–200 kg",   "min": 150,  "max": 200},
+    {"key": "w200_250",   "label": "200–250 kg",   "min": 200,  "max": 250},
+    {"key": "w250_300",   "label": "250–300 kg",   "min": 250,  "max": 300},
+    {"key": "w300_400",   "label": "300–400 kg",   "min": 300,  "max": 400},
+    {"key": "w400_500",   "label": "400–500 kg",   "min": 400,  "max": 500},
+    {"key": "w500_700",   "label": "500–700 kg",   "min": 500,  "max": 700},
+    {"key": "w700_1000",  "label": "700–1000 kg",  "min": 700,  "max": 1000},
+    {"key": "w1000_plus", "label": "1000+ kg",     "min": 1000, "max": None},
 )
 
 

@@ -26,7 +26,7 @@ AGENT_API_TOKEN=<длинный случайный секрет, наприме�
 | `/api/agent/v1/overview` | Список sales-планов (id, период, цель, активный), какие директорские секции подключены, серверная дата. Точка входа. |
 | `/api/agent/v1/sales-monitor?plan_id=<id>` | Прогресс плана: `plan`, `overall` (closed/remaining/progress_percent/total_bl), `monthly` (динамика по месяцам), `departments` (Savdo bo'limi: LTL m³ + FTL фуры; Logistika bo'limi: FTL фуры) с лидербордами. `plan_id` не указан → активный план. |
 | `/api/agent/v1/director/seliy?from=&to=` | Целые фуры (FTL): KPI, топ продавцов Savdo bo'limi и Logistika bo'limi (фуры/BL), клиенты. |
-| `/api/agent/v1/director/sborniy?from=&to=` | Сборный груз (LTL): jami m³/BL, топ продавцов, рейтинг агентов (Fura statuslari), весовые категории (5 корзин с продавцами), дневная динамика в `series`. |
+| `/api/agent/v1/director/sborniy?from=&to=` | Сборный груз (LTL): jami m³/BL, топ продавцов, рейтинг агентов (Fura statuslari), весовые категории (10 тарифных корзин с продавцами), дневная динамика в `series`. |
 | `/api/agent/v1/director/ombor?from=&to=` | Склады YIWU/ZHONGSHAN/HORGOS: заполненность (m³, % от capacity) — **снимок текущего состояния, не зависит от from/to**; период влияет только на «Davr harakati» (движение за период) и 4 суб-метрики (ortilgan, hajm, yo'ldagi, bojxonadagi). Плюс `weight_categories` — разбивка грузов, лежащих сейчас на складе, по 5 весовым категориям с списком cargos (bl/w/wh). |
 
 Параметры:
@@ -125,8 +125,8 @@ def handle_tool_call(name: str, args: dict) -> dict:
   MAQSUDXO'JA, ABDULLAYEV IBROHIM. Их FTL-фуры показываются отдельно и
   НЕ засчитываются в sales-план.
 - Sales plan = месячная цель в m³. progress_percent — процент выполнения.
-- Весовые категории sborniy: Eng yengil 0–100 кг, Yengil 100–250, O'rta
-  250–400, Og'ir 400–500, Eng og'ir 500+.
+- Весовые категории — 10 тарифных корзин (кг): 0–100, 100–150, 150–200,
+  200–250, 250–300, 300–400, 400–500, 500–700, 700–1000, 1000+.
 - Склады: YIWU, ZHONGSHAN, HORGOS. fill_percent = занято от capacity.
 - Yo'ldagi yuklar = в пути (выехал, не прибыл). Bojxonadagi = на таможне.
 

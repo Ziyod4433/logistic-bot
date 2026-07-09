@@ -7522,20 +7522,31 @@ function renderDirectorPayload(section, payload) {
   }
 }
 
+// 10 tariff brackets ("1 kubdagi og'irlik", May 2026 price list).
 const DIRECTOR_WEIGHT_CAT_ICONS = {
-  eng_yengil: "🪶",
-  yengil:     "📦",
-  orta:       "⚖️",
-  ogir:       "🏋️",
-  eng_ogir:   "🗿",
+  w0_100:     "🪶",
+  w100_150:   "🎈",
+  w150_200:   "📦",
+  w200_250:   "📚",
+  w250_300:   "⚖️",
+  w300_400:   "🧱",
+  w400_500:   "🏋️",
+  w500_700:   "🐘",
+  w700_1000:  "🗿",
+  w1000_plus: "🚛",
 };
 
 const DIRECTOR_WEIGHT_CAT_LABELS = {
-  eng_yengil: "Eng yengil",
-  yengil:     "Yengil",
-  orta:       "O'rta",
-  ogir:       "Og'ir",
-  eng_ogir:   "Eng og'ir",
+  w0_100:     "0–100 kg",
+  w100_150:   "100–150 kg",
+  w150_200:   "150–200 kg",
+  w200_250:   "200–250 kg",
+  w250_300:   "250–300 kg",
+  w300_400:   "300–400 kg",
+  w400_500:   "400–500 kg",
+  w500_700:   "500–700 kg",
+  w700_1000:  "700–1000 kg",
+  w1000_plus: "1000+ kg",
 };
 
 // Latest weight payload — the seller click-popup reads details from here
@@ -7561,10 +7572,13 @@ function openSborniyWeightSellerDetail(sellerName, catKey) {
   const catIcon  = DIRECTOR_WEIGHT_CAT_ICONS[catKey] || "⚖️";
   const catLabel = DIRECTOR_WEIGHT_CAT_LABELS[catKey] || cat.label || "";
   const clients  = Number(seller.clients != null ? seller.clients : seller.bl || 0);
+  // Label IS the range now ("0–100 kg") — append range only if it differs.
+  const catTitle = (cat.range_label && cat.range_label !== catLabel)
+    ? `${catLabel} (${cat.range_label})` : catLabel;
   if (iconEl) iconEl.textContent = catIcon;
   if (nameEl) nameEl.textContent = seller.name || "—";
   if (metaEl) metaEl.textContent =
-    `${catLabel} (${cat.range_label || ""}) · ${seller.count} ta savdo · ${Number(seller.weight || 0).toFixed(0)} kg · ${clients} ta mijoz`;
+    `${catTitle} · ${seller.count} ta savdo · ${Number(seller.weight || 0).toFixed(0)} kg · ${clients} ta mijoz`;
 
   const sales = Array.isArray(seller.sales) ? seller.sales : [];
   if (labelEl) {
@@ -7638,7 +7652,9 @@ function renderSborniyWeightCategories(data) {
         </div>
       `;
     }).join("") : `<div style="font-size:11px;color:var(--muted2);text-align:center;padding:10px">Ma'lumot yo'q</div>`;
-    const headParts = [`${esc(c.range_label || "")}`, `${c.total_count} ta savdo`];
+    const headParts = [];
+    if (c.range_label && c.range_label !== c.label) headParts.push(esc(c.range_label));
+    headParts.push(`${c.total_count} ta savdo`);
     if (Number(c.total_bl || 0)) headParts.push(`${c.total_bl} BL`);
     return `
       <div style="border:1px solid var(--stroke);border-radius:14px;padding:12px;background:rgba(255,255,255,.02)">
@@ -7671,7 +7687,9 @@ function openOmborWeightCategoryDetail(catKey) {
   const listEl  = document.getElementById("director-seller-detail-clients");
   const catIcon = DIRECTOR_WEIGHT_CAT_ICONS[catKey] || "⚖️";
   if (iconEl) iconEl.textContent = catIcon;
-  if (nameEl) nameEl.textContent = `${cat.label || ""} (${cat.range_label || ""})`;
+  // Label IS the range now ("0–100 kg") — append range only if it differs.
+  if (nameEl) nameEl.textContent = (cat.range_label && cat.range_label !== cat.label)
+    ? `${cat.label || ""} (${cat.range_label})` : (cat.label || "");
   if (metaEl) metaEl.textContent =
     `${cat.count || 0} ta yuk omborda · ${Number(cat.weight || 0).toFixed(0)} kg`;
 
@@ -7740,7 +7758,7 @@ function renderOmborWeightCategories(data) {
           <span style="font-size:13px;font-weight:700;color:var(--txt);flex:1">${esc(c.label || "")}</span>
           ${clickable ? `<span class="dir-leaderboard-chev" style="font-size:16px;color:var(--amber);font-weight:700">›</span>` : ""}
         </div>
-        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">${esc(c.range_label || "")} · ${c.count || 0} ta yuk · ${Number(c.weight || 0).toFixed(0)} kg</div>
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">${[(c.range_label && c.range_label !== c.label) ? esc(c.range_label) : "", `${c.count || 0} ta yuk`, `${Number(c.weight || 0).toFixed(0)} kg`].filter(Boolean).join(" · ")}</div>
         <div style="display:flex;flex-direction:column;gap:4px">${rowsHtml}</div>
         ${more > 0 ? `<div style="font-size:10px;color:var(--muted2);text-align:center;margin-top:6px">+${more} ta yana — bosing</div>` : ""}
       </div>
