@@ -7670,32 +7670,51 @@ function renderSborniyWeightCategories(data) {
 }
 
 // ── Ombor: weight categories of cargo currently in the warehouse ──
-// Snapshot like the fill gauges. Cards are clickable → modal with the full
-// cargo list (lightest → heaviest), each row = BL + warehouse + kg.
+// Snapshot like the fill gauges. 4 color-coded brackets (green/yellow/
+// orange/red) — separate scale from Sborniy's tariff brackets. Each cargo
+// carries its arrival date (col Z) and days since arrival; cargo older
+// than stale_days (3) hasn't been loaded onto a truck and is flagged red.
+const OMBOR_WEIGHT_CAT_ICONS = {
+  yengil:    "🟢",
+  orta:      "🟡",
+  ogir:      "🟠",
+  juda_ogir: "🔴",
+};
 let __omborWeightData = null;
+
+function omborDaysBadgeHtml(c, staleDays) {
+  if (c.days == null) return "";
+  const stale = !!c.stale;
+  const style = stale
+    ? "color:#ff5b7f;border:1px solid rgba(255,91,127,.45);background:rgba(255,91,127,.1);font-weight:700"
+    : "color:var(--muted2);border:1px solid var(--stroke)";
+  const txt = `${c.kelgan ? esc(c.kelgan) + " · " : ""}${c.days} kun`;
+  return `<div title="${stale ? `Omborda ${staleDays} kundan ortiq — furaga ortilmagan` : "Omborga kelganiga necha kun bo'ldi"}" style="font-size:10px;border-radius:6px;padding:1px 6px;white-space:nowrap;${style}">${stale ? "⚠ " : "🕒 "}${txt}</div>`;
+}
 
 function openOmborWeightCategoryDetail(catKey) {
   const data = __omborWeightData || {};
   const cat = (Array.isArray(data.categories) ? data.categories : [])
     .find(c => (c.key || "") === catKey);
   if (!cat) { toast("Kategoriya topilmadi", "err"); return; }
+  const staleDays = Number(data.stale_days || 3);
 
   const iconEl  = document.getElementById("director-seller-detail-icon");
   const nameEl  = document.getElementById("director-seller-detail-name");
   const metaEl  = document.getElementById("director-seller-detail-meta");
   const labelEl = document.getElementById("director-seller-detail-listlabel");
   const listEl  = document.getElementById("director-seller-detail-clients");
-  const catIcon = DIRECTOR_WEIGHT_CAT_ICONS[catKey] || "⚖️";
+  const catIcon = OMBOR_WEIGHT_CAT_ICONS[catKey] || "⚖️";
   if (iconEl) iconEl.textContent = catIcon;
-  // Label IS the range now ("0–100 kg") — append range only if it differs.
   if (nameEl) nameEl.textContent = (cat.range_label && cat.range_label !== cat.label)
     ? `${cat.label || ""} (${cat.range_label})` : (cat.label || "");
   if (metaEl) metaEl.textContent =
-    `${cat.count || 0} ta yuk omborda · ${Number(cat.weight || 0).toFixed(0)} kg`;
+    `${cat.count || 0} ta yuk omborda · ${Number(cat.weight || 0).toFixed(0)} kg`
+    + (Number(cat.stale || 0) ? ` · ⚠ ${cat.stale} ta ${staleDays} kundan ortiq turibdi` : "");
 
   const cargos = Array.isArray(cat.cargos) ? cat.cargos : [];
   if (labelEl) {
-    let lbl = "Yuklar — yengildan og'irgacha";
+    let lbl = "Yuklar — eng uzoq turganlari birinchi";
     if (cargos.length && Number(cat.count || 0) > cargos.length) {
       lbl += ` · ${cargos.length}/${cat.count} ko'rsatilgan`;
     }
@@ -7705,10 +7724,11 @@ function openOmborWeightCategoryDetail(catKey) {
     listEl.innerHTML = cargos.length ? cargos.map((c, i) => `
       <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:10px;background:rgba(255,255,255,.02)">
         <div style="width:22px;font-size:11px;color:var(--muted2);text-align:center">${i+1}</div>
-        <div style="font-size:16px">${catIcon}</div>
+        <div style="font-size:14px">${catIcon}</div>
         <div style="flex:1;min-width:0;font-size:13px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.bl ? esc(c.bl) : `<span style="color:var(--muted2)">BL ko'rsatilmagan</span>`}</div>
         ${c.wh ? `<div style="font-size:10px;color:var(--muted2);border:1px solid var(--stroke);border-radius:6px;padding:1px 6px;white-space:nowrap">🏬 ${esc(c.wh)}</div>` : ""}
-        <div style="font-size:13px;font-weight:700;color:var(--txt);white-space:nowrap">${Number(c.w || 0).toFixed(1)} kg</div>
+        ${omborDaysBadgeHtml(c, staleDays)}
+        <div style="font-size:13px;font-weight:700;color:var(--txt);white-space:nowrap;min-width:64px;text-align:right">${Number(c.w || 0).toFixed(1)} kg</div>
       </div>
     `).join("") : `<div style="font-size:12px;color:var(--muted2);text-align:center;padding:14px">Bu kategoriyada yuk yo'q</div>`;
   }
@@ -7736,29 +7756,33 @@ function renderOmborWeightCategories(data) {
     if (metaEl) metaEl.textContent = "manba ulanmagan";
     return;
   }
+  const staleDays = Number(data.stale_days || 3);
   if (metaEl) metaEl.textContent =
-    `${data.total_count || 0} ta yuk · ${Number(data.total_weight || 0).toFixed(0)} kg · joriy holat`;
+    `${data.total_count || 0} ta yuk · ${Number(data.total_weight || 0).toFixed(0)} kg · joriy holat`
+    + (Number(data.stale_count || 0) ? ` · ⚠ ${data.stale_count} ta ${staleDays}+ kun` : "");
   grid.innerHTML = cats.map(c => {
+    const color = c.color || "var(--amber)";
     const cargos = Array.isArray(c.cargos) ? c.cargos : [];
-    const preview = cargos.slice(0, 4);
+    const preview = cargos.slice(0, 4);   // oldest first — server pre-sorts by days desc
     const more = Math.max(0, Number(c.count || 0) - preview.length);
     const rowsHtml = preview.length ? preview.map((g, i) => `
       <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:8px;background:rgba(255,255,255,.02)">
         <div style="width:16px;font-size:11px;color:var(--muted2);text-align:center">${i+1}</div>
         <div style="flex:1;min-width:0;font-size:12px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${g.bl ? esc(g.bl) : `<span style="color:var(--muted2)">BL yo'q</span>`}</div>
         ${g.wh ? `<div style="font-size:9px;color:var(--muted2);white-space:nowrap">${esc(g.wh)}</div>` : ""}
+        ${omborDaysBadgeHtml(g, staleDays)}
         <div style="font-size:11px;font-weight:700;color:var(--txt);white-space:nowrap">${Number(g.w || 0).toFixed(1)} kg</div>
       </div>
     `).join("") : `<div style="font-size:11px;color:var(--muted2);text-align:center;padding:10px">Bo'sh</div>`;
     const clickable = Number(c.count || 0) > 0;
     return `
-      <div ${clickable ? `data-ombor-vazn-cat="${esc(c.key || "")}"` : ""} class="${clickable ? "dir-leaderboard-row--clickable" : ""}" style="border:1px solid var(--stroke);border-radius:14px;padding:12px;background:rgba(255,255,255,.02);${clickable ? "cursor:pointer;" : ""}transition:background .15s,border-color .15s">
+      <div ${clickable ? `data-ombor-vazn-cat="${esc(c.key || "")}"` : ""} class="${clickable ? "dir-leaderboard-row--clickable" : ""}" style="border:1px solid var(--stroke);border-left:3px solid ${esc(color)};border-radius:14px;padding:12px;background:rgba(255,255,255,.02);${clickable ? "cursor:pointer;" : ""}transition:background .15s,border-color .15s">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-          <span style="font-size:18px">${DIRECTOR_WEIGHT_CAT_ICONS[c.key] || "📦"}</span>
-          <span style="font-size:13px;font-weight:700;color:var(--txt);flex:1">${esc(c.label || "")}</span>
+          <span style="font-size:15px">${OMBOR_WEIGHT_CAT_ICONS[c.key] || "⚪"}</span>
+          <span style="font-size:13px;font-weight:700;color:${esc(color)};flex:1">${esc(c.label || "")}</span>
           ${clickable ? `<span class="dir-leaderboard-chev" style="font-size:16px;color:var(--amber);font-weight:700">›</span>` : ""}
         </div>
-        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">${[(c.range_label && c.range_label !== c.label) ? esc(c.range_label) : "", `${c.count || 0} ta yuk`, `${Number(c.weight || 0).toFixed(0)} kg`].filter(Boolean).join(" · ")}</div>
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">${[(c.range_label && c.range_label !== c.label) ? esc(c.range_label) : "", `${c.count || 0} ta yuk`, `${Number(c.weight || 0).toFixed(0)} kg`, Number(c.stale || 0) ? `⚠ ${c.stale}` : ""].filter(Boolean).join(" · ")}</div>
         <div style="display:flex;flex-direction:column;gap:4px">${rowsHtml}</div>
         ${more > 0 ? `<div style="font-size:10px;color:var(--muted2);text-align:center;margin-top:6px">+${more} ta yana — bosing</div>` : ""}
       </div>

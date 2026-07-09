@@ -3615,6 +3615,19 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
 # ──────────────────────────────────────────────────────────────────────────
 DIRECTOR_WAREHOUSES = ("YIWU", "ZHONGSHAN", "HORGOS")
 
+# Ombor-specific weight scale — 4 color-coded brackets (differs from the
+# 10 Sborniy tariff brackets): green 0-100, yellow 100-200, orange 200-350,
+# red 350+ kg.
+DIRECTOR_OMBOR_WEIGHT_CATEGORIES = (
+    {"key": "yengil",    "label": "Yengil",     "min": 0,   "max": 100,  "color": "#2ad09b"},
+    {"key": "orta",      "label": "O'rta",      "min": 100, "max": 200,  "color": "#ffb739"},
+    {"key": "ogir",      "label": "Og'ir",      "min": 200, "max": 350,  "color": "#ff9540"},
+    {"key": "juda_ogir", "label": "Juda og'ir", "min": 350, "max": None, "color": "#ff5b7f"},
+)
+# A cargo should be loaded onto a truck (row moves Ombor -> Fura statuslari)
+# within this many days of arriving; older cargo is flagged as stale.
+DIRECTOR_OMBOR_STALE_DAYS = 3
+
 
 def _safe_float(value, default: float = 0.0) -> float:
     if value is None or value == "":
@@ -3975,11 +3988,12 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
 
     # Weight-category breakdown of cargo CURRENTLY in the warehouse — the
     # same snapshot semantics as the fill gauges (whole Ombor tab, no date
-    # filter). Uses the section's own BL/warehouse columns; only the weight
-    # column (vazn_weight_col) needs configuring. Unlike Sborniy's version
-    # this lists the CARGOS themselves, not a seller leaderboard — the
-    # question here is "which cargo in the warehouse falls into which
-    # bracket", not "who sold more".
+    # filter). Uses the OMBOR-specific 4-color scale, NOT the Sborniy tariff
+    # brackets. Each cargo also carries its arrival date (the section's
+    # date_col, i.e. column Z) and the days elapsed since arrival: a row
+    # still sitting in the Ombor tab hasn't been loaded onto a truck (loaded
+    # rows migrate to "Fura statuslari"), so anything older than
+    # DIRECTOR_OMBOR_STALE_DAYS is flagged stale.
     vazn_letter = (cols.get("vazn_weight_col") or "").strip().upper()
     if not vazn_letter:
         # Fallback: Sborniy's Vazn stage-1 reads the SAME Ombor tab — if its
@@ -3998,14 +4012,18 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             pass
     weight_categories: dict = {"configured": False, "categories": [], "total_count": 0}
     if vazn_letter:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+        today_tk = _dt.now(_ZI("Asia/Tashkent")).date()
+
         wt_idx = ombor_service._col_to_index(vazn_letter)
         cat_list = []
-        for c in DIRECTOR_WEIGHT_CATEGORIES:
+        for c in DIRECTOR_OMBOR_WEIGHT_CATEGORIES:
             lo, hi = c["min"], c["max"]
             cat_list.append({
-                "key": c["key"], "label": c["label"],
+                "key": c["key"], "label": c["label"], "color": c["color"],
                 "range_label": f"{lo}–{hi} kg" if hi is not None else f"{lo}+ kg",
-                "count": 0, "weight": 0.0, "cargos": [],
+                "count": 0, "weight": 0.0, "stale": 0, "cargos": [],
             })
         cat_by_key = {c["key"]: c for c in cat_list}
         rows_no_weight = 0
@@ -4015,16 +4033,22 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
                 rows_no_weight += 1
                 continue
             spec = None
-            for c in DIRECTOR_WEIGHT_CATEGORIES:
+            for c in DIRECTOR_OMBOR_WEIGHT_CATEGORIES:
                 lo, hi = c["min"], c["max"]
                 if w >= lo and (hi is None or w < hi):
                     spec = c
                     break
             if spec is None:
                 continue
+            # Days since the cargo arrived at the warehouse (column Z).
+            arrived = ombor_service._parse_date(safe_cell(row, date_idx))
+            days = max(0, (today_tk - arrived).days) if arrived else None
+            is_stale = days is not None and days > DIRECTOR_OMBOR_STALE_DAYS
             bucket = cat_by_key[spec["key"]]
             bucket["count"] += 1
             bucket["weight"] += w
+            if is_stale:
+                bucket["stale"] += 1
             if len(bucket["cargos"]) < 300:
                 wh_raw = safe_cell(row, wh_idx).upper()
                 wh_name = next((n for n in DIRECTOR_WAREHOUSES if n in wh_raw), "")
@@ -4032,15 +4056,21 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
                     "bl": safe_cell(row, bl_idx),
                     "w":  round(w, 1),
                     "wh": wh_name,
+                    "kelgan": arrived.strftime("%d.%m") if arrived else "",
+                    "days": days,
+                    "stale": is_stale,
                 })
         for c in cat_list:
             c["weight"] = round(c["weight"], 1)
-            c["cargos"].sort(key=lambda x: x["w"])   # lightest → heaviest
+            # Oldest first — stale cargo is the actionable part of this block.
+            c["cargos"].sort(key=lambda x: -(x["days"] if x["days"] is not None else -1))
         weight_categories = {
             "configured": True,
             "categories": cat_list,
             "total_count":  sum(c["count"] for c in cat_list),
             "total_weight": round(sum(c["weight"] for c in cat_list), 1),
+            "stale_count":  sum(c["stale"] for c in cat_list),
+            "stale_days":   DIRECTOR_OMBOR_STALE_DAYS,
             "rows_no_weight": rows_no_weight,
         }
 
