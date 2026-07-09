@@ -1826,6 +1826,21 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
               <div style="position:relative;height:240px"><canvas data-dir-chart="ombor-2"></canvas></div>
             </div>
           </div>
+
+          <!-- Weight categories of cargo currently in the warehouse (snapshot,
+               like the gauges). Category card click → full cargo list modal. -->
+          <div class="card" style="margin-top:18px;border:1px solid var(--stroke)">
+            <div class="card-h" style="display:flex;align-items:center;justify-content:space-between">
+              <span class="card-title" style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">⚖️</span> Ombordagi yuklar — vazn kategoriyalari</span>
+              <span style="font-size:11px;color:var(--muted2)" id="dir-ombor-weight-meta">—</span>
+            </div>
+            <div class="card-body">
+              <div id="dir-ombor-weight-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px">
+                <!-- 5 category columns injected; each card is clickable → cargo list modal -->
+              </div>
+            </div>
+          </div>
+
           <div class="director-status-message" data-dir-msg="ombor" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
         </div>
 
@@ -7038,6 +7053,7 @@ const DIRECTOR_COLUMN_LABELS = {
   capacity_yiwu:      "YIWU sig'imi (m³)",
   capacity_zhongshan: "ZHONGSHAN sig'imi (m³)",
   capacity_horgos:    "HORGOS sig'imi (m³)",
+  vazn_weight_col:    "Vazn (kg) ustuni (Ombor varag'ida)",
   fura_sheet_name:    "Varaq nomi (Fura statuslari)",
   fura_header_rows:   "Header qatorlari",
   fura_agent_col:     "Agent ustuni (Fura statuslari varag'i)",
@@ -7090,6 +7106,7 @@ const DIRECTOR_COLUMN_LABELS = {
 // per director section.
 const DIRECTOR_SETTINGS_GROUPS = {
   ombor: {
+    vazn:     "⚖️ VAZN KATEGORIYALARI (ombordagi yuklar)",
     ortilgan: "📥 UMUMIY ORTILGAN YUKLAR",
     hajm:     "📊 UMUMIY HAJM",
     yulda:    "🚛 YO'LDAGI YUKLAR",
@@ -7379,6 +7396,10 @@ function renderDirectorPayload(section, payload) {
         }
         if (subEl) subEl.textContent = "manba ulanmagan";
       });
+      const omborWeightGrid = document.getElementById("dir-ombor-weight-grid");
+      if (omborWeightGrid) omborWeightGrid.innerHTML = "";
+      const omborWeightMeta = document.getElementById("dir-ombor-weight-meta");
+      if (omborWeightMeta) omborWeightMeta.textContent = "—";
     }
   }
 
@@ -7470,6 +7491,7 @@ function renderDirectorPayload(section, payload) {
         if (subEl) subEl.textContent = `${k.count || 0} qator`;
       }
     });
+    renderOmborWeightCategories(payload.weight_categories || {});
   }
 
   // Sborniy: render LTL sellers + agents (from Fura statuslari) leaderboards
@@ -7626,6 +7648,101 @@ function renderSborniyWeightCategories(data) {
         </div>
         <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">${headParts.join(" · ")}</div>
         <div style="display:flex;flex-direction:column;gap:4px">${rowsHtml}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+// ── Ombor: weight categories of cargo currently in the warehouse ──
+// Snapshot like the fill gauges. Cards are clickable → modal with the full
+// cargo list (lightest → heaviest), each row = BL + warehouse + kg.
+let __omborWeightData = null;
+
+function openOmborWeightCategoryDetail(catKey) {
+  const data = __omborWeightData || {};
+  const cat = (Array.isArray(data.categories) ? data.categories : [])
+    .find(c => (c.key || "") === catKey);
+  if (!cat) { toast("Kategoriya topilmadi", "err"); return; }
+
+  const iconEl  = document.getElementById("director-seller-detail-icon");
+  const nameEl  = document.getElementById("director-seller-detail-name");
+  const metaEl  = document.getElementById("director-seller-detail-meta");
+  const labelEl = document.getElementById("director-seller-detail-listlabel");
+  const listEl  = document.getElementById("director-seller-detail-clients");
+  const catIcon = DIRECTOR_WEIGHT_CAT_ICONS[catKey] || "⚖️";
+  if (iconEl) iconEl.textContent = catIcon;
+  if (nameEl) nameEl.textContent = `${cat.label || ""} (${cat.range_label || ""})`;
+  if (metaEl) metaEl.textContent =
+    `${cat.count || 0} ta yuk omborda · ${Number(cat.weight || 0).toFixed(0)} kg`;
+
+  const cargos = Array.isArray(cat.cargos) ? cat.cargos : [];
+  if (labelEl) {
+    let lbl = "Yuklar — yengildan og'irgacha";
+    if (cargos.length && Number(cat.count || 0) > cargos.length) {
+      lbl += ` · ${cargos.length}/${cat.count} ko'rsatilgan`;
+    }
+    labelEl.textContent = lbl;
+  }
+  if (listEl) {
+    listEl.innerHTML = cargos.length ? cargos.map((c, i) => `
+      <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:10px;background:rgba(255,255,255,.02)">
+        <div style="width:22px;font-size:11px;color:var(--muted2);text-align:center">${i+1}</div>
+        <div style="font-size:16px">${catIcon}</div>
+        <div style="flex:1;min-width:0;font-size:13px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.bl ? esc(c.bl) : `<span style="color:var(--muted2)">BL ko'rsatilmagan</span>`}</div>
+        ${c.wh ? `<div style="font-size:10px;color:var(--muted2);border:1px solid var(--stroke);border-radius:6px;padding:1px 6px;white-space:nowrap">🏬 ${esc(c.wh)}</div>` : ""}
+        <div style="font-size:13px;font-weight:700;color:var(--txt);white-space:nowrap">${Number(c.w || 0).toFixed(1)} kg</div>
+      </div>
+    `).join("") : `<div style="font-size:12px;color:var(--muted2);text-align:center;padding:14px">Bu kategoriyada yuk yo'q</div>`;
+  }
+  openModal("director-seller-detail-modal");
+}
+
+if (!window.__omborWeightClickBound) {
+  document.addEventListener("click", function (ev) {
+    const card = ev.target && ev.target.closest && ev.target.closest("[data-ombor-vazn-cat]");
+    if (!card) return;
+    const cat = card.getAttribute("data-ombor-vazn-cat") || "";
+    if (cat) openOmborWeightCategoryDetail(cat);
+  });
+  window.__omborWeightClickBound = true;
+}
+
+function renderOmborWeightCategories(data) {
+  const grid = document.getElementById("dir-ombor-weight-grid");
+  const metaEl = document.getElementById("dir-ombor-weight-meta");
+  if (!grid) return;
+  __omborWeightData = data;
+  const cats = Array.isArray(data.categories) ? data.categories : [];
+  if (!data.configured || !cats.length) {
+    grid.innerHTML = `<div style="grid-column:1/-1;font-size:12px;color:var(--muted2);text-align:center;padding:14px">Vazn ustuni sozlanmagan (⚙ Manba → «Vazn (kg) ustuni»)</div>`;
+    if (metaEl) metaEl.textContent = "manba ulanmagan";
+    return;
+  }
+  if (metaEl) metaEl.textContent =
+    `${data.total_count || 0} ta yuk · ${Number(data.total_weight || 0).toFixed(0)} kg · joriy holat`;
+  grid.innerHTML = cats.map(c => {
+    const cargos = Array.isArray(c.cargos) ? c.cargos : [];
+    const preview = cargos.slice(0, 4);
+    const more = Math.max(0, Number(c.count || 0) - preview.length);
+    const rowsHtml = preview.length ? preview.map((g, i) => `
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:8px;background:rgba(255,255,255,.02)">
+        <div style="width:16px;font-size:11px;color:var(--muted2);text-align:center">${i+1}</div>
+        <div style="flex:1;min-width:0;font-size:12px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${g.bl ? esc(g.bl) : `<span style="color:var(--muted2)">BL yo'q</span>`}</div>
+        ${g.wh ? `<div style="font-size:9px;color:var(--muted2);white-space:nowrap">${esc(g.wh)}</div>` : ""}
+        <div style="font-size:11px;font-weight:700;color:var(--txt);white-space:nowrap">${Number(g.w || 0).toFixed(1)} kg</div>
+      </div>
+    `).join("") : `<div style="font-size:11px;color:var(--muted2);text-align:center;padding:10px">Bo'sh</div>`;
+    const clickable = Number(c.count || 0) > 0;
+    return `
+      <div ${clickable ? `data-ombor-vazn-cat="${esc(c.key || "")}"` : ""} class="${clickable ? "dir-leaderboard-row--clickable" : ""}" style="border:1px solid var(--stroke);border-radius:14px;padding:12px;background:rgba(255,255,255,.02);${clickable ? "cursor:pointer;" : ""}transition:background .15s,border-color .15s">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-size:18px">${DIRECTOR_WEIGHT_CAT_ICONS[c.key] || "📦"}</span>
+          <span style="font-size:13px;font-weight:700;color:var(--txt);flex:1">${esc(c.label || "")}</span>
+          ${clickable ? `<span class="dir-leaderboard-chev" style="font-size:16px;color:var(--amber);font-weight:700">›</span>` : ""}
+        </div>
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">${esc(c.range_label || "")} · ${c.count || 0} ta yuk · ${Number(c.weight || 0).toFixed(0)} kg</div>
+        <div style="display:flex;flex-direction:column;gap:4px">${rowsHtml}</div>
+        ${more > 0 ? `<div style="font-size:10px;color:var(--muted2);text-align:center;margin-top:6px">+${more} ta yana — bosing</div>` : ""}
       </div>
     `;
   }).join("");

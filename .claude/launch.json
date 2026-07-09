@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "Flask Web Server",
+      "name": "flask-panel",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["app.py"],
-      "autoPort": true
+      "runtimeArgs": ["C:/AI PROJECTS/logistic_v2/app.py"],
+      "port": 5000
     }
   ]
 }

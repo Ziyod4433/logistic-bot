@@ -3966,6 +3966,77 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             "configured": result["configured"],
         })
 
+    # Weight-category breakdown of cargo CURRENTLY in the warehouse — the
+    # same snapshot semantics as the fill gauges (whole Ombor tab, no date
+    # filter). Uses the section's own BL/warehouse columns; only the weight
+    # column (vazn_weight_col) needs configuring. Unlike Sborniy's version
+    # this lists the CARGOS themselves, not a seller leaderboard — the
+    # question here is "which cargo in the warehouse falls into which
+    # bracket", not "who sold more".
+    vazn_letter = (cols.get("vazn_weight_col") or "").strip().upper()
+    if not vazn_letter:
+        # Fallback: Sborniy's Vazn stage-1 reads the SAME Ombor tab — if its
+        # sheet/tab match this section's source, reuse its weight column so
+        # the block works without re-entering the letter here.
+        try:
+            import database as _db
+            sb_cfg = _db.get_director_config("savdo_sborniy")
+            sb_cols = sb_cfg.get("columns") or {}
+            if (
+                (sb_cfg.get("sheet_id") or "").strip() == sheet_id
+                and (sb_cols.get("vazn1_sheet_name") or "").strip().lower() == sheet_name.lower()
+            ):
+                vazn_letter = (sb_cols.get("vazn1_weight_col") or "").strip().upper()
+        except Exception:
+            pass
+    weight_categories: dict = {"configured": False, "categories": [], "total_count": 0}
+    if vazn_letter:
+        wt_idx = ombor_service._col_to_index(vazn_letter)
+        cat_list = []
+        for c in DIRECTOR_WEIGHT_CATEGORIES:
+            lo, hi = c["min"], c["max"]
+            cat_list.append({
+                "key": c["key"], "label": c["label"],
+                "range_label": f"{lo}–{hi} kg" if hi is not None else f"{lo}+ kg",
+                "count": 0, "weight": 0.0, "cargos": [],
+            })
+        cat_by_key = {c["key"]: c for c in cat_list}
+        rows_no_weight = 0
+        for row in data_rows:
+            w = ombor_service._parse_float(safe_cell(row, wt_idx))
+            if w <= 0:
+                rows_no_weight += 1
+                continue
+            spec = None
+            for c in DIRECTOR_WEIGHT_CATEGORIES:
+                lo, hi = c["min"], c["max"]
+                if w >= lo and (hi is None or w < hi):
+                    spec = c
+                    break
+            if spec is None:
+                continue
+            bucket = cat_by_key[spec["key"]]
+            bucket["count"] += 1
+            bucket["weight"] += w
+            if len(bucket["cargos"]) < 300:
+                wh_raw = safe_cell(row, wh_idx).upper()
+                wh_name = next((n for n in DIRECTOR_WAREHOUSES if n in wh_raw), "")
+                bucket["cargos"].append({
+                    "bl": safe_cell(row, bl_idx),
+                    "w":  round(w, 1),
+                    "wh": wh_name,
+                })
+        for c in cat_list:
+            c["weight"] = round(c["weight"], 1)
+            c["cargos"].sort(key=lambda x: x["w"])   # lightest → heaviest
+        weight_categories = {
+            "configured": True,
+            "categories": cat_list,
+            "total_count":  sum(c["count"] for c in cat_list),
+            "total_weight": round(sum(c["weight"] for c in cat_list), 1),
+            "rows_no_weight": rows_no_weight,
+        }
+
     period_cbm = round(sum(daily.values()), 2)
 
     return {
@@ -3980,6 +4051,7 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         ],
         "warehouses": warehouses,
         "extra_kpis": extra_kpis,
+        "weight_categories": weight_categories,
         "charts": {"chart1": daily_chart, "chart2": dist_chart},
         "diagnostics": diag,
         "message": (

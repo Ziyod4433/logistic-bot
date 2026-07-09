@@ -5243,6 +5243,10 @@ DIRECTOR_DEFAULT_COLUMNS = {
         "capacity_yiwu":      "1000",
         "capacity_zhongshan": "1000",
         "capacity_horgos":    "1000",
+        # ─── Vazn kategoriyalari (Ombor'dagi yuklar) ───
+        # Weight column on the SAME Ombor tab; snapshot like the gauges —
+        # groups current stock into the 5 weight brackets.
+        "vazn_weight_col": "",
         # ─── 1) UMUMIY ORTILGAN YUKLAR ───
         "ortilgan_sheet_url":    "",
         "ortilgan_sheet_name":   "Ortilgan furalar",
