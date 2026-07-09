@@ -5230,6 +5230,21 @@ DIRECTOR_DEFAULT_COLUMNS = {
         "vazn3_date_col":    "X",
         "vazn3_header_rows": "1",
     },
+    # SOTUV BAZASI = the KP / contract-price sheet. Each row is a quote:
+    # density (M, kg per 1 m³) + the price the seller agreed (N, USD/m³) +
+    # volume (K). The agreed price is compared against the official tariff
+    # (DIRECTOR_SOTUV_TARIFF) to compute margin / flag losses.
+    "sotuv_bazasi": {
+        "status_col":  "A",
+        "cpa_col":     "B",
+        "seller_col":  "C",
+        "client_col":  "E",
+        "product_col": "F",
+        "volume_col":  "K",
+        "density_col": "M",
+        "price_col":   "N",
+        "date_col":    "AJ",
+    },
     # OMBOR = warehouse fill. Aggregates CBM by warehouse name (matched
     # against YIWU/ZHONGSHAN/HORGOS substring). Capacity per warehouse
     # is stored alongside the column letters in columns_json. Also includes
@@ -5376,6 +5391,14 @@ def api_director_section_data(section: str):
             agg.setdefault("to", date_to)
             agg.setdefault("sheet_id", cfg.get("sheet_id"))
             return jsonify(agg)
+        # SOTUV BAZASI — KP / contract prices vs the official tariff
+        if section == "sotuv_bazasi":
+            agg = analytics_service.get_director_sotuv_bazasi(cfg, date_from, date_to)
+            agg.setdefault("section", section)
+            agg.setdefault("from", date_from)
+            agg.setdefault("to", date_to)
+            agg.setdefault("sheet_id", cfg.get("sheet_id"))
+            return jsonify(agg)
         return jsonify({
             "section": section,
             "configured": True,
@@ -5407,6 +5430,7 @@ AGENT_DIRECTOR_SECTIONS = {
     "seliy":   "savdo_seliy",
     "sborniy": "savdo_sborniy",
     "ombor":   "ombor",
+    "sotuv":   "sotuv_bazasi",
 }
 
 
@@ -5544,6 +5568,8 @@ def agent_api_director(section: str):
             payload = analytics_service.get_director_seliy(cfg, date_from, date_to)
         elif internal == "savdo_sborniy":
             payload = analytics_service.get_director_sborniy(cfg, date_from, date_to)
+        elif internal == "sotuv_bazasi":
+            payload = analytics_service.get_director_sotuv_bazasi(cfg, date_from, date_to)
         else:
             payload = analytics_service.get_director_ombor(cfg, date_from, date_to)
     except Exception as exc:
@@ -5561,6 +5587,11 @@ def agent_api_director(section: str):
                 for s in cat.get("sellers") or []:
                     s.pop("sales", None)
                     s.pop("bl_codes", None)
+        # Sotuv bazasi: the full deal list is heavy — keep the 40 worst
+        # (deals are pre-sorted by margin ascending, losses first).
+        if isinstance(payload.get("deals"), list) and len(payload["deals"]) > 40:
+            payload["deals_total"] = len(payload["deals"])
+            payload["deals"] = payload["deals"][:40]
     payload["section"] = section
     payload["from"] = date_from
     payload["to"] = date_to

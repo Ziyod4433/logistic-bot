@@ -4103,6 +4103,264 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
     }
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Director paneli — Sotuv bazasi (KP / kelishuv narxlari tahlili)
+# Reads the KP-preparation sheet: each row is a quote/deal with the density
+# (M, kg per 1 m³), the price the seller agreed with the client (N, USD per
+# 1 m³) and the volume (K, m³). The agreed price is checked against the
+# official delivery tariff to surface losses and margins.
+# ──────────────────────────────────────────────────────────────────────────
+# Tariff (China warehouses → Tashkent, effective 15.05.2026). Bracket =
+# weight of 1 m³ (density, kg/m³). Prices are USD per 1 m³:
+#   base = "Uslugasiz price" (bare floor — below it the deal is a loss)
+#   list = "Price narx" (official sale price)
+# The 1000+ bracket is priced PER KG (0.35 / 0.45 $ за кг × density).
+DIRECTOR_SOTUV_TARIFF = (
+    {"min": 0,    "max": 100,  "base": 90.0,  "list": 110.0},
+    {"min": 100,  "max": 150,  "base": 100.0, "list": 120.0},
+    {"min": 150,  "max": 200,  "base": 110.0, "list": 130.0},
+    {"min": 200,  "max": 250,  "base": 130.0, "list": 150.0},
+    {"min": 250,  "max": 300,  "base": 150.0, "list": 170.0},
+    {"min": 300,  "max": 400,  "base": 160.0, "list": 180.0},
+    {"min": 400,  "max": 500,  "base": 170.0, "list": 190.0},
+    {"min": 500,  "max": 700,  "base": 210.0, "list": 230.0},
+    {"min": 700,  "max": 1000, "base": 240.0, "list": 260.0},
+    {"min": 1000, "max": None, "base_per_kg": 0.35, "list_per_kg": 0.45},
+)
+
+
+def _sotuv_tariff_for(density: float) -> tuple[float, float, str]:
+    """Return (base, list, bracket_label) for a cargo density (kg per 1 m³)."""
+    for b in DIRECTOR_SOTUV_TARIFF:
+        lo, hi = b["min"], b["max"]
+        if density >= lo and (hi is None or density < hi):
+            if hi is None:
+                return (
+                    round(b["base_per_kg"] * density, 2),
+                    round(b["list_per_kg"] * density, 2),
+                    f"{lo}+ kg",
+                )
+            return (b["base"], b["list"], f"{lo}–{hi} kg")
+    return (0.0, 0.0, "—")
+
+
+def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
+    from services import ombor_service
+
+    sheet_id = (cfg.get("sheet_id") or "").strip()
+    if not sheet_id:
+        return {"configured": False, "message": "Sheet manbasini sozlang (⚙)."}
+
+    cols = cfg.get("columns") or {}
+    header_rows = max(0, int(cfg.get("header_rows") or 1))
+    # The KP sheet is usually attached by URL with #gid=… — prefer gid,
+    # fall back to the tab name.
+    gid_or_name = (cfg.get("sheet_gid") or "").strip() or (cfg.get("sheet_name") or "").strip()
+
+    def _idx(key: str, default: str):
+        letter = (cols.get(key) or default).strip().upper() or default
+        return ombor_service._col_to_index(letter)
+
+    status_idx  = _idx("status_col",  "A")
+    cpa_idx     = _idx("cpa_col",     "B")
+    seller_idx  = _idx("seller_col",  "C")
+    client_idx  = _idx("client_col",  "E")
+    product_idx = _idx("product_col", "F")
+    volume_idx  = _idx("volume_col",  "K")
+    density_idx = _idx("density_col", "M")
+    price_idx   = _idx("price_col",   "N")
+    date_idx    = _idx("date_col",    "AJ")
+
+    date_from = _parse_iso_date(date_from_str)
+    date_to   = _parse_iso_date(date_to_str)
+
+    try:
+        if gid_or_name:
+            rows = ombor_service._fetch_csv_by_gid(sheet_id, gid_or_name)
+        else:
+            rows = ombor_service._fetch_csv(sheet_id, "")
+    except Exception as exc:
+        return {
+            "configured": True,
+            "error": f"Sheet o'qish xatosi: {exc}",
+            "kpis": [], "charts": {}, "deals": [],
+            "message": f"Xato: {exc}",
+        }
+
+    data_rows = rows[header_rows:]
+
+    def safe_cell(row, idx):
+        return row[idx].strip() if idx < len(row) else ""
+
+    diag = {
+        "rows_total": len(data_rows),
+        "rows_used": 0,
+        "rows_no_density": 0,
+        "rows_no_price": 0,
+        "rows_outside_period": 0,
+        "rows_bad_date": 0,   # unparseable date — row still counted
+    }
+
+    deals: list[dict] = []
+    sellers_acc: dict[str, dict] = {}
+    total_volume = 0.0
+    total_revenue = 0.0     # Σ agreed × volume
+    total_margin = 0.0      # Σ (agreed − base) × volume
+    loss_count = 0
+    loss_amount = 0.0       # Σ negative margins × volume (absolute)
+    status_counts = {"zarar": 0, "past": 0, "ok": 0}
+
+    for row in data_rows:
+        density = ombor_service._parse_float(safe_cell(row, density_idx))
+        if density <= 0:
+            diag["rows_no_density"] += 1
+            continue
+        price = ombor_service._parse_float(safe_cell(row, price_idx))
+        if price <= 0:
+            diag["rows_no_price"] += 1
+            continue
+
+        # Date cells look like "05/08/2025 18:06:55" — strip the time part.
+        raw_date = safe_cell(row, date_idx)
+        row_date = ombor_service._parse_date(raw_date.split(" ")[0]) if raw_date else None
+        if raw_date and row_date is None:
+            diag["rows_bad_date"] += 1   # counted anyway
+        if row_date and ((date_from and row_date < date_from) or (date_to and row_date > date_to)):
+            diag["rows_outside_period"] += 1
+            continue
+
+        volume = ombor_service._parse_float(safe_cell(row, volume_idx))
+        base, list_price, bracket = _sotuv_tariff_for(density)
+        margin_m3 = round(price - base, 2)
+        margin_total = round(margin_m3 * volume, 2) if volume > 0 else margin_m3
+        if margin_m3 < 0:
+            status = "zarar"
+            loss_count += 1
+            loss_amount += abs(margin_total)
+        elif price < list_price:
+            status = "past"
+        else:
+            status = "ok"
+        status_counts[status] += 1
+
+        seller_raw = safe_cell(row, seller_idx) or "Retention"
+        skey = _norm_person_director(seller_raw)
+        sb = sellers_acc.setdefault(skey, {
+            "name": seller_raw, "count": 0, "volume": 0.0,
+            "margin": 0.0, "loss": 0,
+        })
+        if len(seller_raw) > len(sb["name"]):
+            sb["name"] = seller_raw
+        sb["count"] += 1
+        sb["volume"] += max(volume, 0.0)
+        sb["margin"] += margin_total
+        if status == "zarar":
+            sb["loss"] += 1
+
+        total_volume += max(volume, 0.0)
+        total_revenue += price * max(volume, 0.0)
+        total_margin += margin_total
+        diag["rows_used"] += 1
+
+        if len(deals) < 500:
+            deals.append({
+                "cpa":     safe_cell(row, cpa_idx),
+                "seller":  seller_raw,
+                "client":  safe_cell(row, client_idx),
+                "product": safe_cell(row, product_idx),
+                "status_sheet": safe_cell(row, status_idx),
+                "sana":    row_date.isoformat() if row_date else "",
+                "w":       round(density, 1),
+                "bracket": bracket,
+                "vol":     round(volume, 2),
+                "price":   round(price, 2),
+                "base":    base,
+                "list":    list_price,
+                "margin_m3":    margin_m3,
+                "margin_total": margin_total,
+                "status":  status,
+            })
+
+    # Worst deals first — losses are the actionable part.
+    deals.sort(key=lambda d: d["margin_m3"])
+
+    sellers_sorted = sorted(
+        [
+            {
+                "name":   v["name"],
+                "count":  v["count"],
+                "volume": round(v["volume"], 2),
+                "margin": round(v["margin"], 2),
+                "loss":   v["loss"],
+                "avg_margin_m3": round(v["margin"] / v["volume"], 2) if v["volume"] else 0.0,
+            }
+            for v in sellers_acc.values()
+        ],
+        key=lambda s: s["margin"], reverse=True,
+    )
+
+    def _r(v):
+        return round(float(v or 0), 2)
+
+    top_sellers = sellers_sorted[:10]
+    bar_chart = {
+        "type": "bar",
+        "title": "Marja bo'yicha sotuvchilar (USD)",
+        "labels": [(s["name"] or "")[:18] for s in top_sellers],
+        "datasets": [{
+            "label": "USD",
+            "data": [s["margin"] for s in top_sellers],
+            "backgroundColor": "#2ad09b",
+            "borderColor": "#2ad09b",
+        }],
+    }
+    status_chart = {
+        "type": "doughnut",
+        "title": "KP holati",
+        "labels": ["Zarar", "Tarifdan past", "Norma"],
+        "datasets": [{
+            "label": "KP",
+            "data": [status_counts["zarar"], status_counts["past"], status_counts["ok"]],
+            "backgroundColor": ["#ff5b7f", "#ffb739", "#2ad09b"],
+        }],
+    }
+
+    return {
+        "configured": True,
+        "kpis": [
+            {"label": "Jami KP", "value": str(diag["rows_used"])},
+            {"label": "Hajm (m³)", "value": f"{_r(total_volume)}"},
+            {"label": "Kelishuv summasi (USD)", "value": f"{_r(total_revenue):,.0f}".replace(",", " ")},
+            {"label": "Marja (USD)", "value": f"{_r(total_margin):,.0f}".replace(",", " "),
+             "hint": "kelishuv − Uslugasiz tarif"},
+            {"label": "Zarar KP", "value": str(loss_count),
+             "hint": f"−{_r(loss_amount):,.0f} USD".replace(",", " ") if loss_count else ""},
+        ],
+        "charts": {"chart1": bar_chart, "chart2": status_chart},
+        "sellers": sellers_sorted,
+        "deals": deals,
+        "status_counts": status_counts,
+        "tariff": [
+            {
+                "range": (f"{b['min']}–{b['max']}" if b["max"] is not None else f"{b['min']}+"),
+                "base": b.get("base", f"{b.get('base_per_kg')}/kg"),
+                "list": b.get("list", f"{b.get('list_per_kg')}/kg"),
+            }
+            for b in DIRECTOR_SOTUV_TARIFF
+        ],
+        "diagnostics": diag,
+        "message": (
+            f"KP bazasi: {diag['rows_used']} / {diag['rows_total']} qator "
+            f"({date_from or '∞'} → {date_to or '∞'}). "
+            f"Zarar: {status_counts['zarar']}, tarifdan past: {status_counts['past']}, "
+            f"norma: {status_counts['ok']}. "
+            f"Tashlangan: og'irliksiz={diag['rows_no_density']}, narxsiz={diag['rows_no_price']}, "
+            f"davrdan tashqari={diag['rows_outside_period']}"
+            + (f", sanasi buzuq={diag['rows_bad_date']} (hisobga olindi)" if diag["rows_bad_date"] else "")
+        ),
+    }
+
+
 def _build_seliy_diagnostic_message(diag: dict, date_from, date_to, sheet_id: str, gid_or_name: str) -> str:
     # Round trucks in by_month for display
     by_month_sorted = sorted(diag.get("by_month", {}).items())

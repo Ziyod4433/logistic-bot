@@ -1227,6 +1227,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
         </div>
         <div class="nav-link nav-sublink" onclick="gotoDirectorSection('ombor')"><span class="ico">📦</span> Ombor va yuklar</div>
         <div class="nav-link nav-sublink" onclick="gotoDirectorSection('agentlar')"><span class="ico">👥</span> Agentlar</div>
+        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('sotuv_bazasi')"><span class="ico">💼</span> Sotuv bazasi</div>
       </div>
       <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
       <div class="nav-link" onclick="goto('clients')"><span class="ico">👥</span> Клиенты</div>
@@ -1571,6 +1572,13 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
                 <div style="font-size:12px;color:var(--muted2);margin-top:4px">Reyting va aktivlik</div>
               </div>
             </div>
+            <div class="card" style="cursor:pointer" onclick="gotoDirectorSection('sotuv_bazasi')">
+              <div class="card-body" style="text-align:center">
+                <div style="font-size:36px;margin-bottom:6px">💼</div>
+                <div class="card-title">Sotuv bazasi</div>
+                <div style="font-size:12px;color:var(--muted2);margin-top:4px">KP narxlari: marja va zarar</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1878,6 +1886,74 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
             </div>
           </div>
           <div class="director-status-message" data-dir-msg="agentlar" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
+        </div>
+
+        <!-- SOTUV BAZASI: KP / contract prices vs the official tariff -->
+        <div class="dir-section-view" data-dir-section-view="sotuv_bazasi" style="display:none">
+          <div class="page-h" style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+            <span style="font-size:22px">💼</span>
+            <span>Sotuv bazasi</span>
+            <span class="director-source-badge" id="director-source-badge-sotuv_bazasi" style="font-size:11px;color:var(--muted2);margin-left:6px"></span>
+          </div>
+          <div class="director-toolbar" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Davr</label>
+              <input type="date" data-dir-from="sotuv_bazasi" onchange="reloadDirectorSection('sotuv_bazasi')" style="padding:6px 10px">
+              <span style="color:var(--muted)">→</span>
+              <input type="date" data-dir-to="sotuv_bazasi" onchange="reloadDirectorSection('sotuv_bazasi')" style="padding:6px 10px">
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('sotuv_bazasi',7)">7 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('sotuv_bazasi',30)">30 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('sotuv_bazasi',90)">90 kun</button>
+              <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('sotuv_bazasi','month')">Joriy oy</button>
+            </div>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('sotuv_bazasi',true)" title="Yangilash">↻</button>
+              <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('sotuv_bazasi')">⚙ Manba</button>
+            </div>
+          </div>
+          <div class="director-kpi-row" data-dir-kpi="sotuv_bazasi" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px"></div>
+          <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
+            <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+              <div class="director-chart-title" data-dir-chart-title="sotuv_bazasi-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Marja bo'yicha sotuvchilar</div>
+              <div style="position:relative;height:240px"><canvas data-dir-chart="sotuv_bazasi-1"></canvas></div>
+            </div>
+            <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
+              <div class="director-chart-title" data-dir-chart-title="sotuv_bazasi-2" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">KP holati</div>
+              <div style="position:relative;height:240px"><canvas data-dir-chart="sotuv_bazasi-2"></canvas></div>
+            </div>
+          </div>
+
+          <!-- Per-seller margin leaderboard -->
+          <div class="card" style="margin-top:18px;border:1px solid var(--stroke)">
+            <div class="card-h" style="display:flex;align-items:center;justify-content:space-between">
+              <span class="card-title" style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">🧑‍💼</span> Sotuvchilar — marja</span>
+              <span style="font-size:11px;color:var(--muted2)" id="dir-sotuv-sellers-meta">—</span>
+            </div>
+            <div class="card-body">
+              <div id="dir-sotuv-sellers" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px"></div>
+            </div>
+          </div>
+
+          <!-- Deals table: worst margin first -->
+          <div class="card" style="margin-top:18px;border:1px solid var(--stroke)">
+            <div class="card-h" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+              <span class="card-title" style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">📋</span> KP ro'yxati — eng yomon marja birinchi</span>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="all" onclick="setSotuvDealsFilter('all')">Hammasi</button>
+                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="zarar" onclick="setSotuvDealsFilter('zarar')" style="color:#ff5b7f">⚠ Zarar</button>
+                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="past" onclick="setSotuvDealsFilter('past')" style="color:#ffb739">Tarifdan past</button>
+                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="ok" onclick="setSotuvDealsFilter('ok')" style="color:#2ad09b">Norma</button>
+                <span style="font-size:11px;color:var(--muted2);margin-left:6px" id="dir-sotuv-deals-meta">—</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div style="overflow-x:auto">
+                <div id="dir-sotuv-deals" style="min-width:920px"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="director-status-message" data-dir-msg="sotuv_bazasi" style="margin-top:14px;padding:14px;border:1px dashed var(--stroke);border-radius:12px;color:var(--muted2);font-size:13px;text-align:center"></div>
         </div>
 
         <!-- Seller drill-down modal — clients of one seller -->
@@ -7019,7 +7095,7 @@ document.getElementById("new-batch-name")?.addEventListener("keydown",e=>{if(e.k
 // ═══════════════════════════════════════════════════════════════
 // DIRECTOR PANEL — page with 3 collapsible sections
 // ═══════════════════════════════════════════════════════════════
-const DIRECTOR_SECTIONS = ["savdo_seliy","savdo_sborniy","ombor","agentlar"];
+const DIRECTOR_SECTIONS = ["savdo_seliy","savdo_sborniy","ombor","agentlar","sotuv_bazasi"];
 
 let directorState = {
   configs: { savdo: null, ombor: null, agentlar: null },
@@ -7036,6 +7112,7 @@ const DIRECTOR_SECTION_LABELS = {
   savdo_sborniy: "Savdo · Sborniy (sborniy yuklar)",
   ombor:         "Ombor va yuklar statusi",
   agentlar:      "Agentlar",
+  sotuv_bazasi:  "Sotuv bazasi (KP narxlari)",
 };
 
 const DIRECTOR_COLUMN_LABELS = {
@@ -7054,6 +7131,11 @@ const DIRECTOR_COLUMN_LABELS = {
   capacity_zhongshan: "ZHONGSHAN sig'imi (m³)",
   capacity_horgos:    "HORGOS sig'imi (m³)",
   vazn_weight_col:    "Vazn (kg) ustuni (Ombor varag'ida)",
+  cpa_col:            "KP raqami ustuni (CPA)",
+  product_col:        "Tovar nomi ustuni",
+  volume_col:         "Hajm (m³) ustuni",
+  density_col:        "1 m³ og'irligi (kg) ustuni",
+  price_col:          "Kelishilgan narx (USD/m³) ustuni",
   fura_sheet_name:    "Varaq nomi (Fura statuslari)",
   fura_header_rows:   "Header qatorlari",
   fura_agent_col:     "Agent ustuni (Fura statuslari varag'i)",
@@ -7401,6 +7483,16 @@ function renderDirectorPayload(section, payload) {
       const omborWeightMeta = document.getElementById("dir-ombor-weight-meta");
       if (omborWeightMeta) omborWeightMeta.textContent = "—";
     }
+    if (section === "sotuv_bazasi") {
+      const sellersEl = document.getElementById("dir-sotuv-sellers");
+      if (sellersEl) sellersEl.innerHTML = "";
+      const dealsEl = document.getElementById("dir-sotuv-deals");
+      if (dealsEl) dealsEl.innerHTML = "";
+      ["dir-sotuv-sellers-meta", "dir-sotuv-deals-meta"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = "—";
+      });
+    }
   }
 
   if (!payload?.configured) {
@@ -7493,6 +7585,9 @@ function renderDirectorPayload(section, payload) {
     });
     renderOmborWeightCategories(payload.weight_categories || {});
   }
+
+  // Sotuv bazasi: seller margins + KP deals table
+  if (section === "sotuv_bazasi") renderSotuvBazasi(payload);
 
   // Sborniy: render LTL sellers + agents (from Fura statuslari) leaderboards
   if (section === "savdo_sborniy") {
@@ -7788,6 +7883,100 @@ function renderOmborWeightCategories(data) {
       </div>
     `;
   }).join("");
+}
+
+// ── Sotuv bazasi: KP agreed prices vs the official tariff ──
+// deals arrive pre-sorted worst-margin-first; the status chips filter
+// client-side over the cached list.
+let __sotuvDeals = [];
+let __sotuvFilter = "all";
+const SOTUV_STATUS_META = {
+  zarar: { label: "Zarar",         color: "#ff5b7f", icon: "⚠" },
+  past:  { label: "Tarifdan past", color: "#ffb739", icon: "◔" },
+  ok:    { label: "Norma",         color: "#2ad09b", icon: "✓" },
+};
+
+function renderSotuvBazasi(payload) {
+  const sellersEl = document.getElementById("dir-sotuv-sellers");
+  const sellersMeta = document.getElementById("dir-sotuv-sellers-meta");
+  const sellers = Array.isArray(payload.sellers) ? payload.sellers : [];
+  if (sellersEl) {
+    sellersEl.innerHTML = sellers.length ? sellers.map((s, i) => {
+      const neg = Number(s.margin || 0) < 0;
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--stroke);border-radius:12px;background:rgba(255,255,255,.02)">
+          <div style="width:22px;font-size:12px;color:var(--muted2);text-align:center">${i+1}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name || "—")}</div>
+            <div style="font-size:10px;color:var(--muted2)">${s.count} KP · ${Number(s.volume || 0).toFixed(1)} m³${Number(s.loss || 0) ? ` · <span style="color:#ff5b7f">⚠ ${s.loss} zarar</span>` : ""}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:14px;font-weight:800;color:${neg ? "#ff5b7f" : "#2ad09b"}">${neg ? "−" : "+"}${Math.abs(Number(s.margin || 0)).toFixed(0)} $</div>
+            <div style="font-size:9px;color:var(--muted2)">${Number(s.avg_margin_m3 || 0).toFixed(1)} $/m³</div>
+          </div>
+        </div>
+      `;
+    }).join("") : `<div style="grid-column:1/-1;font-size:12px;color:var(--muted2);text-align:center;padding:14px">Ma'lumot yo'q</div>`;
+  }
+  if (sellersMeta) {
+    const totalMargin = sellers.reduce((a, s) => a + Number(s.margin || 0), 0);
+    sellersMeta.textContent = `${sellers.length} ta sotuvchi · jami marja ${totalMargin.toFixed(0)} $`;
+  }
+  __sotuvDeals = Array.isArray(payload.deals) ? payload.deals : [];
+  __sotuvFilter = "all";
+  renderSotuvDealsTable();
+}
+
+function setSotuvDealsFilter(f) {
+  __sotuvFilter = f;
+  renderSotuvDealsTable();
+}
+
+function renderSotuvDealsTable() {
+  const el = document.getElementById("dir-sotuv-deals");
+  const meta = document.getElementById("dir-sotuv-deals-meta");
+  if (!el) return;
+  document.querySelectorAll("[data-sotuv-filter]").forEach(b => {
+    b.style.background = b.getAttribute("data-sotuv-filter") === __sotuvFilter ? "rgba(255,255,255,.1)" : "";
+  });
+  const rows = __sotuvFilter === "all"
+    ? __sotuvDeals
+    : __sotuvDeals.filter(d => d.status === __sotuvFilter);
+  const shown = rows.slice(0, 120);
+  if (meta) meta.textContent = rows.length
+    ? `${shown.length}/${rows.length} ko'rsatilgan`
+    : "0 ta";
+  const gridCols = "90px 130px minmax(120px,1fr) 70px 90px 76px 90px 84px 64px 90px 110px";
+  const head = `
+    <div style="display:grid;grid-template-columns:${gridCols};gap:8px;padding:6px 10px;font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">
+      <div>KP</div><div>Sotuvchi</div><div>Mijoz / tovar</div><div>kg/m³</div><div>Toifa</div>
+      <div>Kelishuv</div><div>Tarif (min–narx)</div><div>Marja $/m³</div><div>m³</div><div>Marja jami</div><div>Holat</div>
+    </div>`;
+  const body = shown.map(d => {
+    const st = SOTUV_STATUS_META[d.status] || SOTUV_STATUS_META.ok;
+    const negM = Number(d.margin_m3 || 0) < 0;
+    const negT = Number(d.margin_total || 0) < 0;
+    return `
+      <div style="display:grid;grid-template-columns:${gridCols};gap:8px;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(255,255,255,.02);font-size:12px">
+        <div style="color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(d.sana || "")}">${esc(d.cpa || "—")}</div>
+        <div style="color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.seller || "—")}</div>
+        <div style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc((d.client || "") + " · " + (d.product || ""))}">
+          <span style="color:var(--txt)">${esc(d.client || "—")}</span>
+          <span style="color:var(--muted2)"> · ${esc(d.product || "")}</span>
+        </div>
+        <div style="color:var(--txt)">${Number(d.w || 0).toFixed(0)}</div>
+        <div style="color:var(--muted2);font-size:10px">${esc(d.bracket || "")}</div>
+        <div style="font-weight:700;color:var(--txt)">${Number(d.price || 0).toFixed(0)} $</div>
+        <div style="color:var(--muted2);font-size:11px">${Number(d.base || 0).toFixed(0)}–${Number(d.list || 0).toFixed(0)} $</div>
+        <div style="font-weight:700;color:${negM ? "#ff5b7f" : "#2ad09b"}">${negM ? "−" : "+"}${Math.abs(Number(d.margin_m3 || 0)).toFixed(1)}</div>
+        <div style="color:var(--muted2)">${Number(d.vol || 0).toFixed(1)}</div>
+        <div style="font-weight:700;color:${negT ? "#ff5b7f" : "#2ad09b"}">${negT ? "−" : "+"}${Math.abs(Number(d.margin_total || 0)).toFixed(0)} $</div>
+        <div><span style="font-size:10px;font-weight:700;color:${st.color};border:1px solid ${st.color}44;background:${st.color}18;border-radius:6px;padding:2px 7px;white-space:nowrap">${st.icon} ${st.label}</span></div>
+      </div>`;
+  }).join("");
+  el.innerHTML = rows.length
+    ? head + `<div style="display:flex;flex-direction:column;gap:4px">${body}</div>`
+    : `<div style="font-size:12px;color:var(--muted2);text-align:center;padding:14px">Bu filtr bo'yicha KP yo'q</div>`;
 }
 
 function destroyDirectorChart(chartKey) {
