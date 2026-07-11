@@ -5,31 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LogiAdmin — Панель управления</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 :root {
-  --bg:      #08090d;
-  --bg2:     #0e1018;
-  --bg3:     #141720;
-  --bg4:     #1a1f2e;
-  --bg5:     #202638;
-  --border:  #1f2535;
-  --border2: #252d3f;
-  --border3: rgba(255,255,255,.08);
-  --amber:   #f5a623;
-  --amber2:  #fbbf24;
-  --amber3:  #ffd36a;
+  /* ── Obsidian Flow palette (2026-07 redesign). Variable NAMES are kept
+     untouched — the whole app (incl. JS-generated inline styles) references
+     them, so retheming = value swap only. --amber is now the flow-cyan
+     accent, --amber2 the flow-violet. Legacy palette: .claude/legacy_index_style.css */
+  --bg:      #0a0a0f;
+  --bg2:     #101018;
+  --bg3:     #15151f;
+  --bg4:     #1b1b28;
+  --bg5:     #212132;
+  --border:  #232334;
+  --border2: #2b2b40;
+  --border3: rgba(255,255,255,.09);
+  --amber:   #7ee7ff;
+  --amber2:  #9a7bff;
+  --amber3:  #c7f4ff;
   --green:   #10b981;
   --red:     #f43f5e;
   --blue:    #38bdf8;
   --purple:  #a78bfa;
-  --text:    #dde3f0;
-  --muted:   #4a5572;
-  --muted2:  #6b7a9e;
-  --panel:   rgba(14,16,24,.84);
-  --glow:    0 20px 60px rgba(0,0,0,.38);
-  --shadow:  0 24px 80px rgba(0,0,0,.45);
+  --text:    #e8eaf2;
+  --muted:   #4d5470;
+  --muted2:  #7d86a8;
+  --panel:   rgba(16,16,24,.86);
+  --glow:    0 20px 60px rgba(0,0,0,.42);
+  --shadow:  0 24px 80px rgba(0,0,0,.5);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -37,11 +41,11 @@
 html { scroll-behavior: smooth; }
 body {
   background:
-    radial-gradient(circle at top left, rgba(245,166,35,.08) 0%, transparent 28%),
+    radial-gradient(circle at top left, rgba(126,231,255,.08) 0%, transparent 28%),
     radial-gradient(circle at top right, rgba(56,189,248,.06) 0%, transparent 24%),
-    linear-gradient(180deg, #0a0c11 0%, #07080d 100%);
+    linear-gradient(180deg, #0b0b12 0%, #07070c 100%);
   color: var(--text);
-  font-family: 'DM Sans', sans-serif;
+  font-family: 'Inter', 'DM Sans', sans-serif;
   font-size: 13.5px;
   line-height: 1.5;
   min-height: 100vh;
@@ -61,7 +65,7 @@ body::before {
   right: -120px;
   width: 420px;
   height: 420px;
-  background: radial-gradient(circle, rgba(245,166,35,.12) 0%, rgba(245,166,35,0) 72%);
+  background: radial-gradient(circle, rgba(126,231,255,.12) 0%, rgba(126,231,255,0) 72%);
   filter: blur(18px);
 }
 body::after {
@@ -87,7 +91,7 @@ body::after {
   min-height: 100vh;
   display: flex; align-items: center; justify-content: center;
   background:
-    radial-gradient(ellipse at 20% 50%, rgba(245,166,35,.04) 0%, transparent 60%),
+    radial-gradient(ellipse at 20% 50%, rgba(126,231,255,.04) 0%, transparent 60%),
     radial-gradient(ellipse at 80% 20%, rgba(56,189,248,.03) 0%, transparent 50%),
     var(--bg);
 }
@@ -97,7 +101,7 @@ body::after {
   border: 1px solid var(--border2);
   border-radius: 20px;
   padding: 52px 44px;
-  box-shadow: 0 0 60px rgba(0,0,0,.6), 0 0 0 1px rgba(245,166,35,.05);
+  box-shadow: 0 0 60px rgba(0,0,0,.6), 0 0 0 1px rgba(126,231,255,.05);
 }
 .login-brand {
   font-family: 'Syne', sans-serif;
@@ -233,7 +237,7 @@ body::after {
   font-size: 13px; outline: none; margin-bottom: 16px;
   transition: border-color .2s, box-shadow .2s;
 }
-.inp:focus { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(245,166,35,.1); }
+.inp:focus { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(126,231,255,.1); }
 .login-err { color: var(--red); font-size: 12px; margin-bottom: 12px; min-height: 18px; }
 .login-btn {
   width: 100%; padding: 15px;
@@ -242,9 +246,9 @@ body::after {
   font-size: 14px; font-weight: 800; letter-spacing: 2px;
   text-transform: uppercase; cursor: pointer;
   transition: background .15s, transform .1s, box-shadow .2s;
-  box-shadow: 0 4px 24px rgba(245,166,35,.3);
+  box-shadow: 0 4px 24px rgba(126,231,255,.3);
 }
-.login-btn:hover { background: var(--amber2); box-shadow: 0 4px 32px rgba(245,166,35,.45); }
+.login-btn:hover { background: var(--amber2); box-shadow: 0 4px 32px rgba(126,231,255,.45); }
 .login-btn:active { transform: scale(.98); }
 
 /* ── APP ─────────────────────────────────────────────── */
@@ -265,7 +269,7 @@ body::after {
   padding: 28px 22px 20px;
   border-bottom: 1px solid rgba(255,255,255,.05);
   background:
-    linear-gradient(180deg, rgba(245,166,35,.07), rgba(245,166,35,0));
+    linear-gradient(180deg, rgba(126,231,255,.07), rgba(126,231,255,0));
 }
 .sb-brand {
   font-family: 'Syne', sans-serif;
@@ -317,10 +321,10 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   transform: translateX(2px);
 }
 .nav-link.active {
-  background: linear-gradient(90deg, rgba(245,166,35,.18), rgba(245,166,35,.05));
+  background: linear-gradient(90deg, rgba(126,231,255,.18), rgba(126,231,255,.05));
   color: var(--amber3);
-  border-color: rgba(245,166,35,.22);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.02), 0 8px 28px rgba(245,166,35,.08);
+  border-color: rgba(126,231,255,.22);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.02), 0 8px 28px rgba(126,231,255,.08);
 }
 .nav-link.active::before {
   content: '';
@@ -514,7 +518,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .tbl tbody tr { transition: background .1s; }
 .tbl tbody tr:hover td { background: rgba(255,255,255,.03); }
 .tbl tbody tr.row-late td { background: rgba(244,63,94,.06); }
-.tbl tbody tr.row-problem td { box-shadow: inset 3px 0 0 rgba(245,166,35,.35); }
+.tbl tbody tr.row-problem td { box-shadow: inset 3px 0 0 rgba(126,231,255,.35); }
 .comm-check {
   width: 18px;
   height: 18px;
@@ -534,7 +538,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600;
   white-space: nowrap;
 }
-.badge-amber  { background: rgba(245,166,35,.12); color: var(--amber); }
+.badge-amber  { background: rgba(126,231,255,.12); color: var(--amber); }
 .badge-green  { background: rgba(16,185,129,.12); color: var(--green); }
 .badge-red    { background: rgba(244,63,94,.12);  color: var(--red); }
 .badge-blue   { background: rgba(56,189,248,.12); color: var(--blue); }
@@ -545,8 +549,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .s-accepted { background:rgba(74,85,114,.2);  color:var(--muted2); }
 .s-khorgos  { background:rgba(167,139,250,.12);color:var(--purple); }
 .s-almaty   { background:rgba(56,189,248,.12); color:var(--blue); }
-.s-road     { background:rgba(245,166,35,.12); color:var(--amber); }
-.s-tashkent { background:rgba(245,166,35,.2);  color:var(--amber2); }
+.s-road     { background:rgba(126,231,255,.12); color:var(--amber); }
+.s-tashkent { background:rgba(126,231,255,.2);  color:var(--amber2); }
 .s-done     { background:rgba(16,185,129,.12); color:var(--green); }
 
 /* ── BUTTONS ─────────────────────────────────────────── */
@@ -562,9 +566,9 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .btn-amber {
   background: linear-gradient(180deg, var(--amber3), var(--amber));
   color: #0a0905;
-  box-shadow: 0 10px 26px rgba(245,166,35,.25);
+  box-shadow: 0 10px 26px rgba(126,231,255,.25);
 }
-.btn-amber:hover { background: linear-gradient(180deg, #ffe08f, var(--amber2)); box-shadow: 0 14px 30px rgba(245,166,35,.32); }
+.btn-amber:hover { background: linear-gradient(180deg, #b9f0ff, var(--amber2)); box-shadow: 0 14px 30px rgba(126,231,255,.32); }
 .btn-ghost {
   background: rgba(255,255,255,.02);
   color: var(--muted2);
@@ -584,7 +588,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .dir-section-view { animation: fadein .15s ease; }
 .dir-landing .card { transition: transform .15s ease, border-color .15s ease; }
 .dir-landing .card:hover { transform: translateY(-2px); border-color: var(--amber); }
-.dir-leaderboard-row--clickable:hover { background: rgba(245,166,35,.1) !important; border-color: var(--amber) !important; }
+.dir-leaderboard-row--clickable:hover { background: rgba(126,231,255,.1) !important; border-color: var(--amber) !important; }
 .dir-leaderboard-row--clickable:hover .dir-leaderboard-chev { transform: translateX(3px); }
 .dir-leaderboard-chev { transition: transform .15s ease; }
 .bl-actions {
@@ -709,8 +713,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .analytics-tab-btn.active,
 .analytics-tab-btn:hover {
   color:var(--amber3);
-  border-color:rgba(245,166,35,.45);
-  background:rgba(245,166,35,.12);
+  border-color:rgba(126,231,255,.45);
+  background:rgba(126,231,255,.12);
 }
 .analytics-section { display:none; }
 .analytics-section.active { display:block; }
@@ -772,7 +776,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 }
 .analytics-empty-icon {
   font-size:30px;
-  filter:drop-shadow(0 8px 24px rgba(245,166,35,.18));
+  filter:drop-shadow(0 8px 24px rgba(126,231,255,.18));
 }
 .analytics-insights { display:grid; gap:10px; }
 .analytics-insight {
@@ -816,8 +820,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   background:rgba(16,185,129,.08);
 }
 .analytics-status-box.warning {
-  border-color:rgba(245,166,35,.32);
-  background:rgba(245,166,35,.08);
+  border-color:rgba(126,231,255,.32);
+  background:rgba(126,231,255,.08);
 }
 .analytics-export-grid {
   display:grid;
@@ -884,7 +888,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 }
 .send-result.ok  { background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.2); }
 .send-result.err { background: rgba(244,63,94,.08);  border-color: rgba(244,63,94,.15); }
-.send-result.warn { background: rgba(245,166,35,.08); border-color: rgba(245,166,35,.18); }
+.send-result.warn { background: rgba(126,231,255,.08); border-color: rgba(126,231,255,.18); }
 
 /* ── FILE CHIP ───────────────────────────────────────── */
 .file-chip {
@@ -904,7 +908,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   font-size: 11px; color: var(--amber); margin: 3px 3px 3px 0;
   cursor: pointer; transition: background .1s;
 }
-.var-pill:hover { background: rgba(245,166,35,.1); }
+.var-pill:hover { background: rgba(126,231,255,.1); }
 
 /* ── LOGS TABLE ──────────────────────────────────────── */
 .log-row { border-left: 3px solid transparent; }
@@ -926,7 +930,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   font-size: 13px; outline: none; transition: border-color .2s;
   width: 230px;
 }
-.search:focus { border-color: rgba(245,166,35,.55); box-shadow: 0 0 0 4px rgba(245,166,35,.08); }
+.search:focus { border-color: rgba(126,231,255,.55); box-shadow: 0 0 0 4px rgba(126,231,255,.08); }
 
 /* ── STATUS SELECT COLORS ────────────────────────────── */
 .status-track {
@@ -947,7 +951,7 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   transition: all .3s;
 }
 .status-dot.done { background: var(--green); border-color: var(--green); }
-.status-dot.current { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 0 4px rgba(245,166,35,.2); }
+.status-dot.current { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 0 4px rgba(126,231,255,.2); }
 .status-label { font-size: 9.5px; color: var(--muted); text-align: center; line-height: 1.3; }
 .status-label.done { color: var(--green); }
 .status-label.current { color: var(--amber); font-weight: 700; }
@@ -1041,8 +1045,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   background: rgba(244,63,94,.05);
 }
 .notif-item.medium {
-  border-color: rgba(245,166,35,.18);
-  background: rgba(245,166,35,.05);
+  border-color: rgba(126,231,255,.18);
+  background: rgba(126,231,255,.05);
 }
 .notif-item.low {
   border-color: rgba(56,189,248,.16);
@@ -1077,8 +1081,8 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 }
 .back-btn-hero {
   appearance: none;
-  border: 1px solid rgba(245,166,35,.32);
-  background: linear-gradient(180deg, rgba(245,166,35,.22), rgba(245,166,35,.12));
+  border: 1px solid rgba(126,231,255,.32);
+  background: linear-gradient(180deg, rgba(126,231,255,.22), rgba(126,231,255,.12));
   color: #ffd486;
   font-family: 'Syne', sans-serif;
   font-size: 14px;
@@ -1088,15 +1092,15 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   border-radius: 999px;
   margin-bottom: 0;
   width: fit-content;
-  box-shadow: 0 12px 28px rgba(245,166,35,.12);
+  box-shadow: 0 12px 28px rgba(126,231,255,.12);
   transition: transform .15s ease, box-shadow .2s ease, border-color .2s ease, background .2s ease;
 }
 .back-btn-hero:hover {
   color: #fff0c8;
-  border-color: rgba(245,166,35,.52);
-  background: linear-gradient(180deg, rgba(245,166,35,.3), rgba(245,166,35,.18));
+  border-color: rgba(126,231,255,.52);
+  background: linear-gradient(180deg, rgba(126,231,255,.3), rgba(126,231,255,.18));
   transform: translateY(-1px);
-  box-shadow: 0 16px 34px rgba(245,166,35,.18);
+  box-shadow: 0 16px 34px rgba(126,231,255,.18);
 }
 .back-btn-hero .arrow {
   display: inline-flex;
@@ -1113,9 +1117,9 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   max-width: 340px;
   padding: 14px 16px;
   border-radius: 18px;
-  border: 1px solid rgba(245,166,35,.18);
+  border: 1px solid rgba(126,231,255,.18);
   background:
-    linear-gradient(180deg, rgba(245,166,35,.1), rgba(245,166,35,0)),
+    linear-gradient(180deg, rgba(126,231,255,.1), rgba(126,231,255,0)),
     rgba(13,16,24,.9);
   box-shadow: 0 14px 34px rgba(0,0,0,.18);
 }
@@ -1171,6 +1175,78 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
     align-items: flex-start;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   OBSIDIAN FLOW SIGNATURE LAYER (2026-07 redesign)
+   Pure-CSS additions on top of the variable swap above. No markup, ids,
+   classes or JS were changed — every rule below only restyles existing
+   selectors. Legacy design: .claude/legacy_index_style.css + git history.
+   ══════════════════════════════════════════════════════════════════════ */
+@property --obsa {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 135deg;
+}
+
+/* Flowing gradient border on cards: double-background technique — the
+   conic gradient lives in the border-box layer, the translucent panel in
+   the padding-box layer, so no pseudo-elements and no layout impact.
+   The flow ROTATES on hover only (cheap: dozens of cards stay static). */
+.card {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.028), rgba(255,255,255,0)) padding-box,
+    linear-gradient(var(--panel), var(--panel)) padding-box,
+    conic-gradient(from var(--obsa),
+      rgba(126,231,255,.45), rgba(154,123,255,.32) 22%,
+      rgba(255,255,255,.07) 48%, rgba(154,123,255,.28) 72%,
+      rgba(126,231,255,.45)) border-box;
+}
+.card:hover { animation: obs-flow 4.5s linear infinite; }
+@keyframes obs-flow { to { --obsa: 495deg; } }
+
+/* Modals join the flow (static border, slightly stronger) */
+.modal {
+  border: 1px solid transparent !important;
+  background:
+    linear-gradient(var(--bg2), var(--bg2)) padding-box,
+    conic-gradient(from 200deg,
+      rgba(126,231,255,.5), rgba(154,123,255,.4) 30%,
+      rgba(255,255,255,.08) 55%, rgba(126,231,255,.5)) border-box;
+}
+
+/* Cold display font for headings; Syne stays only on the brand lockup */
+.login-title, .page-h, .card-title, .modal-title,
+.stat-value, .kpi-value { font-family: 'Outfit', 'Syne', sans-serif; }
+
+/* Primary buttons: cyan→violet flow gradient (dark text for contrast) */
+.btn-amber {
+  background: linear-gradient(135deg, #7ee7ff, #9a7bff) !important;
+  color: #0b0b14 !important;
+  box-shadow: 0 10px 26px rgba(126,231,255,.22);
+}
+.btn-amber:hover {
+  background: linear-gradient(135deg, #9ceeff, #ab90ff) !important;
+  box-shadow: 0 14px 32px rgba(154,123,255,.32);
+  transform: translateY(-1px);
+}
+.login-btn {
+  background: linear-gradient(135deg, #7ee7ff, #9a7bff) !important;
+  color: #0b0b14 !important;
+}
+
+/* Gentle card entrance — transform/opacity only, plays on render.
+   (Hover swaps it for the border flow; entrance uses `backwards` fill,
+   so a mid-entrance hover just completes instantly — no visual break.) */
+@keyframes obs-rise { from { opacity: 0; transform: translateY(8px); } }
+.card { animation: obs-rise .38s ease-out backwards; }
+
+/* Micro-interactions */
+.nav-link { transition: background .16s ease, color .16s ease, transform .16s ease; }
+.nav-link:hover { transform: translateX(2px); }
+::selection { background: rgba(126,231,255,.28); color: #fff; }
+::-webkit-scrollbar-thumb { background: #34344e; }
+::-webkit-scrollbar-thumb:hover { background: #45456a; }
 </style>
 </head>
 <body class="{{ 'role-editor' if is_editor else 'role-viewer' }}">
@@ -7232,7 +7308,7 @@ function buildLeaderboardHtml(rows, totalKey, unitLabel, opts) {
             ${clickable ? `<span class="dir-leaderboard-chev" style="font-size:16px;color:var(--amber);font-weight:700;flex:0 0 auto">›</span>` : ""}
           </div>
           <div style="position:relative;height:4px;background:rgba(255,255,255,.05);border-radius:3px;margin-top:4px;overflow:hidden">
-            <div style="position:absolute;left:0;top:0;bottom:0;width:${share.toFixed(1)}%;background:linear-gradient(90deg,var(--amber),#ff9540)"></div>
+            <div style="position:absolute;left:0;top:0;bottom:0;width:${share.toFixed(1)}%;background:linear-gradient(90deg,var(--amber),#9a7bff)"></div>
           </div>
         </div>
         <div style="font-size:12px;color:var(--txt);font-weight:600;text-align:right;min-width:80px">${value} ${esc(unitLabel)}<div style="font-size:10px;color:var(--muted2);font-weight:400">${share.toFixed(1)}%</div></div>
@@ -7740,7 +7816,7 @@ function renderSborniyWeightCategories(data) {
               <span class="dir-leaderboard-chev" style="font-size:14px;color:var(--amber);font-weight:700;flex:0 0 auto">›</span>
             </div>
             <div style="position:relative;height:3px;background:rgba(255,255,255,.05);border-radius:2px;margin-top:3px;overflow:hidden">
-              <div style="position:absolute;left:0;top:0;bottom:0;width:${share.toFixed(1)}%;background:linear-gradient(90deg,var(--amber),#ff9540)"></div>
+              <div style="position:absolute;left:0;top:0;bottom:0;width:${share.toFixed(1)}%;background:linear-gradient(90deg,var(--amber),#9a7bff)"></div>
             </div>
           </div>
           <div style="font-size:11px;color:var(--txt);font-weight:700;text-align:right;min-width:56px">${s.count} ta<div style="font-size:9px;color:var(--muted2);font-weight:400">${subParts.join(" · ")}</div></div>
