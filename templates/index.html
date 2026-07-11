@@ -8,12 +8,78 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-/* Obsidian Flow: global Chart.js theme (colors/fonts only - no behavior) */
+/* ══════════════════════════════════════════════════════════════════
+   Obsidian Flow — global Chart.js theme + shape plugin.
+   Makes EVERY Chart.js chart look like the approved mock (variant 5):
+   · bars   → vertical cyan gradient, rounded tops, the peak bar violet+glow
+   · lines  → cyan stroke + translucent gradient area fill, no dots
+   · donuts → segment gaps in the card colour + 64% hole
+   Restyle only (colours/shape) — no behaviour, data or logic touched.
+   The kiosk Sales Monitor is a separate page, so it is unaffected.
+   ══════════════════════════════════════════════════════════════════ */
 if (window.Chart) {
   Chart.defaults.color = "#8b90a8";
   Chart.defaults.borderColor = "rgba(232,234,242,.07)";
   Chart.defaults.font.family = "'Inter','DM Sans',sans-serif";
   Chart.defaults.font.size = 11;
+
+  var OBS_CYAN = "#7ee7ff", OBS_VIOLET = "#9a7bff";
+  // 8-digit-hex alpha helper (palette values are all 6-digit hex)
+  function obsA(hex, aa) { return (typeof hex === "string" && hex[0] === "#" && hex.length === 7) ? hex + aa : hex; }
+
+  var ObsidianCharts = {
+    id: "obsidianCharts",
+    beforeInit: function (chart) {
+      var cfgType = chart.config.type;
+      (chart.config.data.datasets || []).forEach(function (ds) {
+        var t = ds.type || cfgType;
+
+        if (t === "bar" && typeof ds.backgroundColor !== "object") {
+          var base = (typeof ds.backgroundColor === "string") ? ds.backgroundColor : OBS_CYAN;
+          var vals = (ds.data || []).map(function (v) { return Number(v) || 0; });
+          var maxIdx = vals.length ? vals.indexOf(Math.max.apply(null, vals)) : -1;
+          var barFill = function (col) {
+            return function (c) {
+              var area = c.chart.chartArea; if (!area) return col;
+              var g = c.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+              g.addColorStop(0, col); g.addColorStop(1, obsA(col, "1f"));
+              return g;
+            };
+          };
+          ds.backgroundColor = function (c) {
+            var col = (c.dataIndex === maxIdx) ? OBS_VIOLET : base;
+            return barFill(col)(c);
+          };
+          ds.hoverBackgroundColor = function (c) { return (c.dataIndex === maxIdx) ? "#b39dff" : "#9ceeff"; };
+          ds.borderRadius = 7; ds.borderSkipped = false; ds.maxBarThickness = 48;
+          ds.categoryPercentage = 0.72; ds.barPercentage = 0.86;
+
+        } else if (t === "line") {
+          var lbase = (typeof ds.borderColor === "string") ? ds.borderColor : OBS_CYAN;
+          ds.borderColor = lbase; ds.borderWidth = 2.5;
+          if (ds.tension == null) ds.tension = 0.38;
+          ds.pointRadius = 0; ds.pointHoverRadius = 4;
+          ds.pointHoverBackgroundColor = lbase; ds.pointHoverBorderColor = "#0a0a0f";
+          ds.fill = true;
+          ds.backgroundColor = function (c) {
+            var area = c.chart.chartArea; if (!area) return obsA(lbase, "30");
+            var g = c.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+            g.addColorStop(0, obsA(lbase, "45")); g.addColorStop(1, obsA(lbase, "00"));
+            return g;
+          };
+
+        } else if (t === "doughnut" || t === "pie") {
+          ds.borderColor = "rgba(13,13,20,.92)";
+          ds.borderWidth = 3; ds.hoverOffset = 7;
+          if (t === "doughnut") {
+            chart.config.options = chart.config.options || {};
+            if (chart.config.options.cutout == null) chart.config.options.cutout = "64%";
+          }
+        }
+      });
+    },
+  };
+  Chart.register(ObsidianCharts);
 }
 </script>
 <style>
@@ -8298,11 +8364,12 @@ function renderWarehouseGauge(wh) {
   const pctRaw   = Number(wh.fill_percent || 0);
   const pctClamped = Math.max(0, Math.min(pctRaw, 100));
 
-  // Color by overall level shown to the user (not the per-segment colors)
-  let textColor = "#2ad09b";
-  if (pctRaw > 100)      textColor = "#ff5b7f";
-  else if (pctRaw >= 85) textColor = "#ff5b7f";
-  else if (pctRaw >= 60) textColor = "#ffb739";
+  // Color by overall level (Obsidian palette: cyan comfortable → violet
+  // filling → rose over-capacity)
+  let textColor = "#7ee7ff";
+  if (pctRaw > 100)      textColor = "#ff7d9c";
+  else if (pctRaw >= 85) textColor = "#ff7d9c";
+  else if (pctRaw >= 60) textColor = "#9a7bff";
 
   // Gauge geometry: 270° sweep from -135° (lower-left) to +135° (lower-right)
   const VB_W = 260, VB_H = 180;
@@ -8350,10 +8417,10 @@ function renderWarehouseGauge(wh) {
       </defs>
       <!-- Track -->
       <path d="${trackPath}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="24" stroke-linecap="butt" />
-      <!-- Colored zones (drawn under, then needle on top) -->
-      <path d="${greenPath}"  fill="none" stroke="#2ad09b" stroke-width="20" stroke-linecap="butt" opacity=".85" />
-      <path d="${yellowPath}" fill="none" stroke="#ffb739" stroke-width="20" stroke-linecap="butt" opacity=".88" />
-      <path d="${redPath}"    fill="none" stroke="#ff5b7f" stroke-width="20" stroke-linecap="butt" opacity=".9" />
+      <!-- Colored zones (drawn under, then needle on top) — Obsidian tones -->
+      <path d="${greenPath}"  fill="none" stroke="#7ee7ff" stroke-width="20" stroke-linecap="butt" opacity=".9" />
+      <path d="${yellowPath}" fill="none" stroke="#9a7bff" stroke-width="20" stroke-linecap="butt" opacity=".9" />
+      <path d="${redPath}"    fill="none" stroke="#ff7d9c" stroke-width="20" stroke-linecap="butt" opacity=".92" />
       <!-- Ticks -->
       ${ticksSvg}
       <!-- Needle (rotates around centre) -->
