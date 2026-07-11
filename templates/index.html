@@ -7,6 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+/* Obsidian Flow: global Chart.js theme (colors/fonts only - no behavior) */
+if (window.Chart) {
+  Chart.defaults.color = "#8b90a8";
+  Chart.defaults.borderColor = "rgba(232,234,242,.07)";
+  Chart.defaults.font.family = "'Inter','DM Sans',sans-serif";
+  Chart.defaults.font.size = 11;
+}
+</script>
 <style>
 :root {
   /* ── Obsidian Flow palette (2026-07 redesign). Variable NAMES are kept
@@ -1304,9 +1313,32 @@ body {
 
 /* session footer: live pulse on the status dot (mock .live-dot) */
 .sb-footer { border-top: 1px solid rgba(126,231,255,.1); }
-.sb-footer .status-dot, .session-dot {
+.sb-footer .online .dot, .sb-footer .dot {
   background: #7ee7ff;
+  border-radius: 50%;
   animation: obs-pulse 2.2s ease-in-out infinite;
+}
+
+/* ── SVG stroke icons (mock svg.i): inherit currentColor ── */
+svg.oi {
+  width: 16px; height: 16px;
+  stroke: currentColor; fill: none;
+  stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round;
+  flex: 0 0 auto; display: block;
+}
+.nav-link .ico { display: flex; align-items: center; justify-content: center; color: #7ee7ff; }
+.nav-link:hover .ico { color: #b9f0ff; }
+.nav-link.active .ico { color: #ffffff; }
+.nav-sublink svg.oi { width: 14px; height: 14px; }
+
+/* ── card-title emoji → tinted icon box (mock .ct-ico) ── */
+.card-title > span[style*="font-size:18px"] {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 27px; height: 27px;
+  font-size: 14px !important;
+  background: rgba(154,123,255,.14);
+  border: 1px solid rgba(154,123,255,.3);
+  border-radius: 9px;
 }
 
 /* ── topbar & inputs (mock .search / .icon-btn / chips) ── */
@@ -1377,6 +1409,27 @@ body {
 </style>
 </head>
 <body class="{{ 'role-editor' if is_editor else 'role-viewer' }}">
+<!-- Obsidian Flow: Lucide-style stroke icon sprite (inherits currentColor) -->
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="oi-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></symbol>
+  <symbol id="oi-monitor" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+  <symbol id="oi-crown" viewBox="0 0 24 24"><path d="M3 17 2 7l5.5 4L12 4l4.5 7L22 7l-1 10z"/><path d="M4 21h16"/></symbol>
+  <symbol id="oi-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M8 16v-5M13 16V8M18 16v-8"/></symbol>
+  <symbol id="oi-truck" viewBox="0 0 24 24"><path d="M1 5h14v12H1zM15 9h4l4 4v4h-8z"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="19" r="2"/></symbol>
+  <symbol id="oi-package" viewBox="0 0 24 24"><path d="m7.5 4.3 9 5.2M2.8 7.5 12 2.5l9.2 5v9L12 21.5l-9.2-5z"/><path d="M12 12.5v9M2.8 7.5l9.2 5 9.2-5"/></symbol>
+  <symbol id="oi-warehouse" viewBox="0 0 24 24"><path d="M3 21V8.5L12 3l9 5.5V21"/><path d="M7 21v-8h10v8M7 17h10"/></symbol>
+  <symbol id="oi-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><circle cx="17.5" cy="9" r="2.6"/><path d="M15.8 14.6c2.6.2 4.9 1.8 5.7 4.4"/></symbol>
+  <symbol id="oi-wallet" viewBox="0 0 24 24"><path d="M20 7H5a2 2 0 0 1 0-4h13v4"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1"/><circle cx="16.5" cy="14" r="1.3"/></symbol>
+  <symbol id="oi-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="oi-alert" viewBox="0 0 24 24"><path d="M12 3 2.5 20h19z"/><path d="M12 10v4M12 17.5v.5"/></symbol>
+  <symbol id="oi-bell" viewBox="0 0 24 24"><path d="M18 9a6 6 0 1 0-12 0c0 6-2.5 7-2.5 7h17S18 15 18 9"/><path d="M10.3 20a2 2 0 0 0 3.4 0"/></symbol>
+  <symbol id="oi-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
+  <symbol id="oi-mega" viewBox="0 0 24 24"><path d="m3 11 15-6v14L3 13z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></symbol>
+  <symbol id="oi-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+  <symbol id="oi-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="oi-history" viewBox="0 0 24 24"><path d="M3 3v6h6"/><path d="M3.5 13a9 9 0 1 0 2-7.5L3 9"/><path d="M12 7v5l3.5 2"/></symbol>
+  <symbol id="oi-score" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></symbol>
+</svg>
 
 <!-- ── LOGIN ──────────────────────────────────────────────── -->
 {% if login_page %}
@@ -1413,39 +1466,39 @@ body {
     </div>
     <nav>
       <div class="nav-section">Главное</div>
-      <div class="nav-link active" onclick="goto('dashboard')"><span class="ico">📊</span> Dashboard</div>
-      <div class="nav-link" onclick="goto('analytics')"><span class="ico">📈</span> Sales Monitor</div>
+      <div class="nav-link active" onclick="goto('dashboard')"><span class="ico"><svg class="oi"><use href="#oi-grid"/></svg></span> Dashboard</div>
+      <div class="nav-link" onclick="goto('analytics')"><span class="ico"><svg class="oi"><use href="#oi-monitor"/></svg></span> Sales Monitor</div>
       <div class="nav-link nav-parent" id="nav-director-parent" onclick="toggleDirectorMenu()">
-        <span class="ico">👔</span> Direktor paneli
+        <span class="ico"><svg class="oi"><use href="#oi-crown"/></svg></span> Direktor paneli
         <span class="nav-chevron" id="nav-director-chev" style="margin-left:auto;font-size:12px;transition:transform .18s">▾</span>
       </div>
       <div class="nav-children" id="nav-director-children" style="display:none;margin:-2px 0 6px 14px;padding-left:8px;border-left:1px solid var(--stroke)">
         <div class="nav-link nav-sublink nav-parent" id="nav-savdo-parent" onclick="toggleDirectorSavdoMenu()">
-          <span class="ico">📊</span> Savdo bo'yicha
+          <span class="ico"><svg class="oi"><use href="#oi-chart"/></svg></span> Savdo bo'yicha
           <span class="nav-chevron" id="nav-savdo-chev" style="margin-left:auto;font-size:11px;transition:transform .18s">▾</span>
         </div>
         <div class="nav-children" id="nav-savdo-children" style="display:none;margin:-2px 0 4px 14px;padding-left:8px;border-left:1px solid var(--stroke)">
-          <div class="nav-link nav-sublink nav-sublink-2" onclick="gotoDirectorSection('savdo_seliy')"><span class="ico">🚛</span> Seliy</div>
-          <div class="nav-link nav-sublink nav-sublink-2" onclick="gotoDirectorSection('savdo_sborniy')"><span class="ico">📦</span> Sborniy</div>
+          <div class="nav-link nav-sublink nav-sublink-2" onclick="gotoDirectorSection('savdo_seliy')"><span class="ico"><svg class="oi"><use href="#oi-truck"/></svg></span> Seliy</div>
+          <div class="nav-link nav-sublink nav-sublink-2" onclick="gotoDirectorSection('savdo_sborniy')"><span class="ico"><svg class="oi"><use href="#oi-package"/></svg></span> Sborniy</div>
         </div>
-        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('ombor')"><span class="ico">📦</span> Ombor va yuklar</div>
-        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('agentlar')"><span class="ico">👥</span> Agentlar</div>
-        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('sotuv_bazasi')"><span class="ico">💼</span> Sotuv bazasi</div>
+        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('ombor')"><span class="ico"><svg class="oi"><use href="#oi-warehouse"/></svg></span> Ombor va yuklar</div>
+        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('agentlar')"><span class="ico"><svg class="oi"><use href="#oi-users"/></svg></span> Agentlar</div>
+        <div class="nav-link nav-sublink" onclick="gotoDirectorSection('sotuv_bazasi')"><span class="ico"><svg class="oi"><use href="#oi-wallet"/></svg></span> Sotuv bazasi</div>
       </div>
-      <div class="nav-link" onclick="goto('batches')"><span class="ico">📦</span> Партии</div>
-      <div class="nav-link" onclick="goto('clients')"><span class="ico">👥</span> Клиенты</div>
-      <div class="nav-link" onclick="goto('chats')"><span class="ico">💬</span> Telegram группы <span class="badge-count" id="nav-chat-count">0</span></div>
+      <div class="nav-link" onclick="goto('batches')"><span class="ico"><svg class="oi"><use href="#oi-package"/></svg></span> Партии</div>
+      <div class="nav-link" onclick="goto('clients')"><span class="ico"><svg class="oi"><use href="#oi-users"/></svg></span> Клиенты</div>
+      <div class="nav-link" onclick="goto('chats')"><span class="ico"><svg class="oi"><use href="#oi-message"/></svg></span> Telegram группы <span class="badge-count" id="nav-chat-count">0</span></div>
       <div class="nav-section">Мониторинг</div>
-      <div class="nav-link" onclick="goto('problems')"><span class="ico">⚠️</span> Проблемы</div>
-      <div class="nav-link" onclick="goto('notifications')"><span class="ico">🔔</span> Уведомления</div>
-      <div class="nav-link" onclick="goto('moderator-response')"><span class="ico">⏱️</span> Mean Response Time</div>
-      <div class="nav-link" onclick="goto('communication-rate')"><span class="ico">💬</span> Moderator Score</div>
-      <div class="nav-link" onclick="goto('announcements')"><span class="ico">📢</span> Объявления</div>
+      <div class="nav-link" onclick="goto('problems')"><span class="ico"><svg class="oi"><use href="#oi-alert"/></svg></span> Проблемы</div>
+      <div class="nav-link" onclick="goto('notifications')"><span class="ico"><svg class="oi"><use href="#oi-bell"/></svg></span> Уведомления</div>
+      <div class="nav-link" onclick="goto('moderator-response')"><span class="ico"><svg class="oi"><use href="#oi-clock"/></svg></span> Mean Response Time</div>
+      <div class="nav-link" onclick="goto('communication-rate')"><span class="ico"><svg class="oi"><use href="#oi-score"/></svg></span> Moderator Score</div>
+      <div class="nav-link" onclick="goto('announcements')"><span class="ico"><svg class="oi"><use href="#oi-mega"/></svg></span> Объявления</div>
       <div class="nav-section">Настройки</div>
-      <div class="nav-link" onclick="goto('template')"><span class="ico">✏️</span> Шаблон</div>
-      <div class="nav-link" onclick="goto('logs')"><span class="ico">📋</span> Логи отправки</div>
+      <div class="nav-link" onclick="goto('template')"><span class="ico"><svg class="oi"><use href="#oi-edit"/></svg></span> Шаблон</div>
+      <div class="nav-link" onclick="goto('logs')"><span class="ico"><svg class="oi"><use href="#oi-list"/></svg></span> Логи отправки</div>
       {% if is_editor %}
-      <div class="nav-link" onclick="goto('login-history')"><span class="ico">🕓</span> Login history</div>
+      <div class="nav-link" onclick="goto('login-history')"><span class="ico"><svg class="oi"><use href="#oi-history"/></svg></span> Login history</div>
       {% endif %}
     </nav>
     <div class="sb-footer">
@@ -2143,9 +2196,9 @@ body {
               <span class="card-title" style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">📋</span> KP ro'yxati — eng yomon marja birinchi</span>
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                 <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="all" onclick="setSotuvDealsFilter('all')">Hammasi</button>
-                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="zarar" onclick="setSotuvDealsFilter('zarar')" style="color:#ff5b7f">⚠ Zarar</button>
-                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="past" onclick="setSotuvDealsFilter('past')" style="color:#ffb739">Tarifdan past</button>
-                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="ok" onclick="setSotuvDealsFilter('ok')" style="color:#2ad09b">Norma</button>
+                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="zarar" onclick="setSotuvDealsFilter('zarar')" style="color:#ff7d9c">⚠ Zarar</button>
+                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="past" onclick="setSotuvDealsFilter('past')" style="color:#ffc778">Tarifdan past</button>
+                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="ok" onclick="setSotuvDealsFilter('ok')" style="color:#66e2b0">Norma</button>
                 <span style="font-size:11px;color:var(--muted2);margin-left:6px" id="dir-sotuv-deals-meta">—</span>
               </div>
             </div>
@@ -6790,7 +6843,7 @@ async function loadAnalyticsSalesGrowth() {
     const salesLabels = analyticsSeriesToLabels(data.series?.sales);
     analyticsRenderChart("analytics-sales-chart", {
       type: "line",
-      data: { labels: salesLabels, datasets: [{ label: "Savdo", data: analyticsSeriesToValues(data.series?.sales), borderColor: "#ffb739", backgroundColor: "rgba(255,183,57,.18)", tension: .3, fill: true }] },
+      data: { labels: salesLabels, datasets: [{ label: "Savdo", data: analyticsSeriesToValues(data.series?.sales), borderColor: "#7ee7ff", backgroundColor: "rgba(126,231,255,.14)", tension: .3, fill: true }] },
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
     });
     analyticsRenderChart("analytics-income-chart", {
@@ -6845,7 +6898,7 @@ async function loadAnalyticsCashflow() {
       type: "doughnut",
       data: {
         labels: Object.keys(data.kpis?.balance_by_currency || {}),
-        datasets: [{ data: Object.values(data.kpis?.balance_by_currency || {}).map(value => parseFloat(String(value).replace(/[^\d.-]/g, "")) || 0), backgroundColor: ["#4aa8ff", "#2ad09b", "#ffb739", "#ff5b7f"] }],
+        datasets: [{ data: Object.values(data.kpis?.balance_by_currency || {}).map(value => parseFloat(String(value).replace(/[^\d.-]/g, "")) || 0), backgroundColor: ["#7ee7ff", "#66e2b0", "#ffc778", "#ff7d9c"] }],
       },
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
     });
@@ -6863,7 +6916,7 @@ async function loadAnalyticsCashflow() {
       type: "pie",
       data: {
         labels: (data.charts?.income_by_category || []).map(item => item.label),
-        datasets: [{ data: (data.charts?.income_by_category || []).map(item => item.value), backgroundColor: ["#2ad09b", "#4aa8ff", "#52d273", "#ffb739", "#5f8cff"] }],
+        datasets: [{ data: (data.charts?.income_by_category || []).map(item => item.value), backgroundColor: ["#66e2b0", "#7ee7ff", "#9a7bff", "#ffc778", "#c8cede"] }],
       },
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
     });
@@ -6958,7 +7011,7 @@ async function loadAnalyticsShipments() {
       type: "doughnut",
       data: {
         labels: (data.series?.status_counts || []).map(item => item.label),
-        datasets: [{ data: (data.series?.status_counts || []).map(item => item.value), backgroundColor: ["#2ad09b", "#4aa8ff", "#ffb739", "#ff5b7f", "#a66bff", "#7ed6df", "#f8a5c2", "#f6e58d"] }],
+        datasets: [{ data: (data.series?.status_counts || []).map(item => item.value), backgroundColor: ["#66e2b0", "#7ee7ff", "#ffc778", "#ff7d9c", "#9a7bff", "#c8cede", "#f8a5c2", "#f6e58d"] }],
       },
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: "#cfd6ff" }}}}
     });
@@ -7606,11 +7659,14 @@ async function reloadDirectorSection(section, force) {
 
 function buildKpiCardsHtml(kpis) {
   if (!Array.isArray(kpis) || !kpis.length) return "";
+  // Obsidian Flow (mock .kpi-card): dark panel, cyan->violet hairline on
+  // top, uppercase tracked label, big white Outfit value, muted hint.
   return kpis.map(k => `
-    <div style="padding:12px 14px;border:1px solid var(--stroke);border-radius:12px;background:rgba(255,255,255,.03)">
-      <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.14em;margin-bottom:6px">${esc(k.label || "")}</div>
-      <div style="font-size:20px;font-weight:700;color:var(--txt)">${esc(k.value || "—")}</div>
-      ${k.hint ? `<div style="font-size:11px;color:var(--muted2);margin-top:4px">${esc(k.hint)}</div>` : ""}
+    <div style="position:relative;overflow:hidden;padding:15px 16px;border:1px solid rgba(232,234,242,.09);border-radius:15px;background:linear-gradient(160deg,#14141f 0%,#101018 55%,#0d0d14 100%);box-shadow:0 14px 32px rgba(0,0,0,.35)">
+      <div style="position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,#7ee7ff,#9a7bff,transparent 85%)"></div>
+      <div style="font-size:10px;color:#8b90a8;text-transform:uppercase;letter-spacing:.14em;margin-bottom:8px">${esc(k.label || "")}</div>
+      <div style="font-size:24px;font-weight:800;color:#ffffff;letter-spacing:-.02em;font-family:'Outfit','Syne',sans-serif;line-height:1">${esc(k.value || "—")}</div>
+      ${k.hint ? `<div style="font-size:11px;color:#6d7290;margin-top:7px">${esc(k.hint)}</div>` : ""}
     </div>
   `).join("");
 }
@@ -8094,9 +8150,9 @@ function renderOmborWeightCategories(data) {
 let __sotuvDeals = [];
 let __sotuvFilter = "all";
 const SOTUV_STATUS_META = {
-  zarar: { label: "Zarar",         color: "#ff5b7f", icon: "⚠" },
-  past:  { label: "Tarifdan past", color: "#ffb739", icon: "◔" },
-  ok:    { label: "Norma",         color: "#2ad09b", icon: "✓" },
+  zarar: { label: "Zarar",         color: "#ff7d9c", icon: "⚠" },
+  past:  { label: "Tarifdan past", color: "#ffc778", icon: "◔" },
+  ok:    { label: "Norma",         color: "#66e2b0", icon: "✓" },
 };
 
 function renderSotuvBazasi(payload) {
@@ -8201,8 +8257,8 @@ function renderDirectorChart(chartKey, spec) {
       datasets: (spec.datasets || []).map((ds, i) => ({
         label: ds.label || "",
         data: ds.data || [],
-        backgroundColor: ds.backgroundColor || ["#4aa8ff","#2ad09b","#ffb739","#ff5b7f","#a78bfa","#22d3ee"][i % 6],
-        borderColor: ds.borderColor || ["#4aa8ff","#2ad09b","#ffb739","#ff5b7f","#a78bfa","#22d3ee"][i % 6],
+        backgroundColor: ds.backgroundColor || ["#7ee7ff","#9a7bff","#66e2b0","#ffc778","#ff7d9c","#c8cede"][i % 6],
+        borderColor: ds.borderColor || ["#7ee7ff","#9a7bff","#66e2b0","#ffc778","#ff7d9c","#c8cede"][i % 6],
         tension: 0.3,
         fill: type === "line" ? false : (type !== "bar"),
       })),
@@ -8210,10 +8266,10 @@ function renderDirectorChart(chartKey, spec) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: "#cbd5e1" } } },
+      plugins: { legend: { labels: { color: "#a9aec6" } } },
       scales: type === "pie" || type === "doughnut" ? {} : {
-        x: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(148,163,184,.12)" } },
-        y: { ticks: { color: "#94a3b8" }, grid: { color: "rgba(148,163,184,.12)" } },
+        x: { ticks: { color: "#8b90a8" }, grid: { color: "rgba(232,234,242,.07)" } },
+        y: { ticks: { color: "#8b90a8" }, grid: { color: "rgba(232,234,242,.07)" } },
       },
     },
   });

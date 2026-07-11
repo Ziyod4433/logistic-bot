@@ -2840,8 +2840,8 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         "datasets": [{
             "label": "Furalar",
             "data": [_r(daily_savdo.get(d, 0)) for d in all_dates],
-            "borderColor": "#4aa8ff",
-            "backgroundColor": "rgba(74,168,255,.15)",
+            "borderColor": "#7ee7ff",
+            "backgroundColor": "rgba(126,231,255,.12)",
         }],
     }
     log_chart = {
@@ -2851,7 +2851,7 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         "datasets": [{
             "label": "Furalar",
             "data": [_r(daily_logistika.get(d, 0)) for d in all_dates],
-            "borderColor": "#ff5b7f",
+            "borderColor": "#ff7d9c",
             "backgroundColor": "rgba(255,91,127,.15)",
         }],
     }
@@ -2934,12 +2934,12 @@ def get_director_seliy(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         },
         "agents":  {
             "rows": agents_rows,
-            "chart": _bar_chart(agents_rows, "#2ad09b"),
+            "chart": _bar_chart(agents_rows, "#66e2b0"),
             "total_trucks": _r(sum(r["trucks"] for r in agents_rows)),
         },
         "clients": {
             "rows": clients_rows,
-            "chart": _bar_chart(clients_rows, "#a78bfa"),
+            "chart": _bar_chart(clients_rows, "#9a7bff"),
             "total_trucks": _r(sum(r["trucks"] for r in clients_rows)),
         },
         "diagnostics": diag,
@@ -3433,8 +3433,8 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         "datasets": [{
             "label": "m³",
             "data": [s["cbm"] for s in top_n],
-            "backgroundColor": "#4aa8ff",
-            "borderColor": "#4aa8ff",
+            "backgroundColor": "#7ee7ff",
+            "borderColor": "#7ee7ff",
         }],
     }
 
@@ -3459,8 +3459,8 @@ def get_director_sborniy(cfg: dict, date_from_str: str, date_to_str: str) -> dic
         "datasets": [{
             "label": "m³",
             "data": daily_values,
-            "borderColor": "#2ad09b",
-            "backgroundColor": "rgba(42,208,155,.15)",
+            "borderColor": "#66e2b0",
+            "backgroundColor": "rgba(102,226,176,.12)",
         }],
     }
 
@@ -3619,10 +3619,10 @@ DIRECTOR_WAREHOUSES = ("YIWU", "ZHONGSHAN", "HORGOS")
 # 10 Sborniy tariff brackets): green 0-100, yellow 100-200, orange 200-350,
 # red 350+ kg.
 DIRECTOR_OMBOR_WEIGHT_CATEGORIES = (
-    {"key": "yengil",    "label": "Yengil",     "min": 0,   "max": 100,  "color": "#2ad09b"},
-    {"key": "orta",      "label": "O'rta",      "min": 100, "max": 200,  "color": "#ffb739"},
+    {"key": "yengil",    "label": "Yengil",     "min": 0,   "max": 100,  "color": "#66e2b0"},
+    {"key": "orta",      "label": "O'rta",      "min": 100, "max": 200,  "color": "#ffc778"},
     {"key": "ogir",      "label": "Og'ir",      "min": 200, "max": 350,  "color": "#ff9540"},
-    {"key": "juda_ogir", "label": "Juda og'ir", "min": 350, "max": None, "color": "#ff5b7f"},
+    {"key": "juda_ogir", "label": "Juda og'ir", "min": 350, "max": None, "color": "#ff7d9c"},
 )
 # A cargo should be loaded onto a truck (row moves Ombor -> Fura statuslari)
 # within this many days of arriving; older cargo is flagged as stale.
@@ -3916,8 +3916,8 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         "datasets": [{
             "label": "m³",
             "data": [_r(v) for v in daily_sorted.values()],
-            "borderColor": "#4aa8ff",
-            "backgroundColor": "rgba(74,168,255,.15)",
+            "borderColor": "#7ee7ff",
+            "backgroundColor": "rgba(126,231,255,.12)",
         }],
     }
 
@@ -3929,7 +3929,7 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         "datasets": [{
             "label": "m³",
             "data":  [w["cbm"] for w in active_warehouses],
-            "backgroundColor": ["#4aa8ff", "#2ad09b", "#ffb739"],
+            "backgroundColor": ["#7ee7ff", "#66e2b0", "#ffc778"],
         }],
     }
 
@@ -4310,8 +4310,8 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
         "datasets": [{
             "label": "USD",
             "data": [s["margin"] for s in top_sellers],
-            "backgroundColor": "#2ad09b",
-            "borderColor": "#2ad09b",
+            "backgroundColor": "#66e2b0",
+            "borderColor": "#66e2b0",
         }],
     }
     status_chart = {
@@ -4321,7 +4321,7 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
         "datasets": [{
             "label": "KP",
             "data": [status_counts["zarar"], status_counts["past"], status_counts["ok"]],
-            "backgroundColor": ["#ff5b7f", "#ffb739", "#2ad09b"],
+            "backgroundColor": ["#ff7d9c", "#ffc778", "#66e2b0"],
         }],
     }
 
