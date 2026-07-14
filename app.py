@@ -1,4 +1,5 @@
-﻿import hmac
+﻿import base64
+import hmac
 import html
 import os
 import secrets
@@ -924,6 +925,7 @@ def telegram_send_message(
     reply_markup: dict | None = None,
     parse_mode: str | None = "HTML",
     disable_notification: bool = False,
+    link_preview_options: dict | None = None,
 ):
     payload = {
         "chat_id": chat_id,
@@ -935,6 +937,8 @@ def telegram_send_message(
         payload["parse_mode"] = parse_mode
     if reply_markup:
         payload["reply_markup"] = reply_markup
+    if link_preview_options:
+        payload["link_preview_options"] = link_preview_options
     return telegram_api("sendMessage", json=payload)
 
 
@@ -1484,12 +1488,96 @@ def send_communication_survey(recipient: dict, month_key: str):
         raise
 
 
+# Telegram counts caption/text limits in UTF-16 code units (emoji = 2).
+def _tg_text_len(s: str) -> int:
+    return len((s or "").encode("utf-16-le")) // 2
+
+
+TELEGRAM_MAX_CAPTION_UNITS = 1024
+TELEGRAM_MAX_TEXT_UNITS = 4096
+
+
+def _announcement_media_sig(rel_path: str) -> str:
+    return hmac.new(
+        app.secret_key.encode() if isinstance(app.secret_key, str) else app.secret_key,
+        f"announce-media:{rel_path}".encode(),
+        "sha256",
+    ).hexdigest()[:20]
+
+
+def announcement_media_url(file_path: str) -> str:
+    """Absolute public URL for an announcement attachment (or '' when the
+    public base URL isn't configured / the file is outside UPLOAD_FOLDER).
+
+    Stateless: the URL embeds the uploads-relative path plus an HMAC over
+    it, so scheduled-broadcast snapshots keep working with no DB lookups.
+    Used to attach the photo as a link preview when the announcement text
+    exceeds Telegram's 1024-unit caption limit."""
+    base = WEBHOOK_BASE_URL.rstrip("/")
+    if not base or not file_path:
+        return ""
+    try:
+        rel = os.path.relpath(os.path.abspath(file_path), os.path.abspath(UPLOAD_FOLDER))
+    except ValueError:
+        return ""
+    rel = rel.replace("\\", "/")
+    if rel.startswith(".."):
+        return ""
+    token = base64.urlsafe_b64encode(rel.encode()).decode().rstrip("=")
+    return f"{base}/announcement-media/{_announcement_media_sig(rel)}/{token}"
+
+
+@app.route("/announcement-media/<sig>/<token>")
+def serve_announcement_media(sig: str, token: str):
+    """Public (signed) endpoint Telegram fetches the preview photo from."""
+    try:
+        rel = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+    except Exception:
+        abort(404)
+    if not hmac.compare_digest(sig, _announcement_media_sig(rel)):
+        abort(404)
+    uploads_root = os.path.abspath(UPLOAD_FOLDER)
+    full = os.path.abspath(os.path.join(uploads_root, rel))
+    if not full.startswith(uploads_root + os.sep) or not os.path.exists(full):
+        abort(404)
+    return send_file(full)
+
+
 def send_announcement_broadcast(chat_id, text: str, attachment: dict | None = None):
     attachment_info = attachment or {}
     file_path = (attachment_info.get("file_path") or "").strip()
     filename = (attachment_info.get("filename") or "").strip()
     caption_text = (text or "").strip()
-    can_use_single_caption = bool(caption_text) and len(caption_text) <= 1024
+    can_use_single_caption = (
+        bool(caption_text) and _tg_text_len(caption_text) <= TELEGRAM_MAX_CAPTION_UNITS
+    )
+
+    # Photo + text LONGER than the caption limit: still deliver as ONE
+    # message — the text goes out via sendMessage (4096-unit limit) with
+    # the photo attached as a large link preview shown ABOVE the text.
+    # Needs a public URL for the file (WEBHOOK_BASE_URL); when that's not
+    # configured we fall back to the old photo-then-text pair below.
+    if (
+        file_path
+        and attachment_info.get("kind") == "photo"
+        and caption_text
+        and not can_use_single_caption
+        and _tg_text_len(caption_text) <= TELEGRAM_MAX_TEXT_UNITS
+    ):
+        media_url = announcement_media_url(file_path)
+        if media_url:
+            telegram_send_message(
+                chat_id,
+                caption_text,
+                parse_mode=None,
+                link_preview_options={
+                    "url": media_url,
+                    "prefer_large_media": True,
+                    "show_above_text": True,
+                },
+            )
+            return
+
     if file_path:
         send_as_photo = attachment_info.get("kind") == "photo"
         if send_as_photo:
