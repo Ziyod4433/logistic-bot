@@ -1274,14 +1274,17 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
   50%      { box-shadow: 0 0 0 7px rgba(126,231,255,0); opacity: .75; }
 }
 
-/* ── ambient: slowly breathing obsidian background (mock .site.n2) ── */
+/* ── obsidian background (static gradient).
+   NOTE: the conic-gradient "flow" borders below are STATIC at rest and only
+   rotate on :hover. A rotating conic-gradient repaints every frame and can't
+   be GPU-composited, which lagged low-power devices (TV kiosk) — badly while
+   typing on the login screen. At rest a fixed-angle gradient looks identical;
+   the motion is kept only for hover (desktop), so idle CPU is ~0. ── */
 body {
   background:
     radial-gradient(1100px 700px at 15% -10%, rgba(154,123,255,.09), transparent 60%),
     radial-gradient(900px 600px at 95% 110%, rgba(126,231,255,.07), transparent 60%),
     linear-gradient(180deg, #0b0b12 0%, #07070c 100%);
-  background-size: 200% 200%, 200% 200%, auto;
-  animation: obs-bg 26s ease-in-out infinite;
 }
 
 /* ── living flow border: cards, stats, modals (mock card core) ── */
@@ -1293,10 +1296,11 @@ body {
       rgba(200,206,222,.55), #7ee7ff 22%, rgba(200,206,222,.18) 44%,
       #9a7bff 66%, rgba(200,206,222,.55)) border-box;
   box-shadow: 0 18px 40px rgba(0,0,0,.45);
-  animation: obs-rise .6s cubic-bezier(.22,1,.36,1) backwards,
-             obs-spin 10s linear infinite;
+  animation: obs-rise .6s cubic-bezier(.22,1,.36,1) backwards;
 }
-.card:hover, .stat:hover { animation: obs-rise .6s cubic-bezier(.22,1,.36,1) backwards, obs-spin 4s linear infinite; }
+@media (hover: hover) {
+  .card:hover, .stat:hover { animation: obs-spin 4s linear infinite; }
+}
 .stat {
   transition: transform .25s cubic-bezier(.22,1,.36,1), box-shadow .25s;
 }
@@ -1321,7 +1325,6 @@ body {
     conic-gradient(from var(--obsa),
       rgba(200,206,222,.55), #7ee7ff 22%, rgba(200,206,222,.18) 44%,
       #9a7bff 66%, rgba(200,206,222,.55)) border-box;
-  animation: obs-spin 12s linear infinite;
 }
 .login-card {
   border: 1px solid transparent;
@@ -1330,7 +1333,6 @@ body {
     conic-gradient(from var(--obsa),
       rgba(200,206,222,.55), #7ee7ff 22%, rgba(200,206,222,.18) 44%,
       #9a7bff 66%, rgba(200,206,222,.55)) border-box;
-  animation: obs-spin 10s linear infinite;
 }
 
 /* ── typography (mock: Outfit display, Inter text) ── */
@@ -1366,7 +1368,6 @@ body {
       rgba(200,206,222,.6), #7ee7ff 25%, rgba(200,206,222,.15) 50%,
       #9a7bff 75%, rgba(200,206,222,.6)) border-box;
   box-shadow: 0 8px 28px rgba(126,231,255,.08);
-  animation: obs-spin 6s linear infinite;
 }
 .nav-link.active::before { display: none; }  /* mock pill has no left bar */
 .nav-link .badge-count {
