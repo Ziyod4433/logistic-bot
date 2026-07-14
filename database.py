@@ -4036,13 +4036,62 @@ def get_announcement_recipients():
                 c.chat_type,
                 c.username,
                 c.last_seen_at,
-                COUNT(bl.id) AS linked_bl_count
+                COUNT(bl.id) AS linked_bl_count,
+                -- Batches this chat belongs to that are still IN TRANSIT
+                -- (no client_delivery_date yet) — feeds the announcements
+                -- "по партиям в пути" filter. NULL-safe: chats without BL
+                -- links simply get an empty list.
+                GROUP_CONCAT(DISTINCT CASE
+                    WHEN bl.id IS NOT NULL
+                     AND COALESCE(b.client_delivery_date, '') = ''
+                    THEN bl.batch_id
+                END) AS active_batch_ids
             FROM telegram_chats c
             LEFT JOIN bl_codes bl ON bl.chat_id = c.chat_id
+            LEFT JOIN batches b ON b.id = bl.batch_id
             WHERE c.chat_id != ''
               AND c.is_active = 1
             GROUP BY c.chat_id
             ORDER BY COALESCE(NULLIF(TRIM(c.title), ''), NULLIF(TRIM(c.username), ''), c.chat_id) COLLATE NOCASE ASC
+            """
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            raw = item.get("active_batch_ids") or ""
+            item["active_batch_ids"] = [int(x) for x in str(raw).split(",") if str(x).strip().isdigit()]
+            result.append(item)
+        return result
+    finally:
+        conn.close()
+
+
+def get_announcement_batches():
+    """Active (in-transit) batches that have at least one Telegram group
+    linked through their BL codes — the choices for the announcements
+    "по партиям в пути" filter. In transit = client_delivery_date empty
+    (same rule the Партии page uses for 'Активные партии')."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                b.id,
+                b.name,
+                b.status,
+                COUNT(DISTINCT bl.chat_id) AS group_count,
+                COUNT(bl.id) AS bl_count
+            FROM batches b
+            JOIN bl_codes bl
+              ON bl.batch_id = b.id
+             AND TRIM(COALESCE(bl.chat_id, '')) != ''
+            JOIN telegram_chats c
+              ON c.chat_id = bl.chat_id
+             AND c.is_active = 1
+             AND c.chat_id != ''
+            WHERE COALESCE(b.client_delivery_date, '') = ''
+            GROUP BY b.id
+            ORDER BY b.created_at DESC
             """
         ).fetchall()
         return [dict(row) for row in rows]

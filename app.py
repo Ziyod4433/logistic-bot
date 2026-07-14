@@ -4641,6 +4641,8 @@ def api_announcements():
                 "kind": attachment.get("kind", ""),
             } if attachment else {},
             "recipients": recipients,
+            # In-transit batches with linked groups — the "по партиям" filter
+            "batches": db.get_announcement_batches(),
             "summary": {
                 "groups": len(recipients),
                 "has_attachment": bool(attachment),
