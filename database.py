@@ -202,6 +202,7 @@ DEFAULT_STATUS_DETAILS[LEGACY_DELIVERED_STATUS] = DEFAULT_STATUS_DETAILS[DELIVER
 ETA_DESTINATION_LABELS = {
     "Toshkent": "Toshkentga yetib kelish vaqti",
     "Horgos (Qozoq)": "Horgosga yetib kelish vaqti",
+    "Qozog'istonga o'tish": "Qozog'istonga o'tish vaqti",
     "Qozoq furaga ortilish": "Qozoq furaga ortilish vaqti",
     "Mijozga yetib borish": "Mijozga yetib borish vaqti",
 }
@@ -211,18 +212,21 @@ ETA_DESTINATION_LABELS_LOCALIZED = {
     "uz_cyrl": {
         "Toshkent": "Тошкентга етиб келиш вақти",
         "Horgos (Qozoq)": "Хоргосга етиб келиш вақти",
+        "Qozog'istonga o'tish": "Қозоғистонга ўтиш вақти",
         "Qozoq furaga ortilish": "Қозоқ фурага ортилиш вақти",
         "Mijozga yetib borish": "Мижозга етиб бориш вақти",
     },
     "ru": {
         "Toshkent": "Срок прибытия в Ташкент",
         "Horgos (Qozoq)": "Срок прибытия в Хоргос",
+        "Qozog'istonga o'tish": "Срок перехода в Казахстан",
         "Qozoq furaga ortilish": "Срок погрузки на казахскую фуру",
         "Mijozga yetib borish": "Срок доставки клиенту",
     },
     "en": {
         "Toshkent": "Arrival time to Tashkent",
         "Horgos (Qozoq)": "Arrival time to Horgos",
+        "Qozog'istonga o'tish": "Kazakhstan border crossing time",
         "Qozoq furaga ortilish": "Loading time onto Kazakh truck",
         "Mijozga yetib borish": "Delivery time to client",
     },
@@ -1656,7 +1660,20 @@ def get_batches():
                 SELECT COUNT(DISTINCT p.bl_id)
                 FROM problems p
                 WHERE p.batch_id = b.id AND p.status = 'open'
-            ) AS problem_count
+            ) AS problem_count,
+            (
+                SELECT MAX(sent_at) FROM (
+                    SELECT MAX(sl.sent_at) AS sent_at
+                    FROM send_logs sl
+                    JOIN bl_codes bl ON bl.id = sl.bl_id
+                    WHERE bl.batch_id = b.id
+                      AND sl.success = 1
+                    UNION ALL
+                    SELECT MAX(c.sent_at) AS sent_at
+                    FROM tracking_delivery_coverage c
+                    WHERE c.batch_id = b.id
+                )
+            ) AS last_tracking_at
         FROM batches b
         ORDER BY b.created_at DESC
         """

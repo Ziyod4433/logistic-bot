@@ -619,6 +619,15 @@ nav { flex: 1; padding: 20px 12px; overflow-y: auto; }
 .badge-blue   { background: rgba(56,189,248,.12); color: var(--blue); }
 .badge-purple { background: rgba(167,139,250,.12);color: var(--purple); }
 .badge-muted  { background: rgba(74,85,114,.2);   color: var(--muted2); }
+.badge-track-yellow { background: rgba(255,183,57,.14); color: #ffb739; }
+
+/* ── TRACKING FRESHNESS (Партии / Управление) ────────── */
+tr.trk-green  { background: rgba(16,185,129,.06); }
+tr.trk-yellow { background: rgba(255,183,57,.06); }
+tr.trk-red    { background: rgba(244,63,94,.07); }
+tr.trk-green  > td:first-child { box-shadow: inset 3px 0 0 var(--green); }
+tr.trk-yellow > td:first-child { box-shadow: inset 3px 0 0 #ffb739; }
+tr.trk-red    > td:first-child { box-shadow: inset 3px 0 0 var(--red); }
 
 /* ── STATUS BADGES ───────────────────────────────────── */
 .s-accepted { background:rgba(74,85,114,.2);  color:var(--muted2); }
@@ -2352,7 +2361,7 @@ svg.oi {
             </div>
             <table class="tbl">
               <thead><tr>
-                <th>Партия</th><th>Статус</th><th>Опоздание</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
+                <th>Партия</th><th>Статус</th><th>Трекинг</th><th>Опоздание</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
               </tr></thead>
               <tbody id="batches-active-table"></tbody>
             </table>
@@ -2931,6 +2940,7 @@ svg.oi {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <button type="button" class="btn btn-amber btn-sm" id="new-batch-target-toshkent" onclick="setArrivalTarget('new-batch','Toshkent')">Toshkentga taxminiy yetib kelish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-horgos" onclick="setArrivalTarget('new-batch','Horgos (Qozoq)')">Horgosga taxminiy yetib kelish vaqti</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-qozogiston" onclick="setArrivalTarget('new-batch','Qozog\'istonga o\'tish')">Qozog'istonga o'tish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-qozoq-fura" onclick="setArrivalTarget('new-batch','Qozoq furaga ortilish')">Qozoq furaga ortilish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-mijoz" onclick="setArrivalTarget('new-batch','Mijozga yetib borish')">Mijozga yetib borish vaqti</button>
       </div>
@@ -2984,6 +2994,7 @@ svg.oi {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <button type="button" class="btn btn-amber btn-sm" id="edit-batch-target-toshkent" onclick="setArrivalTarget('edit-batch','Toshkent')">Toshkentga taxminiy yetib kelish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-horgos" onclick="setArrivalTarget('edit-batch','Horgos (Qozoq)')">Horgosga taxminiy yetib kelish vaqti</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-qozogiston" onclick="setArrivalTarget('edit-batch','Qozog\'istonga o\'tish')">Qozog'istonga o'tish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-qozoq-fura" onclick="setArrivalTarget('edit-batch','Qozoq furaga ortilish')">Qozoq furaga ortilish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-mijoz" onclick="setArrivalTarget('edit-batch','Mijozga yetib borish')">Mijozga yetib borish vaqti</button>
       </div>
@@ -3766,19 +3777,42 @@ function getTotalDeliveryTerm(batch) {
   return diff >= 0 ? `${diff} kun` : "";
 }
 
+function getTrackingIndication(b) {
+  const last = parseFlexibleDate(b.last_tracking_at);
+  const ref = last || parseFlexibleDate(b.created_at);
+  if (!ref || Number.isNaN(ref.getTime())) {
+    return { cls: "", badge: `<span style="color:var(--muted)">—</span>` };
+  }
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(ref); day.setHours(0, 0, 0, 0);
+  const days = Math.max(0, Math.round((today - day) / 86400000));
+  if (!last) {
+    return days >= 2
+      ? { cls: "trk-red", badge: `<span class="badge badge-red">⚠️ не отправлялся</span>` }
+      : { cls: "trk-yellow", badge: `<span class="badge badge-track-yellow">✉️ не отправлялся</span>` };
+  }
+  if (days === 0) return { cls: "trk-green", badge: `<span class="badge badge-green">✅ сегодня</span>` };
+  if (days === 1) return { cls: "trk-yellow", badge: `<span class="badge badge-track-yellow">⏳ вчера</span>` };
+  return { cls: "trk-red", badge: `<span class="badge badge-red">⚠️ ${days} дн. назад</span>` };
+}
+
 function renderActiveBatchRows(list) {
-  return list.length ? list.map(b=>`
-    <tr>
+  return list.length ? list.map(b=>{
+    const trk = getTrackingIndication(b);
+    return `
+    <tr class="${trk.cls}">
       <td><span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span></td>
       <td>${statusBadge(b.status || "Xitoy")}</td>
+      <td>${trk.badge}</td>
       <td>${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">+${b.delay_days} дн.</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td>${renderProblemsCell(b)}</td>
       <td><span class="badge badge-muted">${b.bl_count} BL</span></td>
       <td>${renderBatchLinkedCell(b)}</td>
       <td class="mono" style="font-size:11px;color:var(--muted2)">${b.created_at}</td>
       <td>${renderBatchRowActions(b)}</td>
-    </tr>`).join("") :
-    `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📦</div><p>Активных партий пока нет.</p></div></td></tr>`;
+    </tr>`;
+  }).join("") :
+    `<tr><td colspan="9"><div class="empty"><div class="empty-icon">📦</div><p>Активных партий пока нет.</p></div></td></tr>`;
 }
 
 function renderInactiveBatchRows(list) {
@@ -3799,6 +3833,7 @@ function renderInactiveBatchRows(list) {
 
 function getArrivalTargetLabel(value) {
   if (value === "Horgos (Qozoq)") return "Horgosga taxminiy yetib kelish vaqti";
+  if (value === "Qozog'istonga o'tish") return "Qozog'istonga o'tish vaqti";
   if (value === "Qozoq furaga ortilish") return "Qozoq furaga ortilish vaqti";
   if (value === "Mijozga yetib borish") return "Mijozga yetib borish vaqti";
   return "Toshkentga taxminiy yetib kelish vaqti";
@@ -3807,6 +3842,7 @@ function getArrivalTargetLabel(value) {
 function setArrivalTarget(prefix, value) {
   const normalized =
     value === "Horgos (Qozoq)" ? "Horgos (Qozoq)"
+    : value === "Qozog'istonga o'tish" ? "Qozog'istonga o'tish"
     : value === "Qozoq furaga ortilish" ? "Qozoq furaga ortilish"
     : value === "Mijozga yetib borish" ? "Mijozga yetib borish"
     : "Toshkent";
@@ -3815,6 +3851,7 @@ function setArrivalTarget(prefix, value) {
   const options = [
     { key: "Toshkent", buttonId: `${prefix}-target-toshkent` },
     { key: "Horgos (Qozoq)", buttonId: `${prefix}-target-horgos` },
+    { key: "Qozog'istonga o'tish", buttonId: `${prefix}-target-qozogiston` },
     { key: "Qozoq furaga ortilish", buttonId: `${prefix}-target-qozoq-fura` },
     { key: "Mijozga yetib borish", buttonId: `${prefix}-target-mijoz` },
   ];
