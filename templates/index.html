@@ -1624,7 +1624,7 @@ svg.oi {
         <div class="stats-row" id="stats-row">
           <div class="stat"><div class="stat-v" id="s-batches">—</div><div class="stat-l">Партий</div></div>
           <div class="stat" style="--cv:var(--text)"><div class="stat-v" id="s-bl">—</div><div class="stat-l">BL кодов</div></div>
-          <div class="stat stat-critical"><div class="stat-v" id="s-late">—</div><div class="stat-l">Опаздывают</div></div>
+          <div class="stat stat-critical" style="cursor:pointer" onclick="openLateCargoModal()" title="Опоздания по шитсу статусов (Ombor → Ortilgan furalar → Yetib keldi). Нажми для деталей."><div class="stat-v" id="s-late">—</div><div class="stat-l">Опаздывают</div></div>
           <div class="stat stat-warning"><div class="stat-v" id="s-problematic">—</div><div class="stat-l">С проблемами</div></div>
           <div class="stat" style="--cv:var(--blue);--line:var(--blue)"><div class="stat-v" id="s-linked">—</div><div class="stat-l">Привязано</div></div>
           <div class="stat" style="--cv:var(--green);--line:var(--green)"><div class="stat-v" id="s-sent">—</div><div class="stat-l">Отправлено</div></div>
@@ -3014,6 +3014,18 @@ svg.oi {
   </div>
 </div>
 
+<!-- Late cargo details (Dashboard → Опаздывают) -->
+<div class="overlay" id="late-cargo-modal">
+  <div class="modal" style="width:780px;max-width:94vw">
+    <div class="modal-title">Опаздывающие <em>грузы</em></div>
+    <div id="late-cargo-body" style="max-height:68vh;overflow:auto"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="refreshLateCargo()">↻ Обновить</button>
+      <button class="btn btn-amber" onclick="closeModal('late-cargo-modal')">Закрыть</button>
+    </div>
+  </div>
+</div>
+
 <!-- Add BL -->
 <div class="overlay" id="add-bl-modal">
   <div class="modal">
@@ -3625,7 +3637,7 @@ async function loadDashboard() {
     allBatches = batches;
     document.getElementById("s-batches").textContent   = stats.batches;
     document.getElementById("s-bl").textContent        = stats.bl_total;
-    document.getElementById("s-late").textContent      = stats.late || 0;
+    loadLateCargo(); // "Опаздывают" тянется из шитса статусов, не из БД
     document.getElementById("s-problematic").textContent = stats.problematic || 0;
     document.getElementById("s-linked").textContent    = stats.linked;
     document.getElementById("s-sent").textContent      = stats.sent;
@@ -3669,6 +3681,127 @@ async function loadDashboard() {
       `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📦</div><p>Активных партий пока нет.</p></div></td></tr>`;
 
   } catch(e) { toast("Ошибка загрузки: "+e.message,"err"); }
+}
+
+// ══════════════════════════════════════════════════════════
+// LATE CARGO (Опаздывают — шитс статусов Ombor/Ortilgan/Yetib keldi)
+// ══════════════════════════════════════════════════════════
+let lateCargoData = null;
+let lateCargoLoading = null;
+
+async function loadLateCargo(force = false) {
+  const el = document.getElementById("s-late");
+  if (lateCargoLoading) return lateCargoLoading;
+  if (el && !lateCargoData) el.textContent = "…";
+  lateCargoLoading = (async () => {
+    try {
+      const data = await api("/api/late-cargo" + (force ? "?force=1" : ""));
+      lateCargoData = data;
+      if (el) el.textContent = data && data.ok ? (data.total_late || 0) : "—";
+    } catch (e) {
+      if (el && !lateCargoData) el.textContent = "—";
+      console.warn("late-cargo:", e.message);
+    } finally {
+      lateCargoLoading = null;
+    }
+  })();
+  return lateCargoLoading;
+}
+
+async function openLateCargoModal() {
+  openModal("late-cargo-modal");
+  const body = document.getElementById("late-cargo-body");
+  if (!lateCargoData) {
+    body.innerHTML = `<div class="empty" style="padding:26px"><div class="empty-icon">⏳</div><p>Загружаю данные из шитса статусов…</p></div>`;
+    await loadLateCargo();
+  }
+  renderLateCargoModal();
+}
+
+async function refreshLateCargo() {
+  const body = document.getElementById("late-cargo-body");
+  body.innerHTML = `<div class="empty" style="padding:26px"><div class="empty-icon">⏳</div><p>Обновляю данные из шитса…</p></div>`;
+  if (lateCargoLoading) { try { await lateCargoLoading; } catch (e) {} }
+  await loadLateCargo(true);
+  renderLateCargoModal();
+}
+
+function lateStageBadge(stage) {
+  return stage === "ombor"
+    ? `<span class="badge badge-track-yellow">📦 Omborda</span>`
+    : `<span class="badge badge-blue">🚛 Yo'lda</span>`;
+}
+
+function renderLateCargoModal() {
+  const body = document.getElementById("late-cargo-body");
+  const d = lateCargoData;
+  if (!d || !d.ok) {
+    body.innerHTML = `<div class="empty" style="padding:26px"><div class="empty-icon">⚠️</div><p>Не удалось прочитать шитс статусов.<br><span style="font-size:11px;color:var(--muted2)">${esc((d && d.error) || "Проверь доступ к таблице")}</span></p></div>`;
+    return;
+  }
+  let html = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      <span class="badge badge-red">⚠️ Опаздывают: ${d.total_late}</span>
+      <span class="badge badge-track-yellow">📦 из них в Ombor: ${d.late_in_ombor}</span>
+      <span class="badge badge-blue">🚛 в пути: ${d.late_in_transit}</span>
+      <span class="badge badge-muted">Всего активных: ${d.active_ombor + d.active_transit}</span>
+    </div>`;
+
+  if (!d.total_late) {
+    html += `<div class="empty" style="padding:22px"><div class="empty-icon">✅</div><p>Опаздывающих грузов нет — все укладываются в ${d.threshold_days} дней.</p></div>`;
+  } else {
+    for (const g of d.groups) {
+      html += `
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-h">
+          <span class="card-title">${esc(g.label)}</span>
+          <span style="font-size:11px;color:var(--muted2)">${g.items.length} груз(ов) · макс. опоздание +${g.max_late} дн.</span>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>Груз (BRAND NAME)</th><th>Этап</th><th>Прибыл на склад</th><th>Дней прошло</th><th>Опоздание</th></tr></thead>
+          <tbody>
+            ${g.items.map(it => `
+            <tr>
+              <td style="font-weight:600">${esc(it.brand)}</td>
+              <td>${lateStageBadge(it.stage)}</td>
+              <td class="mono" style="font-size:11px">${esc(it.arrived)}</td>
+              <td>${it.days_total} дн.${it.stage === "ombor" ? ` <span style="font-size:10px;color:var(--muted2)">(на складе)</span>` : ""}</td>
+              <td><span class="badge badge-red">+${it.days_late} дн.</span></td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`;
+    }
+  }
+
+  if (d.ombor_warning && d.ombor_warning.length) {
+    html += `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-h">
+        <span class="card-title">⏱ Стоят в Ombor дольше ${d.load_sla_days} дней</span>
+        <span style="font-size:11px;color:var(--muted2)">ещё не опаздывают, но не загружены в фуру</span>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>Груз (BRAND NAME)</th><th>Прибыл на склад</th><th>Дней на складе</th></tr></thead>
+        <tbody>
+          ${d.ombor_warning.map(it => `
+          <tr>
+            <td style="font-weight:600">${esc(it.brand)}</td>
+            <td class="mono" style="font-size:11px">${esc(it.arrived)}</td>
+            <td><span class="badge badge-track-yellow">${it.days_in_ombor} дн.</span></td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  html += `
+    <div style="font-size:11px;color:var(--muted2);line-height:1.6;margin-top:4px">
+      Источник: шитс статусов (Ombor → Ortilgan furalar → Yetib keldi).
+      SLA: погрузка 3–6 дн. + транзит 18–25 дн. → после ${d.threshold_days} дней груз считается опаздывающим.
+      Обновлено: ${esc(d.generated_at || "")}.
+    </div>`;
+  body.innerHTML = html;
 }
 
 // ══════════════════════════════════════════════════════════

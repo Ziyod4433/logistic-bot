@@ -2923,6 +2923,15 @@ def api_stats():
     return jsonify(db.get_stats())
 
 
+@app.route("/api/late-cargo")
+@login_required
+def api_late_cargo():
+    from services import late_cargo_service
+
+    force = request.args.get("force") == "1"
+    return jsonify(late_cargo_service.get_late_cargo_report(force=force))
+
+
 @app.route("/api/dashboard/history/clear", methods=["POST"])
 @editor_required
 def api_clear_dashboard_history():
