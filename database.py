@@ -686,6 +686,25 @@ def init_db():
             UNIQUE(batch_id, code)
         );
 
+        -- Permanent BL ↔ Telegram-group link memory. Survives batch
+        -- deletion (bl_codes rows die with their batch), so once a BL
+        -- code was ever linked to a group, future batches can auto-link
+        -- it even when the group title has no recognizable match.
+        CREATE TABLE IF NOT EXISTS bl_link_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code_norm TEXT NOT NULL,
+            code_raw TEXT NOT NULL DEFAULT '',
+            chat_id TEXT NOT NULL,
+            chat_title TEXT NOT NULL DEFAULT '',
+            batch_id INTEGER NOT NULL DEFAULT 0,
+            batch_name TEXT NOT NULL DEFAULT '',
+            linked_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(code_norm, chat_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bl_link_history_code
+            ON bl_link_history(code_norm, linked_at);
+
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
@@ -1443,6 +1462,30 @@ def init_db():
                 datetime('now','localtime')
             )
         WHERE EXISTS (SELECT 1 FROM batches b WHERE b.id = bl_codes.batch_id)
+        """
+    )
+
+    # Seed the permanent BL↔chat link memory from every linked BL that is
+    # still in the database. INSERT OR IGNORE keeps rows already recorded
+    # (and their newer linked_at) intact, so this is safe on every start.
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO bl_link_history(
+            code_norm, code_raw, chat_id, chat_title, batch_id, batch_name, linked_at
+        )
+        SELECT
+            UPPER(REPLACE(REPLACE(REPLACE(REPLACE(TRIM(bl.code), '-', ''), '_', ''), ' ', ''), '.', '')),
+            TRIM(bl.code),
+            TRIM(bl.chat_id),
+            COALESCE(tc.title, ''),
+            bl.batch_id,
+            COALESCE(b.name, ''),
+            COALESCE(NULLIF(bl.created_at, ''), datetime('now','localtime'))
+        FROM bl_codes bl
+        LEFT JOIN batches b ON b.id = bl.batch_id
+        LEFT JOIN telegram_chats tc ON tc.chat_id = TRIM(bl.chat_id)
+        WHERE TRIM(COALESCE(bl.chat_id, '')) != ''
+          AND TRIM(COALESCE(bl.code, '')) != ''
         """
     )
 
@@ -2542,6 +2585,114 @@ def _normalize_template_value(value):
     return html.escape(str(value), quote=False)
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# BL ↔ Telegram-group link memory (bl_link_history)
+# ──────────────────────────────────────────────────────────────────────────
+def _normalize_link_code(value) -> str:
+    """Canonical key for the link memory: uppercase, alnum only —
+    "BL-190" / "bl_190" / "BL 190" all collapse to "BL190"."""
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def record_bl_link(code, chat_id, batch_id=0):
+    """Remember that this BL code was linked to this Telegram group.
+
+    Called from every path that sets a non-empty chat_id on a BL, so the
+    memory keeps growing regardless of how the link was made (manual,
+    title auto-match or history match)."""
+    code_norm = _normalize_link_code(code)
+    chat_id = str(chat_id or "").strip()
+    if not code_norm or not chat_id:
+        return
+    conn = get_conn()
+    try:
+        title_row = conn.execute(
+            "SELECT title FROM telegram_chats WHERE chat_id = ?", (chat_id,)
+        ).fetchone()
+        batch_row = conn.execute(
+            "SELECT name FROM batches WHERE id = ?", (int(batch_id or 0),)
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO bl_link_history(code_norm, code_raw, chat_id, chat_title, batch_id, batch_name)
+            VALUES(?, ?, ?, ?, ?, ?)
+            ON CONFLICT(code_norm, chat_id) DO UPDATE SET
+                code_raw = excluded.code_raw,
+                chat_title = CASE
+                    WHEN excluded.chat_title != '' THEN excluded.chat_title
+                    ELSE chat_title
+                END,
+                batch_id = excluded.batch_id,
+                batch_name = excluded.batch_name,
+                linked_at = datetime('now','localtime')
+            """,
+            (
+                code_norm,
+                str(code or "").strip(),
+                chat_id,
+                (title_row["title"] if title_row else "") or "",
+                int(batch_id or 0),
+                (batch_row["name"] if batch_row else "") or "",
+            ),
+        )
+        conn.commit()
+    except Exception:
+        pass  # memory bookkeeping must never break the main flow
+    finally:
+        conn.close()
+
+
+def lookup_bl_link_history(code) -> dict | None:
+    """Most recent group this BL code was ever linked to (any batch,
+    including deleted ones). Tries the BL-prefixed and bare-digit
+    variants the same way title matching does."""
+    code_norm = _normalize_link_code(code)
+    if not code_norm:
+        return None
+    variants = [code_norm]
+    if code_norm.startswith("BL") and code_norm[2:].isdigit():
+        variants.append(code_norm[2:])
+    elif code_norm.isdigit():
+        variants.append(f"BL{code_norm}")
+    conn = get_conn()
+    try:
+        for variant in variants:
+            row = conn.execute(
+                """
+                SELECT code_norm, code_raw, chat_id, chat_title, batch_name, linked_at
+                FROM bl_link_history
+                WHERE code_norm = ?
+                ORDER BY linked_at DESC, id DESC
+                LIMIT 1
+                """,
+                (variant,),
+            ).fetchone()
+            if row:
+                return dict(row)
+        return None
+    finally:
+        conn.close()
+
+
+def set_bl_chat_id(bl_id, chat_id) -> bool:
+    """Set chat_id on a single BL and record the link in the memory."""
+    chat_id = str(chat_id or "").strip()
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT code, batch_id FROM bl_codes WHERE id = ?", (bl_id,)
+        ).fetchone()
+        if not row:
+            return False
+        conn.execute("UPDATE bl_codes SET chat_id = ? WHERE id = ?", (chat_id, bl_id))
+        conn.commit()
+    finally:
+        conn.close()
+    if chat_id:
+        record_bl_link(row["code"], chat_id, row["batch_id"])
+    return True
+
+
 def add_bl(
     batch_id,
     code,
@@ -2601,11 +2752,13 @@ def add_bl(
             ),
         )
         conn.commit()
-        return True
     except sqlite3.IntegrityError:
         return False
     finally:
         conn.close()
+    if chat_id.strip():
+        record_bl_link(code, chat_id, batch_id)
+    return True
 
 
 def get_bls_for_packing_list_picker():
@@ -3270,6 +3423,8 @@ def update_bl(
     )
     conn.commit()
     conn.close()
+    if chat_id.strip():
+        record_bl_link(normalized_code, chat_id, current["batch_id"])
 
 
 def move_bl_to_batch(bl_id, target_batch_id):

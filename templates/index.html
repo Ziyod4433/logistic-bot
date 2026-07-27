@@ -2407,6 +2407,7 @@ svg.oi {
                 <input class="search" placeholder="🔍 Поиск BL..." id="bl-search" oninput="filterBL()">
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openEditBatchModal()">⚙️ Параметры партии</button>
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openSheetImportModal()">📥 Импорт Sheets</button>
+                <button class="btn btn-ghost btn-sm editor-only" onclick="relinkBatchFromHistory()" title="Привязать группы к BL без chat ID: сначала по названию группы, затем по истории прошлых партий">🧠 Привязать по истории</button>
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openPackingListBulkModal()">📦 Packing lists</button>
                 <button class="btn btn-ghost btn-sm editor-only" onclick="openAddBLModal()">+ Добавить BL</button>
                 <button class="btn btn-red btn-sm editor-only" id="bulk-delete-btn" onclick="bulkDeleteSelectedBL()" disabled title="Выбери BL чекбоксами, чтобы удалить массово">🗑 Удалить выбранные</button>
@@ -4984,9 +4985,13 @@ async function importSelectedSheetRows() {
     const imported = Number(result.imported_count || 0);
     const skipped = Number(result.skipped_count || 0);
     const autoMatched = Number(result.auto_matched_count || 0);
+    const historyMatched = Number(result.history_matched_count || 0);
     let msg = `Импорт завершён: ${imported} добавлено, ${skipped} пропущено`;
     if (imported > 0) {
-      msg += ` · Chat ID авто-привязан: ${autoMatched}/${imported}`;
+      msg += ` · Chat ID авто-привязан: ${autoMatched + historyMatched}/${imported}`;
+      if (historyMatched > 0) {
+        msg += ` (из истории: ${historyMatched})`;
+      }
     }
     toast(msg, "ok");
     closeModal("sheet-import-modal");
@@ -4999,6 +5004,36 @@ async function importSelectedSheetRows() {
 function batchNameById(batchId) {
   const batch = allBatches.find(item => Number(item.id) === Number(batchId));
   return batch ? batch.name : `Партия #${batchId}`;
+}
+
+async function relinkBatchFromHistory() {
+  if (!ensureEditor()) return;
+  if (!currentBatchId) {
+    toast("Сначала открой партию", "err");
+    return;
+  }
+  try {
+    const r = await api(`/api/batches/${currentBatchId}/relink-from-history`, "POST", {});
+    if (!r.linked_count) {
+      toast(
+        r.unlinked_left
+          ? `Совпадений не найдено: ${r.unlinked_left} BL без группы — их нет ни в названиях групп, ни в истории партий`
+          : "Все BL этой партии уже привязаны к группам",
+        "ok"
+      );
+      return;
+    }
+    let msg = `🧠 Привязано ${r.linked_count} BL`;
+    const parts = [];
+    if (r.history_count) parts.push(`из истории: ${r.history_count}`);
+    if (r.title_count) parts.push(`по названию: ${r.title_count}`);
+    if (parts.length) msg += ` (${parts.join(", ")})`;
+    if (r.unlinked_left) msg += ` · без группы осталось: ${r.unlinked_left}`;
+    toast(msg, "ok");
+    await loadBatchDetail(currentBatchId);
+  } catch (e) {
+    toast(e.message, "err");
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

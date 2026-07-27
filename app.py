@@ -3137,6 +3137,20 @@ def _build_chat_code_lookup() -> dict[str, str]:
     return lookup
 
 
+def _known_chat_id_set() -> set[str]:
+    """Chat ids the bot has ever seen — history matches are only applied
+    when the remembered chat still exists in telegram_chats."""
+    try:
+        chats = db.get_telegram_chats(include_inactive=True) or []
+    except Exception:
+        return set()
+    return {
+        str(chat.get("chat_id") or "").strip()
+        for chat in chats
+        if str(chat.get("chat_id") or "").strip()
+    }
+
+
 def _find_chat_for_bl_code(code: str, lookup: dict[str, str]) -> str:
     """Return best-match chat_id for a BL code, or '' if nothing fits."""
     if not code or not lookup:
@@ -3173,17 +3187,27 @@ def api_import_google_sheet_rows(batch_id):
     # Auto-chat-match: build lookup once per request so we don't query the
     # chats table per BL.
     chat_lookup = _build_chat_code_lookup()
+    known_chat_ids = _known_chat_id_set()
 
     imported = []
     skipped = []
     auto_matched = 0
+    history_matched = 0
     for row in rows:
         code = str((row or {}).get("code") or "").strip()
         if not code:
             continue
         # Auto-find the Telegram chat whose title contains this BL code.
-        # Empty string if no match — operator can fill it manually later.
+        # Falls back to the permanent link memory (this BL was linked to
+        # a group in some earlier batch). Empty string if neither knows
+        # the code — operator fills it manually later.
         chat_id = _find_chat_for_bl_code(code, chat_lookup)
+        matched_via = "title" if chat_id else ""
+        if not chat_id:
+            hist = db.lookup_bl_link_history(code)
+            if hist and (not known_chat_ids or hist["chat_id"] in known_chat_ids):
+                chat_id = hist["chat_id"]
+                matched_via = "history"
         success = db.add_bl(
             batch_id=batch_id,
             code=code,
@@ -3199,8 +3223,10 @@ def api_import_google_sheet_rows(batch_id):
         )
         if success:
             imported.append(code)
-            if chat_id:
+            if matched_via == "title":
                 auto_matched += 1
+            elif matched_via == "history":
+                history_matched += 1
         else:
             skipped.append({"code": code, "reason": "duplicate"})
 
@@ -3210,8 +3236,71 @@ def api_import_google_sheet_rows(batch_id):
             "imported_count": len(imported),
             "skipped_count": len(skipped),
             "auto_matched_count": auto_matched,
+            "history_matched_count": history_matched,
             "imported": imported,
             "skipped": skipped,
+        }
+    )
+
+
+@app.route("/api/batches/<int:batch_id>/relink-from-history", methods=["POST"])
+@editor_required
+def api_relink_bls_from_history(batch_id):
+    """Attach groups to the batch's unlinked BLs: first by chat-title
+    match, then by the permanent BL↔group link memory built from all
+    past batches."""
+    batch = db.get_batch(batch_id)
+    if not batch:
+        abort(404)
+    chat_lookup = _build_chat_code_lookup()
+    known_chat_ids = _known_chat_id_set()
+    try:
+        chats_by_id = {
+            str(c.get("chat_id") or "").strip(): str(c.get("title") or "")
+            for c in (db.get_telegram_chats(include_inactive=True) or [])
+        }
+    except Exception:
+        chats_by_id = {}
+
+    linked = []
+    unlinked_left = 0
+    title_count = 0
+    history_count = 0
+    for bl in db.get_bl_by_batch(batch_id):
+        if str(bl.get("chat_id") or "").strip():
+            continue
+        code = str(bl.get("code") or "").strip()
+        chat_id = _find_chat_for_bl_code(code, chat_lookup)
+        via = "title" if chat_id else ""
+        if not chat_id:
+            hist = db.lookup_bl_link_history(code)
+            if hist and (not known_chat_ids or hist["chat_id"] in known_chat_ids):
+                chat_id = hist["chat_id"]
+                via = "history"
+        if chat_id and db.set_bl_chat_id(bl["id"], chat_id):
+            if via == "title":
+                title_count += 1
+            else:
+                history_count += 1
+            linked.append(
+                {
+                    "code": code,
+                    "chat_id": chat_id,
+                    "chat_title": chats_by_id.get(chat_id, ""),
+                    "via": via,
+                }
+            )
+        else:
+            unlinked_left += 1
+
+    return jsonify(
+        {
+            "ok": True,
+            "linked_count": len(linked),
+            "title_count": title_count,
+            "history_count": history_count,
+            "unlinked_left": unlinked_left,
+            "linked": linked,
         }
     )
 
