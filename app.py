@@ -3703,6 +3703,10 @@ _TOKEN_STOPWORDS = {
     "company", "llc", "ltd", "inc", "company", "group", "trade", "trading",
     "ооо", "оао", "ао", "ип",
     "xlsx", "xls", "pdf", "doc", "docx", "zip", "png", "jpg", "jpeg",
+    # 2-char noise (prepositions/conjunctions) — 2-char tokens are allowed
+    # as client identifiers ("AB", "HI"), so the junk ones must be listed.
+    "va", "na", "po", "iz", "uz", "da", "of", "in", "on", "at", "to",
+    "by", "or", "an", "is", "no", "ва", "на", "по", "из", "до", "от",
 }
 
 # Token regex: pulls Latin and Cyrillic word-runs separately so numbers
@@ -3713,15 +3717,21 @@ _TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁё]+", re.UNICODE)
 def _tokenize_name(text: str) -> set[str]:
     """Extract distinctive lowercase tokens for matching.
 
-    Drops BL-NNN codes, stopwords, and tokens shorter than 3 chars.
+    Drops BL-NNN codes, stopwords, and single-char tokens. 2-char tokens
+    survive (many clients ARE a 2-char identifier: "AB", "HI") — the
+    scoring layer only lets them match exactly, never by prefix.
     """
     if not text:
         return set()
-    cleaned = re.sub(r"\b[A-Z]{2,4}[-_ ]?\d+[A-Z0-9]*\b", " ", str(text), flags=re.IGNORECASE)
+    # Strip only literal BL-prefixed codes ("BL-241"). The old wider
+    # [A-Z]{2,4}+digits pattern also ate real client identifiers followed
+    # by a count — "AB 12 MESTA…" lost its "AB" and matched the wrong
+    # client through the generic "light" token.
+    cleaned = re.sub(r"\bBL[-_ ]?\d+[A-Z0-9]*\b", " ", str(text), flags=re.IGNORECASE)
     tokens: set[str] = set()
     for word in _TOKEN_RE.findall(cleaned):
         norm = word.lower()
-        if len(norm) < 3:
+        if len(norm) < 2:
             continue
         if norm in _TOKEN_STOPWORDS:
             continue
@@ -3741,19 +3751,18 @@ def _bl_salient_tokens(row: dict, chat_titles: dict[str, str]) -> set[str]:
     return tokens
 
 
-def _score_tokens(filename_tokens: set[str], bl_tokens: set[str]) -> tuple[int, list[str]]:
-    """Score a (filename, BL) pair and report which tokens drove the match.
+def _token_hits(filename_tokens: set[str], bl_tokens: set[str]) -> dict[str, tuple[int, str]]:
+    """Per-filename-token best hit against one BL's tokens.
 
-    Scoring:
+    Scoring per token:
     - Exact token match: len(token) * 2
     - Prefix-match (≥4 chars on both sides, e.g. "light" / "lighting"):
       min(len(a), len(b))
-    Returns (score, matched_tokens_for_display).
+    Returns {filename_token: (score, matched_bl_token)}.
     """
+    hits: dict[str, tuple[int, str]] = {}
     if not filename_tokens or not bl_tokens:
-        return 0, []
-    score = 0
-    matched: list[str] = []
+        return hits
     for ft in filename_tokens:
         best_bt = ""
         best_local = 0
@@ -3768,16 +3777,17 @@ def _score_tokens(filename_tokens: set[str], bl_tokens: set[str]) -> tuple[int, 
                 best_local = local
                 best_bt = bt
         if best_local:
-            score += best_local
-            matched.append(best_bt or ft)
-    return score, matched
+            hits[ft] = (best_local, best_bt)
+    return hits
 
 
-# Minimum score to accept a fuzzy name match. With the scoring above this
-# corresponds to roughly "one 3+ char exact match" or "one 4-char prefix
-# overlap" — empirically the right cut-off that catches EURO LIGHT /
-# WIZERA / etc. without false-matching every shipment to every client.
+# Minimum TOTAL score to accept a fuzzy name match (roughly "one 3+ char
+# exact match" or "one 4-char prefix overlap"), and the minimum score that
+# must come from UNIQUE tokens — tokens pointing at exactly one client.
+# Words like "light" appear in most client names here, so a match driven
+# only by shared tokens is noise, not evidence.
 _TOKEN_MATCH_MIN_SCORE = 6
+_TOKEN_MATCH_MIN_UNIQUE = 4
 
 
 def _build_batch_bl_code_index(batch_id: int) -> dict:
@@ -3842,29 +3852,70 @@ def _resolve_filename_to_bl(
         if row:
             return {"row": row, "method": "code", "matched_on": code_match.group(0)}
 
-    # 2. Token-based name match. Build the set of "name tokens" for the
-    #    filename and score it against each BL's combined name tokens
-    #    (code + merged_codes + client_name + chat title). Best score wins.
+    # 1b. Whole BL code at the START of the filename — catches phrase-like
+    #     codes the regex above can't ("N LIGHT" → "N LIGHT 45 MESTA…").
+    #     ≥4 normalized chars so 2-letter initials don't false-hit; the
+    #     longest matching code wins ("GIGA LIGHT" beats "GIGA").
+    flat_name = _NON_ALNUM_RE.sub("", no_ext.casefold())
+    if flat_name:
+        best_code_row = None
+        best_code_len = 0
+        best_code_display = ""
+        for norm_code, row in code_index.items():
+            flat_code = str(norm_code or "").casefold()
+            if len(flat_code) >= 4 and flat_name.startswith(flat_code) and len(flat_code) > best_code_len:
+                best_code_row = row
+                best_code_len = len(flat_code)
+                best_code_display = row.get("code") or norm_code
+        if best_code_row is not None:
+            return {"row": best_code_row, "method": "code", "matched_on": best_code_display}
+
+    # 2. Token-based name match, discriminativeness-aware. A filename
+    #    token that hits SEVERAL different clients ("light" appears in
+    #    ~80% of our client names) identifies nobody — it only adds
+    #    confidence to a row that some UNIQUE token already picked.
     #    Catches:
-    #      - "EURO LIGHT 6 MESTA.xlsx" → BL with code "EURO LIGHTING"
-    #        (prefix overlap on "light"/"lighting")
-    #      - "WIZERA 240 MESTA ALYUMIN.xlsx" → BL with code "WIZERA"
-    #        (exact token match)
-    #      - "HI-TECH cargo.xlsx" → BL whose chat title is
-    #        "HI-TECH (BL-146) & BURAQ LOGISTICS"
+    #      - "EURO LIGHT 6 MESTA.xlsx" → "EURO LIGHTING" ("euro" is unique)
+    #      - "WIZERA 240 MESTA ALYUMIN.xlsx" → "WIZERA" (unique exact)
+    #      - "AB 12 STREET LIGHT.xls" → "AB LIGHTING" ("ab" is unique;
+    #        "light" alone would have pulled it to any *LIGHT* client)
+    #    A file whose only hits are shared tokens returns None — better an
+    #    honest "Не найдено" than a confident wrong client.
     filename_tokens = _tokenize_name(no_ext)
     if filename_tokens:
-        best_row: dict | None = None
-        best_score = 0
-        best_matched: list[str] = []
+        scored_rows: list[tuple[dict, dict[str, tuple[int, str]]]] = []
+        rows_per_token: dict[str, int] = {}
         for row in batch_rows:
-            bl_tokens = _bl_salient_tokens(row, chat_titles)
-            score, matched = _score_tokens(filename_tokens, bl_tokens)
-            if score > best_score:
-                best_score = score
+            hits = _token_hits(filename_tokens, _bl_salient_tokens(row, chat_titles))
+            if not hits:
+                continue
+            for ft in hits:
+                rows_per_token[ft] = rows_per_token.get(ft, 0) + 1
+            scored_rows.append((row, hits))
+
+        best_row: dict | None = None
+        best_key = (0, 0)
+        best_matched: list[str] = []
+        tie = False
+        for row, hits in scored_rows:
+            unique = sum(sc for ft, (sc, _bt) in hits.items() if rows_per_token.get(ft) == 1)
+            total = sum(sc for _ft, (sc, _bt) in hits.items())
+            key = (unique, total)
+            if key > best_key:
+                best_key = key
                 best_row = row
-                best_matched = matched
-        if best_row and best_score >= _TOKEN_MATCH_MIN_SCORE:
+                best_matched = [
+                    (bt or ft) for ft, (_sc, bt) in hits.items() if rows_per_token.get(ft) == 1
+                ] or [(bt or ft) for ft, (_sc, bt) in hits.items()]
+                tie = False
+            elif key == best_key and best_row is not None:
+                tie = True  # two clients equally likely — let the operator decide
+        unique_score, total_score = best_key
+        confident = (
+            unique_score >= _TOKEN_MATCH_MIN_SCORE
+            or (unique_score >= _TOKEN_MATCH_MIN_UNIQUE and total_score >= _TOKEN_MATCH_MIN_SCORE)
+        )
+        if best_row is not None and confident and not tie:
             return {
                 "row": best_row,
                 "method": "name",
