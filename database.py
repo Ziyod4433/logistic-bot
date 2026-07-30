@@ -1757,6 +1757,14 @@ def get_batch(batch_id):
 
 def delete_batch(batch_id):
     conn = get_conn()
+    # send_logs.bl_id is the only bl_codes reference without an ON DELETE
+    # clause, so detach those rows first — otherwise deleting any batch
+    # that ever had a successful send fails with a FK error. The log rows
+    # themselves survive (they keep bl_code/batch_name as plain text).
+    conn.execute(
+        "UPDATE send_logs SET bl_id = NULL WHERE bl_id IN (SELECT id FROM bl_codes WHERE batch_id = ?)",
+        (batch_id,),
+    )
     conn.execute("DELETE FROM batches WHERE id = ?", (batch_id,))
     conn.commit()
     conn.close()

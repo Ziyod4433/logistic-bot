@@ -4164,6 +4164,15 @@ def public_file(public_token):
     )
 
 
+# Bulk-send job registry: batch broadcasts run in background threads and
+# the frontend polls /api/send-jobs/<id> for progress. The semaphore caps
+# concurrent Telegram sends ACROSS jobs so sending two batches at once
+# doesn't double the request rate and trip 429 throttling.
+_send_jobs: dict[str, dict] = {}
+_send_jobs_lock = threading.Lock()
+_BULK_SEND_SLOTS = threading.BoundedSemaphore(8)
+
+
 @app.route("/api/batches/<int:batch_id>/send", methods=["POST"])
 @editor_required
 def api_send_batch(batch_id):
@@ -4228,13 +4237,23 @@ def api_send_batch(batch_id):
         sent_chats.add(chat_id)
         dispatch_rows.append(bl)
 
+    if not dispatch_rows:
+        # Nothing to actually send — reply synchronously in the old shape.
+        skipped = sum(1 for item in results if item.get("skipped"))
+        return jsonify({"ok": True, "sent": 0, "skipped": skipped, "total": len(results), "results": results})
+
     def _dispatch_one(bl):
         try:
-            success, error_msg = send_bl_package(
-                bl,
-                batch["name"],
-                include_related_batches=include_related_batches,
-            )
+            # The global semaphore caps Telegram traffic across ALL
+            # simultaneously running send jobs (e.g. two batches sent at
+            # once) — without it 2×8 parallel senders trip Telegram's
+            # rate limit and 429 backoffs balloon the send time.
+            with _BULK_SEND_SLOTS:
+                success, error_msg = send_bl_package(
+                    bl,
+                    batch["name"],
+                    include_related_batches=include_related_batches,
+                )
         except Exception as exc:
             success, error_msg = False, str(exc)
             app.logger.exception(
@@ -4256,35 +4275,85 @@ def api_send_batch(batch_id):
             "error": error_msg,
         }
 
-    # Parallel fan-out across distinct chats. Within one chat the order
-    # is still strict (send_bl_package iterates the bundle serially), so
-    # tracking message → files cadence is preserved. Across chats we run
-    # up to MAX_PARALLEL in parallel — empirically a good trade-off
-    # between Telegram's per-bot global rate limit (~30 msg/sec) and the
-    # number of typical clients in a broadcast (10–50).
-    MAX_PARALLEL = 8
-    if dispatch_rows:
-        with ThreadPoolExecutor(
-            max_workers=min(MAX_PARALLEL, len(dispatch_rows)),
-            thread_name_prefix="bulk-send",
-        ) as pool:
-            futures = [pool.submit(_dispatch_one, bl) for bl in dispatch_rows]
-            for future in as_completed(futures):
-                try:
-                    results.append(future.result())
-                except Exception as exc:
-                    app.logger.exception("Bulk send future error: %s", exc)
-                    results.append({
-                        "code": "",
-                        "client": "",
-                        "success": False,
-                        "skipped": False,
-                        "error": str(exc),
-                    })
+    # The broadcast runs as a BACKGROUND JOB and the request returns
+    # immediately with a job id the frontend polls. A synchronous reply
+    # used to keep the HTTP request open for the whole broadcast — with
+    # Telegram 429 backoffs that easily exceeds the proxy/browser timeout,
+    # so the UI showed an error while the send actually kept running.
+    with _send_jobs_lock:
+        for existing in _send_jobs.values():
+            if existing["batch_id"] == batch_id and not existing["finished"]:
+                return jsonify({
+                    "ok": True,
+                    "job_id": existing["job_id"],
+                    "total": existing["total"],
+                    "already_running": True,
+                })
+        job_id = secrets.token_hex(6)
+        job = {
+            "job_id": job_id,
+            "batch_id": batch_id,
+            "batch_name": batch["name"],
+            "total": len(results) + len(dispatch_rows),
+            "done": len(results),
+            "sent": 0,
+            "skipped": sum(1 for item in results if item.get("skipped")),
+            "results": list(results),
+            "finished": False,
+            "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        _send_jobs[job_id] = job
+        # Prune old finished jobs so the registry doesn't grow forever.
+        finished_ids = [jid for jid, j in _send_jobs.items() if j["finished"]]
+        for jid in finished_ids[:-20]:
+            _send_jobs.pop(jid, None)
 
-    sent = sum(1 for item in results if item["success"])
-    skipped = sum(1 for item in results if item.get("skipped"))
-    return jsonify({"ok": True, "sent": sent, "skipped": skipped, "total": len(results), "results": results})
+    def _run_send_job():
+        # Parallel fan-out across distinct chats. Within one chat the
+        # order is still strict (send_bl_package iterates the bundle
+        # serially), so tracking message → files cadence is preserved.
+        MAX_PARALLEL = 8
+        try:
+            with ThreadPoolExecutor(
+                max_workers=min(MAX_PARALLEL, len(dispatch_rows)),
+                thread_name_prefix="bulk-send",
+            ) as pool:
+                futures = [pool.submit(_dispatch_one, bl) for bl in dispatch_rows]
+                for future in as_completed(futures):
+                    try:
+                        item = future.result()
+                    except Exception as exc:
+                        app.logger.exception("Bulk send future error: %s", exc)
+                        item = {
+                            "code": "",
+                            "client": "",
+                            "success": False,
+                            "skipped": False,
+                            "error": str(exc),
+                        }
+                    with _send_jobs_lock:
+                        job["results"].append(item)
+                        job["done"] += 1
+                        if item["success"]:
+                            job["sent"] += 1
+        finally:
+            with _send_jobs_lock:
+                job["finished"] = True
+
+    threading.Thread(
+        target=_run_send_job, name=f"send-job-{job_id}", daemon=True
+    ).start()
+    return jsonify({"ok": True, "job_id": job_id, "total": job["total"]})
+
+
+@app.route("/api/send-jobs/<job_id>")
+@login_required
+def api_send_job_status(job_id):
+    with _send_jobs_lock:
+        job = _send_jobs.get(str(job_id))
+        if not job:
+            return jsonify({"error": "Задача отправки не найдена"}), 404
+        return jsonify({**job, "results": list(job["results"])})
 
 
 @app.route("/api/bl/<int:bl_id>/send", methods=["POST"])

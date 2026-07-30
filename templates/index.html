@@ -5886,23 +5886,50 @@ async function sendBatch() {
       selected_bl_ids: selectedIds,
       include_related_batches: includeRelatedBatchCargo
     });
-    document.getElementById("send-summary").innerHTML =
-      `Отправлено: <b style="color:var(--green)">${res.sent}</b> из <b>${res.total}</b>${res.skipped ? ` · пропущено: <b style="color:#f5a623">${res.skipped}</b>` : ``}`;
-    document.getElementById("send-results").innerHTML = res.results.map(r=>`
-      <div class="send-result ${r.skipped ? 'warn' : (r.success ? 'ok' : 'err')}">
-        <span style="font-size:16px">${r.skipped ? '⏭️' : (r.success ? '✅' : '❌')}</span>
-        <div>
-          <div class="mono" style="font-size:12px;font-weight:600">${esc(r.code)}</div>
-          ${r.client ? `<div style="font-size:11px;color:var(--muted2)">${esc(r.client)}</div>` : ''}
-          ${r.error  ? `<div style="font-size:11px;color:${r.skipped ? '#f5a623' : 'var(--red)'}">${esc(r.error)}</div>` : ''}
-        </div>
-      </div>`).join("");
+    let final = res;
+    if (res.job_id) {
+      // Отправка идёт в фоне на сервере — поллим прогресс. Даже если
+      // вкладку закрыть, рассылка на сервере продолжится и завершится.
+      if (res.already_running) toast("Отправка этой партии уже идёт — показываю её прогресс", "ok");
+      final = await pollSendJob(res.job_id, btn);
+    }
+    renderSendBatchResults(final);
     closeModal("send-select-modal");
     openModal("send-modal");
     await loadBatchDetail(currentBatchId);
     loadDashboard();
   } catch(e) { toast("Ошибка: "+e.message,"err"); }
   finally { btn.disabled=false; btn.textContent="Отправить выбранные"; }
+}
+
+async function pollSendJob(jobId, btn) {
+  const MAX_POLLS = 720; // ~30 минут при шаге 2.5с
+  for (let i = 0; i < MAX_POLLS; i++) {
+    await new Promise(r => setTimeout(r, 2500));
+    let st;
+    try {
+      st = await api(`/api/send-jobs/${jobId}`);
+    } catch (e) {
+      continue; // мгновенный сбой сети — просто ждём следующий опрос
+    }
+    if (btn) btn.textContent = `⏳ Отправляю… ${st.done}/${st.total}`;
+    if (st.finished) return st;
+  }
+  throw new Error("Отправка продолжается на сервере, но статус недоступен слишком долго. Проверь журнал отправок позже.");
+}
+
+function renderSendBatchResults(res) {
+  document.getElementById("send-summary").innerHTML =
+    `Отправлено: <b style="color:var(--green)">${res.sent}</b> из <b>${res.total}</b>${res.skipped ? ` · пропущено: <b style="color:#f5a623">${res.skipped}</b>` : ``}`;
+  document.getElementById("send-results").innerHTML = (res.results || []).map(r=>`
+    <div class="send-result ${r.skipped ? 'warn' : (r.success ? 'ok' : 'err')}">
+      <span style="font-size:16px">${r.skipped ? '⏭️' : (r.success ? '✅' : '❌')}</span>
+      <div>
+        <div class="mono" style="font-size:12px;font-weight:600">${esc(r.code)}</div>
+        ${r.client ? `<div style="font-size:11px;color:var(--muted2)">${esc(r.client)}</div>` : ''}
+        ${r.error  ? `<div style="font-size:11px;color:${r.skipped ? '#f5a623' : 'var(--red)'}">${esc(r.error)}</div>` : ''}
+      </div>
+    </div>`).join("");
 }
 
 async function sendOne(blId, code) {
