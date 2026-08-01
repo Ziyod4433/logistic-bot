@@ -3966,7 +3966,39 @@ def save_announcement_template(content: str) -> None:
 
 def _normalize_announcement_attachment_kind(kind: str) -> str:
     value = (kind or "").strip().lower()
-    return "photo" if value == "photo" else "document"
+    if value in ("photo", "animation", "video"):
+        return value
+    return "document"
+
+
+def get_announcement_send_options() -> dict:
+    """How announcement text + media should be delivered.
+
+    delivery_mode: "together" (one message when Telegram allows) or
+                   "separate" (always two messages).
+    media_order:   "media_first" | "text_first" — order of the
+                   two-message form (also used as the fallback order
+                   when "together" doesn't fit the caption limits).
+    """
+    mode = (get_setting("announcement_delivery_mode", "together") or "").strip().lower()
+    order = (get_setting("announcement_media_order", "media_first") or "").strip().lower()
+    return {
+        "delivery_mode": mode if mode in ("together", "separate") else "together",
+        "media_order": order if order in ("media_first", "text_first") else "media_first",
+    }
+
+
+def save_announcement_send_options(delivery_mode: str, media_order: str) -> None:
+    mode = (delivery_mode or "").strip().lower()
+    order = (media_order or "").strip().lower()
+    set_setting(
+        "announcement_delivery_mode",
+        mode if mode in ("together", "separate") else "together",
+    )
+    set_setting(
+        "announcement_media_order",
+        order if order in ("media_first", "text_first") else "media_first",
+    )
 
 
 def get_announcement_attachment() -> dict:

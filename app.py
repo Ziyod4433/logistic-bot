@@ -71,6 +71,8 @@ KIOSK_LOGIN    = os.getenv("KIOSK_LOGIN", "sales")
 KIOSK_PASSWORD = os.getenv("KIOSK_PASSWORD", "sales123")
 
 ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "xlsm", "doc", "docx", "zip"}
+# Announcements additionally accept GIF and video attachments.
+ANNOUNCEMENT_ALLOWED_EXT = ALLOWED_EXT | {"gif", "mp4", "mov", "m4v", "webp"}
 
 TRACK_BUTTON = "Yuk holati"
 TRACK_BUTTON_LABELS = {
@@ -1182,19 +1184,67 @@ def telegram_send_photo(
     return response.json()
 
 
-def telegram_send_video(chat_id, file_path: str, filename: str | None = None):
+def telegram_send_video(
+    chat_id,
+    file_path: str,
+    filename: str | None = None,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Видео не найдено: {file_path}")
 
     safe_filename = filename or os.path.basename(file_path)
+    data = {
+        "chat_id": chat_id,
+        "supports_streaming": "true",
+    }
+    if caption:
+        data["caption"] = caption
+    if parse_mode:
+        data["parse_mode"] = parse_mode
     with open(file_path, "rb") as file_handle:
         response = req.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo",
-            data={
-                "chat_id": chat_id,
-                "supports_streaming": "true",
-            },
+            data=data,
             files={"video": (safe_filename, file_handle, "video/mp4")},
+            timeout=60,
+        )
+    if not response.ok:
+        try:
+            payload = response.json()
+            description = payload.get("description") or response.text
+        except ValueError:
+            description = response.text
+        raise RuntimeError(description)
+    return response.json()
+
+
+def telegram_send_animation(
+    chat_id,
+    file_path: str,
+    filename: str | None = None,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+):
+    """GIF (or soundless MP4) via sendAnimation — shows as a looping GIF."""
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"GIF не найден: {file_path}")
+
+    safe_filename = filename or os.path.basename(file_path)
+    mime_type = mimetypes.guess_type(safe_filename)[0] or "image/gif"
+    data = {"chat_id": chat_id}
+    if caption:
+        data["caption"] = caption
+    if parse_mode:
+        data["parse_mode"] = parse_mode
+    with open(file_path, "rb") as file_handle:
+        response = req.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendAnimation",
+            data=data,
+            files={"animation": (safe_filename, file_handle, mime_type)},
             timeout=60,
         )
     if not response.ok:
@@ -1543,86 +1593,124 @@ def serve_announcement_media(sig: str, token: str):
     return send_file(full)
 
 
-def send_announcement_broadcast(chat_id, text: str, attachment: dict | None = None):
-    attachment_info = attachment or {}
+def _send_announcement_media(chat_id, attachment_info: dict, caption: str | None = None):
+    """Send the announcement attachment with the right Telegram method.
+
+    photo → sendPhoto (falls back to sendDocument when Telegram refuses
+    the image), animation (GIF) → sendAnimation, video → sendVideo —
+    both fall back to sendDocument if Telegram rejects the media form.
+    Everything else goes as a document.
+    """
+    kind = (attachment_info.get("kind") or "document").strip().lower()
     file_path = (attachment_info.get("file_path") or "").strip()
     filename = (attachment_info.get("filename") or "").strip()
-    caption_text = (text or "").strip()
-    can_use_single_caption = (
-        bool(caption_text) and _tg_text_len(caption_text) <= TELEGRAM_MAX_CAPTION_UNITS
+
+    if kind == "photo":
+        send_as_photo = True
+        try:
+            if os.path.getsize(file_path) > TELEGRAM_MAX_PHOTO_BYTES:
+                send_as_photo = False
+        except OSError:
+            pass
+        if send_as_photo:
+            try:
+                telegram_send_photo(chat_id, file_path, filename or None, caption=caption)
+                return
+            except Exception as exc:
+                if "too big for a photo" not in str(exc).lower():
+                    raise
+        telegram_send_document(
+            chat_id, file_path, filename or os.path.basename(file_path), caption=caption
+        )
+        return
+
+    if kind in ("animation", "video"):
+        sender = telegram_send_animation if kind == "animation" else telegram_send_video
+        try:
+            sender(chat_id, file_path, filename or None, caption=caption)
+            return
+        except RuntimeError:
+            # Telegram couldn't take it as GIF/video (codec, size…) —
+            # deliver as a plain document so the broadcast still lands.
+            telegram_send_document(
+                chat_id, file_path, filename or os.path.basename(file_path), caption=caption
+            )
+            return
+
+    telegram_send_document(
+        chat_id, file_path, filename or os.path.basename(file_path), caption=caption
     )
 
-    # Photo + text LONGER than the caption limit: still deliver as ONE
-    # message — the text goes out via sendMessage (4096-unit limit) with
-    # the photo attached as a large link preview shown ABOVE the text.
-    # Needs a public URL for the file (WEBHOOK_BASE_URL); when that's not
-    # configured we fall back to the old photo-then-text pair below.
-    if (
-        file_path
-        and attachment_info.get("kind") == "photo"
-        and caption_text
-        and not can_use_single_caption
-        and _tg_text_len(caption_text) <= TELEGRAM_MAX_TEXT_UNITS
-    ):
-        media_url = announcement_media_url(file_path)
-        if media_url:
-            telegram_send_message(
-                chat_id,
-                caption_text,
-                parse_mode=None,
-                link_preview_options={
-                    "url": media_url,
-                    "prefer_large_media": True,
-                    "show_above_text": True,
-                },
-            )
-            return
 
-    if file_path:
-        send_as_photo = attachment_info.get("kind") == "photo"
-        if send_as_photo:
-            try:
-                if os.path.getsize(file_path) > TELEGRAM_MAX_PHOTO_BYTES:
-                    send_as_photo = False
-            except OSError:
-                pass
+def send_announcement_broadcast(
+    chat_id,
+    text: str,
+    attachment: dict | None = None,
+    delivery_mode: str = "together",
+    media_order: str = "media_first",
+):
+    """Deliver one announcement to one chat.
 
-        if send_as_photo:
-            try:
-                telegram_send_photo(
-                    chat_id,
-                    file_path,
-                    filename or None,
-                    caption=caption_text if can_use_single_caption else None,
-                )
-            except Exception as exc:
-                if "too big for a photo" in str(exc).lower():
-                    telegram_send_document(
-                        chat_id,
-                        file_path,
-                        filename or os.path.basename(file_path),
-                        caption=caption_text if can_use_single_caption else None,
-                    )
-                else:
-                    raise
-        else:
-            telegram_send_document(
-                chat_id,
-                file_path,
-                filename or os.path.basename(file_path),
-                caption=caption_text if can_use_single_caption else None,
-            )
-        # File already carries the text as caption (or there's no text to
-        # send). Either way, no second message is needed.
-        if can_use_single_caption or not caption_text:
-            return
-    # Pure-text path or text-too-long-for-caption follow-up. Telegram
-    # rejects empty sendMessage payloads, so guard against the no-text
-    # + no-file degenerate case (the caller-level validator should have
-    # blocked it already).
-    if not caption_text:
+    delivery_mode:
+      "together" — media + text as ONE message when Telegram allows it
+                   (caption ≤1024 units; for photos a longer text goes out
+                   as a single message with the photo as a large preview).
+                   Falls back to two messages in media_order otherwise.
+      "separate" — always two messages.
+    media_order: "media_first" | "text_first" — order of the two-message
+      form (and of the fallback when "together" doesn't fit).
+    """
+    attachment_info = attachment or {}
+    file_path = (attachment_info.get("file_path") or "").strip()
+    caption_text = (text or "").strip()
+    mode = "separate" if str(delivery_mode).strip().lower() == "separate" else "together"
+    order = "text_first" if str(media_order).strip().lower() == "text_first" else "media_first"
+
+    if not file_path:
+        if caption_text:
+            telegram_send_message(chat_id, text, parse_mode=None)
         return
-    telegram_send_message(chat_id, text, parse_mode=None)
+    if not caption_text:
+        _send_announcement_media(chat_id, attachment_info)
+        return
+
+    can_use_single_caption = _tg_text_len(caption_text) <= TELEGRAM_MAX_CAPTION_UNITS
+
+    if mode == "together":
+        if can_use_single_caption:
+            _send_announcement_media(chat_id, attachment_info, caption=caption_text)
+            return
+        # Photo + text LONGER than the caption limit: still deliver as ONE
+        # message — the text goes out via sendMessage (4096-unit limit)
+        # with the photo attached as a large link preview shown ABOVE the
+        # text. Needs a public URL (WEBHOOK_BASE_URL); GIF/video previews
+        # don't render reliably, so those fall back to two messages.
+        if (
+            attachment_info.get("kind") == "photo"
+            and _tg_text_len(caption_text) <= TELEGRAM_MAX_TEXT_UNITS
+        ):
+            media_url = announcement_media_url(file_path)
+            if media_url:
+                telegram_send_message(
+                    chat_id,
+                    caption_text,
+                    parse_mode=None,
+                    link_preview_options={
+                        "url": media_url,
+                        "prefer_large_media": True,
+                        "show_above_text": True,
+                    },
+                )
+                return
+        # "Together" impossible for this combination — degrade to the
+        # two-message form below, honoring the configured order.
+
+    if order == "text_first":
+        telegram_send_message(chat_id, text, parse_mode=None)
+        _send_announcement_media(chat_id, attachment_info)
+    else:
+        _send_announcement_media(chat_id, attachment_info)
+        telegram_send_message(chat_id, text, parse_mode=None)
 
 
 # Telegram Bot API hard cap for sendDocument multipart uploads.
@@ -4949,6 +5037,7 @@ def api_announcements():
             "recipients": recipients,
             # In-transit batches with linked groups — the "по партиям" filter
             "batches": db.get_announcement_batches(),
+            "send_options": db.get_announcement_send_options(),
             "summary": {
                 "groups": len(recipients),
                 "has_attachment": bool(attachment),
@@ -4978,7 +5067,7 @@ def api_upload_announcement_attachment():
         return jsonify({"error": "Выбери файл или фото для загрузки"}), 400
 
     ext = uploaded_file.filename.rsplit(".", 1)[-1].lower() if "." in uploaded_file.filename else ""
-    if ext not in ALLOWED_EXT:
+    if ext not in ANNOUNCEMENT_ALLOWED_EXT:
         return jsonify({"error": f"Тип файла .{ext} не разрешён"}), 400
 
     original_filename = (uploaded_file.filename or "").strip()
@@ -4987,9 +5076,27 @@ def api_upload_announcement_attachment():
     unique = f"announcement_{secrets.token_hex(4)}_{storage_name}"
     file_path = os.path.join(UPLOAD_FOLDER, unique)
     uploaded_file.save(file_path)
-    kind = "photo" if ext in {"png", "jpg", "jpeg"} else "document"
+    if ext == "gif":
+        kind = "animation"
+    elif ext in {"mp4", "mov", "m4v"}:
+        kind = "video"
+    elif ext in {"png", "jpg", "jpeg", "webp"}:
+        kind = "photo"
+    else:
+        kind = "document"
     db.save_announcement_attachment(filename, file_path, kind)
     return jsonify({"ok": True, "attachment": {"filename": filename, "kind": kind}})
+
+
+@app.route("/api/announcements/send-options", methods=["POST"])
+@editor_required
+def api_save_announcement_send_options():
+    data = request.json or {}
+    db.save_announcement_send_options(
+        data.get("delivery_mode") or "",
+        data.get("media_order") or "",
+    )
+    return jsonify({"ok": True, "send_options": db.get_announcement_send_options()})
 
 
 @app.route("/api/announcements/attachment", methods=["DELETE"])
@@ -5026,6 +5133,7 @@ def api_send_announcements():
         for item in db.get_announcement_recipients()
         if str(item.get("chat_id") or "").strip()
     }
+    send_options = db.get_announcement_send_options()
     sent = 0
     skipped = 0
     errors = []
@@ -5037,7 +5145,13 @@ def api_send_announcements():
             errors.append({"chat_id": chat_id, "error": "Группа не найдена или неактивна"})
             continue
         try:
-            send_announcement_broadcast(chat_id, content, attachment)
+            send_announcement_broadcast(
+                chat_id,
+                content,
+                attachment,
+                delivery_mode=send_options["delivery_mode"],
+                media_order=send_options["media_order"],
+            )
             sent += 1
         except Exception as exc:
             errors.append(
@@ -5138,10 +5252,15 @@ def api_schedule_announcement():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
+    # Delivery options are frozen into the snapshot too — changing the
+    # global settings later must not affect an already-scheduled job.
+    send_options = db.get_announcement_send_options()
     snapshot = {
         "filename": attachment.get("filename") or "",
         "file_path": attachment.get("file_path") or "",
         "kind": attachment.get("kind") or "",
+        "delivery_mode": send_options["delivery_mode"],
+        "media_order": send_options["media_order"],
     } if has_attachment else {}
 
     sid = db.create_announcement_schedule(
@@ -5202,7 +5321,9 @@ def _fire_scheduled_announcement(row: dict) -> tuple[int, int, str]:
     content = (row.get("content") or "").strip()
     chat_ids = [str(c).strip() for c in (row.get("chat_ids") or []) if str(c).strip()]
     snap = row.get("attachment_snapshot") or {}
-    file_path = (snap.get("file_path") or "").strip() if isinstance(snap, dict) else ""
+    if not isinstance(snap, dict):
+        snap = {}
+    file_path = (snap.get("file_path") or "").strip()
     attachment = None
     if file_path and os.path.exists(file_path):
         attachment = {
@@ -5210,6 +5331,8 @@ def _fire_scheduled_announcement(row: dict) -> tuple[int, int, str]:
             "file_path": file_path,
             "kind": snap.get("kind") or "",
         }
+    delivery_mode = (snap.get("delivery_mode") or "together").strip() or "together"
+    media_order = (snap.get("media_order") or "media_first").strip() or "media_first"
     if not content and not attachment:
         return 0, len(chat_ids), "Ни текста, ни вложения на момент отправки"
 
@@ -5218,7 +5341,13 @@ def _fire_scheduled_announcement(row: dict) -> tuple[int, int, str]:
     last_err = ""
     for chat_id in chat_ids:
         try:
-            send_announcement_broadcast(chat_id, content, attachment)
+            send_announcement_broadcast(
+                chat_id,
+                content,
+                attachment,
+                delivery_mode=delivery_mode,
+                media_order=media_order,
+            )
             sent += 1
         except Exception as exc:
             failed += 1

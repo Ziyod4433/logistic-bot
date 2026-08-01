@@ -2718,7 +2718,7 @@ svg.oi {
               <div class="mini-stat"><div class="mini-stat-v" id="announce-attachment-state">Нет</div><div class="mini-stat-l">Вложение</div></div>
               <div class="mini-stat"><div class="mini-stat-v" id="announce-last-sent">—</div><div class="mini-stat-l">Последняя рассылка</div></div>
             </div>
-            <div class="kpi-note" style="margin-top:12px">Можно отправить без текста — тогда уйдёт только файл или фото. Текст до 1024 символов идёт подписью к вложению, длиннее — отдельным сообщением.</div>
+            <div class="kpi-note" style="margin-top:12px">Можно отправить без текста — тогда уйдёт только вложение (фото, GIF, видео или файл). Как соединять текст и медиа и в каком порядке — настраивается ниже в «Шаблоне отправки».</div>
             <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
               <div style="display:flex;flex-direction:column;gap:4px">
                 <label style="font-size:11px;color:var(--muted2);letter-spacing:0.5px">⏰ Запланировать (Ташкент UTC+5)</label>
@@ -2757,17 +2757,45 @@ svg.oi {
 
         <div class="card">
           <div class="card-h">
-            <span class="card-title">Файл или фото</span>
+            <span class="card-title">Вложение: файл, фото, GIF или видео</span>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <label class="btn btn-ghost btn-sm editor-only" style="cursor:pointer">
                 📎 Прикрепить
-                <input type="file" id="announcement-attachment-input" style="display:none" onchange="uploadAnnouncementAttachment()">
+                <input type="file" id="announcement-attachment-input" style="display:none"
+                       accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.mp4,.mov,.m4v,.xlsx,.xls,.xlsm,.doc,.docx,.zip"
+                       onchange="uploadAnnouncementAttachment()">
               </label>
               <button class="btn btn-ghost btn-sm editor-only" onclick="clearAnnouncementAttachment()">🗑 Удалить</button>
             </div>
           </div>
           <div class="card-body">
-            <div id="announcement-attachment-meta" class="kpi-note">Файл или фото пока не прикреплены.</div>
+            <div id="announcement-attachment-meta" class="kpi-note">Вложение пока не прикреплено. Поддерживаются фото, GIF, видео (mp4/mov) и документы.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <span class="card-title">Шаблон отправки</span>
+            <span style="font-size:11px;color:var(--muted2)">действует и для мгновенных, и для запланированных рассылок</span>
+          </div>
+          <div class="card-body">
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div>
+                <div style="font-size:10.5px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Вид отправки</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button type="button" class="btn btn-amber btn-sm" id="announce-delivery-together" onclick="setAnnouncementDeliveryMode('together')">🖇 Вместе — одним сообщением</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="announce-delivery-separate" onclick="setAnnouncementDeliveryMode('separate')">🔀 Раздельно — двумя сообщениями</button>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:10.5px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px">Очерёдность (для раздельной отправки)</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <button type="button" class="btn btn-amber btn-sm" id="announce-order-media" onclick="setAnnouncementMediaOrder('media_first')">🎬 Сначала медиа, потом текст</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="announce-order-text" onclick="setAnnouncementMediaOrder('text_first')">📝 Сначала текст, потом медиа</button>
+                </div>
+              </div>
+              <div class="kpi-note" id="announce-send-options-hint" style="margin:0"></div>
+            </div>
           </div>
         </div>
 
@@ -6609,11 +6637,63 @@ function renderAnnouncementAttachmentMeta(attachment={}) {
   const filename = String(attachment?.filename || "").trim();
   const kind = String(attachment?.kind || "").trim();
   if (!filename) {
-    el.textContent = "Файл или фото пока не прикреплены.";
+    el.textContent = "Вложение пока не прикреплено. Поддерживаются фото, GIF, видео (mp4/mov) и документы.";
     return;
   }
-  const label = kind === "photo" ? "Фото" : "Файл";
+  const label = kind === "photo" ? "🖼 Фото"
+              : kind === "animation" ? "🎞 GIF"
+              : kind === "video" ? "🎬 Видео"
+              : "📄 Файл";
   el.innerHTML = `<b>${esc(label)}:</b> ${esc(filename)}`;
+}
+
+// ── Announcement send options (вид отправки + очерёдность) ──────────
+let announcementSendOptions = { delivery_mode: "together", media_order: "media_first" };
+
+function renderAnnouncementSendOptions() {
+  const o = announcementSendOptions;
+  const btnPairs = [
+    ["announce-delivery-together", o.delivery_mode === "together"],
+    ["announce-delivery-separate", o.delivery_mode === "separate"],
+    ["announce-order-media", o.media_order === "media_first"],
+    ["announce-order-text", o.media_order === "text_first"],
+  ];
+  btnPairs.forEach(([id, active]) => {
+    const btn = document.getElementById(id);
+    if (btn) btn.className = active ? "btn btn-amber btn-sm" : "btn btn-ghost btn-sm";
+  });
+  const hint = document.getElementById("announce-send-options-hint");
+  if (hint) {
+    hint.textContent = o.delivery_mode === "together"
+      ? "Вместе: текст до 1024 символов идёт подписью к медиа одним сообщением; для фото длинный текст тоже уходит одним сообщением (фото сверху). Если вместе не помещается — уйдут раздельно в выбранной очерёдности."
+      : (o.media_order === "text_first"
+          ? "Раздельно: сначала текст, затем медиа — всегда два сообщения."
+          : "Раздельно: сначала медиа, затем текст — всегда два сообщения.");
+  }
+}
+
+async function saveAnnouncementSendOptions() {
+  try {
+    const res = await api("/api/announcements/send-options", "POST", announcementSendOptions);
+    if (res.send_options) announcementSendOptions = res.send_options;
+    renderAnnouncementSendOptions();
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+function setAnnouncementDeliveryMode(mode) {
+  if (!ensureEditor()) return;
+  announcementSendOptions.delivery_mode = mode === "separate" ? "separate" : "together";
+  renderAnnouncementSendOptions();
+  saveAnnouncementSendOptions();
+}
+
+function setAnnouncementMediaOrder(order) {
+  if (!ensureEditor()) return;
+  announcementSendOptions.media_order = order === "text_first" ? "text_first" : "media_first";
+  renderAnnouncementSendOptions();
+  saveAnnouncementSendOptions();
 }
 
 function renderAnnouncementRecipientsTable() {
@@ -6759,6 +6839,10 @@ async function loadAnnouncementsPage() {
     document.getElementById("announce-groups").textContent = data.summary?.groups ?? announcementRecipients.length;
     document.getElementById("announce-attachment-state").textContent = data.summary?.has_attachment ? "Есть" : "Нет";
     document.getElementById("announce-last-sent").textContent = data.summary?.last_sent_at || "—";
+    if (data.send_options) {
+      announcementSendOptions = data.send_options;
+      renderAnnouncementSendOptions();
+    }
     renderAnnouncementAttachmentMeta(data.attachment || {});
     renderAnnouncementRecipientsTable();
     // Also refresh the schedule queue. Don't await — a slow schedule
