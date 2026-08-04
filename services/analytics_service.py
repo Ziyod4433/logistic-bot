@@ -1606,6 +1606,41 @@ def save_sales_plan(payload: dict[str, Any]) -> dict[str, Any]:
     if not period_start or not period_end:
         raise ValueError("Plan davri kiritilmagan")
 
+    # A plan saved WITHOUT a sheet connection silently degrades the whole
+    # monitor to the stale imported analytics DB: old months in Oylik
+    # dinamika, zero plan progress. Operators create next month's plan
+    # with just name/dates/target and expect the data wiring to carry
+    # over — so inherit the sheet config from the most recent plan that
+    # has one (August 2026 incident: plan id=8 was created bare and the
+    # monitor "lost" May–July).
+    if not ombor_sheet_id:
+        all_plans = list_sales_plans()
+        # When EDITING, the plan's own stored config wins (the edit form
+        # may simply not carry the sheet fields); otherwise the most
+        # recent configured plan donates its config.
+        candidates = [p for p in all_plans if _to_int(p.get("id")) == plan_id] + [
+            p for p in all_plans if _to_int(p.get("id")) != plan_id
+        ]
+        donor = next(
+            (p for p in candidates if _clean_text(p.get("ombor_sheet_id") or "")),
+            None,
+        )
+        if donor:
+            ombor_sheet_id    = _clean_text(donor.get("ombor_sheet_id") or "")
+            ombor_sheet_name  = _clean_text(donor.get("ombor_sheet_name") or "Ombor")
+            ombor_cbm_col     = _clean_text(donor.get("ombor_cbm_col") or "V").upper()
+            ombor_date_col    = _clean_text(donor.get("ombor_date_col") or "Z").upper()
+            ombor_seller_col  = _clean_text(donor.get("ombor_seller_col") or "AG").upper()
+            ombor_header_rows = max(0, _to_int(donor.get("ombor_header_rows") if donor.get("ombor_header_rows") is not None else 2))
+            if not ftl_sheet_id:
+                ftl_sheet_id      = _clean_text(donor.get("ftl_sheet_id") or "")
+                ftl_sheet_gid     = _clean_text(donor.get("ftl_sheet_gid") or "")
+                ftl_type_col      = _clean_text(donor.get("ftl_type_col") or "J").upper()
+                ftl_date_col      = _clean_text(donor.get("ftl_date_col") or "L").upper()
+                ftl_seller_col    = _clean_text(donor.get("ftl_seller_col") or "AB").upper()
+                ftl_header_rows   = max(0, _to_int(donor.get("ftl_header_rows") if donor.get("ftl_header_rows") is not None else 1))
+                ftl_cbm_per_truck = _to_float(donor.get("ftl_cbm_per_truck")) or 10.0
+
     conn = db.get_conn()
     try:
         if is_active:
