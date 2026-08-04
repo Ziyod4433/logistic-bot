@@ -4938,6 +4938,17 @@ def create_problem(bl_id, problem_type, description=""):
     return True
 
 
+def delete_problem(problem_id) -> bool:
+    """Remove one problem record (e.g. filed against the wrong BL)."""
+    conn = get_conn()
+    try:
+        cur = conn.execute("DELETE FROM problems WHERE id = ?", (problem_id,))
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
 def get_problems(problem_type="", date_from="", date_to="", batch_id=""):
     conn = get_conn()
     conditions = []

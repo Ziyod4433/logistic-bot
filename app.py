@@ -4568,6 +4568,14 @@ def api_create_problem():
     return jsonify({"ok": True})
 
 
+@app.route("/api/problems/<int:problem_id>", methods=["DELETE"])
+@editor_required
+def api_delete_problem(problem_id):
+    if not db.delete_problem(problem_id):
+        return jsonify({"error": "Проблема не найдена"}), 404
+    return jsonify({"ok": True})
+
+
 @app.route("/api/problems/export")
 @login_required
 def api_export_problems():

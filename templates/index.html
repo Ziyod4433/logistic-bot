@@ -5991,10 +5991,28 @@ async function loadProblemsPage() {
         <td>${esc(item.client_name || "—")}</td>
         <td>${problemBadge(item.problem_type)}</td>
         <td style="max-width:340px">${esc(item.description || "—")}</td>
-        <td><button class="btn btn-ghost btn-xs" onclick='goto("batches");openBatchDetail(${item.batch_id}, ${JSON.stringify(item.batch_name)})'>Открыть партию</button></td>
+        <td>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-xs" onclick='goto("batches");openBatchDetail(${item.batch_id}, ${JSON.stringify(item.batch_name)})'>Открыть партию</button>
+            <button class="btn btn-red btn-xs editor-only" onclick='deleteProblem(${item.id}, ${JSON.stringify(item.bl_code || "")})' title="Удалить инцидент (например, заполнен не тот BL)">✕</button>
+          </div>
+        </td>
       </tr>`).join("") :
       `<tr><td colspan="7"><div class="empty"><div class="empty-icon">⚠️</div><p>Инцидентов по выбранным фильтрам нет</p></div></td></tr>`;
   } catch(e) { toast(e.message,"err"); }
+}
+
+async function deleteProblem(problemId, blCode) {
+  if (!ensureEditor()) return;
+  if (!confirm(`Удалить проблему по BL «${blCode}»?\nЗапись исчезнет из списка и из счётчиков партий.`)) return;
+  try {
+    await api("/api/problems/" + problemId, "DELETE");
+    toast("Проблема удалена", "ok");
+    loadProblemsPage();
+    loadDashboard();
+  } catch (e) {
+    toast(e.message, "err");
+  }
 }
 
 function buildProblemQuery() {
