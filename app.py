@@ -41,11 +41,14 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # disable static file caching
 
-ADMIN_LOGIN = os.getenv("ADMIN_LOGIN", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
-ADMIN1_LOGIN = os.getenv("ADMIN1_LOGIN", "Admin1")
-ADMIN1_PASSWORD = os.getenv("ADMIN1_PASSWORD", "Admin6611")
-GUEST_PASSWORD = os.getenv("GUEST_PASSWORD", "Guest6611")
+# Two default profiles: the site editor (buraq) and the TV kiosk (sales).
+# Extra accounts (second admin, guest viewers) exist ONLY when their env
+# vars are set — no more default logins that nobody remembers creating.
+ADMIN_LOGIN = os.getenv("ADMIN_LOGIN", "buraq")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "buraq1234")
+ADMIN1_LOGIN = os.getenv("ADMIN1_LOGIN", "")
+ADMIN1_PASSWORD = os.getenv("ADMIN1_PASSWORD", "")
+GUEST_PASSWORD = os.getenv("GUEST_PASSWORD", "")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").strip()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
