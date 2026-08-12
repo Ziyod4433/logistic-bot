@@ -2420,7 +2420,7 @@ def _send_single_bl_status(chat_id, bl: dict, batch_name: str):
             app.logger.exception("Auto file delivery failed for bl_id=%s", bl.get("id"))
 
 
-def send_bl_status(chat_id, bl: dict):
+def send_bl_status(chat_id, bl: dict, in_transit_only: bool = False):
     """Handle the "Yuk holati" button: send each active batch as its own message.
 
     Mirrors the admin-panel logic in send_bl_package — discover related
@@ -2428,7 +2428,7 @@ def send_bl_status(chat_id, bl: dict):
     one carries its own file inline-keyboard.
     """
     primary_language = normalize_message_language(bl.get("message_language"))
-    bundle = db.get_tracking_bundle_bls(bl, include_related_batches=True)
+    bundle = db.get_tracking_bundle_bls(bl, include_related_batches=True, in_transit_only=in_transit_only)
     if not bundle:
         bundle = [bl]
 
@@ -2588,8 +2588,13 @@ def handle_telegram_message(message: dict):
             )
             return
 
-        latest_active_bl = db.find_latest_active_bl_by_chat(chat_id)
-        if latest_active_bl:
+        # Only cargo that is still ON THE WAY (yo'lda) is reported by the
+        # button. Once a batch reaches the Tashkent warehouse
+        # (Toshkent(Chuqursoy ULS da)) or is delivered, it's no longer in
+        # transit — the button then shows "no cargo in transit" instead of
+        # replaying its tracking.
+        in_transit_bl = db.find_latest_in_transit_bl_by_chat(chat_id)
+        if in_transit_bl:
             db.clear_chat_state(chat_id)
             # send_bl_status now also dispatches every attached file after
             # each BL message in sequence, which can take several seconds
@@ -2597,24 +2602,20 @@ def handle_telegram_message(message: dict):
             # returns immediately and Telegram doesn't retry the request.
             threading.Thread(
                 target=send_bl_status,
-                args=(chat_id, latest_active_bl),
+                args=(chat_id, in_transit_bl),
+                kwargs={"in_transit_only": True},
                 daemon=True,
             ).start()
             return
-        latest_bl = db.find_latest_bl_by_chat(chat_id)
-        if latest_bl:
-            db.clear_chat_state(chat_id)
-            send_with_track_keyboard(
-                chat_id,
-                get_no_active_cargo_text(latest_bl.get("message_language")),
-                language=latest_bl.get("message_language"),
-            )
-            return
+        # Nothing in transit. Use any known BL (incl. an already-arrived one)
+        # only to pick the right language for the message.
+        latest_bl = db.find_latest_active_bl_by_chat(chat_id) or db.find_latest_bl_by_chat(chat_id)
         db.clear_chat_state(chat_id)
+        message_language = latest_bl.get("message_language") if latest_bl else language
         send_with_track_keyboard(
             chat_id,
-            get_no_active_cargo_text(language),
-            language=language,
+            get_no_active_cargo_text(message_language),
+            language=message_language,
         )
         return
 

@@ -2909,6 +2909,20 @@ def find_latest_bl_by_chat(chat_id):
     return dict(row) if row else None
 
 
+# Statuses meaning the cargo is NO LONGER "on the way" (yo'lda): it has
+# reached the Tashkent (Chuqursoy ULS) warehouse or was delivered. The
+# in-group "Yuk holati" button treats these as "no cargo in transit", so it
+# stops replaying tracking for cargo that has already arrived. Deduped,
+# ordered tuple so it can be spread into a parametrized SQL IN (...).
+ARRIVED_STATUSES = tuple(dict.fromkeys([
+    "Toshkent(Chuqursoy ULS da)",
+    DELIVERED_STATUS,
+    LEGACY_DELIVERED_STATUS,
+]))
+
+_ARRIVED_STATUS_PLACEHOLDERS = ", ".join("?" for _ in ARRIVED_STATUSES)
+
+
 def find_latest_active_bl_by_chat(chat_id):
     conn = get_conn()
     row = conn.execute(
@@ -2927,24 +2941,57 @@ def find_latest_active_bl_by_chat(chat_id):
     return dict(row) if row else None
 
 
-def find_active_bls_by_chat(chat_id):
+def find_latest_in_transit_bl_by_chat(chat_id):
+    """Latest active BL for this chat whose cargo is still on the way.
+
+    Excludes batches that already reached the Tashkent warehouse (or were
+    delivered) — those are not "yo'lda" anymore, so the Yuk holati button
+    should report no cargo in transit for them.
+    """
     conn = get_conn()
-    rows = conn.execute(
-        """
+    row = conn.execute(
+        f"""
         SELECT bl.*, b.name AS batch_name
         FROM bl_codes bl
         JOIN batches b ON b.id = bl.batch_id
         WHERE bl.chat_id = ?
           AND COALESCE(b.client_delivery_date, '') = ''
+          AND COALESCE(b.status, '') NOT IN ({_ARRIVED_STATUS_PLACEHOLDERS})
+        ORDER BY bl.created_at DESC
+        LIMIT 1
+        """,
+        (str(chat_id), *ARRIVED_STATUSES),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def find_active_bls_by_chat(chat_id, in_transit_only: bool = False):
+    conn = get_conn()
+    status_filter = (
+        f"AND COALESCE(b.status, '') NOT IN ({_ARRIVED_STATUS_PLACEHOLDERS})"
+        if in_transit_only else ""
+    )
+    params = [str(chat_id)]
+    if in_transit_only:
+        params.extend(ARRIVED_STATUSES)
+    rows = conn.execute(
+        f"""
+        SELECT bl.*, b.name AS batch_name
+        FROM bl_codes bl
+        JOIN batches b ON b.id = bl.batch_id
+        WHERE bl.chat_id = ?
+          AND COALESCE(b.client_delivery_date, '') = ''
+          {status_filter}
         ORDER BY b.created_at DESC, bl.created_at DESC, bl.id DESC
         """,
-        (str(chat_id),),
+        params,
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
 
-def get_tracking_bundle_bls(primary_bl: dict, include_related_batches: bool = True) -> list[dict]:
+def get_tracking_bundle_bls(primary_bl: dict, include_related_batches: bool = True, in_transit_only: bool = False) -> list[dict]:
     if not primary_bl:
         return []
     primary_id = primary_bl.get("id")
@@ -2957,7 +3004,10 @@ def get_tracking_bundle_bls(primary_bl: dict, include_related_batches: bool = Tr
     ordered = [dict(primary_bl)]
     seen_ids = {primary_id}
     exclusion_cache: dict[int, dict[int, bool]] = {}
-    related_rows = find_active_bls_by_chat(chat_id)
+    # in_transit_only drops sibling batches that already arrived at the
+    # Tashkent warehouse, so the Yuk holati button doesn't drag an arrived
+    # cargo back into a "still on the way" reply.
+    related_rows = find_active_bls_by_chat(chat_id, in_transit_only=in_transit_only)
     coverage_map = get_tracking_delivery_coverage_for_bl_ids(
         [_to_int(item.get("id")) for item in related_rows if _to_int(item.get("id"))]
     )
