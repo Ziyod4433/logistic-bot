@@ -2922,6 +2922,35 @@ ARRIVED_STATUSES = tuple(dict.fromkeys([
 
 _ARRIVED_STATUS_PLACEHOLDERS = ", ".join("?" for _ in ARRIVED_STATUSES)
 
+# A batch counts as "still on the way" for the Yuk holati button only if:
+#   1. its own status is not an arrived one, AND
+#   2. no CLEARLY NEWER batch of the same chat has already arrived.
+# Rule 2 catches stale batches operators forgot to advance (e.g. a May
+# batch stuck at "Shimkent" while July batches already reached Tashkent —
+# that cargo obviously isn't on the road anymore). The grace window keeps
+# legitimate overtaking (a slow Kyrgyz-route batch passed by a fast Kazakh
+# one) visible: only batches created 14+ days BEFORE an arrived batch are
+# considered superseded.
+_SUPERSEDED_GRACE_DAYS = 14
+
+_IN_TRANSIT_FILTER_SQL = f"""
+          AND COALESCE(b.status, '') NOT IN ({_ARRIVED_STATUS_PLACEHOLDERS})
+          AND NOT EXISTS (
+              SELECT 1
+              FROM bl_codes bl2
+              JOIN batches b2 ON b2.id = bl2.batch_id
+              WHERE bl2.chat_id = bl.chat_id
+                AND (
+                    COALESCE(b2.status, '') IN ({_ARRIVED_STATUS_PLACEHOLDERS})
+                    OR COALESCE(b2.toshkent_arrived_at, '') != ''
+                    OR COALESCE(b2.client_delivery_date, '') != ''
+                )
+                AND julianday(b2.created_at) - julianday(b.created_at) > {_SUPERSEDED_GRACE_DAYS}
+          )
+"""
+
+_IN_TRANSIT_FILTER_PARAMS = (*ARRIVED_STATUSES, *ARRIVED_STATUSES)
+
 
 def find_latest_active_bl_by_chat(chat_id):
     conn = get_conn()
@@ -2945,8 +2974,8 @@ def find_latest_in_transit_bl_by_chat(chat_id):
     """Latest active BL for this chat whose cargo is still on the way.
 
     Excludes batches that already reached the Tashkent warehouse (or were
-    delivered) — those are not "yo'lda" anymore, so the Yuk holati button
-    should report no cargo in transit for them.
+    delivered) and stale batches superseded by newer arrived ones — the
+    Yuk holati button reports "no cargo in transit" for those.
     """
     conn = get_conn()
     row = conn.execute(
@@ -2956,11 +2985,11 @@ def find_latest_in_transit_bl_by_chat(chat_id):
         JOIN batches b ON b.id = bl.batch_id
         WHERE bl.chat_id = ?
           AND COALESCE(b.client_delivery_date, '') = ''
-          AND COALESCE(b.status, '') NOT IN ({_ARRIVED_STATUS_PLACEHOLDERS})
+          {_IN_TRANSIT_FILTER_SQL}
         ORDER BY bl.created_at DESC
         LIMIT 1
         """,
-        (str(chat_id), *ARRIVED_STATUSES),
+        (str(chat_id), *_IN_TRANSIT_FILTER_PARAMS),
     ).fetchone()
     conn.close()
     return dict(row) if row else None
@@ -2968,13 +2997,10 @@ def find_latest_in_transit_bl_by_chat(chat_id):
 
 def find_active_bls_by_chat(chat_id, in_transit_only: bool = False):
     conn = get_conn()
-    status_filter = (
-        f"AND COALESCE(b.status, '') NOT IN ({_ARRIVED_STATUS_PLACEHOLDERS})"
-        if in_transit_only else ""
-    )
+    status_filter = _IN_TRANSIT_FILTER_SQL if in_transit_only else ""
     params = [str(chat_id)]
     if in_transit_only:
-        params.extend(ARRIVED_STATUSES)
+        params.extend(_IN_TRANSIT_FILTER_PARAMS)
     rows = conn.execute(
         f"""
         SELECT bl.*, b.name AS batch_name
