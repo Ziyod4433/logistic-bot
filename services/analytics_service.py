@@ -4209,6 +4209,11 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
     date_from = _parse_iso_date(date_from_str)
     date_to   = _parse_iso_date(date_to_str)
 
+    # ── Two KP tabs, two service levels ───────────────────────────────
+    # «Под ключ заявки» (the configured gid) — deals WITH the full service
+    # (customs, TIF…) → the LIST tariff applies. «Транспортировка заявки»
+    # (fixed tab name) — transport-only deals WITHOUT the service → the
+    # BASE tariff applies.
     try:
         if gid_or_name:
             rows = ombor_service._fetch_csv_by_gid(sheet_id, gid_or_name)
@@ -4222,13 +4227,62 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
             "message": f"Xato: {exc}",
         }
 
-    data_rows = rows[header_rows:]
+    transport_error = ""
+    try:
+        transport_rows = ombor_service._fetch_csv(sheet_id, "Транспортировка заявки")
+    except Exception as exc:
+        transport_rows = []
+        transport_error = str(exc)
 
     def safe_cell(row, idx):
         return row[idx].strip() if idx < len(row) else ""
 
+    def _extract_podklyuch(row):
+        """Configured layout of «Под ключ заявки» (density column exists)."""
+        return {
+            "density": ombor_service._parse_float(safe_cell(row, density_idx)),
+            "price":   ombor_service._parse_float(safe_cell(row, price_idx)),
+            "volume":  ombor_service._parse_float(safe_cell(row, volume_idx)),
+            "raw_date": safe_cell(row, date_idx),
+            "cpa":     safe_cell(row, cpa_idx),
+            "seller":  safe_cell(row, seller_idx),
+            "client":  safe_cell(row, client_idx),
+            "product": safe_cell(row, product_idx),
+            "status_sheet": safe_cell(row, status_idx),
+        }
+
+    def _extract_transport(row):
+        """Fixed layout of «Транспортировка заявки»: A status, B код заявки,
+        C менеджер, E бренд, F товар, J объём, K нетто, L брутто,
+        O цена за 1 м³, U дата запроса. Плотности нет — считаем брутто/объём
+        (fallback нетто/объём)."""
+        volume = ombor_service._parse_float(safe_cell(row, 9))
+        brutto = ombor_service._parse_float(safe_cell(row, 11))
+        netto  = ombor_service._parse_float(safe_cell(row, 10))
+        weight = brutto if brutto > 0 else netto
+        density = round(weight / volume, 2) if (volume > 0 and weight > 0) else 0.0
+        return {
+            "density": density,
+            "price":   ombor_service._parse_float(safe_cell(row, 14)),
+            "volume":  volume,
+            "raw_date": safe_cell(row, 20),
+            "cpa":     safe_cell(row, 1),
+            "seller":  safe_cell(row, 2),
+            "client":  safe_cell(row, 4),
+            "product": safe_cell(row, 5),
+            "status_sheet": safe_cell(row, 0),
+        }
+
+    sources = [
+        (rows[header_rows:], True, _extract_podklyuch),           # с услугой
+        (transport_rows[1:] if transport_rows else [], False, _extract_transport),  # без услуги
+    ]
+
     diag = {
-        "rows_total": len(data_rows),
+        "rows_total": sum(len(src_rows) for src_rows, _u, _e in sources),
+        "rows_podklyuch": len(rows[header_rows:]),
+        "rows_transport": len(transport_rows[1:]) if transport_rows else 0,
+        "transport_error": transport_error,
         "rows_used": 0,
         "rows_no_density": 0,
         "rows_no_price": 0,
@@ -4245,18 +4299,20 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
     loss_amount = 0.0       # Σ negative margins × volume (absolute)
     status_counts = {"zarar": 0, "past": 0, "ok": 0}
 
-    for row in data_rows:
-        density = ombor_service._parse_float(safe_cell(row, density_idx))
+    for src_rows, usluga, extract in sources:
+      for row in src_rows:
+        cells = extract(row)
+        density = cells["density"]
         if density <= 0:
             diag["rows_no_density"] += 1
             continue
-        price = ombor_service._parse_float(safe_cell(row, price_idx))
+        price = cells["price"]
         if price <= 0:
             diag["rows_no_price"] += 1
             continue
 
         # Date cells look like "05/08/2025 18:06:55" — strip the time part.
-        raw_date = safe_cell(row, date_idx)
+        raw_date = cells["raw_date"]
         row_date = ombor_service._parse_date(raw_date.split(" ")[0]) if raw_date else None
         if raw_date and row_date is None:
             diag["rows_bad_date"] += 1   # counted anyway
@@ -4264,21 +4320,22 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
             diag["rows_outside_period"] += 1
             continue
 
-        volume = ombor_service._parse_float(safe_cell(row, volume_idx))
+        volume = cells["volume"]
         base, list_price, bracket = _sotuv_tariff_for(density)
-        margin_m3 = round(price - base, 2)
+        # Which tariff this deal is judged against depends on the tab it
+        # came from: «Под ключ» → list price, «Транспортировка» → base.
+        tariff = list_price if usluga else base
+        margin_m3 = round(price - tariff, 2)
         margin_total = round(margin_m3 * volume, 2) if volume > 0 else margin_m3
         if margin_m3 < 0:
             status = "zarar"
             loss_count += 1
             loss_amount += abs(margin_total)
-        elif price < list_price:
-            status = "past"
         else:
             status = "ok"
         status_counts[status] += 1
 
-        seller_raw = safe_cell(row, seller_idx) or "Retention"
+        seller_raw = cells["seller"] or "Retention"
         skey = _norm_person_director(seller_raw)
         sb = sellers_acc.setdefault(skey, {
             "name": seller_raw, "count": 0, "volume": 0.0,
@@ -4297,13 +4354,13 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
         total_margin += margin_total
         diag["rows_used"] += 1
 
-        if len(deals) < 500:
+        if True:  # cap is applied AFTER sorting so both tabs are represented
             deals.append({
-                "cpa":     safe_cell(row, cpa_idx),
+                "cpa":     cells["cpa"],
                 "seller":  seller_raw,
-                "client":  safe_cell(row, client_idx),
-                "product": safe_cell(row, product_idx),
-                "status_sheet": safe_cell(row, status_idx),
+                "client":  cells["client"],
+                "product": cells["product"],
+                "status_sheet": cells["status_sheet"],
                 "sana":    row_date.isoformat() if row_date else "",
                 "w":       round(density, 1),
                 "bracket": bracket,
@@ -4311,13 +4368,18 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
                 "price":   round(price, 2),
                 "base":    base,
                 "list":    list_price,
+                "tarif":   tariff,        # the ONE tariff this deal is judged by
+                "usluga":  bool(usluga),  # True = «Под ключ», False = «Транспортировка»
                 "margin_m3":    margin_m3,
                 "margin_total": margin_total,
                 "status":  status,
             })
 
-    # Worst deals first — losses are the actionable part.
+    # Worst deals first — losses are the actionable part. Cap AFTER the
+    # sort so the shown 500 are the worst across BOTH tabs, not just the
+    # first tab read.
     deals.sort(key=lambda d: d["margin_m3"])
+    deals = deals[:500]
 
     sellers_sorted = sorted(
         [
@@ -4352,11 +4414,11 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
     status_chart = {
         "type": "doughnut",
         "title": "KP holati",
-        "labels": ["Zarar", "Tarifdan past", "Norma"],
+        "labels": ["Zarar", "Norma"],
         "datasets": [{
             "label": "KP",
-            "data": [status_counts["zarar"], status_counts["past"], status_counts["ok"]],
-            "backgroundColor": ["#ff7d9c", "#ffc778", "#66e2b0"],
+            "data": [status_counts["zarar"], status_counts["ok"]],
+            "backgroundColor": ["#ff7d9c", "#66e2b0"],
         }],
     }
 
@@ -4367,7 +4429,7 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
             {"label": "Hajm (m³)", "value": f"{_r(total_volume)}"},
             {"label": "Kelishuv summasi (USD)", "value": f"{_r(total_revenue):,.0f}".replace(",", " ")},
             {"label": "Marja (USD)", "value": f"{_r(total_margin):,.0f}".replace(",", " "),
-             "hint": "kelishuv − Uslugasiz tarif"},
+             "hint": "kelishuv − tegishli tarif (usluga bo'yicha)"},
             {"label": "Zarar KP", "value": str(loss_count),
              "hint": f"−{_r(loss_amount):,.0f} USD".replace(",", " ") if loss_count else ""},
         ],
@@ -4386,12 +4448,13 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
         "diagnostics": diag,
         "message": (
             f"KP bazasi: {diag['rows_used']} / {diag['rows_total']} qator "
-            f"({date_from or '∞'} → {date_to or '∞'}). "
-            f"Zarar: {status_counts['zarar']}, tarifdan past: {status_counts['past']}, "
-            f"norma: {status_counts['ok']}. "
+            f"(Pod klyuch {diag['rows_podklyuch']} + Transportirovka {diag['rows_transport']}; "
+            f"{date_from or '∞'} → {date_to or '∞'}). "
+            f"Zarar: {status_counts['zarar']}, norma: {status_counts['ok']}. "
             f"Tashlangan: og'irliksiz={diag['rows_no_density']}, narxsiz={diag['rows_no_price']}, "
             f"davrdan tashqari={diag['rows_outside_period']}"
             + (f", sanasi buzuq={diag['rows_bad_date']} (hisobga olindi)" if diag["rows_bad_date"] else "")
+            + (f". Transportirovka o'qilmadi: {diag['transport_error']}" if diag.get("transport_error") else "")
         ),
     }
 

@@ -2273,8 +2273,9 @@ svg.oi {
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                 <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="all" onclick="setSotuvDealsFilter('all')">Hammasi</button>
                 <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="zarar" onclick="setSotuvDealsFilter('zarar')" style="color:#ff7d9c">⚠ Zarar</button>
-                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="past" onclick="setSotuvDealsFilter('past')" style="color:#ffc778">Tarifdan past</button>
                 <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="ok" onclick="setSotuvDealsFilter('ok')" style="color:#66e2b0">Norma</button>
+                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="usluga" onclick="setSotuvDealsFilter('usluga')" style="color:#7ee7ff">✓ Usluga bilan</button>
+                <button type="button" class="btn btn-ghost btn-xs" data-sotuv-filter="no_usluga" onclick="setSotuvDealsFilter('no_usluga')" style="color:var(--muted2)">✗ Uslugasiz</button>
                 <span style="font-size:11px;color:var(--muted2);margin-left:6px" id="dir-sotuv-deals-meta">—</span>
               </div>
             </div>
@@ -8721,21 +8722,29 @@ function renderSotuvDealsTable() {
   });
   const rows = __sotuvFilter === "all"
     ? __sotuvDeals
-    : __sotuvDeals.filter(d => d.status === __sotuvFilter);
+    : __sotuvFilter === "usluga"
+      ? __sotuvDeals.filter(d => !!d.usluga)
+      : __sotuvFilter === "no_usluga"
+        ? __sotuvDeals.filter(d => !d.usluga)
+        : __sotuvDeals.filter(d => d.status === __sotuvFilter);
   const shown = rows.slice(0, 120);
   if (meta) meta.textContent = rows.length
     ? `${shown.length}/${rows.length} ko'rsatilgan`
     : "0 ta";
-  const gridCols = "90px 130px minmax(120px,1fr) 70px 90px 76px 90px 84px 64px 90px 110px";
+  const gridCols = "90px 130px minmax(120px,1fr) 70px 90px 76px 70px 84px 64px 90px 70px 110px";
   const head = `
-    <div style="display:grid;grid-template-columns:${gridCols};gap:8px;padding:6px 10px;font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">
+    <div style="display:grid;grid-template-columns:${gridCols};gap:8px;padding:8px 10px;font-size:11.5px;font-weight:800;color:var(--txt);text-transform:uppercase;letter-spacing:.08em">
       <div>KP</div><div>Sotuvchi</div><div>Mijoz / tovar</div><div>kg/m³</div><div>Toifa</div>
-      <div>Kelishuv</div><div>Tarif (min–narx)</div><div>Marja $/m³</div><div>m³</div><div>Marja jami</div><div>Holat</div>
+      <div>Kelishuv</div><div>Tarif</div><div>Marja $/m³</div><div>m³</div><div>Marja jami</div><div>Usluga</div><div>Holat</div>
     </div>`;
   const body = shown.map(d => {
     const st = SOTUV_STATUS_META[d.status] || SOTUV_STATUS_META.ok;
     const negM = Number(d.margin_m3 || 0) < 0;
     const negT = Number(d.margin_total || 0) < 0;
+    // Single applicable tariff: list price for «Под ключ» deals, base for
+    // transport-only. Old cached payloads without d.tarif fall back to base.
+    const tarif = Number(d.tarif != null ? d.tarif : (d.usluga ? d.list : d.base) || 0);
+    const usl = !!d.usluga;
     return `
       <div style="display:grid;grid-template-columns:${gridCols};gap:8px;align-items:center;padding:7px 10px;border-radius:10px;background:rgba(255,255,255,.02);font-size:12px">
         <div style="color:var(--muted2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(d.sana || "")}">${esc(d.cpa || "—")}</div>
@@ -8747,10 +8756,11 @@ function renderSotuvDealsTable() {
         <div style="color:var(--txt)">${Number(d.w || 0).toFixed(0)}</div>
         <div style="color:var(--muted2);font-size:10px">${esc(d.bracket || "")}</div>
         <div style="font-weight:700;color:var(--txt)">${Number(d.price || 0).toFixed(0)} $</div>
-        <div style="color:var(--muted2);font-size:11px">${Number(d.base || 0).toFixed(0)}–${Number(d.list || 0).toFixed(0)} $</div>
+        <div style="color:var(--muted2)">${tarif.toFixed(0)} $</div>
         <div style="font-weight:700;color:${negM ? "#ff5b7f" : "#2ad09b"}">${negM ? "−" : "+"}${Math.abs(Number(d.margin_m3 || 0)).toFixed(1)}</div>
         <div style="color:var(--muted2)">${Number(d.vol || 0).toFixed(1)}</div>
         <div style="font-weight:700;color:${negT ? "#ff5b7f" : "#2ad09b"}">${negT ? "−" : "+"}${Math.abs(Number(d.margin_total || 0)).toFixed(0)} $</div>
+        <div><span title="${usl ? "Pod klyuch — usluga bilan" : "Transportirovka — uslugasiz"}" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;font-size:13px;font-weight:800;color:${usl ? "#2ad09b" : "#ff5b7f"};border:1px solid ${usl ? "#2ad09b44" : "#ff5b7f44"};background:${usl ? "#2ad09b18" : "#ff5b7f18"}">${usl ? "✓" : "✕"}</span></div>
         <div><span style="font-size:10px;font-weight:700;color:${st.color};border:1px solid ${st.color}44;background:${st.color}18;border-radius:6px;padding:2px 7px;white-space:nowrap">${st.icon} ${st.label}</span></div>
       </div>`;
   }).join("");
