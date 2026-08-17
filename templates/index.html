@@ -629,6 +629,89 @@ tr.trk-green  > td:first-child { box-shadow: inset 3px 0 0 var(--green); }
 tr.trk-yellow > td:first-child { box-shadow: inset 3px 0 0 #ffb739; }
 tr.trk-red    > td:first-child { box-shadow: inset 3px 0 0 var(--red); }
 
+/* ══════════════════════════════════════════════════════════
+   TRUCK FILL WIDGET — «Ночная диспетчерская» (раздел Ombor)
+   Перенесён из эталона .claude/truck-fill-widget.html (.tfw-*)
+   ══════════════════════════════════════════════════════════ */
+.tfw{
+  --tfw-bg:#10151c; --tfw-card:#171e27; --tfw-line:#232d3a; --tfw-line2:#2c3847;
+  --tfw-ink:#e8edf4; --tfw-mute:#93a1b3; --tfw-dim:#7e8a9c;
+  --tfw-amber:#f5c518; --tfw-red:#e5484d; --tfw-green:#5fe08a;
+  --tfw-g:#0ca30c; --tfw-y:#fab219; --tfw-o:#ec835a; --tfw-r:#d03b3b;
+  color:var(--tfw-ink); background:var(--tfw-bg); border-radius:18px;
+  padding:20px 20px 22px; box-sizing:border-box; border:1px solid var(--tfw-line);
+}
+.tfw *{box-sizing:border-box;margin:0;padding:0}
+.tfw-mono{font-family:ui-monospace,'JetBrains Mono',Consolas,monospace}
+.tfw-top{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.tfw-top .tfw-title{font-size:15px;font-weight:800;letter-spacing:-.01em}
+.tfw-top .tfw-sub{font-size:12.5px;color:var(--tfw-mute);margin-top:3px}
+.tfw-top .tfw-sub b{color:var(--tfw-ink);font-weight:700}
+.tfw-rec{color:var(--tfw-amber)}
+.tfw-warn{color:var(--tfw-red)}
+.tfw-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--tfw-mute)}
+.tfw-legend span{display:flex;align-items:center;gap:5px}
+.tfw-legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.tfw-whblock{margin-top:18px}
+.tfw-whhead{font-size:12.5px;color:var(--tfw-mute);margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tfw-whhead .tfw-whname{font-size:13px;font-weight:800;color:var(--tfw-ink);letter-spacing:.06em}
+.tfw-whhead b{color:var(--tfw-ink)}
+.tfw-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}
+.tfw-card{background:var(--tfw-card);border:1px solid var(--tfw-line);border-radius:14px;padding:16px 16px 14px;position:relative;transition:border-color .3s,box-shadow .3s}
+.tfw-card.is-rec{border-color:var(--tfw-amber);box-shadow:0 0 0 1px var(--tfw-amber) inset}
+.tfw-card .tfw-flag{position:absolute;top:-10px;right:14px;background:var(--tfw-amber);color:#211a02;font-size:11px;font-weight:800;padding:3px 10px;border-radius:20px;letter-spacing:.04em;display:none;z-index:4}
+.tfw-card.is-rec .tfw-flag{display:block}
+.tfw-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.tfw-head .tfw-nm{font-weight:800;font-size:15px}
+.tfw-head .tfw-cap{font-size:11.5px;color:var(--tfw-dim)}
+/* фура: SVG-контур поверх HTML-заливки (для CSS-анимации ширины) */
+.tfw-truck{position:relative;aspect-ratio:460/150;width:100%}
+.tfw-truck svg{position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none}
+.tfw-hold{position:absolute;left:2.61%;top:15.33%;width:69.78%;height:51.33%;border-radius:5px;overflow:hidden;z-index:1;
+  background:#0b0f14;background-image:repeating-linear-gradient(-55deg,transparent 0 9px,rgba(255,255,255,.035) 9px 11px);
+  cursor:pointer;transition:box-shadow .2s}
+.tfw-hold:hover,.tfw-hold:focus-visible{box-shadow:0 0 0 2px #5f88a8;outline:none}
+.tfw-cargo{position:absolute;inset:0;display:flex;z-index:2;pointer-events:none}
+.tfw-cargo i{display:block;height:100%;width:0;opacity:.92;transition:width 1s cubic-bezier(.22,.9,.3,1)}
+.tfw-cargo i:nth-child(1){background:var(--tfw-g)}
+.tfw-cargo i:nth-child(2){background:var(--tfw-y)}
+.tfw-cargo i:nth-child(3){background:var(--tfw-o)}
+.tfw-cargo i:nth-child(4){background:var(--tfw-r)}
+.tfw-wheel{transform-box:fill-box;transform-origin:center}
+.tfw-truck.is-spin .tfw-wheel{animation:tfw-spin 2.6s linear infinite}
+@keyframes tfw-spin{to{transform:rotate(360deg)}}
+.tfw-leds{display:flex;gap:4px;margin:10px 0 8px}
+.tfw-leds b{flex:1;height:7px;border-radius:2px;background:#242e3b;transition:background .35s}
+.tfw-leds b.on{background:var(--tfw-amber)}
+.tfw-leds b.hot{background:var(--tfw-red)}
+.tfw-leds b.hot.blink{animation:tfw-blink 1s steps(2,end) infinite}
+@keyframes tfw-blink{50%{opacity:.35}}
+.tfw-meta{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.tfw-meta .tfw-nums{font-size:12px;color:#aab6c6}
+.tfw-badge{font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:7px;letter-spacing:.02em;white-space:nowrap}
+.tfw-badge.ready{background:rgba(70,200,110,.15);color:var(--tfw-green)}
+.tfw-badge.over{background:rgba(229,72,77,.16);color:#ff8b8f}
+.tfw-badge.almost{background:rgba(245,197,24,.14);color:var(--tfw-amber)}
+.tfw-badge.fill{background:var(--tfw-line);color:var(--tfw-mute)}
+.tfw-hint{font-size:11.5px;color:#ff8b8f;margin-top:7px;display:none}
+.tfw-hint.show{display:block}
+/* консолидация Zhongshan+Yiwu → фура для Хоргоса */
+.tfw-consol{margin-top:18px;border-top:1px dashed var(--tfw-line2);padding-top:16px}
+.tfw-consol .tfw-verdict{font-size:12.5px;margin-bottom:12px;color:var(--tfw-mute)}
+.tfw-consol .tfw-verdict b{color:var(--tfw-ink)}
+.tfw-consol .tfw-verdict .ok{color:var(--tfw-green);font-weight:800}
+.tfw-consol .tfw-verdict .no{color:#ff8b8f;font-weight:800}
+/* таблица плана погрузки (модалка) */
+.tfw-plan-table{width:100%;border-collapse:collapse;font-size:12px}
+.tfw-plan-table th{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted2);text-align:left;padding:8px 8px;border-bottom:1px solid var(--stroke);position:sticky;top:0;background:var(--bg2,#0c1322)}
+.tfw-plan-table td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.05)}
+.tfw-plan-table tr.total td{font-weight:800;border-top:2px solid var(--stroke);border-bottom:none;padding-top:10px}
+@media (prefers-reduced-motion:reduce){
+  .tfw-cargo i{transition:none}
+  .tfw-truck.is-spin .tfw-wheel,.tfw-leds b.hot.blink{animation:none}
+}
+@media (max-width:640px){.tfw{padding:14px 12px 16px}}
+
 /* ── STATUS BADGES ───────────────────────────────────── */
 .s-accepted { background:rgba(74,85,114,.2);  color:var(--muted2); }
 .s-khorgos  { background:rgba(167,139,250,.12);color:var(--purple); }
@@ -2156,6 +2239,12 @@ svg.oi {
             </div>
           </div>
 
+          <!-- Truck-fill widget «Ночная диспетчерская»: Horgos — три фуры,
+               Zhongshan/Yiwu — по одной решётчатой 145 м³/30 т, плюс превью
+               консолидации Zhongshan+Yiwu → фура для Хоргоса.
+               Клик по прицепу → таблица плана погрузки. -->
+          <div id="dir-fura-yuklash" style="margin-bottom:18px"></div>
+
           <div class="director-charts-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px">
             <div class="director-chart-card" style="padding:14px;border:1px solid var(--stroke);border-radius:14px;background:rgba(255,255,255,.02)">
               <div class="director-chart-title" data-dir-chart-title="ombor-1" style="font-size:13px;color:var(--muted2);text-transform:uppercase;letter-spacing:.12em;margin-bottom:10px">Kunlik harakat</div>
@@ -3052,6 +3141,19 @@ svg.oi {
     <div class="modal-actions">
       <button class="btn btn-ghost btn-sm" onclick="refreshLateCargo()">↻ Обновить</button>
       <button class="btn btn-amber" onclick="closeModal('late-cargo-modal')">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<!-- Fura loading plan (клик по прицепу в виджете фур) -->
+<div class="overlay" id="fura-plan-modal">
+  <div class="modal" style="width:940px;max-width:96vw">
+    <div class="modal-title">План погрузки <em id="fura-plan-title"></em></div>
+    <div id="fura-plan-sub" style="font-size:12px;color:var(--muted2);margin-bottom:10px"></div>
+    <div id="fura-plan-body" style="max-height:62vh;overflow:auto"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" onclick="downloadFuraPlanXlsx()">⬇ Скачать план (xlsx)</button>
+      <button class="btn btn-amber" onclick="closeModal('fura-plan-modal')">Закрыть</button>
     </div>
   </div>
 </div>
@@ -8365,6 +8467,7 @@ function renderDirectorPayload(section, payload) {
       }
     });
     renderOmborWeightCategories(payload.weight_categories || {});
+    renderFuraYuklash(payload.fura_items || null);
   }
 
   // Sotuv bazasi: seller margins + KP deals table
@@ -8619,6 +8722,359 @@ if (!window.__omborWeightClickBound) {
     if (cat) openOmborWeightCategoryDetail(cat);
   });
   window.__omborWeightClickBound = true;
+}
+
+// ══════════════════════════════════════════════════════════
+// FURA YUKLASH — truck-fill widget «Ночная диспетчерская»
+// Эталон: .claude/truck-fill-widget.html (стиль и формулы из ТЗ
+// fura-widgettask.md). Horgos — три фуры; Zhongshan/Yiwu — по одной
+// решётчатой 145 м³/30 т; плюс превью консолидации ZH+YW → Хоргос.
+// ══════════════════════════════════════════════════════════
+const FURA_CATS = [
+  { key: "yengil", label: "Yengil",     range: "0–100",   color: "#0ca30c" },
+  { key: "orta",   label: "O'rta",      range: "100–200", color: "#fab219" },
+  { key: "ogir",   label: "Og'ir",      range: "200–350", color: "#ec835a" },
+  { key: "juda",   label: "Juda og'ir", range: "350+",    color: "#d03b3b" },
+];
+const FURA_RHO_DEFAULT = [69, 145, 253, 591];
+const FURA_TRUCKS_HORGOS = [
+  { id: "t96",  name: "Фура 96 м³",  V: 80,  W: 24000 },
+  { id: "t120", name: "Фура 120 м³", V: 105, W: 27000 },
+  { id: "t145", name: "Фура 145 м³", V: 130, W: 29000 },
+];
+const FURA_TRUCK_RESHETKA = { id: "tr145", name: "Решётка 145 м³", V: 145, W: 30000 };
+
+let __furaState = null;       // {groups:{horgos,zhongshan,yiwu,consol}}
+let __furaPlanCurrent = null; // данные открытого плана для xlsx
+
+// Агрегатный allocate из ТЗ (по категориям, м³) — используется в тестах
+// и как референс; позиционный вариант ниже — рабочий.
+function furaAllocateAgg(stock, V, W, RHO) {
+  const rho = RHO || FURA_RHO_DEFAULT;
+  const load = [0, 0, 0, 0]; let rem = V;
+  for (const i of [3, 2, 1, 0]) { const t = Math.min(stock[i], rem); load[i] = t; rem -= t; }
+  let w = load.reduce((s, x, i) => s + x * rho[i], 0);
+  for (const h of [3, 2, 1]) {
+    if (w <= W) break;
+    for (const l of [0, 1, 2]) {
+      if (l >= h || w <= W) continue;
+      const sp = stock[l] - load[l]; if (sp <= 0) continue;
+      const s = Math.min(load[h], sp, (w - W) / (rho[h] - rho[l]));
+      if (s > 0) { load[h] -= s; load[l] += s; w -= s * (rho[h] - rho[l]); }
+    }
+  }
+  for (const h of [3, 2, 1, 0]) {
+    if (w <= W) break;
+    const c = Math.min(load[h], (w - W) / rho[h]); load[h] -= c; w -= c * rho[h];
+  }
+  return { load, vol: load.reduce((a, b) => a + b, 0), w };
+}
+
+// Позиционный allocate (ТЗ 6.1): позиции кладутся ЦЕЛИКОМ. Сначала самые
+// плотные до заполнения объёма; при перевесе меняем тяжёлые на лёгкие из
+// остатка; если лёгкого нет — снимаем тяжёлые (фура едет с недобором).
+function furaAllocateItems(items, V, W) {
+  const inT = []; const rest = []; let vol = 0, w = 0;
+  const byDens = items.slice().sort((a, b) => b.density - a.density);
+  for (const it of byDens) {
+    if (vol + it.cbm <= V + 1e-9) { inT.push(it); vol += it.cbm; w += it.kg; }
+    else rest.push(it);
+  }
+  if (w > W) {
+    let guard = 500;
+    while (w > W && guard--) {
+      inT.sort((a, b) => b.density - a.density);
+      rest.sort((a, b) => a.density - b.density);
+      let swapped = false;
+      for (let hi = 0; hi < inT.length && !swapped; hi++) {
+        const h = inT[hi];
+        for (let li = 0; li < rest.length; li++) {
+          const l = rest[li];
+          if (l.density >= h.density) break;
+          if (vol - h.cbm + l.cbm <= V + 1e-9 && l.kg < h.kg) {
+            inT.splice(hi, 1); rest.splice(li, 1);
+            inT.push(l); rest.push(h);
+            vol += l.cbm - h.cbm; w += l.kg - h.kg;
+            swapped = true; break;
+          }
+        }
+      }
+      if (!swapped) break;
+    }
+    while (w > W && inT.length) {
+      inT.sort((a, b) => b.density - a.density);
+      const h = inT.shift(); rest.push(h); vol -= h.cbm; w -= h.kg;
+    }
+  }
+  const load = [0, 0, 0, 0];
+  inT.forEach(it => { load[it.cat] += it.cbm; });
+  return { items: inT, rest, load, vol, w };
+}
+
+function furaStatusOf(sv, t, r) {
+  const fv = r.vol / t.V, fw = r.w / t.W, fill = Math.max(fv, fw);
+  if (sv >= t.V && fv >= 0.995 && r.w <= t.W + 1) return { code: "ready",  label: "Можно грузить", fill, fv, fw };
+  if (sv >= t.V && fv < 0.995)                    return { code: "over",   label: "Перевес — нужен лёгкий", fill, fv, fw };
+  if (fill >= 0.8)                                return { code: "almost", label: "Почти готова · " + Math.round(fill * 100) + "%", fill, fv, fw };
+  return { code: "fill", label: "Накопление · " + Math.round(fill * 100) + "%", fill, fv, fw };
+}
+
+function furaRecommend(trucks, D, sv) {
+  if (sv <= 0) return -1;
+  const ok = trucks.map((t, i) => ({ i, lim: t.W / t.V, V: t.V }))
+    .filter(x => x.lim >= D).sort((a, b) => b.V - a.V);
+  if (!ok.length) return -1;
+  let rec = ok[0].i;
+  for (const x of ok) { if (sv >= x.V) { rec = x.i; break; } rec = x.i; }
+  return rec;
+}
+
+const FURA_SVG = `<svg viewBox="0 0 460 150" fill="none" aria-hidden="true">
+  <rect x="10" y="21" width="325" height="81" rx="7" stroke="#a9b6c6" stroke-width="2.5"/>
+  <line x1="10" y1="102" x2="335" y2="102" stroke="#a9b6c6" stroke-width="2.5"/>
+  <rect x="20" y="102" width="304" height="8" fill="#232d3a"/>
+  <path d="M345 44 h44 c6 0 11 3 14 8 l12 22 c2 4 3 8 3 12 v16 c0 4 -3 7 -7 7 h-66 z" stroke="#a9b6c6" stroke-width="2.5"/>
+  <path d="M355 52 h30 l11 22 h-41 z" fill="#1d2833" stroke="#5f88a8" stroke-width="1.5"/>
+  <rect x="336" y="96" width="10" height="14" fill="#232d3a"/>
+  <rect x="411" y="100" width="9" height="6" rx="2" fill="#f5c518"/>
+  ${[58, 100, 384].map(cx => `<g class="tfw-wheel"><circle cx="${cx}" cy="116" r="16" fill="#0b0f14" stroke="#a9b6c6" stroke-width="2.5"/><circle cx="${cx}" cy="116" r="4" fill="#a9b6c6"/><line x1="${cx}" y1="103" x2="${cx}" y2="129" stroke="#3d4c5e" stroke-width="2"/><line x1="${cx - 13}" y1="116" x2="${cx + 13}" y2="116" stroke="#3d4c5e" stroke-width="2"/></g>`).join("")}
+  <line x1="0" y1="133" x2="460" y2="133" stroke="#232d3a" stroke-width="2"/></svg>`;
+
+function furaCardHTML(groupKey, t) {
+  return `
+    <div class="tfw-card" data-fcard="${groupKey}:${t.id}">
+      <span class="tfw-flag">Рекомендуем</span>
+      <div class="tfw-head"><span class="tfw-nm">${esc(t.name)}</span><span class="tfw-cap tfw-mono">${t.V} m³ / ${t.W / 1000} t</span></div>
+      <div class="tfw-truck" data-ftruckviz>
+        <div class="tfw-hold" data-fhold="${groupKey}:${t.id}" role="button" tabindex="0"
+             title="Открыть план погрузки" aria-label="План погрузки — ${esc(t.name)}">
+          <div class="tfw-cargo"><i></i><i></i><i></i><i></i></div>
+        </div>${FURA_SVG}
+      </div>
+      <div class="tfw-leds" data-fleds>${"<b></b>".repeat(20)}</div>
+      <div class="tfw-meta"><span class="tfw-nums tfw-mono" data-fnums></span><span class="tfw-badge" data-fbadge></span></div>
+      <div class="tfw-hint" data-fhint></div>
+    </div>`;
+}
+
+function furaGroupSummaryHTML(name, g) {
+  const maxLim = Math.max(...g.trucks.map(t => t.W / t.V));
+  let tail = "";
+  if (g.sv > 0) {
+    if (g.D > maxLim) tail = ' <span class="tfw-warn">— тяжелее лимита фуры, копите лёгкий груз</span>';
+    else if (g.rec >= 0 && g.trucks.length > 1) tail = ' → <span class="tfw-rec">рекомендуем ' + esc(g.trucks[g.rec].name.toLowerCase()) + "</span>";
+  }
+  return `<div class="tfw-whhead"><span class="tfw-whname">🏬 ${esc(name)}</span>
+    <span>На складе <b>${Math.round(g.sv)} м³ · ${(g.sw / 1000).toFixed(1)} т</b> · плотность <b>${Math.round(g.D)} кг/м³</b>${tail}</span></div>`;
+}
+
+function furaBuildGroup(items, trucks) {
+  const sv = items.reduce((a, i) => a + i.cbm, 0);
+  const sw = items.reduce((a, i) => a + i.kg, 0);
+  const D = sv > 0 ? sw / sv : 0;
+  const results = trucks.map(t => {
+    const r = furaAllocateItems(items, t.V, t.W);
+    return { t, r, st: furaStatusOf(sv, t, r) };
+  });
+  return { items, trucks, results, sv, sw, D, rec: furaRecommend(trucks, D, sv) };
+}
+
+function renderFuraYuklash(fp) {
+  const host = document.getElementById("dir-fura-yuklash");
+  if (!host) return;
+  const items = ((fp && fp.items) || []).filter(i => Number(i.cbm) > 0 && Number(i.density) > 0);
+  if (!fp || fp.configured === false) { host.innerHTML = ""; __furaState = null; return; }
+
+  const groups = {
+    horgos:    furaBuildGroup(items.filter(i => i.wh === "HORGOS"),    FURA_TRUCKS_HORGOS),
+    zhongshan: furaBuildGroup(items.filter(i => i.wh === "ZHONGSHAN"), [FURA_TRUCK_RESHETKA]),
+    yiwu:      furaBuildGroup(items.filter(i => i.wh === "YIWU"),      [FURA_TRUCK_RESHETKA]),
+  };
+  groups.consol = furaBuildGroup(
+    items.filter(i => i.wh === "ZHONGSHAN" || i.wh === "YIWU"),
+    FURA_TRUCKS_HORGOS
+  );
+  __furaState = { groups };
+
+  const gc = groups.consol;
+  const consolIdx = gc.rec >= 0 ? gc.rec : FURA_TRUCKS_HORGOS.length - 1;
+  const cBest = gc.results[consolIdx];
+  let verdict;
+  if (gc.sv <= 0) {
+    verdict = 'На складах Zhongshan и Yiwu пока нет груза для консолидации.';
+  } else if (cBest.st.code === "ready") {
+    verdict = '<span class="ok">✅ Можно консолидировать в Хоргосе:</span> Zhongshan + Yiwu вместе заполняют <b>' + esc(cBest.t.name.toLowerCase()) + "</b>.";
+  } else if (cBest.st.code === "over") {
+    verdict = '<span class="no">⚠ Объём есть, но перевес:</span> не хватает ≈<b>' + Math.ceil(cBest.t.V - cBest.r.vol) + " м³</b> лёгкого/среднего груза.";
+  } else {
+    verdict = '<span class="no">Пока рано:</span> собрано <b>' + Math.round(cBest.st.fill * 100) + "%</b> (" + Math.round(cBest.r.vol) + " из " + cBest.t.V + " м³) — не хватает ≈<b>" + Math.max(1, Math.ceil(cBest.t.V - cBest.r.vol)) + " м³</b>.";
+  }
+
+  host.innerHTML = `
+    <div class="tfw" role="region" aria-label="Fura yuklash">
+      <div class="tfw-top">
+        <div>
+          <div class="tfw-title">🚛 Fura yuklash — ночная диспетчерская</div>
+          <div class="tfw-sub">Заполненность фур по текущему остатку складов · клик по прицепу — план погрузки</div>
+        </div>
+        <div class="tfw-legend">${FURA_CATS.map(c => `<span><i style="background:${c.color}"></i>${esc(c.label)} ${c.range}</span>`).join("")}</div>
+      </div>
+      <div class="tfw-whblock" style="margin-top:0">
+        ${furaGroupSummaryHTML("HORGOS", groups.horgos)}
+        <div class="tfw-grid">${groups.horgos.trucks.map(t => furaCardHTML("horgos", t)).join("")}</div>
+      </div>
+      <div class="tfw-whblock">
+        ${furaGroupSummaryHTML("ZHONGSHAN", groups.zhongshan)}
+        <div class="tfw-grid" style="grid-template-columns:repeat(auto-fit,minmax(290px,460px))">${furaCardHTML("zhongshan", FURA_TRUCK_RESHETKA)}</div>
+      </div>
+      <div class="tfw-whblock">
+        ${furaGroupSummaryHTML("YIWU", groups.yiwu)}
+        <div class="tfw-grid" style="grid-template-columns:repeat(auto-fit,minmax(290px,460px))">${furaCardHTML("yiwu", FURA_TRUCK_RESHETKA)}</div>
+      </div>
+      <div class="tfw-consol">
+        <div class="tfw-whhead"><span class="tfw-whname">🔀 Консолидация Zhongshan + Yiwu → фура для Хоргоса</span></div>
+        <div class="tfw-verdict">${verdict}</div>
+        <div class="tfw-grid" style="grid-template-columns:repeat(auto-fit,minmax(290px,460px))">${furaCardHTML("consol", cBest.t)}</div>
+      </div>
+    </div>`;
+
+  // клики + клавиатура по прицепам
+  host.querySelectorAll("[data-fhold]").forEach(hold => {
+    const [gk, tid] = hold.getAttribute("data-fhold").split(":");
+    hold.addEventListener("click", () => openFuraPlanModal(gk, tid));
+    hold.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFuraPlanModal(gk, tid); }
+    });
+  });
+
+  // заливка с нуля (replay из эталона). setTimeout вместо rAF: в фоновых
+  // вкладках rAF замораживается и виджет оставался пустым до перерисовки.
+  setTimeout(furaPaint, 40);
+}
+
+function furaPaint() {
+  const st = __furaState;
+  if (!st) return;
+  for (const [gk, g] of Object.entries(st.groups)) {
+    g.results.forEach(({ t, r, st: s }) => {
+      const card = document.querySelector(`[data-fcard="${gk}:${t.id}"]`);
+      if (!card) return;
+      card.classList.toggle("is-rec", g.trucks.length > 1 && g.rec >= 0 && g.trucks[g.rec].id === t.id);
+      card.querySelectorAll(".tfw-cargo i").forEach((seg, k) => { seg.style.width = (r.load[k] / t.V * 100) + "%"; });
+      const on = Math.round(s.fw * 20);
+      card.querySelectorAll("[data-fleds] b").forEach((b, k) => {
+        b.className = k < on ? (s.fw >= 0.98 ? "hot" + (s.code === "over" ? " blink" : "") : "on") : "";
+      });
+      card.querySelector("[data-fnums]").textContent =
+        Math.round(r.vol) + " м³ / " + (r.w / 1000).toFixed(1) + " т · объём " + Math.round(s.fv * 100) + "% · вес " + Math.round(s.fw * 100) + "%";
+      const badge = card.querySelector("[data-fbadge]");
+      badge.textContent = s.label; badge.className = "tfw-badge " + s.code;
+      card.querySelector("[data-ftruckviz]").classList.toggle("is-spin", s.code === "fill" || s.code === "almost");
+      const hint = card.querySelector("[data-fhint]");
+      if (s.code === "over") {
+        hint.textContent = "Не хватает ≈" + Math.max(1, Math.ceil(t.V - r.vol)) + " м³ лёгкого/среднего груза, чтобы уехать полной";
+        hint.classList.add("show");
+      } else hint.classList.remove("show");
+    });
+  }
+}
+
+function furaHexToRgba(hex, a) {
+  const h = hex.replace("#", "");
+  return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
+}
+
+function openFuraPlanModal(groupKey, truckId) {
+  const st = __furaState;
+  if (!st || !st.groups[groupKey]) return;
+  const g = st.groups[groupKey];
+  const entry = g.results.find(x => x.t.id === truckId);
+  if (!entry) return;
+  const { t, r, st: s } = entry;
+  const groupNames = { horgos: "HORGOS", zhongshan: "ZHONGSHAN", yiwu: "YIWU", consol: "Zhongshan + Yiwu → Хоргос" };
+
+  // сортировка как в наших планах погрузки — по кг/м³ по возрастанию
+  const rows = r.items.slice().sort((a, b) => a.density - b.density).map((it, idx) => ({
+    n: idx + 1,
+    client: it.client || "—",
+    places: it.places || "",
+    kg: it.kg, cbm: it.cbm, density: it.density,
+    cat: it.cat,
+    cat_label: FURA_CATS[it.cat].label,
+    color: FURA_CATS[it.cat].color,
+    wh: it.wh || "—",
+    date: it.date || "—",
+  }));
+  const totKg = rows.reduce((a, x) => a + x.kg, 0);
+  const totCbm = rows.reduce((a, x) => a + x.cbm, 0);
+  const totPlaces = rows.reduce((a, x) => a + (parseFloat(String(x.places).replace(",", ".")) || 0), 0);
+  const avgD = totCbm > 0 ? totKg / totCbm : 0;
+
+  document.getElementById("fura-plan-title").textContent = `${t.name} · ${groupNames[groupKey] || groupKey}`;
+  document.getElementById("fura-plan-sub").textContent =
+    `${s.label} · объём ${Math.round(s.fv * 100)}% (${r.vol.toFixed(1)} из ${t.V} м³) · вес ${Math.round(s.fw * 100)}% (${(r.w / 1000).toFixed(1)} из ${t.W / 1000} т) · позиций: ${rows.length}`;
+
+  const body = document.getElementById("fura-plan-body");
+  body.innerHTML = rows.length ? `
+    <table class="tfw-plan-table">
+      <thead><tr>
+        <th>№</th><th>Клиент / код</th><th>Кол-во мест</th><th>Вес, кг</th><th>Объём, м³</th>
+        <th>Кг в 1 м³</th><th>Категория</th><th>Склад</th><th>Дата приёмки</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(x => `
+        <tr style="background:${furaHexToRgba(x.color, 0.12)};box-shadow:inset 3px 0 0 ${x.color}">
+          <td>${x.n}</td>
+          <td style="font-weight:700">${esc(x.client)}</td>
+          <td>${esc(String(x.places || "—"))}</td>
+          <td class="tfw-mono">${Math.round(x.kg).toLocaleString("ru-RU")}</td>
+          <td class="tfw-mono">${x.cbm.toFixed(2)}</td>
+          <td class="tfw-mono">${Math.round(x.density)}</td>
+          <td><span style="color:${x.color};font-weight:700">${esc(x.cat_label)}</span></td>
+          <td>${esc(x.wh)}</td>
+          <td class="tfw-mono">${esc(x.date)}</td>
+        </tr>`).join("")}
+        <tr class="total">
+          <td></td><td>TOTAL</td>
+          <td>${totPlaces ? Math.round(totPlaces) : "—"}</td>
+          <td class="tfw-mono">${Math.round(totKg).toLocaleString("ru-RU")}</td>
+          <td class="tfw-mono">${totCbm.toFixed(2)}</td>
+          <td class="tfw-mono">${Math.round(avgD)}</td>
+          <td colspan="3" style="color:var(--muted2)">объём ${Math.round(r.vol / t.V * 100)}% · вес ${Math.round(r.w / t.W * 100)}% от лимитов фуры</td>
+        </tr>
+      </tbody>
+    </table>` :
+    `<div class="empty" style="padding:22px"><div class="empty-icon">🚛</div><p>Пока нет позиций для этой фуры.</p></div>`;
+
+  __furaPlanCurrent = {
+    title: `${t.name} — ${groupNames[groupKey] || groupKey}`,
+    truck: { name: t.name, V: t.V, W: t.W },
+    rows,
+  };
+  openModal("fura-plan-modal");
+}
+
+async function downloadFuraPlanXlsx() {
+  if (!__furaPlanCurrent || !__furaPlanCurrent.rows.length) {
+    toast("План пуст — нечего выгружать", "err");
+    return;
+  }
+  try {
+    const resp = await fetch("/api/director/fura-plan-xlsx", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(__furaPlanCurrent),
+    });
+    if (!resp.ok) throw new Error("Ошибка выгрузки: " + resp.status);
+    const blob = await resp.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "fura-plan-" + new Date().toISOString().slice(0, 10) + ".xlsx";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) {
+    toast(e.message, "err");
+  }
 }
 
 function renderOmborWeightCategories(data) {

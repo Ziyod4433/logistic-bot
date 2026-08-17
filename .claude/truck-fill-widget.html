@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Truck Fill Widget — Night Dispatch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+/* =====================================================================
+   TRUCK FILL WIDGET — стиль «Ночная диспетчерская»
+   Самодостаточный компонент. Точка входа: TruckFillWidget.mount(el, opts)
+   Обновление данных: widget.update({ stock:[g,y,o,r] }) или { items:[...] }
+   ===================================================================== */
+.tfw{
+  --tfw-bg:#10151c; --tfw-card:#171e27; --tfw-line:#232d3a; --tfw-line2:#2c3847;
+  --tfw-ink:#e8edf4; --tfw-mute:#93a1b3; --tfw-dim:#7e8a9c;
+  --tfw-amber:#f5c518; --tfw-red:#e5484d; --tfw-green:#5fe08a;
+  --tfw-g:#0ca30c; --tfw-y:#fab219; --tfw-o:#ec835a; --tfw-r:#d03b3b;
+  font-family:'Manrope',system-ui,sans-serif; color:var(--tfw-ink);
+  background:var(--tfw-bg); border-radius:18px; padding:20px 20px 22px;
+  box-sizing:border-box;
+}
+.tfw *{box-sizing:border-box;margin:0;padding:0}
+.tfw-mono{font-family:'JetBrains Mono',monospace}
+
+.tfw-top{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.tfw-top .tfw-title{font-size:15px;font-weight:800;letter-spacing:-.01em}
+.tfw-top .tfw-sub{font-size:12.5px;color:var(--tfw-mute);margin-top:3px}
+.tfw-top .tfw-sub b{color:var(--tfw-ink);font-weight:700}
+.tfw-top .tfw-sub .tfw-rec{color:var(--tfw-amber)}
+.tfw-top .tfw-sub .tfw-warn{color:var(--tfw-red)}
+.tfw-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--tfw-mute)}
+.tfw-legend span{display:flex;align-items:center;gap:5px}
+.tfw-legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+
+.tfw-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}
+.tfw-card{background:var(--tfw-card);border:1px solid var(--tfw-line);border-radius:14px;padding:16px 16px 14px;position:relative;transition:border-color .3s,box-shadow .3s}
+.tfw-card.is-rec{border-color:var(--tfw-amber);box-shadow:0 0 0 1px var(--tfw-amber) inset}
+.tfw-card .tfw-flag{position:absolute;top:-10px;right:14px;background:var(--tfw-amber);color:#211a02;font-size:11px;font-weight:800;padding:3px 10px;border-radius:20px;letter-spacing:.04em;display:none}
+.tfw-card.is-rec .tfw-flag{display:block}
+.tfw-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.tfw-head .tfw-nm{font-weight:800;font-size:15px}
+.tfw-head .tfw-cap{font-size:11.5px;color:var(--tfw-dim)}
+
+/* --- фура: SVG-контур поверх HTML-заливки, чтобы заливка анимировалась CSS-переходом --- */
+.tfw-truck{position:relative;aspect-ratio:460/150;width:100%}
+.tfw-truck svg{position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none}
+.tfw-hold{position:absolute;left:2.61%;top:15.33%;width:69.78%;height:51.33%;border-radius:5px;overflow:hidden;z-index:1;
+  background:#0b0f14;background-image:repeating-linear-gradient(-55deg,transparent 0 9px,rgba(255,255,255,.035) 9px 11px)}
+.tfw-cargo{position:absolute;inset:0;display:flex;z-index:2}
+.tfw-cargo i{display:block;height:100%;width:0;opacity:.92;transition:width 1s cubic-bezier(.22,.9,.3,1)}
+.tfw-cargo i:nth-child(1){background:var(--tfw-g)}
+.tfw-cargo i:nth-child(2){background:var(--tfw-y)}
+.tfw-cargo i:nth-child(3){background:var(--tfw-o)}
+.tfw-cargo i:nth-child(4){background:var(--tfw-r)}
+.tfw-wheel{transform-box:fill-box;transform-origin:center}
+.tfw-truck.is-spin .tfw-wheel{animation:tfw-spin 2.6s linear infinite}
+@keyframes tfw-spin{to{transform:rotate(360deg)}}
+
+/* --- LED-шкала веса --- */
+.tfw-leds{display:flex;gap:4px;margin:10px 0 8px}
+.tfw-leds b{flex:1;height:7px;border-radius:2px;background:#242e3b;transition:background .35s}
+.tfw-leds b.on{background:var(--tfw-amber)}
+.tfw-leds b.hot{background:var(--tfw-red)}
+.tfw-leds b.hot.blink{animation:tfw-blink 1s steps(2,end) infinite}
+@keyframes tfw-blink{50%{opacity:.35}}
+
+.tfw-meta{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.tfw-meta .tfw-nums{font-size:12px;color:#aab6c6}
+.tfw-badge{font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:7px;letter-spacing:.02em;white-space:nowrap}
+.tfw-badge.ready{background:rgba(70,200,110,.15);color:var(--tfw-green)}
+.tfw-badge.over{background:rgba(229,72,77,.16);color:#ff8b8f}
+.tfw-badge.almost{background:rgba(245,197,24,.14);color:var(--tfw-amber)}
+.tfw-badge.fill{background:var(--tfw-line);color:var(--tfw-mute)}
+.tfw-hint{font-size:11.5px;color:#ff8b8f;margin-top:7px;display:none}
+.tfw-hint.show{display:block}
+
+@media (prefers-reduced-motion:reduce){
+  .tfw-cargo i{transition:none}
+  .tfw-truck.is-spin .tfw-wheel,.tfw-leds b.hot.blink{animation:none}
+}
+@media (max-width:640px){.tfw{padding:14px 12px 16px}}
+
+/* ---- только для демо-страницы ---- */
+body{margin:0;background:#e9ecef;font-family:'Manrope',system-ui,sans-serif}
+.demo{max-width:1040px;margin:0 auto;padding:24px 16px 60px}
+.demo-panel{background:#fff;border:1px solid #dde2e8;border-radius:14px;padding:14px 16px;margin-bottom:18px}
+.demo-panel .row{display:flex;flex-wrap:wrap;gap:12px}
+.demo-panel label{flex:1;min-width:110px;font-size:12px;font-weight:700;color:#4a5361}
+.demo-panel input{width:100%;height:36px;margin-top:4px;border:1.5px solid #cfd6de;border-radius:8px;padding:0 10px;font:inherit;font-size:14px}
+.demo-panel .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.demo-panel button{font:inherit;font-size:13px;font-weight:700;border:1.5px solid #cfd6de;background:#fff;border-radius:8px;padding:7px 12px;cursor:pointer}
+.demo-panel button.play{background:#10151c;border-color:#10151c;color:#fff}
+</style>
+</head>
+<body>
+<div class="demo">
+  <div class="demo-panel">
+    <div class="row">
+      <label>🟢 Yengil, м³<input type="number" id="in0" value="40" min="0"></label>
+      <label>🟡 O'rta, м³<input type="number" id="in1" value="62" min="0"></label>
+      <label>🟠 Og'ir, м³<input type="number" id="in2" value="35" min="0"></label>
+      <label>🔴 Juda og'ir, м³<input type="number" id="in3" value="10" min="0"></label>
+    </div>
+    <div class="btns">
+      <button class="play" id="btnPlay">▶ Показать заполнение</button>
+      <button data-preset="40,62,35,10">Средний день</button>
+      <button data-preset="12,28,48,52">Тяжёлая неделя</button>
+      <button data-preset="70,95,30,6">Лёгкий сезон</button>
+      <button data-preset="8,14,6,2">Почти пусто</button>
+    </div>
+  </div>
+
+  <!-- сюда монтируется виджет -->
+  <div id="truckWidget"></div>
+</div>
+
+<script>
+/* =====================================================================
+   TruckFillWidget — логика + рендер. Никаких зависимостей.
+   ===================================================================== */
+const TruckFillWidget = (() => {
+  const RHO_DEFAULT = [69, 145, 253, 591]; // средние плотности категорий по статистике июнь–июль 2026
+  const TRUCKS_DEFAULT = [
+    { id:'t96',  name:'Фура 96 м³',  V:80,  W:24000 },
+    { id:'t120', name:'Фура 120 м³', V:105, W:27000 },
+    { id:'t145', name:'Фура 145 м³', V:130, W:29000 },
+  ];
+  const CAT_NAMES = ['Yengil','O\'rta','Og\'ir','Juda og\'ir'];
+
+  /* --- ядро: распределение груза в фуру (см. fura-widget-task.md, раздел 5) --- */
+  function allocate(stock, V, W, RHO){
+    const load=[0,0,0,0]; let rem=V;
+    for(const i of [3,2,1,0]){const t=Math.min(stock[i],rem);load[i]=t;rem-=t;}
+    let w=load.reduce((s,x,i)=>s+x*RHO[i],0);
+    for(const h of [3,2,1]){if(w<=W)break;
+      for(const l of [0,1,2]){if(l>=h||w<=W)continue;
+        const sp=stock[l]-load[l];if(sp<=0)continue;
+        const s=Math.min(load[h],sp,(w-W)/(RHO[h]-RHO[l]));
+        if(s>0){load[h]-=s;load[l]+=s;w-=s*(RHO[h]-RHO[l]);}}}
+    for(const h of [3,2,1,0]){if(w<=W)break;
+      const c=Math.min(load[h],(w-W)/RHO[h]);load[h]-=c;w-=c*RHO[h];}
+    return {load, vol:load.reduce((a,b)=>a+b,0), w};
+  }
+  function statusOf(stock, t, r){
+    const sv=stock.reduce((a,b)=>a+b,0);
+    const fv=r.vol/t.V, fw=r.w/t.W, fill=Math.max(fv,fw);
+    let code,label;
+    if(sv>=t.V&&fv>=0.995&&r.w<=t.W+1){code='ready';label='Можно грузить';}
+    else if(sv>=t.V&&fv<0.995){code='over';label='Перевес — нужен лёгкий';}
+    else if(fill>=0.8){code='almost';label='Почти готова · '+Math.round(fill*100)+'%';}
+    else{code='fill';label='Накопление · '+Math.round(fill*100)+'%';}
+    return {code,label,fill,fv,fw};
+  }
+  /* сколько м³ лёгкого не хватает, чтобы фура поехала полной по объёму */
+  function lightDeficit(stock,t,r,RHO){
+    if(r.vol>=t.V-0.5)return 0;
+    const missingVol=t.V-r.vol; // столько кубов не влезло из-за веса
+    // заменяем тяжёлый на лёгкий: на каждый м³ красного нужен ~1 м³ зелёного и он экономит RHO[3]-RHO[0]
+    return Math.ceil(missingVol);
+  }
+  /* признак стока: [м³ по 4 категориям]. Если пришли позиции с kg — считаем реальные ρ. */
+  function normalize(input, RHO){
+    if(input.stock) return {stock:input.stock.slice(), RHO:RHO.slice()};
+    // items: [{cbm, kg}] или [{cbm, density}]
+    const vol=[0,0,0,0], wt=[0,0,0,0];
+    for(const it of input.items||[]){
+      const d = it.density!=null ? it.density : (it.kg/it.cbm);
+      const c = d<100?0:d<200?1:d<350?2:3;
+      vol[c]+=it.cbm; wt[c]+=it.cbm*d;
+    }
+    const rho=vol.map((v,i)=>v>0?wt[i]/v:RHO[i]);
+    return {stock:vol, RHO:rho};
+  }
+
+  const SVG=`<svg viewBox="0 0 460 150" fill="none" aria-hidden="true">
+  <rect x="10" y="21" width="325" height="81" rx="7" stroke="#a9b6c6" stroke-width="2.5"/>
+  <line x1="10" y1="102" x2="335" y2="102" stroke="#a9b6c6" stroke-width="2.5"/>
+  <rect x="20" y="102" width="304" height="8" fill="#232d3a"/>
+  <path d="M345 44 h44 c6 0 11 3 14 8 l12 22 c2 4 3 8 3 12 v16 c0 4 -3 7 -7 7 h-66 z" stroke="#a9b6c6" stroke-width="2.5"/>
+  <path d="M355 52 h30 l11 22 h-41 z" fill="#1d2833" stroke="#5f88a8" stroke-width="1.5"/>
+  <rect x="336" y="96" width="10" height="14" fill="#232d3a"/>
+  <rect x="411" y="100" width="9" height="6" rx="2" fill="#f5c518"/>
+  ${[58,100,384].map(cx=>`<g class="tfw-wheel"><circle cx="${cx}" cy="116" r="16" fill="#0b0f14" stroke="#a9b6c6" stroke-width="2.5"/><circle cx="${cx}" cy="116" r="4" fill="#a9b6c6"/><line x1="${cx}" y1="103" x2="${cx}" y2="129" stroke="#3d4c5e" stroke-width="2"/><line x1="${cx-13}" y1="116" x2="${cx+13}" y2="116" stroke="#3d4c5e" stroke-width="2"/></g>`).join('')}
+  <line x1="0" y1="133" x2="460" y2="133" stroke="#232d3a" stroke-width="2"/></svg>`;
+
+  function mount(el, opts={}){
+    const trucks=opts.trucks||TRUCKS_DEFAULT;
+    let RHO=(opts.rho||RHO_DEFAULT).slice();
+    const title=opts.title||'Загрузка фур';
+    el.innerHTML=`<div class="tfw" role="region" aria-label="${title}">
+      <div class="tfw-top">
+        <div><div class="tfw-title">${title}</div><div class="tfw-sub" data-sum></div></div>
+        <div class="tfw-legend">
+          <span><i style="background:var(--tfw-g)"></i>${CAT_NAMES[0]} 0–100</span>
+          <span><i style="background:var(--tfw-y)"></i>${CAT_NAMES[1]} 100–200</span>
+          <span><i style="background:var(--tfw-o)"></i>${CAT_NAMES[2]} 200–350</span>
+          <span><i style="background:var(--tfw-r)"></i>${CAT_NAMES[3]} 350+</span>
+        </div>
+      </div>
+      <div class="tfw-grid">${trucks.map(t=>`
+        <div class="tfw-card" data-card="${t.id}">
+          <span class="tfw-flag">Рекомендуем</span>
+          <div class="tfw-head"><span class="tfw-nm">${t.name}</span><span class="tfw-cap tfw-mono">${t.V} m³ / ${t.W/1000} t</span></div>
+          <div class="tfw-truck" data-truck><div class="tfw-hold"><div class="tfw-cargo"><i></i><i></i><i></i><i></i></div></div>${SVG}</div>
+          <div class="tfw-leds" data-leds>${'<b></b>'.repeat(20)}</div>
+          <div class="tfw-meta"><span class="tfw-nums tfw-mono" data-nums></span><span class="tfw-badge" data-badge></span></div>
+          <div class="tfw-hint" data-hint></div>
+        </div>`).join('')}</div>
+    </div>`;
+
+    const cards=trucks.map(t=>el.querySelector(`[data-card="${t.id}"]`));
+
+    function update(input){
+      const {stock,RHO:rho}=normalize(input,RHO);
+      const sv=stock.reduce((a,b)=>a+b,0);
+      const sw=stock.reduce((s,x,i)=>s+x*rho[i],0);
+      const D=sv>0?sw/sv:0;
+      // рекомендация фуры по плотности склада
+      let rec=-1;
+      if(sv>0){
+        const sorted=trucks.map((t,i)=>({i,lim:t.W/t.V})).sort((a,b)=>b.lim-a.lim); // от «терпимой» к «строгой»
+        // выбираем самую большую фуру, чей лимит плотности >= D
+        const ok=trucks.map((t,i)=>({i,lim:t.W/t.V,V:t.V})).filter(x=>x.lim>=D).sort((a,b)=>b.V-a.V);
+        if(ok.length){ rec=ok[0].i;
+          // если объёма не хватает на эту фуру — сдвигаемся вниз
+          for(const x of ok){ if(sv>=x.V){rec=x.i;break;} rec=x.i; }
+        }
+      }
+      const maxLim=Math.max(...trucks.map(t=>t.W/t.V));
+      const sum=el.querySelector('[data-sum]');
+      sum.innerHTML='На складе <b>'+Math.round(sv)+' м³ · '+(sw/1000).toFixed(1)+' т</b> · плотность <b>'+Math.round(D)+' кг/м³</b>'
+        +(sv===0?'':D>maxLim?' <span class="tfw-warn">— тяжелее лимита любой фуры, копите лёгкий груз</span>'
+        :rec>=0?' → <span class="tfw-rec">рекомендуем '+trucks[rec].name.toLowerCase()+'</span>':'');
+
+      trucks.forEach((t,i)=>{
+        const r=allocate(stock.slice(),t.V,t.W,rho);
+        const st=statusOf(stock,t,r);
+        const c=cards[i];
+        c.classList.toggle('is-rec',rec===i);
+        c.querySelectorAll('.tfw-cargo i').forEach((s,k)=>s.style.width=(r.load[k]/t.V*100)+'%');
+        const on=Math.round(st.fw*20);
+        c.querySelectorAll('[data-leds] b').forEach((b,k)=>{b.className=k<on?(st.fw>=0.98?'hot'+(st.code==='over'?' blink':''):'on'):'';});
+        c.querySelector('[data-nums]').textContent=Math.round(r.vol)+' м³ / '+(r.w/1000).toFixed(1)+' т · объём '+Math.round(st.fv*100)+'% · вес '+Math.round(st.fw*100)+'%';
+        const b=c.querySelector('[data-badge]'); b.textContent=st.label; b.className='tfw-badge '+st.code;
+        c.querySelector('[data-truck]').classList.toggle('is-spin',st.code==='fill'||st.code==='almost');
+        const h=c.querySelector('[data-hint]');
+        if(st.code==='over'){h.textContent='Не хватает ≈'+lightDeficit(stock,t,r,rho)+' м³ лёгкого/среднего груза, чтобы уехать полной';h.classList.add('show');}
+        else h.classList.remove('show');
+      });
+    }
+    /* «анимация с нуля»: сброс заливки и повторное наполнение */
+    function replay(input){
+      el.querySelectorAll('.tfw-cargo i').forEach(s=>{s.style.transition='none';s.style.width='0';});
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        el.querySelectorAll('.tfw-cargo i').forEach(s=>s.style.transition='');
+        update(input);
+      }));
+    }
+    return {update, replay, allocate:(s,V,W)=>allocate(s,V,W,RHO), setRho:(r)=>{RHO=r.slice();}};
+  }
+  return {mount, allocate:(s,V,W,r)=>allocate(s,V,W,r||RHO_DEFAULT)};
+})();
+
+/* ---------------- демо-обвязка (в платформе не нужна) ---------------- */
+const widget = TruckFillWidget.mount(document.getElementById('truckWidget'), { title:'Склад Чжуншань — загрузка фур' });
+const readStock=()=>[0,1,2,3].map(i=>Math.max(0,parseFloat(document.getElementById('in'+i).value)||0));
+[0,1,2,3].forEach(i=>document.getElementById('in'+i).addEventListener('input',()=>widget.update({stock:readStock()})));
+document.querySelectorAll('[data-preset]').forEach(b=>b.addEventListener('click',()=>{
+  const v=b.dataset.preset.split(',').map(Number);
+  [0,1,2,3].forEach(i=>document.getElementById('in'+i).value=v[i]);
+  widget.replay({stock:v});
+}));
+document.getElementById('btnPlay').addEventListener('click',()=>widget.replay({stock:readStock()}));
+requestAnimationFrame(()=>requestAnimationFrame(()=>widget.update({stock:readStock()})));
+</script>
+</body>
+</html>

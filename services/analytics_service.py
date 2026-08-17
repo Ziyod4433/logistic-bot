@@ -4046,6 +4046,13 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         except Exception:
             pass
     weight_categories: dict = {"configured": False, "categories": [], "total_count": 0}
+    # Positional items for the truck-fill widget (fura yuklash): every
+    # stocked row with real density/cbm, tagged with its warehouse. kg is
+    # reconstructed as density × cbm — in the sheet the density column IS
+    # G.W ÷ CBM, so this recovers the actual gross weight.
+    fura_items: list[dict] = []
+    places_letter = (cols.get("places_col") or "U").strip().upper()
+    places_idx = ombor_service._col_to_index(places_letter) if places_letter else None
     if vazn_letter:
         from datetime import datetime as _dt
         from zoneinfo import ZoneInfo as _ZI
@@ -4084,9 +4091,9 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
             bucket["weight"] += w
             if is_stale:
                 bucket["stale"] += 1
+            wh_raw = safe_cell(row, wh_idx).upper()
+            wh_name = next((n for n in DIRECTOR_WAREHOUSES if n in wh_raw), "")
             if len(bucket["cargos"]) < 300:
-                wh_raw = safe_cell(row, wh_idx).upper()
-                wh_name = next((n for n in DIRECTOR_WAREHOUSES if n in wh_raw), "")
                 bucket["cargos"].append({
                     "bl": safe_cell(row, bl_idx),
                     "w":  round(w, 1),
@@ -4094,6 +4101,24 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
                     "kelgan": arrived.strftime("%d.%m") if arrived else "",
                     "days": days,
                     "stale": is_stale,
+                })
+            # Truck-fill widget item: needs volume too. Rows without CBM
+            # can't be loaded into a truck plan — skip those. Sheet totals
+            # rows (JAMI) have neither a client nor a warehouse — drop them.
+            row_cbm = ombor_service._parse_float(safe_cell(row, cbm_idx))
+            has_identity = bool(safe_cell(row, bl_idx)) or bool(wh_name)
+            if row_cbm > 0 and has_identity and len(fura_items) < 1000:
+                cat_i = DIRECTOR_OMBOR_WEIGHT_CATEGORIES.index(spec)
+                fura_items.append({
+                    "client":  safe_cell(row, bl_idx),
+                    "places":  safe_cell(row, places_idx) if places_idx is not None else "",
+                    "kg":      round(w * row_cbm, 1),
+                    "cbm":     round(row_cbm, 3),
+                    "density": round(w, 1),
+                    "cat":     cat_i,
+                    "wh":      wh_name,
+                    "date":    arrived.strftime("%d.%m.%Y") if arrived else "",
+                    "days":    days,
                 })
         for c in cat_list:
             c["weight"] = round(c["weight"], 1)
@@ -4124,6 +4149,10 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
         "warehouses": warehouses,
         "extra_kpis": extra_kpis,
         "weight_categories": weight_categories,
+        "fura_items": {
+            "configured": bool(vazn_letter),
+            "items": fura_items,
+        },
         "charts": {"chart1": daily_chart, "chart2": dist_chart},
         "diagnostics": diag,
         "message": (

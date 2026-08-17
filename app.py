@@ -5485,6 +5485,91 @@ def analytics_api_sync_status():
     return jsonify(analytics_service.get_sync_settings_payload())
 
 
+@app.route("/api/director/fura-plan-xlsx", methods=["POST"])
+@login_required
+def api_fura_plan_xlsx():
+    """Export a truck loading plan (from the fura widget) as xlsx in the
+    company's loading-plan format: rows colored by weight category,
+    sorted by kg/m³, TOTAL row with truck-limit percentages."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    data = request.json or {}
+    rows = data.get("rows") or []
+    title = str(data.get("title") or "Fura plan").strip()[:80]
+    truck = data.get("truck") or {}
+    truck_v = float(truck.get("V") or 0)
+    truck_w = float(truck.get("W") or 0)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Plan"
+
+    headers = ["№", "Клиент / код", "Кол-во мест", "Вес, кг", "Объём, м³",
+               "Кг в 1 м³", "Категория", "Склад", "Дата приёмки"]
+    ws.append([title])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    ws.cell(row=1, column=1).font = Font(bold=True, size=13)
+    ws.append(headers)
+    for col in range(1, len(headers) + 1):
+        c = ws.cell(row=2, column=col)
+        c.font = Font(bold=True)
+        c.alignment = Alignment(horizontal="center")
+
+    tot_kg = tot_cbm = tot_places = 0.0
+    for i, r in enumerate(rows):
+        kg = float(r.get("kg") or 0)
+        cbm = float(r.get("cbm") or 0)
+        tot_kg += kg
+        tot_cbm += cbm
+        try:
+            tot_places += float(str(r.get("places") or "0").replace(",", "."))
+        except ValueError:
+            pass
+        ws.append([
+            r.get("n") or (i + 1),
+            str(r.get("client") or ""),
+            str(r.get("places") or ""),
+            round(kg),
+            round(cbm, 2),
+            round(float(r.get("density") or 0)),
+            str(r.get("cat_label") or ""),
+            str(r.get("wh") or ""),
+            str(r.get("date") or ""),
+        ])
+        color = str(r.get("color") or "").lstrip("#")
+        if len(color) == 6:
+            fill = PatternFill(start_color=color.upper(), end_color=color.upper(), fill_type="solid")
+            for col in range(1, len(headers) + 1):
+                ws.cell(row=ws.max_row, column=col).fill = fill
+
+    avg_d = (tot_kg / tot_cbm) if tot_cbm > 0 else 0
+    pct = ""
+    if truck_v > 0 and truck_w > 0:
+        pct = f"объём {round(tot_cbm / truck_v * 100)}% · вес {round(tot_kg / truck_w * 100)}% от лимитов"
+    ws.append(["", "TOTAL", round(tot_places) if tot_places else "",
+               round(tot_kg), round(tot_cbm, 2), round(avg_d), pct, "", ""])
+    for col in range(1, len(headers) + 1):
+        ws.cell(row=ws.max_row, column=col).font = Font(bold=True)
+
+    widths = [5, 24, 12, 11, 11, 10, 13, 13, 13]
+    for i, wdt in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = wdt
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    safe_name = re.sub(r"[^\w\-]+", "_", title)[:40] or "fura_plan"
+    return send_file(
+        bio,
+        as_attachment=True,
+        download_name=f"{safe_name}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 @app.route("/analytics/api/plans", methods=["GET"])
 @login_required
 def analytics_api_plans():
