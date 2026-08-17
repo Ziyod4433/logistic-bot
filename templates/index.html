@@ -2327,14 +2327,25 @@ svg.oi {
               <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('sotuv_bazasi',90)">90 kun</button>
               <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('sotuv_bazasi','month')">Joriy oy</button>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Menejer</label>
-              <select id="dir-sotuv-seller" class="inp" style="padding:6px 10px;min-width:180px;max-width:260px" onchange="reloadDirectorSection('sotuv_bazasi')">
-                <option value="">Barcha menejerlar</option>
-              </select>
-              <button type="button" class="btn btn-ghost btn-xs" id="dir-sotuv-nolight" onclick="toggleSotuvLighting()" title="Исключить товары освещения: светильники, люстры, лампы, бра, LED и т.п.">💡 Yoritgichlarsiz</button>
-            </div>
             <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+              <!-- Filtr tugmasi: menejer + yoritgichsiz filtrlari yashiringan panel -->
+              <div style="position:relative">
+                <button type="button" class="btn btn-ghost btn-sm" id="dir-sotuv-filter-btn" onclick="toggleSotuvFilterPanel(event)" title="Filtrlar">
+                  <span>⧩ Filtr</span>
+                  <span id="dir-sotuv-filter-badge" style="display:none;margin-left:6px;font-size:10px;font-weight:800;background:var(--amber);color:#0d0d14;border-radius:10px;padding:1px 7px">0</span>
+                </button>
+                <div id="dir-sotuv-filter-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);z-index:60;width:280px;padding:16px;border:1px solid var(--stroke);border-radius:14px;background:linear-gradient(160deg,#14141f 0%,#101018 60%,#0d0d14 100%);box-shadow:0 18px 44px rgba(0,0,0,.5)">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <span style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Filtrlar</span>
+                    <button type="button" class="btn btn-ghost btn-xs" onclick="clearSotuvFilters()" title="Сбросить фильтры">Tozalash</button>
+                  </div>
+                  <label style="display:block;font-size:11px;color:var(--muted2);margin-bottom:6px">Menejer</label>
+                  <select id="dir-sotuv-seller" class="inp" style="padding:8px 10px;width:100%;margin-bottom:14px" onchange="reloadDirectorSection('sotuv_bazasi')">
+                    <option value="">Barcha menejerlar</option>
+                  </select>
+                  <button type="button" class="btn btn-ghost btn-sm" id="dir-sotuv-nolight" onclick="toggleSotuvLighting()" style="width:100%;justify-content:center" title="Исключить товары освещения: светильники, люстры, лампы, бра, LED и т.п.">💡 Yoritgichlarsiz</button>
+                </div>
+              </div>
               <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('sotuv_bazasi',true)" title="Yangilash">↻</button>
               <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('sotuv_bazasi')">⚙ Manba</button>
             </div>
@@ -9148,8 +9159,57 @@ const SOTUV_STATUS_META = {
 function toggleSotuvLighting() {
   window.__sotuvNoLight = !window.__sotuvNoLight;
   const btn = document.getElementById("dir-sotuv-nolight");
-  if (btn) btn.className = window.__sotuvNoLight ? "btn btn-amber btn-xs" : "btn btn-ghost btn-xs";
+  if (btn) btn.className = window.__sotuvNoLight ? "btn btn-amber btn-sm" : "btn btn-ghost btn-sm";
+  if (btn) btn.style.width = "100%";
   reloadDirectorSection("sotuv_bazasi");
+}
+
+function toggleSotuvFilterPanel(evt) {
+  if (evt) evt.stopPropagation();
+  const panel = document.getElementById("dir-sotuv-filter-panel");
+  if (!panel) return;
+  const open = panel.style.display !== "none";
+  panel.style.display = open ? "none" : "block";
+  if (!open) {
+    // close on outside click / Esc — one-shot listeners
+    setTimeout(() => {
+      const onDoc = e => {
+        if (!panel.contains(e.target) && e.target.id !== "dir-sotuv-filter-btn") closeSotuvFilterPanel();
+      };
+      const onEsc = e => { if (e.key === "Escape") closeSotuvFilterPanel(); };
+      panel.__onDoc = onDoc; panel.__onEsc = onEsc;
+      document.addEventListener("click", onDoc);
+      document.addEventListener("keydown", onEsc);
+    }, 0);
+  }
+}
+
+function closeSotuvFilterPanel() {
+  const panel = document.getElementById("dir-sotuv-filter-panel");
+  if (!panel) return;
+  panel.style.display = "none";
+  if (panel.__onDoc) document.removeEventListener("click", panel.__onDoc);
+  if (panel.__onEsc) document.removeEventListener("keydown", panel.__onEsc);
+  panel.__onDoc = panel.__onEsc = null;
+}
+
+function clearSotuvFilters() {
+  const sel = document.getElementById("dir-sotuv-seller");
+  if (sel) sel.value = "";
+  window.__sotuvNoLight = false;
+  const btn = document.getElementById("dir-sotuv-nolight");
+  if (btn) { btn.className = "btn btn-ghost btn-sm"; btn.style.width = "100%"; }
+  reloadDirectorSection("sotuv_bazasi");
+}
+
+// Показать на кнопке «Filtr» число активных фильтров (менеджер + освещение).
+function updateSotuvFilterBadge() {
+  const badge = document.getElementById("dir-sotuv-filter-badge");
+  if (!badge) return;
+  const sel = document.getElementById("dir-sotuv-seller");
+  const n = (sel && sel.value ? 1 : 0) + (window.__sotuvNoLight ? 1 : 0);
+  badge.textContent = String(n);
+  badge.style.display = n ? "inline-block" : "none";
 }
 
 function renderSotuvBazasi(payload) {
@@ -9164,7 +9224,8 @@ function renderSotuvBazasi(payload) {
       ).join("");
   }
   const lightBtn = document.getElementById("dir-sotuv-nolight");
-  if (lightBtn) lightBtn.className = window.__sotuvNoLight ? "btn btn-amber btn-xs" : "btn btn-ghost btn-xs";
+  if (lightBtn) { lightBtn.className = window.__sotuvNoLight ? "btn btn-amber btn-sm" : "btn btn-ghost btn-sm"; lightBtn.style.width = "100%"; }
+  updateSotuvFilterBadge();
 
   const sellersEl = document.getElementById("dir-sotuv-sellers");
   const sellersMeta = document.getElementById("dir-sotuv-sellers-meta");
