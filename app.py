@@ -5927,7 +5927,11 @@ def api_director_section_data(section: str):
             return jsonify(agg)
         # SOTUV BAZASI — KP / contract prices vs the official tariff
         if section == "sotuv_bazasi":
-            agg = analytics_service.get_director_sotuv_bazasi(cfg, date_from, date_to)
+            agg = analytics_service.get_director_sotuv_bazasi(
+                cfg, date_from, date_to,
+                seller_filter=(request.args.get("seller") or "").strip(),
+                exclude_lighting=(request.args.get("no_lighting") or "") == "1",
+            )
             agg.setdefault("section", section)
             agg.setdefault("from", date_from)
             agg.setdefault("to", date_to)

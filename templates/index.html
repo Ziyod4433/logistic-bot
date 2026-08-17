@@ -2327,6 +2327,13 @@ svg.oi {
               <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('sotuv_bazasi',90)">90 kun</button>
               <button type="button" class="btn btn-ghost btn-xs" onclick="setDirectorPreset('sotuv_bazasi','month')">Joriy oy</button>
             </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">Menejer</label>
+              <select id="dir-sotuv-seller" class="inp" style="padding:6px 10px;min-width:180px;max-width:260px" onchange="reloadDirectorSection('sotuv_bazasi')">
+                <option value="">Barcha menejerlar</option>
+              </select>
+              <button type="button" class="btn btn-ghost btn-xs" id="dir-sotuv-nolight" onclick="toggleSotuvLighting()" title="Исключить товары освещения: светильники, люстры, лампы, бра, LED и т.п.">💡 Yoritgichlarsiz</button>
+            </div>
             <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
               <button type="button" class="btn btn-ghost btn-sm" onclick="reloadDirectorSection('sotuv_bazasi',true)" title="Yangilash">↻</button>
               <button type="button" class="btn btn-amber btn-sm editor-only" onclick="openDirectorSettings('sotuv_bazasi')">⚙ Manba</button>
@@ -8273,6 +8280,11 @@ async function reloadDirectorSection(section, force) {
   const msgEl = document.querySelector(`[data-dir-msg="${section}"]`);
   try {
     const q = new URLSearchParams({ from, to, _t: Date.now() });
+    if (section === "sotuv_bazasi") {
+      const sel = document.getElementById("dir-sotuv-seller");
+      if (sel && sel.value) q.set("seller", sel.value);
+      if (window.__sotuvNoLight) q.set("no_lighting", "1");
+    }
     const res = await api(`/api/director/${section}/data?${q.toString()}`, "GET");
     directorState.loaded[section] = true;
     renderDirectorPayload(section, res);
@@ -9133,7 +9145,27 @@ const SOTUV_STATUS_META = {
   ok:    { label: "Norma",         color: "#66e2b0", icon: "✓" },
 };
 
+function toggleSotuvLighting() {
+  window.__sotuvNoLight = !window.__sotuvNoLight;
+  const btn = document.getElementById("dir-sotuv-nolight");
+  if (btn) btn.className = window.__sotuvNoLight ? "btn btn-amber btn-xs" : "btn btn-ghost btn-xs";
+  reloadDirectorSection("sotuv_bazasi");
+}
+
 function renderSotuvBazasi(payload) {
+  // Manager dropdown: options come pre-filter from the backend, so the
+  // list stays complete while a filter is applied. Keep the selection.
+  const sellerSel = document.getElementById("dir-sotuv-seller");
+  if (sellerSel && Array.isArray(payload.seller_options)) {
+    const current = sellerSel.value;
+    sellerSel.innerHTML = `<option value="">Barcha menejerlar</option>` +
+      payload.seller_options.map(n =>
+        `<option value="${esc(n)}"${n === current ? " selected" : ""}>${esc(n)}</option>`
+      ).join("");
+  }
+  const lightBtn = document.getElementById("dir-sotuv-nolight");
+  if (lightBtn) lightBtn.className = window.__sotuvNoLight ? "btn btn-amber btn-xs" : "btn btn-ghost btn-xs";
+
   const sellersEl = document.getElementById("dir-sotuv-sellers");
   const sellersMeta = document.getElementById("dir-sotuv-sellers-meta");
   const sellers = Array.isArray(payload.sellers) ? payload.sellers : [];

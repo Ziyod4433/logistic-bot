@@ -4227,7 +4227,38 @@ def _sotuv_tariff_for(density: float) -> tuple[float, float, str]:
     return (0.0, 0.0, "—")
 
 
-def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
+# «Товары освещения» для фильтра-исключения в Sotuv bazasi. Длинные
+# ключи ищутся подстрокой (ловят словоформы: светильник/подсветка,
+# люстра/люстры…), короткие — только целым словом, иначе «лед» находил
+# бы «следующий», а «бра» — «браслет».
+_SOTUV_LIGHTING_SUBSTR = (
+    "свет", "люстр", "ламп", "осветит", "освещ", "галоген", "торшер",
+    "прожектор", "паникадил", "фонар", "лэд", "неон",
+    "light", "lamp", "chandel", "lyustra", "yorit", "fonar", "neon",
+)
+_SOTUV_LIGHTING_TOKENS = {"лед", "led", "бра", "bra", "спот", "spot"}
+
+
+def _sotuv_is_lighting(*texts) -> bool:
+    for t in texts:
+        low = str(t or "").lower()
+        if not low:
+            continue
+        if any(s in low for s in _SOTUV_LIGHTING_SUBSTR):
+            return True
+        for tok in re.findall(r"[a-zа-яё]+", low):
+            if tok in _SOTUV_LIGHTING_TOKENS:
+                return True
+    return False
+
+
+def get_director_sotuv_bazasi(
+    cfg: dict,
+    date_from_str: str,
+    date_to_str: str,
+    seller_filter: str = "",
+    exclude_lighting: bool = False,
+) -> dict:
     from services import ombor_service
 
     sheet_id = (cfg.get("sheet_id") or "").strip()
@@ -4236,6 +4267,7 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
 
     cols = cfg.get("columns") or {}
     header_rows = max(0, int(cfg.get("header_rows") or 1))
+    seller_filter_norm = _norm_person_director(seller_filter) if seller_filter.strip() else ""
     # The KP sheet is usually attached by URL with #gid=… — prefer gid,
     # fall back to the tab name.
     gid_or_name = (cfg.get("sheet_gid") or "").strip() or (cfg.get("sheet_name") or "").strip()
@@ -4249,6 +4281,7 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
     seller_idx  = _idx("seller_col",  "C")
     client_idx  = _idx("client_col",  "E")
     product_idx = _idx("product_col", "F")
+    purpose_idx = _idx("purpose_col", "G")
     volume_idx  = _idx("volume_col",  "K")
     density_idx = _idx("density_col", "M")
     price_idx   = _idx("price_col",   "N")
@@ -4296,6 +4329,7 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
             "seller":  safe_cell(row, seller_idx),
             "client":  safe_cell(row, client_idx),
             "product": safe_cell(row, product_idx),
+            "purpose": safe_cell(row, purpose_idx),
             "status_sheet": safe_cell(row, status_idx),
         }
 
@@ -4318,6 +4352,7 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
             "seller":  safe_cell(row, 2),
             "client":  safe_cell(row, 4),
             "product": safe_cell(row, 5),
+            "purpose": safe_cell(row, 6),
             "status_sheet": safe_cell(row, 0),
         }
 
@@ -4336,7 +4371,12 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
         "rows_no_price": 0,
         "rows_outside_period": 0,
         "rows_bad_date": 0,   # unparseable date — row still counted
+        "rows_filtered_seller": 0,
+        "rows_filtered_lighting": 0,
     }
+    # Manager dropdown options: every valid seller, collected BEFORE the
+    # seller/lighting/date filters so the list stays stable while filtering.
+    seller_options_map: dict[str, str] = {}
 
     deals: list[dict] = []
     sellers_acc: dict[str, dict] = {}
@@ -4359,6 +4399,12 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
             diag["rows_no_price"] += 1
             continue
 
+        seller_raw = cells["seller"] or "Retention"
+        skey = _norm_person_director(seller_raw)
+        prev_name = seller_options_map.get(skey, "")
+        if len(seller_raw) > len(prev_name):
+            seller_options_map[skey] = seller_raw
+
         # Date cells look like "05/08/2025 18:06:55" — strip the time part.
         raw_date = cells["raw_date"]
         row_date = ombor_service._parse_date(raw_date.split(" ")[0]) if raw_date else None
@@ -4366,6 +4412,14 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
             diag["rows_bad_date"] += 1   # counted anyway
         if row_date and ((date_from and row_date < date_from) or (date_to and row_date > date_to)):
             diag["rows_outside_period"] += 1
+            continue
+
+        # ── optional filters: manager + «без товаров освещения» ──
+        if seller_filter_norm and skey != seller_filter_norm:
+            diag["rows_filtered_seller"] += 1
+            continue
+        if exclude_lighting and _sotuv_is_lighting(cells["product"], cells.get("purpose")):
+            diag["rows_filtered_lighting"] += 1
             continue
 
         volume = cells["volume"]
@@ -4383,8 +4437,6 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
             status = "ok"
         status_counts[status] += 1
 
-        seller_raw = cells["seller"] or "Retention"
-        skey = _norm_person_director(seller_raw)
         sb = sellers_acc.setdefault(skey, {
             "name": seller_raw, "count": 0, "volume": 0.0,
             "margin": 0.0, "loss": 0,
@@ -4485,6 +4537,11 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
         "sellers": sellers_sorted,
         "deals": deals,
         "status_counts": status_counts,
+        "seller_options": sorted(seller_options_map.values(), key=str.casefold),
+        "filters": {
+            "seller": seller_filter.strip(),
+            "exclude_lighting": bool(exclude_lighting),
+        },
         "tariff": [
             {
                 "range": _sotuv_bracket_label(
@@ -4505,6 +4562,8 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
             f"Tashlangan: og'irliksiz={diag['rows_no_density']}, narxsiz={diag['rows_no_price']}, "
             f"davrdan tashqari={diag['rows_outside_period']}"
             + (f", sanasi buzuq={diag['rows_bad_date']} (hisobga olindi)" if diag["rows_bad_date"] else "")
+            + (f". Menejer filtri: −{diag['rows_filtered_seller']}" if diag["rows_filtered_seller"] else "")
+            + (f". Yoritgichlar chiqarildi: −{diag['rows_filtered_lighting']}" if diag["rows_filtered_lighting"] else "")
             + (f". Transportirovka o'qilmadi: {diag['transport_error']}" if diag.get("transport_error") else "")
         ),
     }
