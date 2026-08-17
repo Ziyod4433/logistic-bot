@@ -4174,11 +4174,13 @@ def get_director_ombor(cfg: dict, date_from_str: str, date_to_str: str) -> dict:
 # 1 m³) and the volume (K, m³). The agreed price is checked against the
 # official delivery tariff to surface losses and margins.
 # ──────────────────────────────────────────────────────────────────────────
-# Tariff (China warehouses → Tashkent, effective 15.05.2026). Bracket =
-# weight of 1 m³ (density, kg/m³). Prices are USD per 1 m³:
-#   base = "Uslugasiz price" (bare floor — below it the deal is a loss)
-#   list = "Price narx" (official sale price)
-# The 1000+ bracket is priced PER KG (0.35 / 0.45 $ за кг × density).
+# Tariff (China warehouses → Tashkent; price list updated Aug 2026).
+# Bracket = weight of 1 m³ (density, kg/m³). Prices are USD per 1 m³:
+#   base = "Standart tarif"   (без услуги / floor)
+#   list = "Eksklyuziv tarif" (с услугой «под ключ»)
+# Per the official price sheet the UPPER bound is INCLUSIVE
+# (0–100, 101–150, …, 701–1000); strictly above 1000 kg/m³ the cargo
+# is priced PER KG (0.35 / 0.45 $ × density).
 DIRECTOR_SOTUV_TARIFF = (
     {"min": 0,    "max": 100,  "base": 90.0,  "list": 110.0},
     {"min": 100,  "max": 150,  "base": 100.0, "list": 120.0},
@@ -4193,18 +4195,35 @@ DIRECTOR_SOTUV_TARIFF = (
 )
 
 
+def _sotuv_bracket_label(prev_hi: float, hi) -> str:
+    """Price-list style label: 0–100, 101–150, …, 1000+ (inclusive tops)."""
+    if hi is None:
+        return "1000+ kg"
+    lo_label = int(prev_hi) + 1 if prev_hi else 0
+    return f"{lo_label}–{int(hi)} kg"
+
+
 def _sotuv_tariff_for(density: float) -> tuple[float, float, str]:
-    """Return (base, list, bracket_label) for a cargo density (kg per 1 m³)."""
+    """Return (base, list, bracket_label) for a cargo density (kg per 1 m³).
+
+    Bracket upper bounds are INCLUSIVE, matching the official price list:
+    exactly 100 kg/m³ bills as 0–100 (90 $), exactly 1000 as 701–1000
+    (240 $); only strictly heavier than 1000 switches to per-kg pricing.
+    """
+    prev_hi = 0.0
     for b in DIRECTOR_SOTUV_TARIFF:
-        lo, hi = b["min"], b["max"]
-        if density >= lo and (hi is None or density < hi):
-            if hi is None:
+        hi = b["max"]
+        if hi is None:
+            if density > b["min"]:
                 return (
                     round(b["base_per_kg"] * density, 2),
                     round(b["list_per_kg"] * density, 2),
-                    f"{lo}+ kg",
+                    _sotuv_bracket_label(None, None),
                 )
-            return (b["base"], b["list"], f"{lo}–{hi} kg")
+            continue
+        if density <= hi:
+            return (b["base"], b["list"], _sotuv_bracket_label(prev_hi, hi))
+        prev_hi = hi
     return (0.0, 0.0, "—")
 
 
@@ -4468,11 +4487,14 @@ def get_director_sotuv_bazasi(cfg: dict, date_from_str: str, date_to_str: str) -
         "status_counts": status_counts,
         "tariff": [
             {
-                "range": (f"{b['min']}–{b['max']}" if b["max"] is not None else f"{b['min']}+"),
+                "range": _sotuv_bracket_label(
+                    DIRECTOR_SOTUV_TARIFF[i - 1]["max"] if i else 0,
+                    b["max"],
+                ).replace(" kg", ""),
                 "base": b.get("base", f"{b.get('base_per_kg')}/kg"),
                 "list": b.get("list", f"{b.get('list_per_kg')}/kg"),
             }
-            for b in DIRECTOR_SOTUV_TARIFF
+            for i, b in enumerate(DIRECTOR_SOTUV_TARIFF)
         ],
         "diagnostics": diag,
         "message": (
