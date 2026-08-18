@@ -313,7 +313,7 @@ body::after {
      Diagonal layout: LTL parks up-left at the tank's TOP edge level,
      FTL parks down-right at the BOTTOM edge level. */
   --drop-size: 120px;  /* diameter of one drop */
-  --drop-x: 168px;     /* horizontal parking distance from the center */
+  --drop-x: 190px;     /* horizontal parking distance from the center */
   --drop-y-l: -150px;  /* LTL (left) — top edge of the big circle */
   --drop-y-r: 150px;   /* FTL (right) — bottom edge of the big circle */
   --drop-sy: 58px;     /* start point inside the water (below center) */
@@ -1242,7 +1242,7 @@ body.monitor-fullscreen .circsvg {
 body.monitor-fullscreen .tank-clip { inset: 46px; }
 body.monitor-fullscreen .circc {
   --drop-size: 150px;
-  --drop-x: 215px;
+  --drop-x: 250px;
   --drop-y-l: -215px;
   --drop-y-r: 215px;
   --drop-sy: 80px;
@@ -1474,13 +1474,28 @@ body.tv-mode .circsvg {
 body.tv-mode .tank-clip { inset: 52px; }
 body.tv-mode .circc {
   --drop-size: 170px;
-  --drop-x: 245px;
+  --drop-x: 280px;
   --drop-y-l: -245px;
   --drop-y-r: 245px;
   --drop-sy: 90px;
   --drop-fs: 20px;
   --goo-core: 486px;
 }
+
+/* ── TV/kiosk performance (sales profile) ─────────────────────────────
+   TV sticks choke on per-frame SVG-filter rasterization and on the big
+   animated background blurs. Keep the drop choreography, cut the
+   expensive paint work:
+   - no drifting body glows (they force constant backdrop re-blur),
+   - no lq-float on the tank (it re-rasterized the goo layer every frame),
+   - no metaball filter — the drops fly as plain liquid circles.        */
+body.tv-mode::before,
+body.tv-mode::after { animation: none; }
+body.tv-mode .circc { animation: none; }
+body.tv-mode .drop-goo { filter: none; }
+body.tv-mode .drop-goo-core { display: none; }
+body.tv-mode .drop-gmove,
+body.tv-mode .drop-dmove { will-change: transform; }
 body.tv-mode .circbg,
 body.tv-mode .circfill {
   stroke-width: 14 !important;
