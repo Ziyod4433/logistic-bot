@@ -39,6 +39,13 @@
         <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b2"/>
         <feMerge><feMergeNode in="b2"/><feMergeNode in="b1"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
+      <!-- LTL/FTL drops: metaball "goo" — blur + alpha contrast merges the
+           drop silhouettes with the tank water while they separate/dissolve -->
+      <filter id="drop-goo">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur"/>
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9" result="goo"/>
+        <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+      </filter>
     </defs>
   </svg>
 
@@ -88,6 +95,15 @@
         <div id="plan-status-banner" class="plan-status-banner" hidden></div>
         <div class="circwrap">
           <div class="circc">
+            <!-- LTL/FTL drops, liquid layer (variant 4 "капля-стакан").
+                 Sits UNDER the real tank water: visible only while a drop
+                 separates from / dissolves into the tank. #drop-goo-water
+                 height is synced with #tank-water by renderArc(). -->
+            <div class="drop-goo" aria-hidden="true">
+              <div class="drop-goo-core"><div class="drop-goo-water" id="drop-goo-water"></div></div>
+              <div class="drop-gmove ltl"><div class="drop-gblob"></div></div>
+              <div class="drop-gmove ftl"><div class="drop-gblob ftl"></div></div>
+            </div>
             <!-- LIQUID: round tank — the water level tracks plan completion.
                  #tank-water height is synced by renderArc() alongside the ring. -->
             <div class="tank-clip" aria-hidden="true">
@@ -108,6 +124,23 @@
             <div class="circcenter">
               <div class="circpct" id="progress-percent">0%</div>
               <div class="circsub">BAJARILDI</div>
+            </div>
+            <!-- LTL/FTL drop cards (glass bubble with its own water level).
+                 They follow the same flight path as the goo blobs; numbers
+                 fade in after separation, fade out before dissolving. -->
+            <div class="drop-dmove ltl" aria-hidden="true">
+              <div class="drop-ui">
+                <div class="drop-lvl" id="drop-ltl-level"></div>
+                <div class="drop-l">LTL</div>
+                <div class="drop-v" id="drop-ltl-value">0 m³</div>
+              </div>
+            </div>
+            <div class="drop-dmove ftl" aria-hidden="true">
+              <div class="drop-ui ftl">
+                <div class="drop-lvl" id="drop-ftl-level"></div>
+                <div class="drop-l">FTL</div>
+                <div class="drop-v" id="drop-ftl-value">0 fura</div>
+              </div>
             </div>
           </div>
         </div>

@@ -309,6 +309,13 @@ body::after {
   width: 370px;
   height: 370px;
   animation: lq-float 7s ease-in-out infinite;
+  /* LTL/FTL drop geometry (overridden in fullscreen / tv-mode) */
+  --drop-size: 96px;   /* diameter of one drop */
+  --drop-x: 205px;     /* horizontal parking distance from the center */
+  --drop-y: -12px;     /* vertical parking offset */
+  --drop-sy: 58px;     /* start point inside the water (below center) */
+  --drop-fs: 12px;     /* base font size inside the drop */
+  --goo-core: 296px;   /* liquid silhouette matching the tank interior */
 }
 
 /* Water clipped to a circle just inside the ring */
@@ -429,6 +436,207 @@ body::after {
   opacity: 0.85;
   margin-top: 6px;
   text-shadow: 0 1px 10px rgba(3, 20, 30, 0.7);
+}
+
+/* ── LTL/FTL drops (variant 4 "капля-стакан") ──────────────────────────
+   18s cycle: separate from the tank (~1.5s) → glass bubble with numbers,
+   jiggling, 10s → dissolve back into the water (~1.5s) → 5s pause.
+   Two synchronized layers:
+     .drop-goo   — solid silhouettes under the real water, run through the
+                   #drop-goo metaball filter → liquid neck on separation
+                   and merge-on-return. Hidden behind the tank otherwise.
+     .drop-dmove — the visible glass card flying the same path; its numbers
+                   fade in only after the drop has fully separated.       */
+.drop-goo {
+  position: absolute;
+  inset: -170px;
+  z-index: 0;
+  filter: url(#drop-goo);
+  pointer-events: none;
+}
+
+.drop-goo-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--goo-core);
+  height: var(--goo-core);
+  margin: calc(var(--goo-core) / -2) 0 0 calc(var(--goo-core) / -2);
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+/* height synced with #tank-water by renderArc() — same transition curve */
+.drop-goo-water {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0%;
+  background: #1e93c9;
+  transition: height 1.1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.drop-gmove,
+.drop-dmove {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--drop-size);
+  height: var(--drop-size);
+  margin: calc(var(--drop-size) / -2) 0 0 calc(var(--drop-size) / -2);
+  pointer-events: none;
+}
+
+.drop-gmove.ltl { animation: sm-drop-blob-l 18s cubic-bezier(0.45, 0.05, 0.35, 1) infinite; }
+.drop-gmove.ftl { animation: sm-drop-blob-r 18s cubic-bezier(0.45, 0.05, 0.35, 1) infinite; }
+
+.drop-gblob {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 36% 30%, #7dd3fc, #1795cf 70%);
+  animation: sm-drop-jelly 3.6s ease-in-out infinite;
+}
+
+.drop-gblob.ftl {
+  background: radial-gradient(circle at 36% 30%, #7ef0dd, #0f9d8c 70%);
+  animation-duration: 4.2s;
+}
+
+.drop-dmove { z-index: 3; }
+.drop-dmove.ltl { animation: sm-drop-fly-l 18s cubic-bezier(0.45, 0.05, 0.35, 1) infinite; }
+.drop-dmove.ftl { animation: sm-drop-fly-r 18s cubic-bezier(0.45, 0.05, 0.35, 1) infinite; }
+
+.drop-ui {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 50%;
+  border: 1px solid rgba(125, 211, 252, 0.5);
+  background: radial-gradient(circle at 34% 28%, rgba(56, 189, 248, 0.12), rgba(6, 16, 26, 0.9) 72%);
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.3);
+  opacity: 0;
+  font-size: var(--drop-fs);
+  animation: sm-drop-jelly 3.6s ease-in-out infinite, sm-drop-show 18s linear infinite;
+}
+
+.drop-ui.ftl {
+  border-color: rgba(45, 212, 191, 0.5);
+  box-shadow: 0 0 18px rgba(45, 212, 191, 0.3);
+  animation-duration: 4.2s, 18s;
+}
+
+/* glossy highlight, like a real droplet */
+.drop-ui::after {
+  content: "";
+  position: absolute;
+  top: 11%;
+  left: 19%;
+  width: 24%;
+  height: 13%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+  transform: rotate(-26deg);
+}
+
+/* inner water level = this component's share of the plan (set by JS) */
+.drop-lvl {
+  position: absolute;
+  left: -15%;
+  right: -15%;
+  bottom: 0;
+  height: 0%;
+  background: linear-gradient(180deg, rgba(56, 189, 248, 0.55), rgba(14, 116, 144, 0.75));
+  transition: height 1.1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.drop-ui.ftl .drop-lvl {
+  background: linear-gradient(180deg, rgba(45, 212, 191, 0.55), rgba(13, 110, 100, 0.75));
+}
+
+.drop-l {
+  position: relative;
+  z-index: 1;
+  font-size: 0.75em;
+  letter-spacing: 0.24em;
+  font-weight: 700;
+  color: #eaf8ff;
+  text-shadow: 0 1px 6px rgba(3, 20, 30, 0.6);
+}
+
+.drop-v {
+  position: relative;
+  z-index: 1;
+  margin-top: 2px;
+  font-family: "Space Grotesk", "Inter", sans-serif;
+  font-weight: 700;
+  font-size: 1.45em;
+  line-height: 1.15;
+  color: #fff;
+  text-shadow: 0 1px 8px rgba(3, 20, 30, 0.6);
+}
+
+/* JS adds this when the payload has no department data (legacy plans) */
+.circc.drops-off .drop-goo,
+.circc.drops-off .drop-dmove { display: none; }
+
+/* flight path: in the water → parked aside (bobbing) → back → pause */
+@keyframes sm-drop-fly-l {
+  0%, 2%   { transform: translate(0, var(--drop-sy)) scale(0.22); }
+  8%       { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(1); }
+  30%      { transform: translate(calc(var(--drop-x) * -1), calc(var(--drop-y) - 7px)) scale(1); }
+  50%      { transform: translate(calc(var(--drop-x) * -1), calc(var(--drop-y) + 6px)) scale(1); }
+  64%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(1); }
+  70%, 100% { transform: translate(0, var(--drop-sy)) scale(0.22); }
+}
+
+@keyframes sm-drop-fly-r {
+  0%, 2%   { transform: translate(0, var(--drop-sy)) scale(0.22); }
+  8%       { transform: translate(var(--drop-x), var(--drop-y)) scale(1); }
+  30%      { transform: translate(var(--drop-x), calc(var(--drop-y) + 6px)) scale(1); }
+  50%      { transform: translate(var(--drop-x), calc(var(--drop-y) - 7px)) scale(1); }
+  64%      { transform: translate(var(--drop-x), var(--drop-y)) scale(1); }
+  70%, 100% { transform: translate(0, var(--drop-sy)) scale(0.22); }
+}
+
+/* liquid silhouette: same path, but vanishes while the glass card is shown
+   (the drop "turns into glass"), and reappears to carry the merge-back */
+@keyframes sm-drop-blob-l {
+  0%, 2%   { transform: translate(0, var(--drop-sy)) scale(0.22); }
+  8%       { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(1); }
+  13%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(0.01); }
+  61%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(0.01); }
+  64%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(1); }
+  70%, 100% { transform: translate(0, var(--drop-sy)) scale(0.22); }
+}
+
+@keyframes sm-drop-blob-r {
+  0%, 2%   { transform: translate(0, var(--drop-sy)) scale(0.22); }
+  8%       { transform: translate(var(--drop-x), var(--drop-y)) scale(1); }
+  13%      { transform: translate(var(--drop-x), var(--drop-y)) scale(0.01); }
+  61%      { transform: translate(var(--drop-x), var(--drop-y)) scale(0.01); }
+  64%      { transform: translate(var(--drop-x), var(--drop-y)) scale(1); }
+  70%, 100% { transform: translate(0, var(--drop-sy)) scale(0.22); }
+}
+
+/* jelly wobble — the drop never freezes while parked */
+@keyframes sm-drop-jelly {
+  0%, 100% { transform: scale(1, 1); }
+  25%      { transform: scale(1.05, 0.95); }
+  50%      { transform: scale(0.958, 1.042); }
+  75%      { transform: scale(1.028, 0.972); }
+}
+
+/* numbers: appear after separation, hide before the merge-back */
+@keyframes sm-drop-show {
+  0%, 8%   { opacity: 0; }
+  11%, 63% { opacity: 1; }
+  66%, 100% { opacity: 0; }
 }
 
 /* ── Plan badge ─────────────────────────────────────────────────────── */
@@ -1029,6 +1237,14 @@ body.monitor-fullscreen .circsvg {
   height: 530px;
 }
 body.monitor-fullscreen .tank-clip { inset: 46px; }
+body.monitor-fullscreen .circc {
+  --drop-size: 122px;
+  --drop-x: 290px;
+  --drop-y: -14px;
+  --drop-sy: 80px;
+  --drop-fs: 15px;
+  --goo-core: 428px;
+}
 body.monitor-fullscreen .circpct { font-size: 110px; }
 body.monitor-fullscreen .circsub { font-size: 14px; letter-spacing: 4px; }
 body.monitor-fullscreen .pgrid { gap: 18px; }
@@ -1252,6 +1468,14 @@ body.tv-mode .circsvg {
   height: 600px !important;
 }
 body.tv-mode .tank-clip { inset: 52px; }
+body.tv-mode .circc {
+  --drop-size: 136px;
+  --drop-x: 330px;
+  --drop-y: -16px;
+  --drop-sy: 90px;
+  --drop-fs: 17px;
+  --goo-core: 486px;
+}
 body.tv-mode .circbg,
 body.tv-mode .circfill {
   stroke-width: 14 !important;

@@ -81,6 +81,11 @@
     sourceName: byId("source-name"),
     progressArc: byId("progress-arc"),
     progressPercent: byId("progress-percent"),
+    // LTL/FTL drop bubbles around the tank
+    dropLtlValue: byId("drop-ltl-value"),
+    dropFtlValue: byId("drop-ftl-value"),
+    dropLtlLevel: byId("drop-ltl-level"),
+    dropFtlLevel: byId("drop-ftl-level"),
     planTarget: byId("plan-target"),
     planClosed: byId("plan-closed"),
     planRemaining: byId("plan-remaining"),
@@ -303,6 +308,10 @@
     // LIQUID design: the water level inside the tank mirrors the ring.
     const water = document.getElementById("tank-water");
     if (water) water.style.height = normalized + "%";
+    // The goo silhouette behind the tank must hold the same level, so the
+    // LTL/FTL drops separate exactly from the visible water surface.
+    const gooWater = document.getElementById("drop-goo-water");
+    if (gooWater) gooWater.style.height = normalized + "%";
   }
 
   function renderMonthly(rows, metric, label) {
@@ -600,6 +609,29 @@
 
     const logists = payload.departments?.logists || {};
     const sales = payload.departments?.sales || {};
+
+    // LTL/FTL drop bubbles: LTL = pure Ombor m³, FTL = SAVDO truck count.
+    // Inner water level = that component's share of the plan target.
+    const circc = document.querySelector(".circc");
+    if (circc) circc.classList.toggle("drops-off", !payload.departments || !payload.departments.logists);
+    const ftlData = logists.ftl || {};
+    if (els.dropLtlValue) {
+      els.dropLtlValue.textContent = `${formatNumber(Math.round(Number(logists.closed_value || 0)))} m³`;
+    }
+    if (els.dropLtlLevel) {
+      const ltlLevel = Math.max(0, Math.min(100, Number(logists.plan_share_percent || 0)));
+      els.dropLtlLevel.style.height = `${ltlLevel}%`;
+    }
+    if (els.dropFtlValue) {
+      els.dropFtlValue.textContent = `${formatNumber(Number(ftlData.total_trucks || 0))} fura`;
+    }
+    if (els.dropFtlLevel) {
+      const ftlLevel = targetValue
+        ? Math.max(0, Math.min(100, (Number(ftlData.total_cbm || 0) / targetValue) * 100))
+        : 0;
+      els.dropFtlLevel.style.height = `${ftlLevel}%`;
+    }
+
     const logistShare = Math.max(0, Math.min(100, Number(logists.plan_share_percent || 0)));
     const salesShare = Math.max(0, Math.min(100, Number(sales.plan_share_percent || 0)));
     els.logistsShareBar.style.width = `${logistShare}%`;
