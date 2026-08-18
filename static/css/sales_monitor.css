@@ -309,12 +309,15 @@ body::after {
   width: 370px;
   height: 370px;
   animation: lq-float 7s ease-in-out infinite;
-  /* LTL/FTL drop geometry (overridden in fullscreen / tv-mode) */
-  --drop-size: 96px;   /* diameter of one drop */
-  --drop-x: 205px;     /* horizontal parking distance from the center */
-  --drop-y: -12px;     /* vertical parking offset */
+  /* LTL/FTL drop geometry (overridden in fullscreen / tv-mode).
+     Diagonal layout: LTL parks up-left at the tank's TOP edge level,
+     FTL parks down-right at the BOTTOM edge level. */
+  --drop-size: 120px;  /* diameter of one drop */
+  --drop-x: 168px;     /* horizontal parking distance from the center */
+  --drop-y-l: -150px;  /* LTL (left) — top edge of the big circle */
+  --drop-y-r: 150px;   /* FTL (right) — bottom edge of the big circle */
   --drop-sy: 58px;     /* start point inside the water (below center) */
-  --drop-fs: 12px;     /* base font size inside the drop */
+  --drop-fs: 14.5px;   /* base font size inside the drop */
   --goo-core: 296px;   /* liquid silhouette matching the tank interior */
 }
 
@@ -588,19 +591,19 @@ body::after {
 /* flight path: in the water → parked aside (bobbing) → back → pause */
 @keyframes sm-drop-fly-l {
   0%, 2%   { transform: translate(0, var(--drop-sy)) scale(0.22); }
-  8%       { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(1); }
-  30%      { transform: translate(calc(var(--drop-x) * -1), calc(var(--drop-y) - 7px)) scale(1); }
-  50%      { transform: translate(calc(var(--drop-x) * -1), calc(var(--drop-y) + 6px)) scale(1); }
-  64%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(1); }
+  8%       { transform: translate(calc(var(--drop-x) * -1), var(--drop-y-l)) scale(1); }
+  30%      { transform: translate(calc(var(--drop-x) * -1), calc(var(--drop-y-l) - 7px)) scale(1); }
+  50%      { transform: translate(calc(var(--drop-x) * -1), calc(var(--drop-y-l) + 6px)) scale(1); }
+  64%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y-l)) scale(1); }
   70%, 100% { transform: translate(0, var(--drop-sy)) scale(0.22); }
 }
 
 @keyframes sm-drop-fly-r {
   0%, 2%   { transform: translate(0, var(--drop-sy)) scale(0.22); }
-  8%       { transform: translate(var(--drop-x), var(--drop-y)) scale(1); }
-  30%      { transform: translate(var(--drop-x), calc(var(--drop-y) + 6px)) scale(1); }
-  50%      { transform: translate(var(--drop-x), calc(var(--drop-y) - 7px)) scale(1); }
-  64%      { transform: translate(var(--drop-x), var(--drop-y)) scale(1); }
+  8%       { transform: translate(var(--drop-x), var(--drop-y-r)) scale(1); }
+  30%      { transform: translate(var(--drop-x), calc(var(--drop-y-r) + 6px)) scale(1); }
+  50%      { transform: translate(var(--drop-x), calc(var(--drop-y-r) - 7px)) scale(1); }
+  64%      { transform: translate(var(--drop-x), var(--drop-y-r)) scale(1); }
   70%, 100% { transform: translate(0, var(--drop-sy)) scale(0.22); }
 }
 
@@ -608,19 +611,19 @@ body::after {
    (the drop "turns into glass"), and reappears to carry the merge-back */
 @keyframes sm-drop-blob-l {
   0%, 2%   { transform: translate(0, var(--drop-sy)) scale(0.22); }
-  8%       { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(1); }
-  13%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(0.01); }
-  61%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(0.01); }
-  64%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y)) scale(1); }
+  8%       { transform: translate(calc(var(--drop-x) * -1), var(--drop-y-l)) scale(1); }
+  13%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y-l)) scale(0.01); }
+  61%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y-l)) scale(0.01); }
+  64%      { transform: translate(calc(var(--drop-x) * -1), var(--drop-y-l)) scale(1); }
   70%, 100% { transform: translate(0, var(--drop-sy)) scale(0.22); }
 }
 
 @keyframes sm-drop-blob-r {
   0%, 2%   { transform: translate(0, var(--drop-sy)) scale(0.22); }
-  8%       { transform: translate(var(--drop-x), var(--drop-y)) scale(1); }
-  13%      { transform: translate(var(--drop-x), var(--drop-y)) scale(0.01); }
-  61%      { transform: translate(var(--drop-x), var(--drop-y)) scale(0.01); }
-  64%      { transform: translate(var(--drop-x), var(--drop-y)) scale(1); }
+  8%       { transform: translate(var(--drop-x), var(--drop-y-r)) scale(1); }
+  13%      { transform: translate(var(--drop-x), var(--drop-y-r)) scale(0.01); }
+  61%      { transform: translate(var(--drop-x), var(--drop-y-r)) scale(0.01); }
+  64%      { transform: translate(var(--drop-x), var(--drop-y-r)) scale(1); }
   70%, 100% { transform: translate(0, var(--drop-sy)) scale(0.22); }
 }
 
@@ -1238,11 +1241,12 @@ body.monitor-fullscreen .circsvg {
 }
 body.monitor-fullscreen .tank-clip { inset: 46px; }
 body.monitor-fullscreen .circc {
-  --drop-size: 122px;
-  --drop-x: 290px;
-  --drop-y: -14px;
+  --drop-size: 150px;
+  --drop-x: 215px;
+  --drop-y-l: -215px;
+  --drop-y-r: 215px;
   --drop-sy: 80px;
-  --drop-fs: 15px;
+  --drop-fs: 18px;
   --goo-core: 428px;
 }
 body.monitor-fullscreen .circpct { font-size: 110px; }
@@ -1469,11 +1473,12 @@ body.tv-mode .circsvg {
 }
 body.tv-mode .tank-clip { inset: 52px; }
 body.tv-mode .circc {
-  --drop-size: 136px;
-  --drop-x: 330px;
-  --drop-y: -16px;
+  --drop-size: 170px;
+  --drop-x: 245px;
+  --drop-y-l: -245px;
+  --drop-y-r: 245px;
   --drop-sy: 90px;
-  --drop-fs: 17px;
+  --drop-fs: 20px;
   --goo-core: 486px;
 }
 body.tv-mode .circbg,
