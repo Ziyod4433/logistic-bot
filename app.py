@@ -4031,34 +4031,17 @@ def api_resolve_packing_list_codes(batch_id):
     if not isinstance(codes_raw, list):
         codes_raw = []
 
-    # Build two layers of context:
-    #   1) BLs in the currently-open batch (matched first — these are the
-    #      "expected" home of the upload).
-    #   2) BLs across every other still-active batch (fallback so files
-    #      with codes/names that don't belong to the current batch still
-    #      auto-attach to the right BL elsewhere).
+    # STRICT batch scoping: a packing list uploaded from batch X may only
+    # ever attach to BLs of batch X. The old cross-batch fallback misfired
+    # whenever the same BL code lived in two batches — the file silently
+    # landed on the other batch's BL and "left" the batch the operator was
+    # working in.
     current_batch_rows = db.get_bl_by_batch(batch_id) or []
-    all_active_rows = db.get_bls_for_packing_list_picker() or []
-    chat_titles = _build_chat_title_lookup(current_batch_rows + all_active_rows)
+    chat_titles = _build_chat_title_lookup(current_batch_rows)
 
     current_code_index = _build_batch_bl_code_index(batch_id)
-    # Cross-batch code index — built from every active BL, keyed identically
-    # so _normalize_bl_code lookups still work.
-    cross_code_index: dict[str, dict] = {}
-    for row in all_active_rows:
-        primary = _normalize_bl_code(row.get("code") or "")
-        if primary:
-            cross_code_index.setdefault(primary, row)
-        for part in re.split(r"[,;\s]+", str(row.get("merged_codes") or "")):
-            piece = _normalize_bl_code(part)
-            if piece:
-                cross_code_index.setdefault(piece, row)
 
-    current_batch_id_int = int(batch_id)
-
-    # Manual-pick dropdown options — current batch first, then everyone
-    # else, each labeled with the batch name so the admin knows where the
-    # file will land.
+    # Manual-pick dropdown options — current batch only.
     bl_options: list[dict] = []
     seen_ids: set[int] = set()
 
@@ -4082,12 +4065,6 @@ def api_resolve_packing_list_codes(batch_id):
 
     for row in current_batch_rows:
         _push_option(row, is_current=True, batch_name=batch.get("name", ""))
-    for row in all_active_rows:
-        _push_option(
-            row,
-            is_current=(int(row.get("batch_id") or 0) == current_batch_id_int),
-            batch_name=row.get("batch_name") or "",
-        )
 
     def _enrich(row: dict, hit_method: str, matched_on: str, is_current: bool, batch_name: str) -> dict:
         row_chat_id = str(row.get("chat_id") or "").strip()
@@ -4103,8 +4080,9 @@ def api_resolve_packing_list_codes(batch_id):
             "is_current": bool(is_current),
         }
 
-    # New API: resolve by filename (preferred). Try the current batch
-    # first; if nothing fits, fall back to the cross-batch pool.
+    # New API: resolve by filename (preferred). Current batch ONLY — a
+    # file that doesn't fit any BL here stays unmatched so the operator
+    # picks by hand instead of the file silently leaving the batch.
     resolved_by_filename: dict[str, dict] = {}
     for raw_name in filenames_raw:
         name = str(raw_name or "").strip()
@@ -4117,17 +4095,6 @@ def api_resolve_packing_list_codes(batch_id):
                 hit["row"], hit["method"], hit["matched_on"],
                 is_current=True, batch_name=batch.get("name", ""),
             )
-            continue
-
-        # Cross-batch fallback
-        cross_hit = _resolve_filename_to_bl(name, cross_code_index, all_active_rows, chat_titles)
-        if cross_hit:
-            row = cross_hit["row"]
-            resolved_by_filename[raw_name] = _enrich(
-                row, cross_hit["method"], cross_hit["matched_on"],
-                is_current=(int(row.get("batch_id") or 0) == current_batch_id_int),
-                batch_name=row.get("batch_name") or "",
-            )
 
     # Legacy API: resolve by extracted code (current batch only — back-compat).
     resolved_by_code: dict[str, dict] = {}
@@ -4135,7 +4102,7 @@ def api_resolve_packing_list_codes(batch_id):
         code = _normalize_bl_code(raw_code)
         if not code:
             continue
-        row = current_code_index.get(code) or cross_code_index.get(code)
+        row = current_code_index.get(code)
         if not row:
             continue
         resolved_by_code[raw_code] = {
@@ -4171,25 +4138,11 @@ def api_bulk_packing_lists(batch_id):
     except Exception as exc:
         return jsonify({"error": f"Не удалось создать папку загрузки: {exc}"}), 500
 
-    # Whitelist = every BL in every still-active batch. The packing-list
-    # picker now spans all active batches (so a file uploaded from the
-    # context of batch A can legitimately land on a BL belonging to
-    # batch B if that's where the BL code lives). We still validate the
-    # BL exists and isn't from a delivered/archived batch.
+    # Whitelist = BLs of THIS batch only. Cross-batch attach used to be
+    # allowed and misfired when the same BL code existed in two batches:
+    # the file silently landed on the other batch's BL. Strict scoping —
+    # a file uploaded from batch X can only attach inside batch X.
     allowed_ids: set[int] = set()
-    try:
-        all_active = db.get_bls_for_packing_list_picker() or []
-    except Exception:
-        all_active = []
-    for row in all_active:
-        rid = row.get("id")
-        if rid is not None:
-            try:
-                allowed_ids.add(int(rid))
-            except (TypeError, ValueError):
-                pass
-    # Always also accept BLs from this batch as a safety net (in case the
-    # picker query is stricter than get_bl_by_batch — e.g. delivered batches).
     for row in db.get_bl_by_batch(batch_id) or []:
         rid = row.get("id")
         if rid is not None:
@@ -4237,7 +4190,7 @@ def api_bulk_packing_lists(batch_id):
             continue
         if bl_id not in allowed_ids:
             failed += 1
-            results.append({"filename": uploaded_file.filename, "ok": False, "error": "BL не найден ни в одной активной партии"})
+            results.append({"filename": uploaded_file.filename, "ok": False, "error": "BL не из этой партии"})
             continue
 
         original_filename = (uploaded_file.filename or "").strip()
