@@ -3771,7 +3771,17 @@ function closeModal(id) {
   }
 }
 document.querySelectorAll(".overlay").forEach(m=>{
-  m.addEventListener("click", e=>{ if(e.target===m) m.classList.remove("open"); });
+  m.addEventListener("click", e=>{
+    if (e.target !== m) return;
+    // Packing-list bulk upload must survive stray clicks on the backdrop:
+    // closing + reopening the modal would reset the file table and the
+    // in-flight upload loop would silently skip the rest of the queue.
+    if (m.id === "packing-list-bulk-modal" && packingListBulkUploading) {
+      toast("⏳ Идёт загрузка файлов — дождись завершения", "err");
+      return;
+    }
+    m.classList.remove("open");
+  });
 });
 
 // ══════════════════════════════════════════════════════════
@@ -5258,9 +5268,16 @@ async function deleteFileFromManager(fileId, blId) {
 // status: "matched" (auto), "manual" (user picked), "unmatched" (needs picker)
 let packingListBulkFiles = [];
 let packingListBlOptions = [];   // [{id, code, display_code, client_name}]
+let packingListBulkUploading = false;  // true while an upload pass is running
 
 function openPackingListBulkModal() {
   if (!ensureEditor()) return;
+  if (packingListBulkUploading) {
+    // An upload pass is still running — reopen the live table instead of
+    // wiping the in-flight state (a reset would silently kill the queue).
+    openModal("packing-list-bulk-modal");
+    return;
+  }
   if (!currentBatchId) { toast("Сначала открой партию", "err"); return; }
   packingListBulkFiles = [];
   packingListBlOptions = [];
@@ -5369,12 +5386,22 @@ async function onPackingListBulkSelected(event, mode) {
   renderPackingListBulkTable();
 }
 
-function packingListBlOptionsHTML(selectedId) {
+function packingListBlOptionsHTML(selectedId, query) {
   // Render BLs from the current batch first as one optgroup, every other
   // active batch's BLs as a second optgroup labeled "из других партий".
+  // `query` (from the 🔍 search box) filters by BL code / client / batch;
+  // the currently selected option always stays visible.
+  const q = String(query || "").trim().toLowerCase();
+  const matches = (opt) => {
+    if (!q) return true;
+    if (String(opt.id) === String(selectedId)) return true;
+    return [opt.display_code, opt.code, opt.client_name, opt.batch_name]
+      .some(v => String(v || "").toLowerCase().includes(q));
+  };
   const current = [];
   const other = [];
   packingListBlOptions.forEach(opt => {
+    if (!matches(opt)) return;
     (opt.is_current ? current : other).push(opt);
   });
   const renderOpt = (opt) => {
@@ -5386,6 +5413,9 @@ function packingListBlOptionsHTML(selectedId) {
     return `<option value="${opt.id}"${sel}>${esc(label)}</option>`;
   };
   let html = `<option value="">— выбрать BL вручную —</option>`;
+  if (q && !current.length && !other.length) {
+    return `<option value="">— ничего не найдено —</option>`;
+  }
   if (current.length) {
     html += `<optgroup label="Текущая партия">${current.map(renderOpt).join("")}</optgroup>`;
   }
@@ -5393,6 +5423,30 @@ function packingListBlOptionsHTML(selectedId) {
     html += `<optgroup label="Из других партий">${other.map(renderOpt).join("")}</optgroup>`;
   }
   return html;
+}
+
+// Search box + BL dropdown used by the "unmatched" and "editing" rows.
+// Typing in the input re-renders only the row's <select> options (not the
+// whole table), so the input keeps focus while the user types.
+function packingListBlPickerHTML(idx, row) {
+  return `<div style="margin-top:4px">
+    <input class="inp" style="min-width:240px;display:block;margin-bottom:4px"
+           placeholder="🔍 Поиск: BL код, клиент, партия…"
+           value="${esc(row.searchQuery || "")}"
+           oninput="filterPackingListBlSearch(${idx}, this.value)">
+    <select class="inp" style="min-width:240px;display:block" data-pl-select="${idx}"
+            onchange="onPackingListManualPick(${idx}, this.value)">
+      ${packingListBlOptionsHTML(row.blId || "", row.searchQuery || "")}
+    </select>
+  </div>`;
+}
+
+function filterPackingListBlSearch(idx, value) {
+  const row = packingListBulkFiles[idx];
+  if (!row) return;
+  row.searchQuery = value;
+  const sel = document.querySelector(`select[data-pl-select="${idx}"]`);
+  if (sel) sel.innerHTML = packingListBlOptionsHTML(row.blId || "", value);
 }
 
 function onPackingListManualPick(index, blIdRaw) {
@@ -5416,6 +5470,7 @@ function onPackingListManualPick(index, blIdRaw) {
     row.manual = true;
     row.matchMethod = "manual";
     row.matchedOn = "";
+    row.searchQuery = "";
   }
   // Confirming a pick exits edit mode. The savedMatch snapshot is no
   // longer needed (the user has accepted the new choice).
@@ -5507,10 +5562,7 @@ function renderPackingListBulkTable() {
         : `<button class="btn btn-ghost btn-xs" onclick="cancelPackingListEdit(${idx})" style="margin-left:6px">↶ закрыть</button>`;
       badge = `<span class="badge badge-blue">✏ Выбери BL вручную:</span>
                ${cancelBtn}
-               <select class="inp" style="min-width:240px;margin-top:4px;display:block"
-                       onchange="onPackingListManualPick(${idx}, this.value)">
-                 ${packingListBlOptionsHTML(row.blId || "")}
-               </select>`;
+               ${packingListBlPickerHTML(idx, row)}`;
     } else if (row.status === "matched") {
       matched++;
       const method = row.matchMethod === "name" ? "по имени клиента"
@@ -5533,10 +5585,7 @@ function renderPackingListBulkTable() {
     } else {
       missed++;
       badge = `<span class="badge badge-red">Не найдено — выбери BL:</span>
-               <select class="inp" style="min-width:240px;margin-top:4px"
-                       onchange="onPackingListManualPick(${idx}, this.value)">
-                 ${packingListBlOptionsHTML("")}
-               </select>`;
+               ${packingListBlPickerHTML(idx, row)}`;
       blCodeCell = "—";
       clientCell = "—";
     }
@@ -5626,6 +5675,12 @@ async function uploadPackingListBulk() {
   const filesBtn = document.querySelector("#packing-list-bulk-modal button[onclick*=\"files-input\"]");
   const originalLabel = btn.innerHTML;
 
+  // Snapshot the batch id: if the user navigates to another batch while
+  // files are still uploading, the remaining requests must keep hitting
+  // the batch the upload started from.
+  const batchId = currentBatchId;
+  packingListBulkUploading = true;
+
   btn.disabled = true;
   if (cancelBtn) cancelBtn.disabled = true;
   if (folderBtn) folderBtn.disabled = true;
@@ -5635,60 +5690,68 @@ async function uploadPackingListBulk() {
   let doneFail = 0;
   let firstError = "";
 
-  // Upload one file at a time so each row gets individual feedback. Avoids
-  // multipart edge-cases that can swallow the whole batch on a single bad
-  // file and lets us update the table inline.
-  for (let i = 0; i < queue.length; i++) {
-    const idx = queue[i];
-    const row = packingListBulkFiles[idx];
-    if (!row || !row.file || !row.blId) continue;
+  try {
+    // Upload one file at a time so each row gets individual feedback. Avoids
+    // multipart edge-cases that can swallow the whole batch on a single bad
+    // file and lets us update the table inline.
+    for (let i = 0; i < queue.length; i++) {
+      const idx = queue[i];
+      const row = packingListBulkFiles[idx];
+      if (!row || !row.file || !row.blId) continue;
 
-    row.uploadResult = "uploading";
-    renderPackingListBulkTable();
-    btn.innerHTML = `⏳ Загрузка ${i + 1}/${queue.length}...`;
-    summary.textContent = `Прогресс: ${i + 1}/${queue.length} · ✅ ${doneOk} · ❌ ${doneFail}`;
+      row.uploadResult = "uploading";
+      renderPackingListBulkTable();
+      btn.innerHTML = `⏳ Загрузка ${i + 1}/${queue.length}...`;
+      summary.textContent = `Прогресс: ${i + 1}/${queue.length} · ✅ ${doneOk} · ❌ ${doneFail}`;
 
-    const fd = new FormData();
-    fd.append("files", row.file, row.file.name);
-    fd.append("bl_ids", String(row.blId));
+      const fd = new FormData();
+      fd.append("files", row.file, row.file.name);
+      fd.append("bl_ids", String(row.blId));
 
-    try {
-      const r = await fetch(`/api/batches/${currentBatchId}/packing-lists/bulk`, {
-        method: "POST",
-        body: fd,
-      });
-      let data = {};
-      try { data = await r.json(); } catch (_) { data = {}; }
+      try {
+        const r = await fetch(`/api/batches/${batchId}/packing-lists/bulk`, {
+          method: "POST",
+          body: fd,
+        });
+        let data = {};
+        try { data = await r.json(); } catch (_) { data = {}; }
 
-      if (!r.ok) {
-        const err = data.error || `HTTP ${r.status}`;
-        console.error("Bulk upload failed:", err, data);
+        if (!r.ok) {
+          const err = data.error || `HTTP ${r.status}`;
+          console.error("Bulk upload failed:", err, data);
+          row.uploadResult = "error";
+          row.uploadError = err;
+          doneFail++;
+          if (!firstError) firstError = err;
+        } else if (Number(data.uploaded || 0) > 0) {
+          row.uploadResult = "ok";
+          row.uploadError = "";
+          doneOk++;
+        } else {
+          const detail = (data.results && data.results[0] && data.results[0].error) || "Сервер не принял файл";
+          console.error("Bulk upload rejected:", detail, data);
+          row.uploadResult = "error";
+          row.uploadError = detail;
+          doneFail++;
+          if (!firstError) firstError = detail;
+        }
+      } catch (e) {
+        const err = (e && e.message) || "Сетевая ошибка";
+        console.error("Bulk upload exception:", e);
         row.uploadResult = "error";
         row.uploadError = err;
         doneFail++;
         if (!firstError) firstError = err;
-      } else if (Number(data.uploaded || 0) > 0) {
-        row.uploadResult = "ok";
-        row.uploadError = "";
-        doneOk++;
-      } else {
-        const detail = (data.results && data.results[0] && data.results[0].error) || "Сервер не принял файл";
-        console.error("Bulk upload rejected:", detail, data);
-        row.uploadResult = "error";
-        row.uploadError = detail;
-        doneFail++;
-        if (!firstError) firstError = detail;
       }
-    } catch (e) {
-      const err = (e && e.message) || "Сетевая ошибка";
-      console.error("Bulk upload exception:", e);
-      row.uploadResult = "error";
-      row.uploadError = err;
-      doneFail++;
-      if (!firstError) firstError = err;
-    }
 
-    renderPackingListBulkTable();
+      renderPackingListBulkTable();
+    }
+  } finally {
+    packingListBulkUploading = false;
+    btn.disabled = false;
+    if (cancelBtn) cancelBtn.disabled = false;
+    if (folderBtn) folderBtn.disabled = false;
+    if (filesBtn) filesBtn.disabled = false;
   }
 
   btn.innerHTML = originalLabel;
@@ -5701,14 +5764,11 @@ async function uploadPackingListBulk() {
     toast(`Не удалось загрузить файлы. Ошибка: ${firstError}`, "err");
   }
 
-  btn.disabled = false;
-  if (cancelBtn) cancelBtn.disabled = false;
-  if (folderBtn) folderBtn.disabled = false;
-  if (filesBtn) filesBtn.disabled = false;
+  renderPackingListBulkTable();
 
   // Refresh the BL list quietly so file counts update. Errors here mustn't
   // hide the upload results — swallow them.
-  try { await loadBatchDetail(currentBatchId); } catch (e) { console.warn("loadBatchDetail after bulk:", e); }
+  try { await loadBatchDetail(batchId); } catch (e) { console.warn("loadBatchDetail after bulk:", e); }
 }
 
 async function loadBLFiles(blId) {
