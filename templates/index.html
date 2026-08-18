@@ -3882,6 +3882,17 @@ function lateStageBadge(stage) {
     : `<span class="badge badge-blue">🚛 Yo'lda</span>`;
 }
 
+function lateSkladCell(sklad) {
+  if (!sklad) return `<span style="color:var(--muted2)">—</span>`;
+  return `<span class="badge badge-muted">🏭 ${esc(sklad)}</span>`;
+}
+
+function lateSellerCell(seller) {
+  if (!seller) return `<span style="color:var(--muted2)">—</span>`;
+  const short = seller.split(/\s+/).slice(0, 2).join(" ");
+  return `<span title="${esc(seller)}" style="font-size:11px">${esc(short)}</span>`;
+}
+
 function renderLateCargoModal() {
   const body = document.getElementById("late-cargo-body");
   const d = lateCargoData;
@@ -3908,11 +3919,13 @@ function renderLateCargoModal() {
           <span style="font-size:11px;color:var(--muted2)">${g.items.length} груз(ов) · макс. опоздание +${g.max_late} дн.</span>
         </div>
         <table class="tbl">
-          <thead><tr><th>Груз (BRAND NAME)</th><th>Этап</th><th>Прибыл на склад</th><th>Дней прошло</th><th>Опоздание</th></tr></thead>
+          <thead><tr><th>Груз (BRAND NAME)</th><th>Склад</th><th>Продавец</th><th>Этап</th><th>Прибыл на склад</th><th>Дней прошло</th><th>Опоздание</th></tr></thead>
           <tbody>
             ${g.items.map(it => `
             <tr>
               <td style="font-weight:600">${esc(it.brand)}</td>
+              <td>${lateSkladCell(it.sklad)}</td>
+              <td>${lateSellerCell(it.seller)}</td>
               <td>${lateStageBadge(it.stage)}</td>
               <td class="mono" style="font-size:11px">${esc(it.arrived)}</td>
               <td>${it.days_total} дн.${it.stage === "ombor" ? ` <span style="font-size:10px;color:var(--muted2)">(на складе)</span>` : ""}</td>
@@ -3932,11 +3945,13 @@ function renderLateCargoModal() {
         <span style="font-size:11px;color:var(--muted2)">ещё не опаздывают, но не загружены в фуру</span>
       </div>
       <table class="tbl">
-        <thead><tr><th>Груз (BRAND NAME)</th><th>Прибыл на склад</th><th>Дней на складе</th></tr></thead>
+        <thead><tr><th>Груз (BRAND NAME)</th><th>Склад</th><th>Продавец</th><th>Прибыл на склад</th><th>Дней на складе</th></tr></thead>
         <tbody>
           ${d.ombor_warning.map(it => `
           <tr>
             <td style="font-weight:600">${esc(it.brand)}</td>
+            <td>${lateSkladCell(it.sklad)}</td>
+            <td>${lateSellerCell(it.seller)}</td>
             <td class="mono" style="font-size:11px">${esc(it.arrived)}</td>
             <td><span class="badge badge-track-yellow">${it.days_in_ombor} дн.</span></td>
           </tr>`).join("")}

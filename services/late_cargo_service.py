@@ -79,6 +79,28 @@ def _locate_columns(header: list[str], data_rows: list[list[str]]) -> dict:
     return {"brand": brand_idx, "arrive": arrive_idx, "reys": reys_idx}
 
 
+def _pick_named_column(name: str, header_rows: list[list[str]], sample_rows: list[list[str]]) -> int | None:
+    """Find the data column whose header mentions ``name``.
+
+    gviz merges multi-row headers unreliably (e.g. the Ombor tab's merged
+    label row says "SKLAD ZHONGSHAN" one column LEFT of the real SKLAD
+    data), so candidates are gathered from every header-ish top row and
+    the candidate whose column actually holds data wins.
+    """
+    candidates: list[int] = []
+    for hrow in header_rows:
+        for j, cell in enumerate(hrow):
+            if name in _norm(cell) and j not in candidates:
+                candidates.append(j)
+    best_j = None
+    best = -1
+    for j in candidates:
+        filled = sum(1 for r in sample_rows if j < len(r) and r[j].strip())
+        if filled > best:
+            best, best_j = filled, j
+    return best_j
+
+
 def _read_stage(sheet_name: str) -> list[dict]:
     """Return the real cargo rows of one tab: parsed arrive date + brand.
 
@@ -93,10 +115,21 @@ def _read_stage(sheet_name: str) -> list[dict]:
     cols = _locate_columns(rows[header_i], data_rows)
     if cols["brand"] is None or cols["arrive"] is None:
         raise ValueError(f"{sheet_name}: BRAND NAME / DATE OF ARRIVE ustunlari topilmadi")
+
+    def _arrive_of(row: list[str]):
+        raw = row[cols["arrive"]].strip() if cols["arrive"] < len(row) else ""
+        return ombor_service._parse_date(raw)
+
+    # Extra columns (warehouse + seller). Header-ish rows = top rows with
+    # no parseable arrive date; real cargo rows drive the fill-count test.
+    top_rows = [r for r in rows[header_i:header_i + 4] if _arrive_of(r) is None]
+    real_rows = [r for r in data_rows if _arrive_of(r) is not None]
+    sklad_idx = _pick_named_column("SKLAD", top_rows, real_rows)
+    seller_idx = _pick_named_column("SOTUVCHI", top_rows, real_rows)
+
     out = []
     for row in data_rows:
-        raw_arrive = row[cols["arrive"]].strip() if cols["arrive"] < len(row) else ""
-        arrive = ombor_service._parse_date(raw_arrive)
+        arrive = _arrive_of(row)
         if arrive is None:
             continue
         brand = row[cols["brand"]].strip() if cols["brand"] < len(row) else ""
@@ -105,7 +138,17 @@ def _read_stage(sheet_name: str) -> list[dict]:
         reys = ""
         if cols["reys"] is not None and cols["reys"] < len(row):
             reys = row[cols["reys"]].strip()
-        out.append({"brand": brand or "—", "arrive": arrive, "reys": reys})
+
+        def _cell(idx: int | None) -> str:
+            return row[idx].strip() if idx is not None and idx < len(row) else ""
+
+        out.append({
+            "brand": brand or "—",
+            "arrive": arrive,
+            "reys": reys,
+            "sklad": _cell(sklad_idx),
+            "seller": _cell(seller_idx),
+        })
     return out
 
 
@@ -170,6 +213,8 @@ def get_late_cargo_report(force: bool = False) -> dict:
         return {
             "brand": row["brand"],
             "reys": row["reys"],
+            "sklad": row.get("sklad", ""),
+            "seller": row.get("seller", ""),
             "arrived": row["arrive"].strftime("%d.%m.%Y"),
             "days_total": days_total,
             "days_late": max(0, days_total - TOTAL_SLA_DAYS),
@@ -205,7 +250,13 @@ def get_late_cargo_report(force: bool = False) -> dict:
     # 6-day loading window but not yet late overall (those go above).
     ombor_warning = sorted(
         (
-            {"brand": it["brand"], "arrived": it["arrived"], "days_in_ombor": it["days_total"]}
+            {
+                "brand": it["brand"],
+                "sklad": it["sklad"],
+                "seller": it["seller"],
+                "arrived": it["arrived"],
+                "days_in_ombor": it["days_total"],
+            }
             for it in items
             if it["stage"] == "ombor" and LOAD_SLA_DAYS < it["days_total"] <= TOTAL_SLA_DAYS
         ),
