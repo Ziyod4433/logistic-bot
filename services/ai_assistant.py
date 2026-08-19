@@ -465,11 +465,11 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list) -> 
 # CHAT LOOP
 # ═══════════════════════════════════════════════════════════════
 
-def _chat_completion(messages, use_model=None):
+def _chat_completion(messages, use_model=None, tools=None):
     payload = {
         "model": use_model or _model(),
         "messages": messages,
-        "tools": TOOLS,
+        "tools": tools if tools is not None else TOOLS,
         "temperature": 0.3,
     }
     response = req.post(
@@ -486,7 +486,7 @@ def _chat_completion(messages, use_model=None):
         # this account) — retry once with the standard model.
         body = response.text or ""
         if "model" in body.lower():
-            return _chat_completion(messages, use_model=FALLBACK_MODEL)
+            return _chat_completion(messages, use_model=FALLBACK_MODEL, tools=tools)
     response.raise_for_status()
     return response.json()
 
@@ -562,3 +562,153 @@ def handle_owner_message(tg_user_id, text: str) -> dict:
 
 def reset_history(tg_user_id) -> None:
     db.ai_clear_history(str(tg_user_id))
+
+
+# ═══════════════════════════════════════════════════════════════
+# GROUP AGENT — client-scoped smart replies on @mention
+# ═══════════════════════════════════════════════════════════════
+# Same DeepSeek brain as the owner assistant, but the ONLY data it can
+# reach is the cargo linked to the group it's answering in (the tool is
+# pre-bound to that chat_id — the model can't ask about другие группы).
+
+def _group_model() -> str:
+    return (os.getenv("DEEPSEEK_GROUP_MODEL") or "").strip() or _model()
+
+
+GROUP_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_group_cargo",
+            "description": (
+                "Все грузы ЭТОЙ группы: BL код, клиент, партия (рейс), текущий статус, "
+                "ETA до Ташкента, конечная точка, в пути / прибыл / выдан, количество packing-list файлов, "
+                "дата последнего трекинга."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+]
+
+
+def _tool_group_cargo(chat_id: str) -> dict:
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl.code, bl.client_name, b.name AS batch_name, b.status,
+                   COALESCE(b.eta_to_toshkent,'') AS eta_to_toshkent,
+                   COALESCE(b.eta_destination,'') AS eta_destination,
+                   COALESCE(b.client_delivery_date,'') AS delivered_date,
+                   (SELECT COUNT(*) FROM files f WHERE f.bl_id = bl.id) AS files,
+                   (SELECT MAX(sl.sent_at) FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1) AS last_tracking_at
+            FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id
+            WHERE TRIM(bl.chat_id) = ?
+            ORDER BY b.id DESC
+            LIMIT 30
+            """,
+            (str(chat_id).strip(),),
+        ).fetchall()
+    finally:
+        conn.close()
+    arrived = set(db.ARRIVED_STATUSES)
+    cargo = []
+    for r in rows:
+        active = not r["delivered_date"]
+        delivered = r["status"] in {db.DELIVERED_STATUS, db.LEGACY_DELIVERED_STATUS} or bool(r["delivered_date"])
+        cargo.append({
+            "bl_code": r["code"],
+            "client": r["client_name"] or "",
+            "batch": r["batch_name"],
+            "status": r["status"],
+            "eta_to_toshkent": r["eta_to_toshkent"],
+            "destination": r["eta_destination"],
+            "state": ("выдан клиенту" if delivered
+                      else "прибыл (на складе Ташкента)" if r["status"] in arrived
+                      else "в пути" if active
+                      else "архив"),
+            "packing_list_files": r["files"],
+            "last_tracking_sent": r["last_tracking_at"] or "ещё не отправлялся",
+        })
+    return {"cargo": cargo, "count": len(cargo)}
+
+
+def _group_system_prompt(chat_title: str) -> str:
+    from datetime import datetime
+
+    statuses = " → ".join(db.STATUSES)
+    return f"""Ты — умный ассистент карго-компании BURAQ Logistics (доставка Китай → Узбекистан) в Telegram-группе клиента.
+Группа: «{chat_title}». Сегодня: {datetime.now().strftime('%d.%m.%Y')}.
+Тебя отмечают (@) в группе и задают вопросы — ты отвечаешь легко, точно и по-человечески.
+
+КАК УСТРОЕНА ДОСТАВКА:
+- Груз клиента идёт под BL кодом внутри партии (рейса). Статус партии — точка маршрута:
+  {statuses}.
+- Два маршрута: через Казахстан (Horgos→Nurjo'li→Jarkent→Almata→Taraz→Shimkent→Qonusbay→Saryagash→Yallama→Toshkent)
+  и через Кыргызстан (Kashgar→Irkeshtam→Osh→Dostlik→Andijon).
+- «Toshkent(Chuqursoy ULS da)» = груз прибыл на склад в Ташкенте. «{db.DELIVERED_STATUS}» = выдан клиенту.
+- Трекинг приходит в эту группу автоматически при движении фуры. Packing list (упаковочный лист) приходит файлом
+  кнопкой под сообщением трекинга.
+
+ДАННЫЕ:
+- Единственный источник данных — инструмент get_group_cargo: в нём ВСЕ грузы именно этой группы.
+- ВСЕГДА вызывай его прежде чем отвечать на вопрос о грузах. Никогда ничего не выдумывай.
+- НЕ проси у клиента BL код или «номер накладной»: данные группы у тебя уже есть. Если грузов несколько и вопрос
+  неоднозначен — просто перечисли все с их статусами.
+- Если в данных пусто — скажи, что в этой группе грузы пока не числятся, и предложи обратиться к менеджеру.
+
+СТИЛЬ:
+- Отвечай на языке вопроса (узбекский/русский). Коротко, тепло, без канцелярита и без роботных шаблонов.
+- Telegram HTML: <b>жирный</b>, <code>код</code>. НЕ используй Markdown (** и #).
+- Ты видишь только данные этой группы. О других клиентах, ценах, внутренних делах компании — не говори,
+  предлагай связаться с менеджером."""
+
+
+def handle_group_question(chat_id, chat_title: str, question: str, sender_name: str = "") -> str:
+    """Answer one @mention question in a client group. Returns "" when
+    the agent is unavailable (no key / API error) so the caller can fall
+    back to the legacy intent flow."""
+    if not _api_key():
+        return ""
+    chat_key = f"group:{chat_id}"
+    question = str(question or "").strip()
+    user_line = f"{sender_name}: {question}" if sender_name else question
+
+    with _history_lock:
+        history = db.ai_get_history(chat_key, limit=12)
+        db.ai_add_message(chat_key, "user", user_line)
+
+    messages = [{"role": "system", "content": _group_system_prompt(chat_title)}]
+    messages.extend(history)
+    messages.append({"role": "user", "content": user_line})
+
+    reply_text = ""
+    try:
+        for _round in range(4):
+            data = _chat_completion(messages, use_model=_group_model(), tools=GROUP_TOOLS)
+            choice = (data.get("choices") or [{}])[0]
+            msg = choice.get("message") or {}
+            tool_calls = msg.get("tool_calls") or []
+            if not tool_calls:
+                reply_text = (msg.get("content") or "").strip()
+                break
+            messages.append({
+                "role": "assistant",
+                "content": msg.get("content") or "",
+                "tool_calls": tool_calls,
+            })
+            for call in tool_calls:
+                name = ((call.get("function") or {}).get("name")) or ""
+                result = _tool_group_cargo(chat_id) if name == "get_group_cargo" else {"error": "unknown tool"}
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.get("id"),
+                    "content": json.dumps(result, ensure_ascii=False, default=str)[:8000],
+                })
+    except Exception:
+        return ""
+
+    if reply_text:
+        with _history_lock:
+            db.ai_add_message(chat_key, "assistant", reply_text)
+    return reply_text

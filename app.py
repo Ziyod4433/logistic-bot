@@ -2170,6 +2170,48 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
         return True
     text = question
 
+    # ── SMART PATH: DeepSeek group agent, scoped to THIS group's cargo ──
+    # Answers naturally with real data (no canned "пришлите BL-код").
+    # Falls through to the legacy intent flow only if the agent is
+    # unavailable (no API key / DeepSeek error).
+    sender = message.get("from") or {}
+    try:
+        from services import ai_assistant
+
+        with TypingIndicator(chat_id):
+            smart_reply = ai_assistant.handle_group_question(
+                chat_id,
+                chat_title,
+                text,
+                sender_name=telegram_user_name(sender),
+            )
+    except Exception:
+        app.logger.exception("Group AI agent failed for chat %s", chat_id)
+        smart_reply = ""
+    if smart_reply:
+        try:
+            telegram_send_message(chat_id, smart_reply, reply_markup=REMOVE_REPLY_MARKUP)
+        except Exception:
+            try:
+                telegram_send_message(chat_id, smart_reply, parse_mode=None)
+            except Exception:
+                app.logger.exception("Group agent reply delivery failed for chat %s", chat_id)
+                return True
+        try:
+            db.record_ai_log(
+                chat_id=chat_id,
+                group_title=chat_title,
+                user_id=sender.get("id") or "",
+                username=sender.get("username") or telegram_user_name(sender),
+                original_text=text,
+                detected_intent="smart_agent",
+                bl_code="",
+                ai_response=smart_reply,
+            )
+        except Exception:
+            app.logger.exception("AI log write failed for chat %s", chat_id)
+        return True
+
     ai_service = None
     for module_name in ("services.ai_service", "ai_service"):
         try:
