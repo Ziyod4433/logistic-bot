@@ -2525,6 +2525,11 @@ def handle_telegram_message(message: dict):
         # to the group-AI handler either.
         return
 
+    # ZIP-ссылка (Google Drive / прямой URL) в управляющей группе —
+    # большие архивы packing list приходят так (Telegram >20MB не отдаёт).
+    if maybe_handle_control_group_zip_link(message):
+        return
+
     if maybe_handle_group_ai_message(message):
         return
 
@@ -2907,6 +2912,8 @@ def send_packing_list_reminder(force: bool = False):
 
 
 def _packing_reminder_scheduler():
+    """Morning tick (every 5 min): packing-list ask + tracking digest.
+    Both are self-guarded by per-day settings keys."""
     while True:
         try:
             now = datetime.now(db.TASHKENT_TZ)
@@ -2914,8 +2921,12 @@ def _packing_reminder_scheduler():
                 sent, info = send_packing_list_reminder()
                 if sent:
                     app.logger.info("Packing reminder sent: %s", info)
+            if now.hour >= TRACKING_DIGEST_HOUR:
+                sent, info = send_tracking_digest()
+                if sent:
+                    app.logger.info("Tracking digest sent: %s", info)
         except Exception:
-            app.logger.exception("Packing reminder tick failed")
+            app.logger.exception("Morning scheduler tick failed")
         time.sleep(300)
 
 
@@ -3026,6 +3037,33 @@ def maybe_handle_control_group_document(message: dict) -> bool:
 
 
 def process_packing_zip(chat_id, doc: dict):
+    """ZIP sent as a Telegram document (≤20MB — Bot API download limit).
+    Larger archives come in via a link (see process_packing_zip_url)."""
+    try:
+        with TypingIndicator(chat_id):
+            info = telegram_api("getFile", json={"file_id": doc.get("file_id")}) or {}
+            tg_path = ((info.get("result") or {}).get("file_path")) or ""
+            if not tg_path:
+                telegram_send_message(
+                    chat_id,
+                    "⚠️ ZIP faylni yuklab bo'lmadi — fayl 20 MB dan katta bo'lishi mumkin.\n"
+                    "Katta arxivlarni Google Drive'ga yuklab, havolasini shu guruhga tashlang — o'zim yuklab olaman.",
+                )
+                return
+            url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{tg_path}"
+            content = req.get(url, timeout=180).content
+            _ingest_packing_zip(chat_id, io.BytesIO(content))
+    except Exception as exc:
+        app.logger.exception("Packing zip (telegram) failed")
+        try:
+            telegram_send_message(chat_id, f"⚠️ ZIP tahlilida xato: {exc}", parse_mode=None)
+        except Exception:
+            pass
+
+
+def _ingest_packing_zip(chat_id, zip_source):
+    """Shared pipeline: open the archive (path or file-like), match every
+    file (brand → MESTA), attach and report in Uzbek."""
     import zipfile
     from html import escape as html_escape
 
@@ -3036,20 +3074,11 @@ def process_packing_zip(chat_id, doc: dict):
     ambiguous: list = []
     mesta_warns: list = []
     try:
-        with TypingIndicator(chat_id):
-            info = telegram_api("getFile", json={"file_id": doc.get("file_id")}) or {}
-            tg_path = ((info.get("result") or {}).get("file_path")) or ""
-            if not tg_path:
-                telegram_send_message(chat_id, "⚠️ ZIP faylni yuklab bo'lmadi (Telegram getFile xatosi — fayl 20 MB dan katta bo'lishi mumkin).")
-                return
-            url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{tg_path}"
-            content = req.get(url, timeout=180).content
+        index, rows = _build_active_bl_index()
+        chat_titles = _build_chat_title_lookup(rows)
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-            index, rows = _build_active_bl_index()
-            chat_titles = _build_chat_title_lookup(rows)
-            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+        with zipfile.ZipFile(zip_source) as zf:
                 names = [n for n in zf.namelist() if not n.endswith("/")]
                 for name in names[:_PACKING_ZIP_MAX_FILES]:
                     base = os.path.basename(name.replace("\\", "/")).strip()
@@ -3147,6 +3176,168 @@ def process_packing_zip(chat_id, doc: dict):
     if not lines:
         lines = ["ℹ️ ZIP ichida biriktiradigan fayl topilmadi."]
     telegram_send_message(chat_id, "\n".join(lines))
+
+
+# ── Большие ZIP по ссылке (Google Drive / прямой URL) ────────────────
+# Telegram Bot API не отдаёт файлы >20MB, поэтому большие архивы
+# приходят ссылкой: бот скачивает по HTTP (стрим на диск, до 512MB)
+# и прогоняет через тот же конвейер.
+_PACKING_URL_MAX_BYTES = 512 * 1024 * 1024
+_DRIVE_ID_RE = re.compile(
+    r"drive\.google\.com/(?:file/d/([\w-]{20,})|open\?id=([\w-]{20,})|uc\?[^\s]*?id=([\w-]{20,}))"
+)
+_DIRECT_ZIP_RE = re.compile(r"https?://\S+?\.zip(?:\?\S*)?(?=\s|$)", re.IGNORECASE)
+
+
+def maybe_handle_control_group_zip_link(message: dict) -> bool:
+    from services import ai_assistant
+
+    chat = message.get("chat") or {}
+    if chat.get("type") not in {"group", "supergroup"}:
+        return False
+    chat_id = chat.get("id")
+    if not chat_id or not ai_assistant.is_control_chat(chat_id):
+        return False
+    text = (message.get("text") or "").strip()
+    if not text:
+        return False
+    m = _DRIVE_ID_RE.search(text)
+    if m:
+        file_id = next(g for g in m.groups() if g)
+        threading.Thread(target=process_packing_zip_url, args=(chat_id, "drive", file_id), daemon=True).start()
+        return True
+    m2 = _DIRECT_ZIP_RE.search(text)
+    if m2:
+        threading.Thread(target=process_packing_zip_url, args=(chat_id, "direct", m2.group(0)), daemon=True).start()
+        return True
+    return False
+
+
+def process_packing_zip_url(chat_id, kind: str, ref: str):
+    import tempfile
+
+    try:
+        with TypingIndicator(chat_id):
+            if kind == "drive":
+                candidates = [
+                    f"https://drive.usercontent.google.com/download?id={ref}&export=download&confirm=t",
+                    f"https://drive.google.com/uc?export=download&id={ref}&confirm=t",
+                ]
+            else:
+                candidates = [ref]
+            tmp_path = None
+            last_err = ""
+            for url in candidates:
+                try:
+                    with req.get(url, stream=True, timeout=600) as resp:
+                        resp.raise_for_status()
+                        chunks = resp.iter_content(chunk_size=512 * 1024)
+                        first = next(chunks, b"")
+                        if not first.startswith(b"PK"):
+                            # HTML-заглушка Google (нет доступа) или не ZIP
+                            last_err = "havola ZIP faylga olib bormaydi (ruxsat yo'q bo'lishi mumkin)"
+                            continue
+                        fd, tmp_path = tempfile.mkstemp(suffix=".zip")
+                        total = 0
+                        with os.fdopen(fd, "wb") as out:
+                            out.write(first)
+                            total += len(first)
+                            for chunk in chunks:
+                                total += len(chunk)
+                                if total > _PACKING_URL_MAX_BYTES:
+                                    raise ValueError("arxiv 512 MB dan katta")
+                                out.write(chunk)
+                        break
+                    # unreachable
+                except Exception as exc:
+                    last_err = str(exc)
+                    if tmp_path and os.path.exists(tmp_path):
+                        try:
+                            os.remove(tmp_path)
+                        except OSError:
+                            pass
+                    tmp_path = None
+                    continue
+            if not tmp_path:
+                telegram_send_message(
+                    chat_id,
+                    f"⚠️ Havoladan ZIP yuklab bo'lmadi: {last_err}\n"
+                    "Google Drive'da faylga \"Anyone with the link\" ruxsati berilganini tekshiring.",
+                    parse_mode=None,
+                )
+                return
+            try:
+                _ingest_packing_zip(chat_id, tmp_path)
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+    except Exception as exc:
+        app.logger.exception("Packing zip via URL failed")
+        try:
+            telegram_send_message(chat_id, f"⚠️ Havola ZIP tahlilida xato: {exc}", parse_mode=None)
+        except Exception:
+            pass
+
+
+# ═══════════════════════════════════════════════════════════════
+# MORNING TRACKING DIGEST (личка ответственного за трекинг)
+# ═══════════════════════════════════════════════════════════════
+# Каждое утро после того, как логисты обновят статусы в системе, бот
+# шлёт пользователю TRACKING_DIGEST_TG_ID сводку по всем активным
+# партиям. С 9:00 бот ждёт первого обновления статусов за сегодня; если
+# к 13:00 обновлений так и нет — шлёт сводку с пометкой об этом.
+
+TRACKING_DIGEST_TG_ID = os.getenv("TRACKING_DIGEST_TG_ID", "7713376668").strip()
+TRACKING_DIGEST_HOUR = int(os.getenv("TRACKING_DIGEST_HOUR", "9") or 9)
+_TRACKING_DIGEST_FALLBACK_HOUR = 13
+_TRACKING_DIGEST_SETTING = "tracking_digest_last_date"
+
+
+def send_tracking_digest(force: bool = False):
+    from html import escape as html_escape
+
+    if not TRACKING_DIGEST_TG_ID or not BOT_TOKEN:
+        return False, "not configured"
+    now = datetime.now(db.TASHKENT_TZ)
+    today = now.strftime("%Y-%m-%d")
+    if not force and db.get_setting(_TRACKING_DIGEST_SETTING) == today:
+        return False, "already sent today"
+
+    batches = [b for b in db.get_batches() if not (b.get("client_delivery_date") or "")]
+    if not batches:
+        db.set_setting(_TRACKING_DIGEST_SETTING, today)
+        return False, "no active batches"
+
+    def _updated_today(b) -> bool:
+        return str(b.get("status_updated_at") or "")[:10] == today
+
+    updated = [b for b in batches if _updated_today(b)]
+    if not force and not updated and now.hour < _TRACKING_DIGEST_FALLBACK_HOUR:
+        # логисты ещё не обновили статусы — ждём следующего тика
+        return False, "waiting for status updates"
+
+    lines = [f"🚚 <b>Treking ma'lumoti — {now.strftime('%d.%m.%Y')}</b>", ""]
+    for b in batches:
+        mark = "✅" if _updated_today(b) else "⏳"
+        lines.append(f"📦 <b>{html_escape(b.get('name') or '')}</b> — {html_escape(b.get('status') or '')} {mark}")
+        eta = (b.get("eta_to_toshkent") or "").strip()
+        dest = (b.get("eta_destination") or "").strip()
+        detail = []
+        if eta:
+            detail.append(f"ETA: {html_escape(eta)}")
+        if dest:
+            detail.append(html_escape(dest))
+        if detail:
+            lines.append("   " + " · ".join(detail))
+    lines.append("")
+    lines.append("✅ — status bugun yangilangan · ⏳ — hali yangilanmagan")
+    if not updated:
+        lines.append("⚠️ Logistlar bugun statuslarni hali yangilashmadi.")
+    telegram_send_message(TRACKING_DIGEST_TG_ID, "\n".join(lines))
+    db.set_setting(_TRACKING_DIGEST_SETTING, today)
+    return True, f"{len(batches)} batches ({len(updated)} updated today)"
 
 
 def handle_my_chat_member_update(chat_update: dict):
