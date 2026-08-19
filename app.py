@@ -2076,6 +2076,41 @@ def remember_group_chat(chat: dict, is_active: bool = True):
     )
 
 
+_BOT_USERNAME_CACHE = {"username": "", "checked_at": 0.0}
+
+
+def get_bot_username() -> str:
+    """Bot's @username via getMe, cached (retry at most every 5 min)."""
+    now = time.time()
+    if _BOT_USERNAME_CACHE["username"]:
+        return _BOT_USERNAME_CACHE["username"]
+    if now - _BOT_USERNAME_CACHE["checked_at"] < 300:
+        return ""
+    _BOT_USERNAME_CACHE["checked_at"] = now
+    try:
+        payload = telegram_api("getMe") or {}
+        username = str(((payload.get("result") or {}).get("username")) or "").strip()
+        if username:
+            _BOT_USERNAME_CACHE["username"] = username
+        return username
+    except Exception:
+        app.logger.exception("getMe failed while resolving bot username")
+        return ""
+
+
+def extract_bot_mention_question(message: dict) -> str | None:
+    """If the bot is @mentioned in the group message, return the text
+    with the mention stripped (the actual question). None otherwise."""
+    text = message.get("text") or ""
+    username = get_bot_username()
+    if not username:
+        return None
+    if ("@" + username.lower()) not in text.lower():
+        return None
+    stripped = re.sub(re.escape("@" + username), "", text, flags=re.IGNORECASE)
+    return " ".join(stripped.split()).strip()
+
+
 def maybe_handle_group_ai_message(message: dict) -> bool:
     chat = message.get("chat") or {}
     chat_type = chat.get("type")
@@ -2087,32 +2122,20 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
     if not chat_id or not text or text.startswith("/") or text == CANCEL_BUTTON or text in TRACK_BUTTON_TEXTS:
         return False
 
-    global_ai_enabled = False
-    group_ai_enabled = False
-    ai_called = False
     chat_title = chat.get("title") or ""
-    try:
-        global_ai_enabled = db.get_global_ai_enabled()
-        group_ai_enabled = db.get_chat_ai_enabled(chat_id)
-        if not global_ai_enabled or not group_ai_enabled:
-            app.logger.info(
-                "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s",
-                chat_id,
-                chat_title,
-                text,
-                global_ai_enabled,
-                group_ai_enabled,
-                ai_called,
-            )
-            return False
-    except Exception:
-        app.logger.exception(
-            "AI gate check failed for chat %s group_title=%r text=%r",
-            chat_id,
-            chat_title,
-            text,
-        )
+    ai_called = False
+
+    # ACTIVITY GATE (rewritten 19.08.2026): the per-chat/global AI toggles
+    # are retired — the bot is active in EVERY group, but it replies
+    # STRICTLY when someone @mentions it AND asks something. Everything
+    # else in groups is ignored silently.
+    question = extract_bot_mention_question(message)
+    if question is None:
         return False
+    if not question:
+        # Bare @mention with no actual question — stay silent (strict rule).
+        return True
+    text = question
 
     ai_service = None
     for module_name in ("services.ai_service", "ai_service"):
@@ -2124,12 +2147,10 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
 
     if not ai_service:
         app.logger.info(
-            "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s error=%r",
+            "AI_DEBUG chat_id=%s group_title=%r user_text=%r ai_called=%s error=%r",
             chat_id,
             chat_title,
             text,
-            global_ai_enabled,
-            group_ai_enabled,
             ai_called,
             "ai_service_missing",
         )
@@ -2139,12 +2160,10 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
         analyzer = getattr(ai_service, "analyze_message", None) or getattr(ai_service, "handle_group_message", None)
         if not callable(analyzer):
             app.logger.info(
-                "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s error=%r",
+                "AI_DEBUG chat_id=%s group_title=%r user_text=%r ai_called=%s error=%r",
                 chat_id,
                 chat_title,
                 text,
-                global_ai_enabled,
-                group_ai_enabled,
                 ai_called,
                 "ai_handler_missing",
             )
@@ -2158,12 +2177,10 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
         if "OPENAI_API_KEY is missing" in str(exc):
             app.logger.error("OPENAI_API_KEY is missing")
         app.logger.exception(
-            "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s error=%r",
+            "AI_DEBUG chat_id=%s group_title=%r user_text=%r ai_called=%s error=%r",
             chat_id,
             chat_title,
             text,
-            global_ai_enabled,
-            group_ai_enabled,
             ai_called,
             str(exc),
         )
@@ -2183,12 +2200,10 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
             ai_response = get_ai_ask_bl_text(ai_language, chat_id=chat_id)
         else:
             app.logger.info(
-                "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s intent=%s bl_code=%s",
+                "AI_DEBUG chat_id=%s group_title=%r user_text=%r ai_called=%s intent=%s bl_code=%s",
                 chat_id,
                 chat_title,
                 text,
-                global_ai_enabled,
-                group_ai_enabled,
                 ai_called,
                 detected_intent,
                 bl_code,
@@ -2226,12 +2241,10 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
     sender = message.get("from") or {}
     language = normalize_ai_language(ai_language, chat_id=chat_id)
     app.logger.info(
-        "AI_DEBUG chat_id=%s group_title=%r user_text=%r global_ai_enabled=%s group_ai_enabled=%s ai_called=%s intent=%s bl_code=%s",
+        "AI_DEBUG chat_id=%s group_title=%r user_text=%r ai_called=%s intent=%s bl_code=%s",
         chat_id,
         chat_title,
         text,
-        global_ai_enabled,
-        group_ai_enabled,
         ai_called,
         detected_intent,
         bl_code,

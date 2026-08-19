@@ -70,11 +70,31 @@ def _get_openai_model() -> str:
     return (os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
 
 
+def _get_api_config() -> tuple[str, str, str]:
+    """(chat_completions_url, api_key, model).
+
+    OpenAI if OPENAI_API_KEY is set; otherwise DeepSeek (same API shape)
+    with the DEEPSEEK_API_KEY used by the owner assistant. Group intent
+    classification is a cheap task, so the group model defaults to
+    deepseek-chat (override with DEEPSEEK_GROUP_MODEL).
+    """
+    openai_key = _get_openai_api_key()
+    if openai_key:
+        return "https://api.openai.com/v1/chat/completions", openai_key, _get_openai_model()
+    deepseek_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip()
+    if deepseek_key:
+        base = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
+        model = (os.getenv("DEEPSEEK_GROUP_MODEL") or "deepseek-chat").strip()
+        return f"{base}/chat/completions", deepseek_key, model
+    return "", "", ""
+
+
 def get_runtime_status() -> dict:
-    api_key = _get_openai_api_key()
+    url, api_key, model = _get_api_config()
     return {
         "openai_api_key_present": bool(api_key),
-        "openai_model": _get_openai_model(),
+        "openai_model": model or _get_openai_model(),
+        "provider": ("openai" if "openai" in url else "deepseek" if url else "none"),
     }
 
 
@@ -250,7 +270,7 @@ def analyze_message(text: str) -> dict:
     if heuristic.get("intent") == "ask_for_bl":
         return heuristic
 
-    api_key = _get_openai_api_key()
+    api_url, api_key, api_model = _get_api_config()
     if not api_key:
         return heuristic
 
@@ -267,7 +287,7 @@ def analyze_message(text: str) -> dict:
     )
 
     payload = {
-        "model": _get_openai_model(),
+        "model": api_model,
         "temperature": 0.2,
         "response_format": {"type": "json_object"},
         "messages": [
@@ -278,7 +298,7 @@ def analyze_message(text: str) -> dict:
 
     try:
         response = req.post(
-            "https://api.openai.com/v1/chat/completions",
+            api_url,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
