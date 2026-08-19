@@ -140,7 +140,13 @@ def _system_prompt() -> str:
     подтверждающий видел это до нажатия ✅.
     Когда предлагаешь смену статуса на «Horgos (Qozoq)» — сам предложи следом и синхронизацию по казахскому плану.
 
-11. ПЕРЕНОС ПРИБЫВШИХ. Второй шитс для переноса прибывших грузов будет настроен позже —
+11. УТРЕННИЙ СБОР PACKING LIST. Каждое утро (по Ташкенту) бот сам пишет в управляющую группу,
+    отмечает ответственного (Jigar, на узбекском) и перечисляет BL активных партий без packing list.
+    Jigar кидает в группу ZIP-архив — бот сам распаковывает, сопоставляет файлы по именам (BL код /
+    имя клиента) с BL активных партий и прикрепляет, затем отчитывается: что прикрепил, что уже было,
+    что не смог сопоставить. Инструмент get_missing_packing_lists показывает текущий список без файлов.
+
+12. ПЕРЕНОС ПРИБЫВШИХ. Второй шитс для переноса прибывших грузов будет настроен позже —
     если спросят, честно скажи, что ждёшь настройки.
 
 ════════ ТВОИ ПРАВИЛА ════════
@@ -222,6 +228,14 @@ TOOLS = [
                 "properties": {"limit": {"type": "integer", "description": "сколько вернуть, по умолчанию 15"}},
                 "required": [],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_missing_packing_lists",
+            "description": "BL активных партий, к которым ещё не прикреплён packing list (их бот утром запрашивает у ответственного).",
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     {
@@ -445,6 +459,29 @@ def _tool_get_send_logs(args: dict) -> dict:
     return {"logs": [dict(r) for r in rows]}
 
 
+def _tool_get_missing_packing_lists(_args: dict) -> dict:
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl.code, bl.client_name, b.name AS batch_name
+            FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id
+            WHERE COALESCE(b.client_delivery_date, '') = ''
+              AND NOT EXISTS (SELECT 1 FROM files f WHERE f.bl_id = bl.id)
+            ORDER BY b.id DESC, bl.code
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "count": len(rows),
+        "missing": [
+            {"bl_code": r["code"], "client": r["client_name"] or "", "batch": r["batch_name"]}
+            for r in rows
+        ],
+    }
+
+
 def _tool_get_loading_plans(args: dict) -> dict:
     from services import loading_plan_service
 
@@ -562,6 +599,8 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list) -> 
             return _tool_get_send_logs(args)
         if name == "get_loading_plans":
             return _tool_get_loading_plans(args)
+        if name == "get_missing_packing_lists":
+            return _tool_get_missing_packing_lists(args)
         if name == "propose_action":
             return _tool_propose_action(args, tg_user_id, created_actions)
         return {"error": f"Неизвестный инструмент {name}"}

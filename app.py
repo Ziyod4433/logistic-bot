@@ -2447,6 +2447,11 @@ def handle_telegram_message(message: dict):
 
     remember_group_chat(chat, is_active=True)
 
+    # ZIP with packing lists in the control group — handled before the
+    # text check (documents have no text).
+    if maybe_handle_control_group_document(message):
+        return
+
     if not chat_id or not text:
         return
 
@@ -2817,6 +2822,234 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
                 app.logger.exception("AI action result delivery failed")
 
     threading.Thread(target=_worker, daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════
+# MORNING PACKING-LIST FLOW (Tracking gruppa)
+# ═══════════════════════════════════════════════════════════════
+# Every morning the bot @mentions the responsible person (Jigar) in the
+# control group with the list of BLs that still have no packing list.
+# He replies with a ZIP; the bot downloads it, unpacks, matches every
+# file to a BL of an ACTIVE batch (same resolver as the panel's bulk
+# upload) and attaches them. Summary is reported back in Uzbek.
+
+PACKING_RESPONSIBLE_TG_ID = os.getenv("PACKING_RESPONSIBLE_TG_ID", "8526226966").strip()
+PACKING_RESPONSIBLE_NAME = os.getenv("PACKING_RESPONSIBLE_NAME", "Jigar").strip() or "Jigar"
+PACKING_REMINDER_HOUR = int(os.getenv("PACKING_REMINDER_HOUR", "9") or 9)
+_PACKING_REMINDER_SETTING = "packing_reminder_last_date"
+_PACKING_ZIP_MAX_FILES = 200
+_PACKING_FILE_MAX_BYTES = 30 * 1024 * 1024
+
+
+def get_missing_packing_bls() -> list[dict]:
+    """BLs of ACTIVE batches that have no packing list attached."""
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl.id, bl.code, bl.client_name, b.name AS batch_name
+            FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id
+            WHERE COALESCE(b.client_delivery_date, '') = ''
+              AND NOT EXISTS (SELECT 1 FROM files f WHERE f.bl_id = bl.id)
+            ORDER BY b.id DESC, bl.code
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def send_packing_list_reminder(force: bool = False):
+    """Morning ask in the control group. Returns (sent, info)."""
+    from html import escape as html_escape
+    from services import ai_assistant
+
+    chat_id = ai_assistant.control_group_id()
+    if not chat_id or not BOT_TOKEN:
+        return False, "control group or BOT_TOKEN not configured"
+    today = datetime.now(db.TASHKENT_TZ).strftime("%Y-%m-%d")
+    if not force and db.get_setting(_PACKING_REMINDER_SETTING) == today:
+        return False, "already sent today"
+    missing = get_missing_packing_bls()
+    if not missing:
+        db.set_setting(_PACKING_REMINDER_SETTING, today)
+        return False, "nothing missing"
+
+    mention = f'<a href="tg://user?id={PACKING_RESPONSIBLE_TG_ID}">{html_escape(PACKING_RESPONSIBLE_NAME)}</a>'
+    by_batch: dict[str, list] = {}
+    for r in missing:
+        by_batch.setdefault(r["batch_name"], []).append(r["code"])
+    lines = [
+        f"🌅 Assalomu alaykum, {mention}!",
+        "",
+        "Quyidagi BL larga packing list hali biriktirilmagan:",
+    ]
+    shown = 0
+    for batch_name, codes in by_batch.items():
+        lines.append(f"\n📦 <b>{html_escape(batch_name)}</b>:")
+        for code in codes:
+            if shown >= 60:
+                break
+            lines.append(f"  • <code>{html_escape(code)}</code>")
+            shown += 1
+        if shown >= 60:
+            break
+    rest = len(missing) - shown
+    if rest > 0:
+        lines.append(f"\n…va yana {rest} ta BL.")
+    lines.append(
+        f"\n📎 Iltimos, packing listlarni bitta ZIP arxiv qilib shu guruhga tashlang — "
+        f"o'zim ochib, tahlil qilib, tegishli BL larga biriktiraman. Rahmat, {html_escape(PACKING_RESPONSIBLE_NAME)}! 🙏"
+    )
+    telegram_send_message(chat_id, "\n".join(lines))
+    db.set_setting(_PACKING_REMINDER_SETTING, today)
+    return True, f"{len(missing)} BL without packing list"
+
+
+def _packing_reminder_scheduler():
+    while True:
+        try:
+            now = datetime.now(db.TASHKENT_TZ)
+            if now.hour == PACKING_REMINDER_HOUR:
+                sent, info = send_packing_list_reminder()
+                if sent:
+                    app.logger.info("Packing reminder sent: %s", info)
+        except Exception:
+            app.logger.exception("Packing reminder tick failed")
+        time.sleep(300)
+
+
+def _build_active_bl_index():
+    """(code_index, rows) across ALL active batches — for zip matching."""
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl.*, b.name AS batch_name
+            FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id
+            WHERE COALESCE(b.client_delivery_date, '') = ''
+            ORDER BY b.id DESC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    rows = [dict(r) for r in rows]
+    index: dict[str, dict] = {}
+    for row in rows:
+        primary = _normalize_bl_code(row.get("code") or "")
+        if primary:
+            index.setdefault(primary, row)
+        for part in re.split(r"[,;\s]+", str(row.get("merged_codes") or "")):
+            piece = _normalize_bl_code(part)
+            if piece:
+                index.setdefault(piece, row)
+    return index, rows
+
+
+def maybe_handle_control_group_document(message: dict) -> bool:
+    """ZIP dropped in the control group → unpack & attach packing lists."""
+    from services import ai_assistant
+
+    chat = message.get("chat") or {}
+    if chat.get("type") not in {"group", "supergroup"}:
+        return False
+    chat_id = chat.get("id")
+    if not chat_id or not ai_assistant.is_control_chat(chat_id):
+        return False
+    doc = message.get("document") or {}
+    filename = str(doc.get("file_name") or "").lower()
+    if not filename.endswith(".zip"):
+        return False
+    threading.Thread(target=process_packing_zip, args=(chat_id, doc), daemon=True).start()
+    return True
+
+
+def process_packing_zip(chat_id, doc: dict):
+    import zipfile
+    from html import escape as html_escape
+
+    attached: list = []
+    skipped_dup: list = []
+    unmatched: list = []
+    rejected: list = []
+    try:
+        with TypingIndicator(chat_id):
+            info = telegram_api("getFile", json={"file_id": doc.get("file_id")}) or {}
+            tg_path = ((info.get("result") or {}).get("file_path")) or ""
+            if not tg_path:
+                telegram_send_message(chat_id, "⚠️ ZIP faylni yuklab bo'lmadi (Telegram getFile xatosi — fayl 20 MB dan katta bo'lishi mumkin).")
+                return
+            url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{tg_path}"
+            content = req.get(url, timeout=180).content
+
+            index, rows = _build_active_bl_index()
+            chat_titles = _build_chat_title_lookup(rows)
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                names = [n for n in zf.namelist() if not n.endswith("/")]
+                for name in names[:_PACKING_ZIP_MAX_FILES]:
+                    base = os.path.basename(name.replace("\\", "/")).strip()
+                    if not base or base.startswith("._") or "__MACOSX" in name:
+                        continue
+                    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+                    if ext not in ALLOWED_EXT:
+                        rejected.append(base)
+                        continue
+                    hit = _resolve_filename_to_bl(base, index, rows, chat_titles)
+                    if not hit:
+                        unmatched.append(base)
+                        continue
+                    bl = hit["row"]
+                    existing = {
+                        str(f.get("filename") or "").strip().lower()
+                        for f in (db.get_files(bl["id"]) or [])
+                    }
+                    if base.lower() in existing:
+                        skipped_dup.append(base)
+                        continue
+                    data = zf.read(name)
+                    if len(data) > _PACKING_FILE_MAX_BYTES:
+                        rejected.append(base)
+                        continue
+                    storage = secure_filename(base) or f"file_{secrets.token_hex(4)}.{ext}"
+                    unique = f"bl{bl['id']}_{secrets.token_hex(4)}_{storage}"
+                    path = os.path.join(UPLOAD_FOLDER, unique)
+                    with open(path, "wb") as fh:
+                        fh.write(data)
+                    db.add_file(bl["id"], base, path)
+                    attached.append((base, bl.get("code") or "", bl.get("batch_name") or ""))
+    except zipfile.BadZipFile:
+        telegram_send_message(chat_id, "⚠️ Arxiv ochilmadi — ZIP fayl buzilgan ko'rinadi. Qayta yuborib ko'ring.")
+        return
+    except Exception as exc:
+        app.logger.exception("Packing zip processing failed")
+        try:
+            telegram_send_message(chat_id, f"⚠️ ZIP tahlilida xato: {exc}", parse_mode=None)
+        except Exception:
+            pass
+        return
+
+    lines = []
+    if attached:
+        lines.append(f"✅ Rahmat, {html_escape(PACKING_RESPONSIBLE_NAME)}! {len(attached)} ta packing list biriktirildi:")
+        for base, code, batch_name in attached[:30]:
+            lines.append(f"  • <code>{html_escape(code)}</code> ← {html_escape(base)} ({html_escape(batch_name)})")
+        if len(attached) > 30:
+            lines.append(f"  …va yana {len(attached) - 30} ta")
+    if skipped_dup:
+        lines.append(f"↩️ Allaqachon biriktirilgan edi ({len(skipped_dup)} ta) — o'tkazib yubordim.")
+    if unmatched:
+        lines.append(
+            f"❓ Mos BL topilmadi ({len(unmatched)} ta): "
+            + ", ".join(html_escape(u) for u in unmatched[:15])
+        )
+        lines.append("Bu fayllar nomiga BL kodini yozib qayta yuboring yoki paneldan qo'lda biriktiring.")
+    if rejected:
+        lines.append(f"🚫 Format qabul qilinmadi ({len(rejected)} ta): " + ", ".join(html_escape(x) for x in rejected[:10]))
+    if not lines:
+        lines = ["ℹ️ ZIP ichida biriktiradigan fayl topilmadi."]
+    telegram_send_message(chat_id, "\n".join(lines))
 
 
 def handle_my_chat_member_update(chat_update: dict):
@@ -6394,5 +6627,8 @@ if __name__ == "__main__":
             app.logger.warning("Failed to configure Telegram webhook: %s", exc)
     else:
         app.logger.warning("Telegram webhook is not configured. Set BOT_TOKEN and WEBHOOK_BASE_URL.")
+
+    # Morning packing-list ask in the control group (daily, Tashkent time)
+    threading.Thread(target=_packing_reminder_scheduler, daemon=True).start()
 
     app.run(host="0.0.0.0", port=PORT, debug=False)
