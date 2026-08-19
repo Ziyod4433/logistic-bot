@@ -3295,7 +3295,7 @@ def api_create_batch():
     if not name:
         return jsonify({"error": "Имя партии обязательно"}), 400
     if not db.create_batch(name, status, eta_to_toshkent, eta_destination, client_delivery_date):
-        return jsonify({"error": "Партия с таким именем уже существует"}), 400
+        return jsonify({"error": "Не удалось создать партию"}), 400
     return jsonify({"ok": True})
 
 
@@ -3316,7 +3316,7 @@ def api_update_batch(batch_id):
         (data.get("eta_destination") or "Toshkent").strip() or "Toshkent",
         client_delivery_date,
     ):
-        return jsonify({"error": "Партия с таким именем уже существует"}), 400
+        return jsonify({"error": "Не удалось обновить партию"}), 400
     return jsonify({"ok": True})
 
 

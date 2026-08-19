@@ -642,6 +642,45 @@ def _normalize_status(value: str) -> str:
     return normalized
 
 
+def _migrate_drop_batches_name_unique(conn):
+    """Batches used to require a UNIQUE name; two trucks can now depart
+    on the same date, so duplicates are allowed. SQLite can't drop a
+    constraint in place — rebuild the table once (legacy DBs only)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='batches'"
+    ).fetchone()
+    create_sql = (row["sql"] if row else "") or ""
+    if "UNIQUE" not in create_sql.upper():
+        return
+    new_sql = re.sub(
+        r"(?i)\bname\s+TEXT\s+UNIQUE\s+NOT\s+NULL",
+        "name TEXT NOT NULL",
+        create_sql,
+        count=1,
+    )
+    if new_sql == create_sql:
+        # Unexpected schema layout — better keep the constraint than risk
+        # a broken rebuild.
+        return
+    new_sql = re.sub(
+        r"(?i)^\s*CREATE\s+TABLE\s+\"?batches\"?",
+        'CREATE TABLE "batches__new"',
+        new_sql,
+        count=1,
+    )
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.execute(new_sql)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(batches)").fetchall()]
+        col_list = ", ".join(f'"{c}"' for c in cols)
+        conn.execute(f'INSERT INTO "batches__new" ({col_list}) SELECT {col_list} FROM "batches"')
+        conn.execute('DROP TABLE "batches"')
+        conn.execute('ALTER TABLE "batches__new" RENAME TO "batches"')
+        conn.commit()
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
 def init_db():
     conn = get_conn()
     cursor = conn.cursor()
@@ -649,7 +688,7 @@ def init_db():
         """
         CREATE TABLE IF NOT EXISTS batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
             status TEXT DEFAULT 'Xitoy',
             expected_date TEXT DEFAULT '',
             actual_date TEXT DEFAULT '',
@@ -1267,6 +1306,8 @@ def init_db():
     for column_name, column_def in batch_columns:
         if not _table_has_column(conn, "batches", column_name):
             conn.execute(f"ALTER TABLE batches ADD COLUMN {column_name} {column_def}")
+
+    _migrate_drop_batches_name_unique(conn)
 
     legacy_columns = [
         ("merged_codes", "TEXT DEFAULT ''"),
