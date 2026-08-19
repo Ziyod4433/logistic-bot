@@ -942,6 +942,39 @@ def telegram_send_message(
     return telegram_api("sendMessage", json=payload)
 
 
+def telegram_send_chat_action(chat_id, action: str = "typing"):
+    """Show "typing…" in the chat header. Telegram clears it after ~5s
+    or as soon as a message arrives, so long operations use
+    TypingIndicator instead of a single call."""
+    try:
+        telegram_api("sendChatAction", json={"chat_id": chat_id, "action": action})
+    except Exception:
+        pass
+
+
+class TypingIndicator:
+    """Context manager: keeps the "typing…" status visible while a slow
+    operation (DeepSeek call, file delivery) is producing the reply."""
+
+    def __init__(self, chat_id, action: str = "typing"):
+        self.chat_id = chat_id
+        self.action = action
+        self._stop = threading.Event()
+
+    def __enter__(self):
+        def _loop():
+            while not self._stop.is_set():
+                telegram_send_chat_action(self.chat_id, self.action)
+                self._stop.wait(4.0)
+
+        threading.Thread(target=_loop, daemon=True).start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        return False
+
+
 # Network errors we treat as "retry-worthy" — usually a transient
 # Railway↔Telegram connectivity blip. requests raises slightly different
 # exception classes depending on what stage failed, so we catch them all.
@@ -2169,10 +2202,13 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
             )
             return False
         ai_called = True
-        if analyzer.__name__ == "handle_group_message":
-            result = analyzer(message)
-        else:
-            result = analyzer(text)
+        # "typing…" stays visible while the model formulates the reply —
+        # otherwise the group looks like the bot ignored the mention.
+        with TypingIndicator(chat_id):
+            if analyzer.__name__ == "handle_group_message":
+                result = analyzer(message)
+            else:
+                result = analyzer(text)
     except Exception as exc:
         if "OPENAI_API_KEY is missing" in str(exc):
             app.logger.error("OPENAI_API_KEY is missing")
@@ -2210,7 +2246,8 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
             )
             # Threaded for the same reason as the Yuk holati handler:
             # file delivery is now part of send_bl_status and can take
-            # several seconds.
+            # several seconds. Show "typing…" so the wait is visible.
+            telegram_send_chat_action(chat_id, "typing")
             threading.Thread(
                 target=send_bl_status,
                 args=(chat_id, bl),
@@ -2590,7 +2627,11 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
 
     def _worker():
         try:
-            result = ai_assistant.handle_owner_message(sender_id, text)
+            # Keep "typing…" visible while the assistant thinks — the
+            # agent loop with tools can take a while and the chat looked
+            # dead in the meantime.
+            with TypingIndicator(chat_id):
+                result = ai_assistant.handle_owner_message(sender_id, text)
         except Exception as exc:
             app.logger.exception("AI assistant failure")
             try:
