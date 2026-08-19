@@ -1,6 +1,7 @@
 ﻿import base64
 import hmac
 import html
+import json
 import os
 import secrets
 import re
@@ -2003,6 +2004,10 @@ def handle_callback_query(callback_query: dict):
     if not callback_id or not data or not chat_id:
         return
 
+    if data.startswith("aiact:"):
+        handle_ai_action_callback(callback_query, callback_id, data)
+        return
+
     if data.startswith(f"{FILE_ALL_PREFIX}:"):
         # New bulk button: deliver every packing list attached to the BL.
         try:
@@ -2566,6 +2571,16 @@ def handle_telegram_message(message: dict):
         )
         return
 
+    # ── AI assistant (DeepSeek): private chat with the owner only ─────
+    # Every non-command private message from an allowed admin id goes to
+    # the assistant. Group messages are NOT routed here.
+    if chat_type == "private":
+        from services import ai_assistant
+
+        if ai_assistant.is_admin(sender_id):
+            handle_ai_assistant_private_message(chat_id, sender_id, text)
+            return
+
     file_match = re.match(r"^/([A-Za-z0-9_]+)(?:@\w+)?$", text)
     if file_match:
         file_info = db.get_file_by_command_alias(file_match.group(1))
@@ -2630,6 +2645,207 @@ def handle_telegram_message(message: dict):
             language=get_chat_message_language(chat_id),
         )
         return
+
+
+# ═══════════════════════════════════════════════════════════════
+# AI ASSISTANT (DeepSeek) — owner private chat + approval flow
+# ═══════════════════════════════════════════════════════════════
+
+def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
+    """Route one owner message to the assistant on a worker thread."""
+    from services import ai_assistant
+
+    lowered = (text or "").strip().lower()
+    if lowered in {"/reset", "/aireset"}:
+        ai_assistant.reset_history(sender_id)
+        telegram_send_message(chat_id, "🧹 История диалога с ассистентом очищена.")
+        return
+
+    def _worker():
+        try:
+            result = ai_assistant.handle_owner_message(sender_id, text)
+        except Exception as exc:
+            app.logger.exception("AI assistant failure")
+            try:
+                telegram_send_message(chat_id, f"⚠️ Ошибка ассистента: {exc}", parse_mode=None)
+            except Exception:
+                pass
+            return
+        reply = result.get("reply") or "…"
+        try:
+            telegram_send_message(chat_id, reply)
+        except Exception:
+            # Model text can contain broken HTML — retry as plain text.
+            try:
+                telegram_send_message(chat_id, reply, parse_mode=None)
+            except Exception:
+                app.logger.exception("AI assistant reply delivery failed")
+        for act in result.get("pending") or []:
+            try:
+                send_ai_action_approval(chat_id, act)
+            except Exception:
+                app.logger.exception("AI approval card delivery failed")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def send_ai_action_approval(chat_id, act: dict):
+    from html import escape as html_escape
+
+    action_id = act.get("id")
+    summary = act.get("summary") or ""
+    keyboard = {
+        "inline_keyboard": [[
+            {"text": "✅ Подтвердить", "callback_data": f"aiact:ok:{action_id}"},
+            {"text": "❌ Отклонить", "callback_data": f"aiact:no:{action_id}"},
+        ]]
+    }
+    telegram_send_message(
+        chat_id,
+        (
+            "🤖 <b>Требуется подтверждение</b>\n\n"
+            f"{html_escape(summary)}\n\n"
+            f"<i>Заявка #{action_id}. Без подтверждения ничего не изменится.</i>"
+        ),
+        reply_markup=keyboard,
+    )
+
+
+def execute_ai_action(action: dict):
+    """Run one APPROVED assistant action. Returns (ok, human_result)."""
+    kind = action.get("kind")
+    try:
+        params = json.loads(action.get("params_json") or "{}")
+    except Exception:
+        params = {}
+
+    if kind == "set_batch_status":
+        batch_id = int(params.get("batch_id") or 0)
+        status = str(params.get("status") or "").strip()
+        batch = db.get_batch(batch_id)
+        if not batch:
+            return False, "Партия не найдена"
+        valid = set(db.STATUSES) | {db.DELIVERED_STATUS}
+        if status not in valid:
+            return False, f"Недопустимый статус «{status}»"
+        db.update_batch(
+            batch_id,
+            batch["name"],
+            status,
+            batch.get("eta_to_toshkent") or "",
+            batch.get("eta_destination") or "Toshkent",
+            batch.get("client_delivery_date") or "",
+        )
+        return True, f"Статус партии «{batch['name']}»: {batch['status']} → {status}"
+
+    if kind == "send_group_message":
+        target_chat = str(params.get("chat_id") or "").strip()
+        text = str(params.get("text") or "").strip()
+        if not target_chat or not text:
+            return False, "Пустой chat_id или текст"
+        telegram_send_message(target_chat, text)
+        return True, f"Сообщение отправлено в чат {target_chat}"
+
+    if kind == "send_tracking_batch":
+        batch_id = int(params.get("batch_id") or 0)
+        batch = db.get_batch(batch_id)
+        if not batch:
+            return False, "Партия не найдена"
+        bl_rows = [
+            bl for bl in db.get_bl_by_batch(batch_id)
+            if bl.get("chat_id") and not bl.get("send_excluded") and not bl.get("tracking_sent_current")
+        ]
+        sent_chats: set = set()
+        dispatch = []
+        for bl in bl_rows:
+            cid = str(bl.get("chat_id") or "").strip()
+            if not cid or cid in sent_chats:
+                continue
+            sent_chats.add(cid)
+            dispatch.append(bl)
+        if not dispatch:
+            return False, "Нет BL для отправки: все уже отправлены, исключены или без групп"
+        ok_count = 0
+        fail_count = 0
+        for bl in dispatch:
+            with _BULK_SEND_SLOTS:
+                try:
+                    success, error_msg = send_bl_package(bl, batch["name"], include_related_batches=False)
+                except Exception as exc:
+                    success, error_msg = False, str(exc)
+                    app.logger.exception("AI tracking send failed for bl_id=%s", bl.get("id"))
+            try:
+                db.add_log(bl["id"], bl["code"], batch["name"], bl["chat_id"], bl["status"], success, error_msg)
+            except Exception:
+                app.logger.exception("AI tracking send: log write failed")
+            if success:
+                ok_count += 1
+            else:
+                fail_count += 1
+        return fail_count == 0, f"Трекинг партии «{batch['name']}»: ✅ {ok_count} · ❌ {fail_count}"
+
+    return False, f"Неизвестное действие: {kind}"
+
+
+def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
+    from services import ai_assistant
+
+    voter = callback_query.get("from") or {}
+    if not ai_assistant.is_admin(voter.get("id")):
+        telegram_answer_callback_query(callback_id, "Недостаточно прав")
+        return
+
+    parts = data.split(":")
+    if len(parts) != 3:
+        telegram_answer_callback_query(callback_id, "Неверный формат")
+        return
+    verdict = parts[1]
+    try:
+        action_id = int(parts[2])
+    except (TypeError, ValueError):
+        telegram_answer_callback_query(callback_id, "Неверный id заявки")
+        return
+
+    action = db.ai_get_pending_action(action_id)
+    origin_chat = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+    if not action:
+        telegram_answer_callback_query(callback_id, "Заявка не найдена")
+        return
+    if action.get("status") != "pending":
+        telegram_answer_callback_query(callback_id, f"Уже обработано: {action.get('status')}")
+        return
+
+    if verdict == "no":
+        db.ai_finish_pending_action(action_id, "rejected")
+        telegram_answer_callback_query(callback_id, "Отклонено")
+        if origin_chat:
+            telegram_send_message(origin_chat, f"❌ Заявка #{action_id} отклонена. Ничего не изменено.")
+        return
+
+    if verdict != "ok":
+        telegram_answer_callback_query(callback_id, "Неизвестное действие")
+        return
+
+    # Mark as approved synchronously so a double-click can't run it twice,
+    # then execute on a worker thread (tracking sends can take minutes).
+    db.ai_finish_pending_action(action_id, "approved")
+    telegram_answer_callback_query(callback_id, "✅ Выполняю...")
+
+    def _worker():
+        try:
+            ok, result_text = execute_ai_action(action)
+        except Exception as exc:
+            ok, result_text = False, f"Ошибка выполнения: {exc}"
+            app.logger.exception("AI action execution failed")
+        db.ai_finish_pending_action(action_id, "executed" if ok else "failed", result_text)
+        if origin_chat:
+            icon = "✅" if ok else "⚠️"
+            try:
+                telegram_send_message(origin_chat, f"{icon} Заявка #{action_id}: {result_text}")
+            except Exception:
+                app.logger.exception("AI action result delivery failed")
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def handle_my_chat_member_update(chat_update: dict):

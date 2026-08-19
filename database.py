@@ -705,6 +705,29 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_bl_link_history_code
             ON bl_link_history(code_norm, linked_at);
 
+        CREATE TABLE IF NOT EXISTS ai_assistant_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tg_user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ai_assistant_messages_user
+            ON ai_assistant_messages(tg_user_id, id);
+
+        CREATE TABLE IF NOT EXISTS ai_pending_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tg_user_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            params_json TEXT NOT NULL DEFAULT '{}',
+            summary TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            result TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            decided_at TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
@@ -5990,3 +6013,108 @@ def save_director_config(
         conn.close()
     return get_director_config(section)
 
+
+
+# ═══════════════════════════════════════════════════════════════
+# AI ASSISTANT (DeepSeek) — conversation memory + approval queue
+# ═══════════════════════════════════════════════════════════════
+
+AI_HISTORY_LIMIT = 30
+
+
+def ai_add_message(tg_user_id, role, content):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO ai_assistant_messages (tg_user_id, role, content) VALUES (?, ?, ?)",
+            (str(tg_user_id), str(role), str(content or "")),
+        )
+        # Keep the history bounded per user.
+        conn.execute(
+            """
+            DELETE FROM ai_assistant_messages
+            WHERE tg_user_id = ?
+              AND id NOT IN (
+                  SELECT id FROM ai_assistant_messages
+                  WHERE tg_user_id = ?
+                  ORDER BY id DESC LIMIT ?
+              )
+            """,
+            (str(tg_user_id), str(tg_user_id), AI_HISTORY_LIMIT * 2),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ai_get_history(tg_user_id, limit=AI_HISTORY_LIMIT):
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT role, content FROM ai_assistant_messages
+            WHERE tg_user_id = ?
+            ORDER BY id DESC LIMIT ?
+            """,
+            (str(tg_user_id), int(limit)),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in reversed(rows)]
+
+
+def ai_clear_history(tg_user_id):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "DELETE FROM ai_assistant_messages WHERE tg_user_id = ?",
+            (str(tg_user_id),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ai_create_pending_action(tg_user_id, kind, params_json, summary):
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO ai_pending_actions (tg_user_id, kind, params_json, summary)
+            VALUES (?, ?, ?, ?)
+            """,
+            (str(tg_user_id), str(kind), str(params_json), str(summary or "")),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def ai_get_pending_action(action_id):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM ai_pending_actions WHERE id = ?",
+            (int(action_id),),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def ai_finish_pending_action(action_id, status, result=""):
+    """status: approved / rejected / executed / failed"""
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE ai_pending_actions
+            SET status = ?, result = ?, decided_at = datetime('now','localtime')
+            WHERE id = ?
+            """,
+            (str(status), str(result or ""), int(action_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()

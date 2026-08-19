@@ -1,0 +1,564 @@
+# -*- coding: utf-8 -*-
+"""BURAQ Logistics AI assistant (DeepSeek).
+
+A private-chat Telegram assistant for the owner. It knows every process
+of the admin panel (batches, tracking, Yuk holati, packing lists,
+problems, announcements, late cargo, sales monitor) and can:
+
+  - answer questions using READ tools (executed immediately);
+  - PROPOSE actions (status change, tracking send, group message) —
+    proposals are queued in ai_pending_actions and the owner confirms
+    them with inline buttons. NOTHING is changed or sent without an
+    explicit confirmation. This is a hard rule enforced in code, not
+    just in the prompt: the assistant has no direct write tools.
+
+Only Telegram user ids listed in AI_ASSISTANT_ADMIN_IDS may talk to it
+(default: the owner, 303114354).
+"""
+
+import json
+import os
+import threading
+
+import requests as req
+
+import database as db
+
+DEEPSEEK_BASE_URL = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
+FALLBACK_MODEL = "deepseek-chat"
+MAX_TOOL_ROUNDS = 6
+REQUEST_TIMEOUT = 90
+
+_history_lock = threading.Lock()
+
+
+def _api_key() -> str:
+    return (os.getenv("DEEPSEEK_API_KEY") or "").strip()
+
+
+def _model() -> str:
+    return (os.getenv("DEEPSEEK_MODEL") or "deepseek-v4-pro").strip()
+
+
+def admin_ids() -> set:
+    raw = os.getenv("AI_ASSISTANT_ADMIN_IDS", "303114354")
+    return {part.strip() for part in str(raw).split(",") if part.strip()}
+
+
+def is_admin(tg_user_id) -> bool:
+    return str(tg_user_id) in admin_ids()
+
+
+def get_runtime_status() -> dict:
+    return {
+        "deepseek_api_key_present": bool(_api_key()),
+        "deepseek_model": _model(),
+        "admin_ids": sorted(admin_ids()),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# SYSTEM PROMPT — the full process knowledge base
+# ═══════════════════════════════════════════════════════════════
+
+def _system_prompt() -> str:
+    from datetime import datetime
+
+    statuses = " → ".join(db.STATUSES)
+    return f"""Ты — AI-ассистент логистической компании BURAQ Logistics (карго Китай → Узбекистан).
+Ты работаешь внутри админ-панели (Flask-сайт) и общаешься с ВЛАДЕЛЬЦЕМ компании в личном чате Telegram.
+Сегодня: {datetime.now().strftime('%d.%m.%Y %H:%M')}.
+
+════════ КАК УСТРОЕНА СИСТЕМА ════════
+
+1. ПАРТИИ (batches). Партия — это рейс/отправка, её имя обычно дата (например «01.08.2026»).
+   У партии есть: статус (точка маршрута), ETA до Ташкента, конечная точка (Toshkent / Qozog'istonga o'tish и др.),
+   дата выдачи клиенту (client_delivery_date). Партия АКТИВНА, пока дата выдачи пуста; после заполнения уходит в архив.
+   Цепочка статусов маршрута: {statuses}.
+   Два маршрута: через Казахстан (Horgos → Nurjo'li → Jarkent → Almata → Taraz → Shimkent → Qonusbay → Saryagash → Yallama)
+   и через Кыргызстан (Kashgar → Irkeshtam → Osh → Dostlik → Andijon).
+   «Toshkent(Chuqursoy ULS da)» = груз прибыл на склад в Ташкенте. «{db.DELIVERED_STATUS}» = выдан клиенту.
+
+2. BL КОДЫ. Внутри партии — BL коды (например BL-171). У BL: код, имя клиента, телефон, привязанная
+   Telegram-группа клиента (chat_id), файлы (packing list), флаги «исключён из рассылки» и «трекинг уже отправлен».
+   Один клиент может иметь несколько BL в разных партиях. Привязка BL↔группа запоминается навсегда
+   в истории (bl_link_history) — при импорте новой партии из шитса группы подставляются автоматически.
+
+3. ЕЖЕДНЕВНЫЙ ТРЕКИНГ (главный процесс).
+   Оператор каждый день обновляет статус партии по факту движения фуры, затем жмёт «отправить трекинг»:
+   бот рассылает в группу каждого BL сообщение (фото фуры + текущий статус + ETA) на языке группы (uz/ru/кириллица/en).
+   Индикация в панели: зелёная строка = трекинг отправлен сегодня, жёлтая = 1 день без отправки, красная = 2+ дней.
+   Логи всех отправок хранятся (send_logs).
+
+4. КНОПКА «YUK HOLATI» в группах клиентов: клиент сам запрашивает статус. Бот показывает ТОЛЬКО партии
+   В ПУТИ. Если груз уже в статусе «Toshkent(Chuqursoy ULS da)» или доставлен — бот отвечает
+   «Hozirgi vaqtda yo'lda kelayotgan yukingiz mavjud emas» (строгое правило).
+
+5. PACKING LISTS. Файлы упаковочных листов прикрепляются к BL массово: авто-сопоставление по имени файла
+   (BL код или имя клиента), ручной выбор с поиском. СТРОГО в рамках текущей партии — файл не может уйти в чужую партию.
+   Клиент может запросить свой packing list кнопкой в группе.
+
+6. ПРОБЛЕМЫ. По BL фиксируются проблемы: Shikastlanish (повреждение), Kechikish (задержка), Kamomad (недостача),
+   Qadoq buzilishi (нарушение упаковки), Boshqa (другое). Есть просмотр, фильтры, удаление ошибочных.
+
+7. ОБЪЯВЛЕНИЯ. Массовая рассылка по всем группам клиентов: текст + фото/видео/GIF, настраиваемый порядок
+   (медиа первым или текст первым, вместе или отдельно).
+
+8. ОПАЗДЫВАЮЩИЕ ГРУЗЫ (Dashboard). Отдельный Google Sheets статусов с 3 листами: Ombor (на складе в Китае) →
+   Ortilgan furalar (погружен в фуру) → Yetib keldi (прибыл). SLA: склад→фура 3-6 дней, фура→Ташкент 18-25 дней,
+   итого 30 дней от даты прихода на склад (DATE OF ARRIVE). Груз старше 30 дней = опаздывает.
+   Группировка по рейсу (REYS RAQAMI), видно склад (SKLAD: ZHONGSHAN/YIWU) и продавца (SOTUVCHI).
+
+9. SALES MONITOR (ТВ-экран отдела продаж, профиль sales). План месяца в м³. LTL = кубы из шитса Ombor,
+   FTL = целые фуры (1 фура = N м³). Большой круг «BAJARILDI» = (LTL м³ + FTL м³) / план, вокруг него капли LTL/FTL.
+
+10. ПЕРЕНОС ПРИБЫВШИХ. Владелец планирует подключить два Google Sheets для переноса прибывших грузов —
+    эта функция ЕЩЁ НЕ НАСТРОЕНА. Если спросят — честно скажи, что ждёшь настройки шитсов.
+
+════════ ТВОИ ПРАВИЛА ════════
+
+- ЖЕЛЕЗНОЕ ПРАВИЛО: ты НИЧЕГО не меняешь и НИКУДА не рассылаешь без подтверждения владельца.
+  У тебя физически нет инструментов прямого действия — только propose_action, который создаёт заявку.
+  После создания заявки владельцу приходят кнопки «✅ Подтвердить / ❌ Отклонить». Действие выполнится
+  только после нажатия ✅. Никогда не говори, что действие выполнено, пока оно не подтверждено и не исполнено.
+- Данные бери ТОЛЬКО из инструментов. Не выдумывай статусы, цифры, BL коды. Если данных нет — так и скажи.
+- Отвечай кратко и по делу, на русском. Формат Telegram HTML: <b>жирный</b>, <code>код</code>. НЕ используй Markdown (** и #).
+- Если запрос неоднозначен (какая партия? какая группа?) — сначала уточни или покажи варианты из данных.
+- Ты пока в режиме обучения: общаешься только с владельцем. Рассылки клиентам — только через подтверждение."""
+
+
+# ═══════════════════════════════════════════════════════════════
+# TOOLS
+# ═══════════════════════════════════════════════════════════════
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_overview",
+            "description": "Сводка по системе: статистика и список партий (активные первыми) со статусами, количеством BL, привязок и датой последнего трекинга.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_batch_detail",
+            "description": "Детали одной партии: все BL с клиентами, привязками к группам, файлами, проблемами и флагами отправки. batch — id или часть имени партии.",
+            "parameters": {
+                "type": "object",
+                "properties": {"batch": {"type": "string", "description": "id партии или часть имени, например '01.08'"}},
+                "required": ["batch"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_bl",
+            "description": "Поиск BL по коду или имени клиента (подстрока). Возвращает BL со статусом партии и привязкой к группе.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "часть BL кода или имени клиента"}},
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_late_cargo",
+            "description": "Отчёт по опаздывающим грузам из шитса статусов (SLA 30 дней): группы по рейсам, склад, продавец, дни опоздания.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_problems",
+            "description": "Последние зафиксированные проблемы по грузам (тип, BL, описание, статус).",
+            "parameters": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer", "description": "сколько вернуть, по умолчанию 10"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_send_logs",
+            "description": "Последние отправки трекинга (лог): BL, партия, статус, успех/ошибка, время.",
+            "parameters": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer", "description": "сколько вернуть, по умолчанию 15"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_action",
+            "description": (
+                "Создать ЗАЯВКУ на действие (требует подтверждения владельца кнопками). "
+                "kind: 'set_batch_status' (params: batch_id, status — точное название из цепочки статусов), "
+                "'send_tracking_batch' (params: batch_id — разослать трекинг по группам партии), "
+                "'send_group_message' (params: chat_id, text — отправить сообщение в конкретную группу). "
+                "summary: короткое человекочитаемое описание действия по-русски."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_group_message"]},
+                    "params": {"type": "object", "description": "параметры действия"},
+                    "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
+                },
+                "required": ["kind", "params", "summary"],
+            },
+        },
+    },
+]
+
+
+def _find_batch(batch_ref: str):
+    batches = db.get_batches()
+    ref = str(batch_ref or "").strip().lower()
+    if not ref:
+        return None
+    for b in batches:
+        if str(b.get("id")) == ref:
+            return b
+    exact = [b for b in batches if str(b.get("name") or "").strip().lower() == ref]
+    if len(exact) == 1:
+        return exact[0]
+    partial = [b for b in batches if ref in str(b.get("name") or "").lower()]
+    if len(partial) == 1:
+        return partial[0]
+    return {"__ambiguous__": [
+        {"id": b["id"], "name": b["name"], "status": b["status"]} for b in partial
+    ]} if partial else None
+
+
+def _batch_brief(b: dict) -> dict:
+    return {
+        "id": b.get("id"),
+        "name": b.get("name"),
+        "status": b.get("status"),
+        "eta_to_toshkent": b.get("eta_to_toshkent") or "",
+        "eta_destination": b.get("eta_destination") or "",
+        "active": not (b.get("client_delivery_date") or ""),
+        "bl_count": b.get("bl_count"),
+        "linked_groups": b.get("linked_count"),
+        "last_tracking_at": b.get("last_tracking_at") or "никогда",
+    }
+
+
+def _tool_get_overview(_args: dict) -> dict:
+    stats = db.get_stats()
+    batches = [_batch_brief(b) for b in db.get_batches()]
+    active = [b for b in batches if b["active"]]
+    inactive = [b for b in batches if not b["active"]]
+    return {
+        "stats": stats,
+        "active_batches": active,
+        "archived_batches_count": len(inactive),
+        "archived_last_3": inactive[:3],
+    }
+
+
+def _tool_get_batch_detail(args: dict) -> dict:
+    found = _find_batch(str(args.get("batch") or ""))
+    if not found:
+        return {"error": "Партия не найдена. Уточни имя или id (см. get_overview)."}
+    if "__ambiguous__" in found:
+        return {"error": "Найдено несколько партий, уточни какая", "candidates": found["__ambiguous__"]}
+    bls = db.get_bl_by_batch(found["id"])
+    return {
+        "batch": _batch_brief(found),
+        "bl_codes": [
+            {
+                "id": bl.get("id"),
+                "code": bl.get("code"),
+                "client": bl.get("client_name") or "",
+                "phone": bl.get("phone") or "",
+                "group_linked": bool(bl.get("chat_id")),
+                "chat_id": bl.get("chat_id") or "",
+                "files": bl.get("file_count") or 0,
+                "open_problems": bl.get("problem_count") or 0,
+                "excluded_from_send": bool(bl.get("send_excluded")),
+                "tracking_sent_current": bool(bl.get("tracking_sent_current")),
+            }
+            for bl in bls
+        ],
+    }
+
+
+def _tool_find_bl(args: dict) -> dict:
+    query = str(args.get("query") or "").strip()
+    if len(query) < 2:
+        return {"error": "Запрос слишком короткий"}
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl.id, bl.code, bl.client_name, bl.chat_id, bl.batch_id,
+                   b.name AS batch_name, b.status AS batch_status,
+                   COALESCE(b.client_delivery_date,'') AS delivered_date
+            FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id
+            WHERE UPPER(bl.code) LIKE UPPER(?) OR UPPER(COALESCE(bl.client_name,'')) LIKE UPPER(?)
+            ORDER BY bl.id DESC LIMIT 25
+            """,
+            (f"%{query}%", f"%{query}%"),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "matches": [
+            {
+                "bl_id": r["id"],
+                "code": r["code"],
+                "client": r["client_name"] or "",
+                "group_linked": bool(r["chat_id"]),
+                "chat_id": r["chat_id"] or "",
+                "batch": r["batch_name"],
+                "batch_status": r["batch_status"],
+                "batch_active": not r["delivered_date"],
+            }
+            for r in rows
+        ]
+    }
+
+
+def _tool_get_late_cargo(_args: dict) -> dict:
+    from services import late_cargo_service
+
+    rep = late_cargo_service.get_late_cargo_report()
+    if not rep.get("ok"):
+        return {"error": rep.get("error") or "Шитс статусов недоступен"}
+    return {
+        "total_late": rep.get("total_late"),
+        "late_in_ombor": rep.get("late_in_ombor"),
+        "late_in_transit": rep.get("late_in_transit"),
+        "active_total": (rep.get("active_ombor") or 0) + (rep.get("active_transit") or 0),
+        "groups": [
+            {
+                "reys": g.get("label"),
+                "max_late_days": g.get("max_late"),
+                "items": [
+                    {
+                        "brand": it.get("brand"),
+                        "sklad": it.get("sklad"),
+                        "seller": it.get("seller"),
+                        "arrived": it.get("arrived"),
+                        "days_late": it.get("days_late"),
+                    }
+                    for it in g.get("items", [])
+                ],
+            }
+            for g in rep.get("groups", [])
+        ],
+        "ombor_watchlist_count": len(rep.get("ombor_warning") or []),
+    }
+
+
+def _tool_get_problems(args: dict) -> dict:
+    limit = int(args.get("limit") or 10)
+    problems = db.get_problems()[:limit]
+    return {
+        "problems": [
+            {
+                "id": p.get("id"),
+                "bl_code": p.get("bl_code") or p.get("code") or "",
+                "type": p.get("problem_type"),
+                "description": (p.get("description") or "")[:200],
+                "status": p.get("status"),
+                "created_at": p.get("created_at"),
+            }
+            for p in problems
+        ]
+    }
+
+
+def _tool_get_send_logs(args: dict) -> dict:
+    limit = int(args.get("limit") or 15)
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl_code, batch_name, status, success, error_msg, sent_at
+            FROM send_logs ORDER BY id DESC LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {"logs": [dict(r) for r in rows]}
+
+
+ALLOWED_ACTION_KINDS = {"set_batch_status", "send_tracking_batch", "send_group_message"}
+
+
+def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> dict:
+    kind = str(args.get("kind") or "").strip()
+    params = args.get("params") or {}
+    summary = str(args.get("summary") or "").strip()
+    if kind not in ALLOWED_ACTION_KINDS:
+        return {"error": f"Неизвестный вид действия: {kind}"}
+    if not isinstance(params, dict):
+        return {"error": "params должен быть объектом"}
+    if not summary:
+        return {"error": "Нужно короткое описание (summary)"}
+
+    # Validate params early so the owner never confirms a broken action.
+    if kind == "set_batch_status":
+        batch = db.get_batch(int(params.get("batch_id") or 0))
+        if not batch:
+            return {"error": "batch_id не найден"}
+        status = str(params.get("status") or "").strip()
+        valid = set(db.STATUSES) | {db.DELIVERED_STATUS}
+        if status not in valid:
+            return {"error": f"Недопустимый статус. Разрешены: {sorted(valid)}"}
+        params["batch_name"] = batch["name"]
+    elif kind == "send_tracking_batch":
+        batch = db.get_batch(int(params.get("batch_id") or 0))
+        if not batch:
+            return {"error": "batch_id не найден"}
+        params["batch_name"] = batch["name"]
+    elif kind == "send_group_message":
+        chat_id = str(params.get("chat_id") or "").strip()
+        text = str(params.get("text") or "").strip()
+        if not chat_id or not text:
+            return {"error": "Нужны chat_id и text"}
+
+    action_id = db.ai_create_pending_action(tg_user_id, kind, json.dumps(params, ensure_ascii=False), summary)
+    created_actions.append({"id": action_id, "kind": kind, "summary": summary})
+    return {
+        "ok": True,
+        "pending_action_id": action_id,
+        "note": "Заявка создана. Владельцу отправлены кнопки подтверждения — действие выполнится только после ✅.",
+    }
+
+
+def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list) -> dict:
+    try:
+        if name == "get_overview":
+            return _tool_get_overview(args)
+        if name == "get_batch_detail":
+            return _tool_get_batch_detail(args)
+        if name == "find_bl":
+            return _tool_find_bl(args)
+        if name == "get_late_cargo":
+            return _tool_get_late_cargo(args)
+        if name == "get_problems":
+            return _tool_get_problems(args)
+        if name == "get_send_logs":
+            return _tool_get_send_logs(args)
+        if name == "propose_action":
+            return _tool_propose_action(args, tg_user_id, created_actions)
+        return {"error": f"Неизвестный инструмент {name}"}
+    except Exception as exc:  # tools must never crash the loop
+        return {"error": f"Ошибка инструмента: {exc}"}
+
+
+# ═══════════════════════════════════════════════════════════════
+# CHAT LOOP
+# ═══════════════════════════════════════════════════════════════
+
+def _chat_completion(messages, use_model=None):
+    payload = {
+        "model": use_model or _model(),
+        "messages": messages,
+        "tools": TOOLS,
+        "temperature": 0.3,
+    }
+    response = req.post(
+        f"{DEEPSEEK_BASE_URL}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {_api_key()}",
+            "Content-Type": "application/json",
+        },
+        data=json.dumps(payload),
+        timeout=REQUEST_TIMEOUT,
+    )
+    if response.status_code == 400 and use_model is None:
+        # Unknown model name (e.g. the configured one isn't available on
+        # this account) — retry once with the standard model.
+        body = response.text or ""
+        if "model" in body.lower():
+            return _chat_completion(messages, use_model=FALLBACK_MODEL)
+    response.raise_for_status()
+    return response.json()
+
+
+def handle_owner_message(tg_user_id, text: str) -> dict:
+    """Process one owner message. Returns {"reply", "pending": [...]}."""
+    tg_user_id = str(tg_user_id)
+    text = str(text or "").strip()
+
+    if not _api_key():
+        return {
+            "reply": (
+                "🤖 AI-ассистент ещё не подключён: не задан <b>DEEPSEEK_API_KEY</b>.\n"
+                "Создай API ключ на platform.deepseek.com → API Keys и добавь его в переменные окружения "
+                "(.env локально и Railway), затем перезапусти сервис."
+            ),
+            "pending": [],
+        }
+
+    with _history_lock:
+        history = db.ai_get_history(tg_user_id)
+        db.ai_add_message(tg_user_id, "user", text)
+
+    messages = [{"role": "system", "content": _system_prompt()}]
+    messages.extend(history)
+    messages.append({"role": "user", "content": text})
+
+    created_actions: list = []
+    reply_text = ""
+    try:
+        for _round in range(MAX_TOOL_ROUNDS):
+            data = _chat_completion(messages)
+            choice = (data.get("choices") or [{}])[0]
+            msg = choice.get("message") or {}
+            tool_calls = msg.get("tool_calls") or []
+            if not tool_calls:
+                reply_text = (msg.get("content") or "").strip()
+                break
+            # Append the assistant tool-call turn, then each tool result.
+            messages.append({
+                "role": "assistant",
+                "content": msg.get("content") or "",
+                "tool_calls": tool_calls,
+            })
+            for call in tool_calls:
+                fn = (call.get("function") or {})
+                name = fn.get("name") or ""
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except Exception:
+                    args = {}
+                result = _run_tool(name, args, tg_user_id, created_actions)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.get("id"),
+                    "content": json.dumps(result, ensure_ascii=False, default=str)[:12000],
+                })
+        else:
+            reply_text = "⚠️ Слишком длинная цепочка инструментов — попробуй сформулировать запрос конкретнее."
+    except req.RequestException as exc:
+        reply_text = f"⚠️ Ошибка DeepSeek API: {exc}"
+    except Exception as exc:
+        reply_text = f"⚠️ Внутренняя ошибка ассистента: {exc}"
+
+    if not reply_text:
+        reply_text = "Готово." if created_actions else "Не смог сформировать ответ, попробуй ещё раз."
+
+    with _history_lock:
+        db.ai_add_message(tg_user_id, "assistant", reply_text)
+
+    return {"reply": reply_text, "pending": created_actions}
+
+
+def reset_history(tg_user_id) -> None:
+    db.ai_clear_history(str(tg_user_id))
