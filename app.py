@@ -577,45 +577,37 @@ def is_group_chat_id(chat_id) -> bool:
         return False
 
 
+# The "Yuk holati" reply keyboard is RETIRED (owner request, 19.08.2026):
+# the button is removed from every group and private chat. Both builders
+# now return REMOVE_REPLY_MARKUP so every outgoing message actively strips
+# any keyboard still cached on the client side. Typing the button text
+# manually still works (the TRACK_BUTTON_TEXTS handler is kept).
 def build_main_reply_markup(*, chat_id=None, language: str | None = None) -> dict:
-    return {
-        "keyboard": [[{"text": get_track_button_text(chat_id=chat_id, language=language)}]],
-        "resize_keyboard": True,
-        "one_time_keyboard": False,
-        "is_persistent": True,
-        "input_field_placeholder": get_track_button_text(chat_id=chat_id, language=language),
-    }
+    return REMOVE_REPLY_MARKUP
 
 
 def build_group_track_reply_markup(*, chat_id=None, language: str | None = None) -> dict:
-    return {
-        "keyboard": [[{"text": get_track_button_text(chat_id=chat_id, language=language)}]],
-        "resize_keyboard": True,
-        "one_time_keyboard": False,
-        "is_persistent": True,
-        "input_field_placeholder": get_track_button_text(chat_id=chat_id, language=language),
-    }
+    return REMOVE_REPLY_MARKUP
 
 
 def get_group_welcome_text(button_text: str | None = None) -> str:
-    button_text = (button_text or TRACK_BUTTON).upper()
+    # button_text kept for signature compatibility — the reply button is
+    # retired, so the welcome no longer instructs clients to press it.
     return (
         "👋Assalomu alaykum hurmatli mijoz! \n\n"
         "🤖Ushbu bot yuklaringiz bo‘yicha ma’lumotlarni tez va qulay tarzda olish uchun yaratilgan.\n\n"
-        f"✅MENYUDA paydo bo'lgan \"{button_text}\" tugmasini bosish orqali siz ushbu platformada quyidagi imkoniyatlardan foydalanasiz:\n\n"
-        "• yuk statusini kuzatasiz\n"
+        "✅Ushbu platformada siz quyidagi imkoniyatlardan foydalanasiz:\n\n"
+        "• yuk statusi bo‘yicha yangilanishlarni olasiz\n"
         "• yetkazib berish jarayonini nazorat qilasiz\n"
-        "• yangilanishlarni olasiz\n"
         "• menejer bilan bog‘lanasiz\n\n"
         "🎥 Botdan foydalanish bo‘yicha qisqa videoqo‘llanma quyida taqdim etilgan.\n\n"
         "Bir marta ko‘rib chiqish tavsiya etiladi 👇\n\n"
         "━━━━━━━━━━━━━━━\n\n"
         "👋Здравствуйте, уважаемый клиент!\n\n"
         "🤖Этот бот создан для того, чтобы вы могли быстро и удобно получать информацию по вашим грузам.\n\n"
-        f"✅Нажав на появившуюся в МЕНЮ кнопку \"{button_text}\", вы сможете:\n\n"
-        "• отслеживать статус груза\n"
+        "✅На этой платформе вы сможете:\n\n"
+        "• получать обновления по статусу груза\n"
         "• контролировать процесс доставки\n"
-        "• получать обновления\n"
         "• связываться с менеджером\n\n"
         "🎥 Ниже представлена короткая видеоинструкция по использованию бота.\n\n"
         "Рекомендуем посмотреть её один раз 👇"
@@ -628,14 +620,16 @@ def get_no_active_cargo_text(language: str | None = None) -> str:
 
 
 def get_menu_restore_text(language: str | None = None) -> str:
+    # The reply button is retired — /menu now just reports that updates
+    # arrive automatically instead of pretending to restore a keyboard.
     normalized_language = normalize_message_language(language)
     if normalized_language == "uz_cyrl":
-        return "✅ Юқоридаги меню қайта ёқилди. Пастдаги <b>Юк ҳолати</b> тугмасидан фойдаланинг."
+        return "ℹ️ Юк ҳолати бўйича янгиланишлар автоматик юборилади."
     if normalized_language == "ru":
-        return "✅ Меню снова включено. Используйте нижнюю кнопку <b>Статус груза</b>."
+        return "ℹ️ Обновления по статусу груза приходят автоматически."
     if normalized_language == "en":
-        return "✅ Menu is enabled again. Use the lower <b>Cargo status</b> button."
-    return "✅ Menu qayta yoqildi. Pastdagi <b>Yuk holati</b> tugmasidan foydalaning."
+        return "ℹ️ Cargo status updates are delivered automatically."
+    return "ℹ️ Yuk holati bo'yicha yangilanishlar avtomatik yuboriladi."
 
 
 def get_chat_admin_ids(chat_id):
@@ -1420,46 +1414,10 @@ def handle_group_remove_request(message: dict, command: str):
 
 
 def refresh_track_reply_keyboard(chat_id, *, language: str | None = None):
-    try:
-        if is_group_chat_id(chat_id):
-            return
-        chat_key = str(chat_id)
-        with TRACK_KEYBOARD_ANCHORS_LOCK:
-            previous_message_id = (TRACK_KEYBOARD_ANCHORS.get(chat_key) or {}).get("message_id")
-        if previous_message_id:
-            try:
-                telegram_delete_message(chat_id, previous_message_id)
-            except Exception:
-                pass
-
-        button_text = get_track_button_text(chat_id=chat_id, language=language)
-        is_group = is_group_chat_id(chat_id)
-        response = telegram_send_message(
-            chat_id,
-            "ㅤ" if is_group else f"⬇️ {button_text}",
-            reply_markup=(
-                build_group_track_reply_markup(chat_id=chat_id, language=language)
-                if is_group
-                else build_main_reply_markup(chat_id=chat_id, language=language)
-            ),
-            parse_mode=None,
-            disable_notification=True,
-        )
-        message_id = (((response or {}).get("result") or {}).get("message_id"))
-        if message_id:
-            with TRACK_KEYBOARD_ANCHORS_LOCK:
-                TRACK_KEYBOARD_ANCHORS[chat_key] = {
-                    "message_id": message_id,
-                    "language": normalize_message_language(language),
-                }
-            if is_group:
-                threading.Thread(
-                    target=_delete_message_later,
-                    args=(chat_id, message_id, 0.8),
-                    daemon=True,
-                ).start()
-    except Exception:
-        pass
+    # Retired with the "Yuk holati" button: the keyboard anchor messages
+    # ("⬇️ Yuk holati") are no longer sent. Keyboard removal rides along
+    # every regular outgoing message via REMOVE_REPLY_MARKUP instead.
+    return
 
 
 def send_group_message_with_keyboard(chat_id, text: str, *, language: str | None = None):
@@ -2560,7 +2518,7 @@ def handle_telegram_message(message: dict):
         if chat_type in {"group", "supergroup"}:
             send_group_welcome_bundle(chat_id, button_text)
         else:
-            send_with_track_keyboard(chat_id, "Привет!\n\nНажми кнопку ниже, чтобы узнать текущий статус своего груза.")
+            send_with_track_keyboard(chat_id, "Привет!\n\nЗдесь ты будешь получать обновления по статусу своих грузов.")
         return
 
     if text == "/chatid":
@@ -3229,6 +3187,69 @@ def telegram_webhook():
 @login_required
 def api_stats():
     return jsonify(db.get_stats())
+
+
+@app.route("/api/remove-track-keyboards", methods=["POST"])
+@editor_required
+def api_remove_track_keyboards():
+    """One-time sweep: strip the retired "Yuk holati" reply keyboard from
+    every chat the bot knows (groups + privates). Per chat: send an
+    invisible message with remove_keyboard, then delete it — the cached
+    keyboard disappears without leaving a visible message."""
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT chat_id FROM (
+                SELECT chat_id FROM telegram_chats
+                UNION SELECT chat_id FROM telegram_sessions
+                UNION SELECT chat_id FROM bl_codes WHERE chat_id != ''
+                UNION SELECT chat_id FROM send_logs WHERE chat_id != ''
+            ) WHERE COALESCE(chat_id, '') != ''
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    chat_ids = [str(r["chat_id"]).strip() for r in rows if str(r["chat_id"]).strip()]
+
+    def _sweep():
+        ok = 0
+        fail = 0
+        for cid in chat_ids:
+            try:
+                resp = telegram_send_message(
+                    cid,
+                    "ㅤ",
+                    reply_markup=REMOVE_REPLY_MARKUP,
+                    parse_mode=None,
+                    disable_notification=True,
+                )
+                mid = ((resp or {}).get("result") or {}).get("message_id")
+                if mid:
+                    try:
+                        telegram_delete_message(cid, mid)
+                    except Exception:
+                        pass
+                    ok += 1
+                else:
+                    fail += 1
+            except Exception:
+                fail += 1
+            time.sleep(0.08)
+        app.logger.info("Track-keyboard sweep done: ok=%s fail=%s of %s", ok, fail, len(chat_ids))
+        from services import ai_assistant
+
+        for admin_id in ai_assistant.admin_ids():
+            try:
+                telegram_send_message(
+                    admin_id,
+                    f"🧹 Кнопка Yuk holati убрана: ✅ {ok} чатов, ❌ {fail} недоступно (бот удалён из чата и т.п.).",
+                )
+            except Exception:
+                pass
+
+    threading.Thread(target=_sweep, daemon=True).start()
+    return jsonify({"ok": True, "targets": len(chat_ids)})
 
 
 @app.route("/api/late-cargo")
