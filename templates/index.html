@@ -2481,7 +2481,7 @@ svg.oi {
             </div>
             <table class="tbl">
               <thead><tr>
-                <th>Партия</th><th>Дата доставки клиентам</th><th>Прибытие в Toshkent</th><th>До Toshkent</th><th>Доставка клиенту</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
+                <th>Партия</th><th>Прибытие в Toshkent</th><th>Дата доставки клиентам</th><th>До Toshkent</th><th>Доставка клиенту</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
               </tr></thead>
               <tbody id="batches-inactive-table"></tbody>
             </table>
@@ -4088,11 +4088,19 @@ function getTotalDeliveryTerm(batch) {
 // Срок доставки, разбитый на два плеча:
 //   до Toshkent  = дата в имени партии (выезд со склада) → toshkent_arrived_at
 //   до клиента   = toshkent_arrived_at → client_delivery_date
+// Обе даты нормализуются до полуночи: у "живых" отметок прибытия внутри
+// время (напр. 30.07 14:22), и без нормализации 30.07→31.07 давало 0 дней.
 function getDeliveryTermSplit(b) {
-  const days = (a, z) => (a && z) ? Math.floor((z - a) / 86400000) : null;
-  const start = parseFlexibleDate(b.name);
-  const arrived = parseFlexibleDate(b.toshkent_arrived_at);
-  const delivered = parseFlexibleDate(b.client_delivery_date);
+  const mid = (v) => {
+    const d = parseFlexibleDate(v);
+    if (!d || Number.isNaN(d.getTime())) return null;
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+  const days = (a, z) => (a && z) ? Math.round((z - a) / 86400000) : null;
+  const start = mid(b.name);
+  const arrived = mid(b.toshkent_arrived_at);
+  const delivered = mid(b.client_delivery_date);
   const clean = (v) => (v !== null && v >= 0) ? v : null;
   return {
     toTashkent: clean(days(start, arrived)),
@@ -4154,8 +4162,8 @@ function renderInactiveBatchRows(list) {
     return `
     <tr>
       <td><span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span></td>
-      <td>${b.client_delivery_date ? `<span class="badge badge-green">📅 ${esc(b.client_delivery_date)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td>${formatDisplayDate(b.toshkent_arrived_at) ? `<span class="badge badge-amber">📦 ${esc(formatDisplayDate(b.toshkent_arrived_at))}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+      <td>${b.client_delivery_date ? `<span class="badge badge-green">📅 ${esc(b.client_delivery_date)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td>${toTkCell}</td>
       <td>${toClientCell}</td>
       <td>${renderProblemsCell(b)}</td>
