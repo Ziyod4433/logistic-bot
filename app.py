@@ -2155,193 +2155,70 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
     if not chat_id or not text or text.startswith("/") or text == CANCEL_BUTTON or text in TRACK_BUTTON_TEXTS:
         return False
 
-    chat_title = chat.get("title") or ""
-    ai_called = False
+    from services import ai_assistant
 
-    # ACTIVITY GATE (rewritten 19.08.2026): the per-chat/global AI toggles
-    # are retired — the bot is active in EVERY group, but it replies
-    # STRICTLY when someone @mentions it AND asks something. Everything
-    # else in groups is ignored silently.
+    # ── ACCESS MODEL (19.08.2026) ────────────────────────────────────
+    # Exactly ONE staff group (AI_CONTROL_GROUP_ID) has full rights over
+    # the bot — its members talk to the FULL assistant (all read tools +
+    # approval-gated actions) by @mentioning it. Every other group is a
+    # client group where the bot stays COMPLETELY silent for now.
+    if not ai_assistant.is_control_chat(chat_id):
+        return False
+
     question = extract_bot_mention_question(message)
     if question is None:
         return False
     if not question:
-        # Bare @mention with no actual question — stay silent (strict rule).
+        # Bare @mention with no actual question — stay silent.
         return True
-    text = question
 
-    # ── SMART PATH: DeepSeek group agent, scoped to THIS group's cargo ──
-    # Answers naturally with real data (no canned "пришлите BL-код").
-    # Falls through to the legacy intent flow only if the agent is
-    # unavailable (no API key / DeepSeek error).
+    chat_title = chat.get("title") or ""
     sender = message.get("from") or {}
-    try:
-        from services import ai_assistant
+    sender_name = telegram_user_name(sender)
+    # Speaker attribution: several staff members share this chat, so the
+    # assistant sees who is asking. History/pending actions are keyed by
+    # the group id.
+    assistant_input = f"{sender_name}: {question}" if sender_name else question
 
-        with TypingIndicator(chat_id):
-            smart_reply = ai_assistant.handle_group_question(
-                chat_id,
-                chat_title,
-                text,
-                sender_name=telegram_user_name(sender),
-            )
-    except Exception:
-        app.logger.exception("Group AI agent failed for chat %s", chat_id)
-        smart_reply = ""
-    if smart_reply:
+    def _worker():
         try:
-            telegram_send_message(chat_id, smart_reply, reply_markup=REMOVE_REPLY_MARKUP)
+            with TypingIndicator(chat_id):
+                result = ai_assistant.handle_owner_message(f"group:{chat_id}", assistant_input)
+        except Exception as exc:
+            app.logger.exception("Control-group assistant failure")
+            try:
+                telegram_send_message(chat_id, f"⚠️ Ошибка ассистента: {exc}", parse_mode=None)
+            except Exception:
+                pass
+            return
+        reply = result.get("reply") or "…"
+        try:
+            telegram_send_message(chat_id, reply)
         except Exception:
             try:
-                telegram_send_message(chat_id, smart_reply, parse_mode=None)
+                telegram_send_message(chat_id, reply, parse_mode=None)
             except Exception:
-                app.logger.exception("Group agent reply delivery failed for chat %s", chat_id)
-                return True
+                app.logger.exception("Control-group assistant reply delivery failed")
+        for act in result.get("pending") or []:
+            try:
+                send_ai_action_approval(chat_id, act)
+            except Exception:
+                app.logger.exception("Control-group approval card delivery failed")
         try:
             db.record_ai_log(
                 chat_id=chat_id,
                 group_title=chat_title,
                 user_id=sender.get("id") or "",
-                username=sender.get("username") or telegram_user_name(sender),
-                original_text=text,
-                detected_intent="smart_agent",
+                username=sender.get("username") or sender_name,
+                original_text=question,
+                detected_intent="control_group_assistant",
                 bl_code="",
-                ai_response=smart_reply,
+                ai_response=reply[:1000],
             )
         except Exception:
             app.logger.exception("AI log write failed for chat %s", chat_id)
-        return True
 
-    ai_service = None
-    for module_name in ("services.ai_service", "ai_service"):
-        try:
-            ai_service = __import__(module_name, fromlist=["*"])
-            break
-        except ImportError:
-            continue
-
-    if not ai_service:
-        app.logger.info(
-            "AI_DEBUG chat_id=%s group_title=%r user_text=%r ai_called=%s error=%r",
-            chat_id,
-            chat_title,
-            text,
-            ai_called,
-            "ai_service_missing",
-        )
-        return False
-
-    try:
-        analyzer = getattr(ai_service, "analyze_message", None) or getattr(ai_service, "handle_group_message", None)
-        if not callable(analyzer):
-            app.logger.info(
-                "AI_DEBUG chat_id=%s group_title=%r user_text=%r ai_called=%s error=%r",
-                chat_id,
-                chat_title,
-                text,
-                ai_called,
-                "ai_handler_missing",
-            )
-            return False
-        ai_called = True
-        # "typing…" stays visible while the model formulates the reply —
-        # otherwise the group looks like the bot ignored the mention.
-        with TypingIndicator(chat_id):
-            if analyzer.__name__ == "handle_group_message":
-                result = analyzer(message)
-            else:
-                result = analyzer(text)
-    except Exception as exc:
-        if "OPENAI_API_KEY is missing" in str(exc):
-            app.logger.error("OPENAI_API_KEY is missing")
-        app.logger.exception(
-            "AI_DEBUG chat_id=%s group_title=%r user_text=%r ai_called=%s error=%r",
-            chat_id,
-            chat_title,
-            text,
-            ai_called,
-            str(exc),
-        )
-        return False
-
-    if not isinstance(result, dict):
-        result = {}
-
-    detected_intent = str(result.get("intent") or "unknown").strip() or "unknown"
-    bl_code = str(result.get("bl_code") or "").strip()
-    ai_language = str(result.get("language") or "").strip()
-    ai_response = str(result.get("reply") or "").strip()
-
-    if detected_intent == "check_cargo_status":
-        bl = db.find_bl_by_code(bl_code) if bl_code else None
-        if not bl:
-            ai_response = get_ai_ask_bl_text(ai_language, chat_id=chat_id)
-        else:
-            app.logger.info(
-                "AI_DEBUG chat_id=%s group_title=%r user_text=%r ai_called=%s intent=%s bl_code=%s",
-                chat_id,
-                chat_title,
-                text,
-                ai_called,
-                detected_intent,
-                bl_code,
-            )
-            # Threaded for the same reason as the Yuk holati handler:
-            # file delivery is now part of send_bl_status and can take
-            # several seconds. Show "typing…" so the wait is visible.
-            telegram_send_chat_action(chat_id, "typing")
-            threading.Thread(
-                target=send_bl_status,
-                args=(chat_id, bl),
-                daemon=True,
-            ).start()
-            try:
-                sender = message.get("from") or {}
-                db.record_ai_log(
-                    chat_id=chat_id,
-                    group_title=chat_title,
-                    user_id=sender.get("id") or "",
-                    username=sender.get("username") or telegram_user_name(sender),
-                    original_text=text,
-                    detected_intent=detected_intent,
-                    bl_code=bl_code,
-                    ai_response=f"[real_status_sent] {bl.get('code') or bl_code}",
-                )
-            except Exception:
-                app.logger.exception("AI log write failed for chat %s", chat_id)
-            return True
-
-    if not ai_response:
-        if detected_intent in {"ask_for_bl", "unknown"}:
-            ai_response = get_ai_unknown_text(ai_language, chat_id=chat_id)
-        else:
-            ai_response = get_ai_unknown_text(ai_language, chat_id=chat_id)
-
-    sender = message.get("from") or {}
-    language = normalize_ai_language(ai_language, chat_id=chat_id)
-    app.logger.info(
-        "AI_DEBUG chat_id=%s group_title=%r user_text=%r ai_called=%s intent=%s bl_code=%s",
-        chat_id,
-        chat_title,
-        text,
-        ai_called,
-        detected_intent,
-        bl_code,
-    )
-    send_group_message_with_keyboard(chat_id, ai_response, language=language)
-    try:
-        db.record_ai_log(
-            chat_id=chat_id,
-            group_title=chat_title,
-            user_id=sender.get("id") or "",
-            username=sender.get("username") or telegram_user_name(sender),
-            original_text=text,
-            detected_intent=detected_intent,
-            bl_code=bl_code,
-            ai_response=ai_response,
-        )
-    except Exception:
-        app.logger.exception("AI log write failed for chat %s", chat_id)
+    threading.Thread(target=_worker, daemon=True).start()
     return True
 
 
@@ -2801,7 +2678,10 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
     from services import ai_assistant
 
     voter = callback_query.get("from") or {}
-    if not ai_assistant.is_admin(voter.get("id")):
+    origin_chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+    # Approvals: the owner (admin ids) anywhere, or ANY member of the
+    # control group when the buttons live in that group.
+    if not (ai_assistant.is_admin(voter.get("id")) or ai_assistant.is_control_chat(origin_chat_id)):
         telegram_answer_callback_query(callback_id, "Недостаточно прав")
         return
 

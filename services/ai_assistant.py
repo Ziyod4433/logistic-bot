@@ -49,6 +49,16 @@ def is_admin(tg_user_id) -> bool:
     return str(tg_user_id) in admin_ids()
 
 
+def control_group_id() -> str:
+    """The ONE staff group that has full rights over the bot. All other
+    groups are client groups where the bot stays silent (for now)."""
+    return (os.getenv("AI_CONTROL_GROUP_ID") or "-1002653438323").strip()
+
+
+def is_control_chat(chat_id) -> bool:
+    return str(chat_id).strip() == control_group_id()
+
+
 def get_runtime_status() -> dict:
     return {
         "deepseek_api_key_present": bool(_api_key()),
