@@ -2547,61 +2547,19 @@ def handle_telegram_message(message: dict):
             return
 
     if text in TRACK_BUTTON_TEXTS:
-        language = get_chat_message_language(chat_id)
-        remaining = db.reserve_track_button_request(
-            chat_id,
-            sender_id,
-            cooldown_seconds=TRACK_BUTTON_COOLDOWN_SECONDS,
-        )
-        if remaining:
-            send_with_track_keyboard(
-                chat_id,
-                get_track_button_cooldown_text(language, remaining),
-                language=language,
-            )
-            return
-
-        # Only cargo that is still ON THE WAY (yo'lda) is reported by the
-        # button. Once a batch reaches the Tashkent warehouse
-        # (Toshkent(Chuqursoy ULS da)) or is delivered, it's no longer in
-        # transit — the button then shows "no cargo in transit" instead of
-        # replaying its tracking.
-        in_transit_bl = db.find_latest_in_transit_bl_by_chat(chat_id)
-        if in_transit_bl:
-            db.clear_chat_state(chat_id)
-            # send_bl_status now also dispatches every attached file after
-            # each BL message in sequence, which can take several seconds
-            # per file. Run it on a daemon thread so the Telegram webhook
-            # returns immediately and Telegram doesn't retry the request.
-            threading.Thread(
-                target=send_bl_status,
-                args=(chat_id, in_transit_bl),
-                kwargs={"in_transit_only": True},
-                daemon=True,
-            ).start()
-            return
-        # Nothing in transit. Use any known BL (incl. an already-arrived one)
-        # only to pick the right language for the message.
-        latest_bl = db.find_latest_active_bl_by_chat(chat_id) or db.find_latest_bl_by_chat(chat_id)
-        db.clear_chat_state(chat_id)
-        message_language = latest_bl.get("message_language") if latest_bl else language
-        send_with_track_keyboard(
-            chat_id,
-            get_no_active_cargo_text(message_language),
-            language=message_language,
-        )
+        # The "Yuk holati" flow is FULLY retired (owner request,
+        # 19.08.2026): the button is gone and the bot no longer answers
+        # this text at all — consumed silently so it can't fall through
+        # to the group-AI handler either.
         return
 
     if maybe_handle_group_ai_message(message):
         return
 
     if text == CANCEL_BUTTON or db.get_chat_state(chat_id) == STATE_WAITING_BL:
+        # Legacy ask-for-BL flow retired alongside the button: clear any
+        # lingering state silently, no reply.
         db.clear_chat_state(chat_id)
-        send_with_track_keyboard(
-            chat_id,
-            get_no_active_cargo_text(get_chat_message_language(chat_id)),
-            language=get_chat_message_language(chat_id),
-        )
         return
 
 
