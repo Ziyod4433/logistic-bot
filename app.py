@@ -2946,6 +2946,67 @@ def _build_active_bl_index():
     return index, rows
 
 
+# Packing-list filename convention: "<БРЕНД/BL> <N> MESTA <товар>.xlsx",
+# e.g. "LUCEAT 10 MESTA LYUSTRA.xlsx", "BL-65 10 MESTA ELEKTROMOBIL….xlsx".
+# The brand (before the number) says WHOSE packing list it is; N = carton
+# count (CTN/件数 from the Sklad sheet → bl.quantity_places) and is used
+# as the secondary check when the brand matches several BLs.
+_MESTA_RE = re.compile(r"^(?P<brand>.+?)\s+(?P<mesta>\d{1,5})\s+MESTA\b", re.IGNORECASE)
+
+
+def _parse_packing_filename(base_name: str):
+    """(brand, mesta_count|None) from a packing-list filename."""
+    stem = base_name.rsplit(".", 1)[0].strip()
+    m = _MESTA_RE.match(stem)
+    if not m:
+        return stem, None
+    return m.group("brand").strip(), int(m.group("mesta"))
+
+
+def _mesta_matches(bl: dict, mesta: int | None) -> bool:
+    if mesta is None:
+        return True
+    try:
+        places = int(round(float(bl.get("quantity_places") or 0)))
+    except (TypeError, ValueError):
+        places = 0
+    if places == mesta:
+        return True
+    # разбивка мест ("4+11+14") — файл может закрывать одну её часть
+    breakdown = str(bl.get("quantity_places_breakdown") or "")
+    return mesta in [int(x) for x in re.findall(r"\d+", breakdown)]
+
+
+def _find_bl_candidates_by_brand(brand: str, rows: list, chat_titles: dict) -> list:
+    """Active-batch BLs whose code / client / group title match the brand."""
+    brand_norm = _normalize_bl_code(brand)
+    brand_up = brand.upper().strip()
+    scored = []
+    for row in rows:
+        code_norm = _normalize_bl_code(str(row.get("code") or ""))
+        client = str(row.get("client_name") or "").upper().strip()
+        title = str(chat_titles.get(str(row.get("chat_id") or "").strip(), "")).upper()
+        score = 0
+        if brand_norm and code_norm and brand_norm == code_norm:
+            score = 3
+        else:
+            for part in re.split(r"[,;\s]+", str(row.get("merged_codes") or "")):
+                if brand_norm and _normalize_bl_code(part) == brand_norm:
+                    score = 3
+                    break
+        if not score and len(brand_up) >= 3:
+            if client and (brand_up == client or brand_up in client or client in brand_up):
+                score = 2
+            elif title and brand_up in title:
+                score = 2
+        if score:
+            scored.append((score, row))
+    if not scored:
+        return []
+    best = max(s for s, _ in scored)
+    return [row for s, row in scored if s == best]
+
+
 def maybe_handle_control_group_document(message: dict) -> bool:
     """ZIP dropped in the control group → unpack & attach packing lists."""
     from services import ai_assistant
@@ -2972,6 +3033,8 @@ def process_packing_zip(chat_id, doc: dict):
     skipped_dup: list = []
     unmatched: list = []
     rejected: list = []
+    ambiguous: list = []
+    mesta_warns: list = []
     try:
         with TypingIndicator(chat_id):
             info = telegram_api("getFile", json={"file_id": doc.get("file_id")}) or {}
@@ -2996,11 +3059,36 @@ def process_packing_zip(chat_id, doc: dict):
                     if ext not in ALLOWED_EXT:
                         rejected.append(base)
                         continue
-                    hit = _resolve_filename_to_bl(base, index, rows, chat_titles)
-                    if not hit:
+                    # 1) главный ключ — бренд/название из имени файла;
+                    # 2) при нескольких кандидатах решает MESTA (CTN).
+                    brand, mesta = _parse_packing_filename(base)
+                    candidates = _find_bl_candidates_by_brand(brand, rows, chat_titles)
+                    bl = None
+                    if len(candidates) == 1:
+                        bl = candidates[0]
+                        if mesta is not None and not _mesta_matches(bl, mesta):
+                            mesta_warns.append(
+                                f"{base}: faylda {mesta} mesta, tizimda {bl.get('quantity_places') or 0}"
+                            )
+                    elif len(candidates) > 1:
+                        filtered = [c for c in candidates if _mesta_matches(c, mesta)] if mesta is not None else []
+                        if len(filtered) == 1:
+                            bl = filtered[0]
+                        else:
+                            ambiguous.append(
+                                base + " → " + ", ".join(
+                                    f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4]
+                                )
+                            )
+                            continue
+                    else:
+                        # запасной путь — общий резолвер (нестандартные имена)
+                        hit = _resolve_filename_to_bl(base, index, rows, chat_titles)
+                        if hit:
+                            bl = hit["row"]
+                    if not bl:
                         unmatched.append(base)
                         continue
-                    bl = hit["row"]
                     existing = {
                         str(f.get("filename") or "").strip().lower()
                         for f in (db.get_files(bl["id"]) or [])
@@ -3037,6 +3125,15 @@ def process_packing_zip(chat_id, doc: dict):
             lines.append(f"  • <code>{html_escape(code)}</code> ← {html_escape(base)} ({html_escape(batch_name)})")
         if len(attached) > 30:
             lines.append(f"  …va yana {len(attached) - 30} ta")
+    if mesta_warns:
+        lines.append("⚠️ Mesta (karobka soni) mos kelmadi, lekin nomi aniq bo'lgani uchun biriktirdim:")
+        for w in mesta_warns[:10]:
+            lines.append(f"  • {html_escape(w)}")
+    if ambiguous:
+        lines.append(f"🤔 Bir nechta BL mos keldi, mesta ham aniqlik kiritmadi ({len(ambiguous)} ta):")
+        for a in ambiguous[:10]:
+            lines.append(f"  • {html_escape(a)}")
+        lines.append("Bularni aniqlashtirib qayta yuboring (fayl nomiga BL kodini yozing).")
     if skipped_dup:
         lines.append(f"↩️ Allaqachon biriktirilgan edi ({len(skipped_dup)} ta) — o'tkazib yubordim.")
     if unmatched:
