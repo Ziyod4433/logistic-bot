@@ -3458,27 +3458,56 @@ def sync_batches_from_fura_statuses():
     changed = 0
     arrived_set = set(db.ARRIVED_STATUSES)
     for batch in db.get_batches():
-        if (batch.get("client_delivery_date") or "").strip():
-            continue  # уже неактивна
         digits = re.sub(r"\D", "", str(batch.get("name") or ""))
         if len(digits) != 8:
             continue
         rec = records.get(digits)
         if not rec:
             continue
+        was_active = not (batch.get("client_delivery_date") or "").strip()
 
-        # V: прибытие в Ташкент (дата из шитса точнее, чем "сейчас")
-        if rec["bojxona"]:
-            iso_arr = rec["bojxona"].strftime("%Y-%m-%d") + " 00:00:00"
-            if batch.get("status") not in arrived_set:
+        # W: дата выдачи клиентам. Шитс — ИСТОЧНИК ИСТИНЫ, в том числе для
+        # уже закрытых партий (вручную вбитые даты корректируются).
+        if rec["tarqatildi"]:
+            delivery = rec["tarqatildi"].strftime("%d.%m.%Y")
+            if (batch.get("client_delivery_date") or "").strip() != delivery:
+                new_status = db.DELIVERED_STATUS if was_active else (batch.get("status") or db.DELIVERED_STATUS)
                 db.update_batch(
-                    batch["id"], batch["name"], "Toshkent(Chuqursoy ULS da)",
+                    batch["id"], batch["name"], new_status,
                     batch.get("eta_to_toshkent") or "",
                     batch.get("eta_destination") or "Toshkent",
-                    "",
+                    delivery,
                 )
                 changed += 1
-            if not (batch.get("toshkent_arrived_at") or "").strip() or batch.get("status") not in arrived_set:
+                if was_active:
+                    # уведомляем только о ПЕРЕХОДЕ в неактивные, не о правках дат
+                    try:
+                        telegram_send_message(
+                            ai_assistant.control_group_id(),
+                            (
+                                f"📦 Partiya <b>{batch['name']}</b> yakunlandi: "
+                                f"Yuklar tarqatildi — {delivery} (Fura statuslari jadvalidan). "
+                                "Partiya avtomatik NOAKTIV bo'ldi."
+                            ),
+                        )
+                    except Exception:
+                        app.logger.exception("Fura-status deactivation notify failed")
+        elif was_active and rec["bojxona"] and batch.get("status") not in arrived_set:
+            # прибыла в Ташкент, но ещё не выдана
+            db.update_batch(
+                batch["id"], batch["name"], "Toshkent(Chuqursoy ULS da)",
+                batch.get("eta_to_toshkent") or "",
+                batch.get("eta_destination") or "Toshkent",
+                "",
+            )
+            changed += 1
+
+        # V: дата прибытия в Ташкент. Тоже источник истины — исправляем,
+        # если отличается (в т.ч. штамп «вживую», поставленный логистами
+        # раньше/позже реальной даты из шитса).
+        if rec["bojxona"]:
+            iso_arr = rec["bojxona"].strftime("%Y-%m-%d") + " 00:00:00"
+            if (batch.get("toshkent_arrived_at") or "").strip()[:10] != iso_arr[:10]:
                 conn = db.get_conn()
                 try:
                     conn.execute(
@@ -3488,28 +3517,7 @@ def sync_batches_from_fura_statuses():
                     conn.commit()
                 finally:
                     conn.close()
-
-        # W: выдано клиентам → в неактивные
-        if rec["tarqatildi"]:
-            delivery = rec["tarqatildi"].strftime("%d.%m.%Y")
-            db.update_batch(
-                batch["id"], batch["name"], db.DELIVERED_STATUS,
-                batch.get("eta_to_toshkent") or "",
-                batch.get("eta_destination") or "Toshkent",
-                delivery,
-            )
-            changed += 1
-            try:
-                telegram_send_message(
-                    ai_assistant.control_group_id(),
-                    (
-                        f"📦 Partiya <b>{batch['name']}</b> yakunlandi: "
-                        f"Yuklar tarqatildi — {delivery} (Fura statuslari jadvalidan). "
-                        "Partiya avtomatik NOAKTIV bo'ldi."
-                    ),
-                )
-            except Exception:
-                app.logger.exception("Fura-status deactivation notify failed")
+                changed += 1
     return changed
 
 
