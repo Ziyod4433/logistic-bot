@@ -2481,7 +2481,7 @@ svg.oi {
             </div>
             <table class="tbl">
               <thead><tr>
-                <th>Партия</th><th>Дата доставки клиентам</th><th>Прибытие в Toshkent</th><th>Общий срок</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
+                <th>Партия</th><th>Дата доставки клиентам</th><th>Прибытие в Toshkent</th><th>До Toshkent</th><th>Доставка клиенту</th><th>Проблемы</th><th>BL кодов</th><th>Привязано</th><th>Создана</th><th>Действия</th>
               </tr></thead>
               <tbody id="batches-inactive-table"></tbody>
             </table>
@@ -4085,6 +4085,22 @@ function getTotalDeliveryTerm(batch) {
   return diff >= 0 ? `${diff} kun` : "";
 }
 
+// Срок доставки, разбитый на два плеча:
+//   до Toshkent  = дата в имени партии (выезд со склада) → toshkent_arrived_at
+//   до клиента   = toshkent_arrived_at → client_delivery_date
+function getDeliveryTermSplit(b) {
+  const days = (a, z) => (a && z) ? Math.floor((z - a) / 86400000) : null;
+  const start = parseFlexibleDate(b.name);
+  const arrived = parseFlexibleDate(b.toshkent_arrived_at);
+  const delivered = parseFlexibleDate(b.client_delivery_date);
+  const clean = (v) => (v !== null && v >= 0) ? v : null;
+  return {
+    toTashkent: clean(days(start, arrived)),
+    toClient: clean(days(arrived, delivered)),
+    total: clean(days(start, delivered)),
+  };
+}
+
 function getTrackingIndication(b) {
   const last = parseFlexibleDate(b.last_tracking_at);
   const ref = last || parseFlexibleDate(b.created_at);
@@ -4124,19 +4140,32 @@ function renderActiveBatchRows(list) {
 }
 
 function renderInactiveBatchRows(list) {
-  return list.length ? list.map(b=>`
+  return list.length ? list.map(b=>{
+    const term = getDeliveryTermSplit(b);
+    const toTkCell = term.toTashkent !== null
+      ? `<span class="badge badge-blue">🚚 ${term.toTashkent} kun</span>`
+      : `<span style="color:var(--muted)">—</span>`;
+    // если даты прибытия нет — показываем хотя бы общий срок как подсказку
+    const toClientCell = term.toClient !== null
+      ? `<span class="badge badge-blue">🏠 ${term.toClient} kun</span>`
+      : (term.total !== null
+          ? `<span class="badge badge-muted" title="Дата прибытия в Toshkent не заполнена — показан общий срок">jami ${term.total} kun</span>`
+          : `<span style="color:var(--muted)">—</span>`);
+    return `
     <tr>
       <td><span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span></td>
       <td>${b.client_delivery_date ? `<span class="badge badge-green">📅 ${esc(b.client_delivery_date)}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td>${formatDisplayDate(b.toshkent_arrived_at) ? `<span class="badge badge-amber">📦 ${esc(formatDisplayDate(b.toshkent_arrived_at))}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
-      <td>${getTotalDeliveryTerm(b) ? `<span class="badge badge-blue">${esc(getTotalDeliveryTerm(b))}</span>` : `<span style="color:var(--muted)">—</span>`}</td>
+      <td>${toTkCell}</td>
+      <td>${toClientCell}</td>
       <td>${renderProblemsCell(b)}</td>
       <td><span class="badge badge-muted">${b.bl_count} BL</span></td>
       <td>${renderBatchLinkedCell(b)}</td>
       <td class="mono" style="font-size:11px;color:var(--muted2)">${b.created_at}</td>
       <td>${renderBatchRowActions(b)}</td>
-    </tr>`).join("") :
-    `<tr><td colspan="9"><div class="empty"><div class="empty-icon">📦</div><p>Неактивных партий пока нет.</p></div></td></tr>`;
+    </tr>`;
+  }).join("") :
+    `<tr><td colspan="10"><div class="empty"><div class="empty-icon">📦</div><p>Неактивных партий пока нет.</p></div></td></tr>`;
 }
 
 function getArrivalTargetLabel(value) {

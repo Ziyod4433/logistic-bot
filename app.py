@@ -2948,6 +2948,10 @@ def _packing_reminder_scheduler():
                 sent, info = send_tracking_digest()
                 if sent:
                     app.logger.info("Tracking digest sent: %s", info)
+            # авто-жизненный цикл партий из «Fura statuslari»
+            synced = sync_batches_from_fura_statuses()
+            if synced:
+                app.logger.info("Fura-status sync: %s batch updates", synced)
         except Exception:
             app.logger.exception("Morning scheduler tick failed")
         time.sleep(300)
@@ -3432,6 +3436,81 @@ TRACKING_DIGEST_TG_ID = os.getenv("TRACKING_DIGEST_TG_ID", "7713376668").strip()
 TRACKING_DIGEST_HOUR = int(os.getenv("TRACKING_DIGEST_HOUR", "9") or 9)
 _TRACKING_DIGEST_FALLBACK_HOUR = 13
 _TRACKING_DIGEST_SETTING = "tracking_digest_last_date"
+
+
+def sync_batches_from_fura_statuses():
+    """Auto-lifecycle from the «Fura statuslari» sheet:
+
+    - BOJXONAGA TUSHDI (V) filled → batch arrived in Tashkent: if the
+      live status hasn't reached an arrived state yet, set
+      «Toshkent(Chuqursoy ULS da)» and write the V date into
+      toshkent_arrived_at (same event, sheet vs live).
+    - YUKLAR TARQATILDI (W) filled → batch delivered: set the delivery
+      date and DELIVERED status — the batch automatically moves to the
+      inactive list. The control group gets a notification.
+    """
+    from services import ai_assistant, fura_status_service
+
+    data = fura_status_service.get_fura_statuses()
+    if not data.get("ok"):
+        return 0
+    records = data["records"]
+    changed = 0
+    arrived_set = set(db.ARRIVED_STATUSES)
+    for batch in db.get_batches():
+        if (batch.get("client_delivery_date") or "").strip():
+            continue  # уже неактивна
+        digits = re.sub(r"\D", "", str(batch.get("name") or ""))
+        if len(digits) != 8:
+            continue
+        rec = records.get(digits)
+        if not rec:
+            continue
+
+        # V: прибытие в Ташкент (дата из шитса точнее, чем "сейчас")
+        if rec["bojxona"]:
+            iso_arr = rec["bojxona"].strftime("%Y-%m-%d") + " 00:00:00"
+            if batch.get("status") not in arrived_set:
+                db.update_batch(
+                    batch["id"], batch["name"], "Toshkent(Chuqursoy ULS da)",
+                    batch.get("eta_to_toshkent") or "",
+                    batch.get("eta_destination") or "Toshkent",
+                    "",
+                )
+                changed += 1
+            if not (batch.get("toshkent_arrived_at") or "").strip() or batch.get("status") not in arrived_set:
+                conn = db.get_conn()
+                try:
+                    conn.execute(
+                        "UPDATE batches SET toshkent_arrived_at = ? WHERE id = ?",
+                        (iso_arr, batch["id"]),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+
+        # W: выдано клиентам → в неактивные
+        if rec["tarqatildi"]:
+            delivery = rec["tarqatildi"].strftime("%d.%m.%Y")
+            db.update_batch(
+                batch["id"], batch["name"], db.DELIVERED_STATUS,
+                batch.get("eta_to_toshkent") or "",
+                batch.get("eta_destination") or "Toshkent",
+                delivery,
+            )
+            changed += 1
+            try:
+                telegram_send_message(
+                    ai_assistant.control_group_id(),
+                    (
+                        f"📦 Partiya <b>{batch['name']}</b> yakunlandi: "
+                        f"Yuklar tarqatildi — {delivery} (Fura statuslari jadvalidan). "
+                        "Partiya avtomatik NOAKTIV bo'ldi."
+                    ),
+                )
+            except Exception:
+                app.logger.exception("Fura-status deactivation notify failed")
+    return changed
 
 
 def send_tracking_digest(force: bool = False):
