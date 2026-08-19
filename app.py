@@ -901,9 +901,27 @@ def inject_auth_context():
     }
 
 
+# СТРОГО КОНФИДЕНЦИАЛЬНЫЕ чаты (Savdo bo'limi / Buraq): бот НИКОГДА не
+# отправляет туда сообщения — гард стоит на самом нижнем уровне API,
+# поэтому покрывает трекинг, объявления, AI, sweep и всё остальное.
+CONFIDENTIAL_CHAT_IDS = {
+    part.strip()
+    for part in os.getenv("CONFIDENTIAL_CHAT_IDS", "-1002687342009").split(",")
+    if part.strip()
+}
+
+
 def telegram_api(method: str, *, timeout: int = 15, **kwargs):
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not configured")
+    target_chat = None
+    for container in (kwargs.get("json"), kwargs.get("data")):
+        if isinstance(container, dict) and container.get("chat_id") is not None:
+            target_chat = str(container.get("chat_id"))
+            break
+    if target_chat is not None and target_chat in CONFIDENTIAL_CHAT_IDS and method.lower().startswith("send"):
+        app.logger.warning("BLOCKED %s to confidential chat %s", method, target_chat)
+        return {"ok": False, "blocked_confidential": True}
     response = req.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/{method}",
         timeout=timeout,
@@ -2501,13 +2519,14 @@ def handle_telegram_message(message: dict):
         )
         return
 
-    # ── AI assistant (DeepSeek): private chat with the owner only ─────
-    # Every non-command private message from an allowed admin id goes to
-    # the assistant. Group messages are NOT routed here.
+    # ── AI assistant (DeepSeek): private chat, admin + read-only ids ──
+    # Admin ids get the full assistant; read-only ids (например,
+    # ответственный за трекинг) — те же READ-инструменты без права
+    # что-либо менять. Group messages are NOT routed here.
     if chat_type == "private":
         from services import ai_assistant
 
-        if ai_assistant.is_admin(sender_id):
+        if ai_assistant.is_admin(sender_id) or ai_assistant.is_readonly_user(sender_id):
             handle_ai_assistant_private_message(chat_id, sender_id, text)
             return
 
@@ -2554,13 +2573,15 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
         telegram_send_message(chat_id, "🧹 История диалога с ассистентом очищена.")
         return
 
+    readonly = ai_assistant.is_readonly_user(sender_id)
+
     def _worker():
         try:
             # Keep "typing…" visible while the assistant thinks — the
             # agent loop with tools can take a while and the chat looked
             # dead in the meantime.
             with TypingIndicator(chat_id):
-                result = ai_assistant.handle_owner_message(sender_id, text)
+                result = ai_assistant.handle_owner_message(sender_id, text, readonly=readonly)
         except Exception as exc:
             app.logger.exception("AI assistant failure")
             try:
@@ -2904,7 +2925,9 @@ def send_packing_list_reminder(force: bool = False):
         lines.append(f"\n…va yana {rest} ta BL.")
     lines.append(
         f"\n📎 Iltimos, packing listlarni bitta ZIP arxiv qilib shu guruhga tashlang — "
-        f"o'zim ochib, tahlil qilib, tegishli BL larga biriktiraman. Rahmat, {html_escape(PACKING_RESPONSIBLE_NAME)}! 🙏"
+        f"o'zim ochib, tahlil qilib, tegishli BL larga biriktiraman. "
+        f"Katta arxiv bo'lsa (20 MB+), Google Drive papkaga yuklab, havolasini tashlang "
+        f"(ZIP formatida — RAR ochilmaydi). Rahmat, {html_escape(PACKING_RESPONSIBLE_NAME)}! 🙏"
     )
     telegram_send_message(chat_id, "\n".join(lines))
     db.set_setting(_PACKING_REMINDER_SETTING, today)
@@ -3061,81 +3084,133 @@ def process_packing_zip(chat_id, doc: dict):
             pass
 
 
+def _new_packing_results() -> dict:
+    return {
+        "attached": [], "skipped_dup": [], "unmatched": [],
+        "rejected": [], "ambiguous": [], "mesta_warns": [], "unsupported": [],
+    }
+
+
+def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, results: dict):
+    """Match ONE packing-list file (brand → MESTA) and attach it."""
+    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+    if ext not in ALLOWED_EXT:
+        results["rejected"].append(base)
+        return
+    if len(data) > _PACKING_FILE_MAX_BYTES:
+        results["rejected"].append(base)
+        return
+    # 1) главный ключ — бренд/название из имени файла;
+    # 2) при нескольких кандидатах решает MESTA (CTN).
+    brand, mesta = _parse_packing_filename(base)
+    candidates = _find_bl_candidates_by_brand(brand, rows, chat_titles)
+    bl = None
+    if len(candidates) == 1:
+        bl = candidates[0]
+        if mesta is not None and not _mesta_matches(bl, mesta):
+            results["mesta_warns"].append(
+                f"{base}: faylda {mesta} mesta, tizimda {bl.get('quantity_places') or 0}"
+            )
+    elif len(candidates) > 1:
+        filtered = [c for c in candidates if _mesta_matches(c, mesta)] if mesta is not None else []
+        if len(filtered) == 1:
+            bl = filtered[0]
+        else:
+            results["ambiguous"].append(
+                base + " → " + ", ".join(
+                    f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4]
+                )
+            )
+            return
+    else:
+        # запасной путь — общий резолвер (нестандартные имена)
+        hit = _resolve_filename_to_bl(base, index, rows, chat_titles)
+        if hit:
+            bl = hit["row"]
+    if not bl:
+        results["unmatched"].append(base)
+        return
+    existing = {
+        str(f.get("filename") or "").strip().lower()
+        for f in (db.get_files(bl["id"]) or [])
+    }
+    if base.lower() in existing:
+        results["skipped_dup"].append(base)
+        return
+    ext_storage = secure_filename(base) or f"file_{secrets.token_hex(4)}.{ext}"
+    unique = f"bl{bl['id']}_{secrets.token_hex(4)}_{ext_storage}"
+    path = os.path.join(UPLOAD_FOLDER, unique)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    db.add_file(bl["id"], base, path)
+    results["attached"].append((base, bl.get("code") or "", bl.get("batch_name") or ""))
+
+
+def _ingest_zip_source(zip_source, index, rows, chat_titles, results: dict):
+    """Iterate one ZIP (path or file-like) into shared results."""
+    import zipfile
+
+    with zipfile.ZipFile(zip_source) as zf:
+        names = [n for n in zf.namelist() if not n.endswith("/")]
+        for name in names[:_PACKING_ZIP_MAX_FILES]:
+            base = os.path.basename(name.replace("\\", "/")).strip()
+            if not base or base.startswith("._") or "__MACOSX" in name:
+                continue
+            _attach_packing_bytes(base, zf.read(name), index, rows, chat_titles, results)
+
+
+def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Biriktiradigan fayl topilmadi."):
+    from html import escape as html_escape
+
+    lines = []
+    attached = results["attached"]
+    if attached:
+        lines.append(f"✅ Rahmat, {html_escape(PACKING_RESPONSIBLE_NAME)}! {len(attached)} ta packing list biriktirildi:")
+        for base, code, batch_name in attached[:30]:
+            lines.append(f"  • <code>{html_escape(code)}</code> ← {html_escape(base)} ({html_escape(batch_name)})")
+        if len(attached) > 30:
+            lines.append(f"  …va yana {len(attached) - 30} ta")
+    if results["mesta_warns"]:
+        lines.append("⚠️ Mesta (karobka soni) mos kelmadi, lekin nomi aniq bo'lgani uchun biriktirdim:")
+        for w in results["mesta_warns"][:10]:
+            lines.append(f"  • {html_escape(w)}")
+    if results["ambiguous"]:
+        lines.append(f"🤔 Bir nechta BL mos keldi, mesta ham aniqlik kiritmadi ({len(results['ambiguous'])} ta):")
+        for a in results["ambiguous"][:10]:
+            lines.append(f"  • {html_escape(a)}")
+        lines.append("Bularni aniqlashtirib qayta yuboring (fayl nomiga BL kodini yozing).")
+    if results["skipped_dup"]:
+        lines.append(f"↩️ Allaqachon biriktirilgan edi ({len(results['skipped_dup'])} ta) — o'tkazib yubordim.")
+    if results["unmatched"]:
+        lines.append(
+            f"❓ Mos BL topilmadi ({len(results['unmatched'])} ta): "
+            + ", ".join(html_escape(u) for u in results["unmatched"][:15])
+        )
+        lines.append("Bu fayllar nomiga BL kodini yozib qayta yuboring yoki paneldan qo'lda biriktiring.")
+    if results["rejected"]:
+        lines.append(f"🚫 Format qabul qilinmadi ({len(results['rejected'])} ta): " + ", ".join(html_escape(x) for x in results["rejected"][:10]))
+    if results["unsupported"]:
+        lines.append(
+            f"📦 RAR/7z arxivlarni ocholmayman ({len(results['unsupported'])} ta): "
+            + ", ".join(html_escape(x) for x in results["unsupported"][:5])
+        )
+        lines.append("Iltimos, ZIP formatida yuboring yoki fayllarni papkaga alohida-alohida yuklang.")
+    if not lines:
+        lines = [empty_note]
+    telegram_send_message(chat_id, "\n".join(lines))
+
+
 def _ingest_packing_zip(chat_id, zip_source):
     """Shared pipeline: open the archive (path or file-like), match every
     file (brand → MESTA), attach and report in Uzbek."""
     import zipfile
-    from html import escape as html_escape
 
-    attached: list = []
-    skipped_dup: list = []
-    unmatched: list = []
-    rejected: list = []
-    ambiguous: list = []
-    mesta_warns: list = []
+    results = _new_packing_results()
     try:
         index, rows = _build_active_bl_index()
         chat_titles = _build_chat_title_lookup(rows)
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-        with zipfile.ZipFile(zip_source) as zf:
-                names = [n for n in zf.namelist() if not n.endswith("/")]
-                for name in names[:_PACKING_ZIP_MAX_FILES]:
-                    base = os.path.basename(name.replace("\\", "/")).strip()
-                    if not base or base.startswith("._") or "__MACOSX" in name:
-                        continue
-                    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
-                    if ext not in ALLOWED_EXT:
-                        rejected.append(base)
-                        continue
-                    # 1) главный ключ — бренд/название из имени файла;
-                    # 2) при нескольких кандидатах решает MESTA (CTN).
-                    brand, mesta = _parse_packing_filename(base)
-                    candidates = _find_bl_candidates_by_brand(brand, rows, chat_titles)
-                    bl = None
-                    if len(candidates) == 1:
-                        bl = candidates[0]
-                        if mesta is not None and not _mesta_matches(bl, mesta):
-                            mesta_warns.append(
-                                f"{base}: faylda {mesta} mesta, tizimda {bl.get('quantity_places') or 0}"
-                            )
-                    elif len(candidates) > 1:
-                        filtered = [c for c in candidates if _mesta_matches(c, mesta)] if mesta is not None else []
-                        if len(filtered) == 1:
-                            bl = filtered[0]
-                        else:
-                            ambiguous.append(
-                                base + " → " + ", ".join(
-                                    f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4]
-                                )
-                            )
-                            continue
-                    else:
-                        # запасной путь — общий резолвер (нестандартные имена)
-                        hit = _resolve_filename_to_bl(base, index, rows, chat_titles)
-                        if hit:
-                            bl = hit["row"]
-                    if not bl:
-                        unmatched.append(base)
-                        continue
-                    existing = {
-                        str(f.get("filename") or "").strip().lower()
-                        for f in (db.get_files(bl["id"]) or [])
-                    }
-                    if base.lower() in existing:
-                        skipped_dup.append(base)
-                        continue
-                    data = zf.read(name)
-                    if len(data) > _PACKING_FILE_MAX_BYTES:
-                        rejected.append(base)
-                        continue
-                    storage = secure_filename(base) or f"file_{secrets.token_hex(4)}.{ext}"
-                    unique = f"bl{bl['id']}_{secrets.token_hex(4)}_{storage}"
-                    path = os.path.join(UPLOAD_FOLDER, unique)
-                    with open(path, "wb") as fh:
-                        fh.write(data)
-                    db.add_file(bl["id"], base, path)
-                    attached.append((base, bl.get("code") or "", bl.get("batch_name") or ""))
+        _ingest_zip_source(zip_source, index, rows, chat_titles, results)
     except zipfile.BadZipFile:
         telegram_send_message(chat_id, "⚠️ Arxiv ochilmadi — ZIP fayl buzilgan ko'rinadi. Qayta yuborib ko'ring.")
         return
@@ -3146,36 +3221,7 @@ def _ingest_packing_zip(chat_id, zip_source):
         except Exception:
             pass
         return
-
-    lines = []
-    if attached:
-        lines.append(f"✅ Rahmat, {html_escape(PACKING_RESPONSIBLE_NAME)}! {len(attached)} ta packing list biriktirildi:")
-        for base, code, batch_name in attached[:30]:
-            lines.append(f"  • <code>{html_escape(code)}</code> ← {html_escape(base)} ({html_escape(batch_name)})")
-        if len(attached) > 30:
-            lines.append(f"  …va yana {len(attached) - 30} ta")
-    if mesta_warns:
-        lines.append("⚠️ Mesta (karobka soni) mos kelmadi, lekin nomi aniq bo'lgani uchun biriktirdim:")
-        for w in mesta_warns[:10]:
-            lines.append(f"  • {html_escape(w)}")
-    if ambiguous:
-        lines.append(f"🤔 Bir nechta BL mos keldi, mesta ham aniqlik kiritmadi ({len(ambiguous)} ta):")
-        for a in ambiguous[:10]:
-            lines.append(f"  • {html_escape(a)}")
-        lines.append("Bularni aniqlashtirib qayta yuboring (fayl nomiga BL kodini yozing).")
-    if skipped_dup:
-        lines.append(f"↩️ Allaqachon biriktirilgan edi ({len(skipped_dup)} ta) — o'tkazib yubordim.")
-    if unmatched:
-        lines.append(
-            f"❓ Mos BL topilmadi ({len(unmatched)} ta): "
-            + ", ".join(html_escape(u) for u in unmatched[:15])
-        )
-        lines.append("Bu fayllar nomiga BL kodini yozib qayta yuboring yoki paneldan qo'lda biriktiring.")
-    if rejected:
-        lines.append(f"🚫 Format qabul qilinmadi ({len(rejected)} ta): " + ", ".join(html_escape(x) for x in rejected[:10]))
-    if not lines:
-        lines = ["ℹ️ ZIP ichida biriktiradigan fayl topilmadi."]
-    telegram_send_message(chat_id, "\n".join(lines))
+    _send_packing_report(chat_id, results, empty_note="ℹ️ ZIP ichida biriktiradigan fayl topilmadi.")
 
 
 # ── Большие ZIP по ссылке (Google Drive / прямой URL) ────────────────
@@ -3187,6 +3233,9 @@ _DRIVE_ID_RE = re.compile(
     r"drive\.google\.com/(?:file/d/([\w-]{20,})|open\?id=([\w-]{20,})|uc\?[^\s]*?id=([\w-]{20,}))"
 )
 _DIRECT_ZIP_RE = re.compile(r"https?://\S+?\.zip(?:\?\S*)?(?=\s|$)", re.IGNORECASE)
+
+
+_DRIVE_FOLDER_RE = re.compile(r"drive\.google\.com/drive/(?:u/\d+/)?folders/([\w-]{15,})")
 
 
 def maybe_handle_control_group_zip_link(message: dict) -> bool:
@@ -3201,6 +3250,10 @@ def maybe_handle_control_group_zip_link(message: dict) -> bool:
     text = (message.get("text") or "").strip()
     if not text:
         return False
+    mf = _DRIVE_FOLDER_RE.search(text)
+    if mf:
+        threading.Thread(target=process_drive_folder, args=(chat_id, mf.group(1)), daemon=True).start()
+        return True
     m = _DRIVE_ID_RE.search(text)
     if m:
         file_id = next(g for g in m.groups() if g)
@@ -3211,6 +3264,92 @@ def maybe_handle_control_group_zip_link(message: dict) -> bool:
         threading.Thread(target=process_packing_zip_url, args=(chat_id, "direct", m2.group(0)), daemon=True).start()
         return True
     return False
+
+
+def _list_drive_folder(folder_id: str) -> list:
+    """[(file_id, name)] of a PUBLIC Drive folder via the legacy
+    embeddedfolderview endpoint (the modern folder page is JS-only)."""
+    url = f"https://drive.google.com/embeddedfolderview?id={folder_id}#list"
+    html_text = req.get(url, timeout=60).text
+    return re.findall(
+        r'id="entry-(1[A-Za-z0-9_-]{15,})".*?flip-entry-title">([^<]+)<',
+        html_text,
+        re.S,
+    )
+
+
+def _download_drive_bytes(file_id: str, max_bytes: int) -> bytes | None:
+    """Download ONE public Drive file, None on failure/HTML stub."""
+    for url in (
+        f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t",
+        f"https://drive.google.com/uc?export=download&id={file_id}&confirm=t",
+    ):
+        try:
+            with req.get(url, stream=True, timeout=300) as resp:
+                resp.raise_for_status()
+                chunks = resp.iter_content(chunk_size=512 * 1024)
+                first = next(chunks, b"")
+                if first.lstrip()[:1] in (b"<", b""):
+                    continue  # HTML-заглушка (нет доступа)
+                buf = bytearray(first)
+                for chunk in chunks:
+                    buf.extend(chunk)
+                    if len(buf) > max_bytes:
+                        raise ValueError("file too big")
+                return bytes(buf)
+        except Exception:
+            continue
+    return None
+
+
+def process_drive_folder(chat_id, folder_id: str):
+    """Drive FOLDER link in the control group: enumerate the folder and
+    run every file (and every ZIP inside it) through the packing
+    pipeline. RAR/7z are reported as unsupported."""
+    import zipfile
+
+    try:
+        with TypingIndicator(chat_id):
+            entries = _list_drive_folder(folder_id)
+            if not entries:
+                telegram_send_message(
+                    chat_id,
+                    "⚠️ Papkada fayl topilmadi yoki ruxsat yo'q. "
+                    "Papkaga \"Anyone with the link\" ruxsati berilganini tekshiring.",
+                )
+                return
+            index, rows = _build_active_bl_index()
+            chat_titles = _build_chat_title_lookup(rows)
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+            results = _new_packing_results()
+            for file_id, name in entries[:_PACKING_ZIP_MAX_FILES]:
+                base = str(name or "").strip()
+                low = base.lower()
+                if low.endswith((".rar", ".7z")):
+                    results["unsupported"].append(base)
+                    continue
+                if low.endswith(".zip"):
+                    data = _download_drive_bytes(file_id, _PACKING_URL_MAX_BYTES)
+                    if data is None:
+                        results["rejected"].append(base + " (yuklab bo'lmadi)")
+                        continue
+                    try:
+                        _ingest_zip_source(io.BytesIO(data), index, rows, chat_titles, results)
+                    except zipfile.BadZipFile:
+                        results["rejected"].append(base + " (buzilgan arxiv)")
+                    continue
+                data = _download_drive_bytes(file_id, _PACKING_FILE_MAX_BYTES)
+                if data is None:
+                    results["rejected"].append(base + " (yuklab bo'lmadi)")
+                    continue
+                _attach_packing_bytes(base, data, index, rows, chat_titles, results)
+            _send_packing_report(chat_id, results, empty_note="ℹ️ Papkada biriktiradigan fayl topilmadi.")
+    except Exception as exc:
+        app.logger.exception("Drive folder processing failed")
+        try:
+            telegram_send_message(chat_id, f"⚠️ Papka tahlilida xato: {exc}", parse_mode=None)
+        except Exception:
+            pass
 
 
 def process_packing_zip_url(chat_id, kind: str, ref: str):

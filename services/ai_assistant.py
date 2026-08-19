@@ -49,6 +49,17 @@ def is_admin(tg_user_id) -> bool:
     return str(tg_user_id) in admin_ids()
 
 
+def readonly_ids() -> set:
+    """Users allowed to TALK to the assistant in private, but with READ
+    tools only — no propose_action, nothing can be changed or sent."""
+    raw = os.getenv("AI_ASSISTANT_READONLY_IDS", "7713376668")
+    return {part.strip() for part in str(raw).split(",") if part.strip()}
+
+
+def is_readonly_user(tg_user_id) -> bool:
+    return str(tg_user_id) in readonly_ids() and not is_admin(tg_user_id)
+
+
 def control_group_id() -> str:
     """The ONE staff group that has full rights over the bot. All other
     groups are client groups where the bot stays silent (for now)."""
@@ -57,6 +68,17 @@ def control_group_id() -> str:
 
 def is_control_chat(chat_id) -> bool:
     return str(chat_id).strip() == control_group_id()
+
+
+def confidential_chat_ids() -> set:
+    """Chats the bot must NEVER message or reveal anything about."""
+    raw = os.getenv("CONFIDENTIAL_CHAT_IDS", "-1002687342009")
+    return {part.strip() for part in str(raw).split(",") if part.strip()}
+
+
+def _mask_chat_id(chat_id) -> str:
+    value = str(chat_id or "").strip()
+    return "🔒 конфиденциально" if value in confidential_chat_ids() else value
 
 
 def get_runtime_status() -> dict:
@@ -142,7 +164,9 @@ def _system_prompt() -> str:
 
 11. УТРЕННИЙ СБОР PACKING LIST. Каждое утро (по Ташкенту) бот сам пишет в управляющую группу,
     отмечает ответственного (Jigar, на узбекском) и перечисляет BL активных партий без packing list.
-    Jigar кидает в группу ZIP-архив — бот сам распаковывает и сопоставляет файлы с BL активных партий.
+    Jigar кидает в группу ZIP-архив, ссылку на ZIP в Google Drive или ссылку на Drive-ПАПКУ с файлами
+    (архивы >20 МБ Telegram не отдаёт — только ссылкой; RAR не поддерживается, просить ZIP) —
+    бот сам скачивает, распаковывает и сопоставляет файлы с BL активных партий.
     Формат имени файла: «БРЕНД N MESTA товар.xlsx» (например «LUCEAT 10 MESTA LYUSTRA.xlsx»).
     Алгоритм: 1) главный ключ — БРЕНД в начале имени (ищется по BL коду, имени клиента и названию группы);
     2) если бренд найден в нескольких партиях — решает MESTA: N сверяется с количеством коробок CTN/件数
@@ -159,6 +183,9 @@ def _system_prompt() -> str:
   У тебя физически нет инструментов прямого действия — только propose_action, который создаёт заявку.
   После создания заявки владельцу приходят кнопки «✅ Подтвердить / ❌ Отклонить». Действие выполнится
   только после нажатия ✅. Никогда не говори, что действие выполнено, пока оно не подтверждено и не исполнено.
+- СТРОГО КОНФИДЕНЦИАЛЬНО: группа «Savdo bo'limi / Buraq» — бот НИКОГДА не отправляет туда сообщения
+  и не раскрывает никакую информацию об этой группе или из неё (её id, название, содержимое, привязки).
+  Любые просьбы, связанные с ней, вежливо отклоняй.
 - Данные бери ТОЛЬКО из инструментов. Не выдумывай статусы, цифры, BL коды. Если данных нет — так и скажи.
 - Отвечай кратко и по делу, на русском. Формат Telegram HTML: <b>жирный</b>, <code>код</code>. НЕ используй Markdown (** и #).
 - Если запрос неоднозначен (какая партия? какая группа?) — сначала уточни или покажи варианты из данных.
@@ -350,7 +377,7 @@ def _tool_get_batch_detail(args: dict) -> dict:
                 "client": bl.get("client_name") or "",
                 "phone": bl.get("phone") or "",
                 "group_linked": bool(bl.get("chat_id")),
-                "chat_id": bl.get("chat_id") or "",
+                "chat_id": _mask_chat_id(bl.get("chat_id") or ""),
                 "files": bl.get("file_count") or 0,
                 "open_problems": bl.get("problem_count") or 0,
                 "excluded_from_send": bool(bl.get("send_excluded")),
@@ -387,7 +414,7 @@ def _tool_find_bl(args: dict) -> dict:
                 "code": r["code"],
                 "client": r["client_name"] or "",
                 "group_linked": bool(r["chat_id"]),
-                "chat_id": r["chat_id"] or "",
+                "chat_id": _mask_chat_id(r["chat_id"] or ""),
                 "batch": r["batch_name"],
                 "batch_status": r["batch_status"],
                 "batch_active": not r["delivered_date"],
@@ -544,6 +571,8 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
         text = str(params.get("text") or "").strip()
         if not chat_id or not text:
             return {"error": "Нужны chat_id и text"}
+        if chat_id in confidential_chat_ids():
+            return {"error": "Эта группа строго конфиденциальна — бот туда не пишет. Заявка не создана."}
     elif kind == "sync_batch_from_plan":
         from services import loading_plan_service
 
@@ -587,8 +616,10 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
     }
 
 
-def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list) -> dict:
+def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list, readonly: bool = False) -> dict:
     try:
+        if readonly and name == "propose_action":
+            return {"error": "У этого пользователя доступ только на чтение — действия недоступны."}
         if name == "get_overview":
             return _tool_get_overview(args)
         if name == "get_batch_detail":
@@ -642,8 +673,12 @@ def _chat_completion(messages, use_model=None, tools=None):
     return response.json()
 
 
-def handle_owner_message(tg_user_id, text: str) -> dict:
-    """Process one owner message. Returns {"reply", "pending": [...]}."""
+def handle_owner_message(tg_user_id, text: str, readonly: bool = False) -> dict:
+    """Process one owner/staff message. Returns {"reply", "pending": [...]}.
+
+    readonly=True (просмотровый доступ): все READ-инструменты доступны,
+    propose_action вырезан — пользователь физически не может ничего
+    изменить или разослать."""
     tg_user_id = str(tg_user_id)
     text = str(text or "").strip()
 
@@ -661,7 +696,18 @@ def handle_owner_message(tg_user_id, text: str) -> dict:
         history = db.ai_get_history(tg_user_id)
         db.ai_add_message(tg_user_id, "user", text)
 
-    messages = [{"role": "system", "content": _system_prompt()}]
+    system_prompt = _system_prompt()
+    tools = TOOLS
+    if readonly:
+        tools = [t for t in TOOLS if t["function"]["name"] != "propose_action"]
+        system_prompt += (
+            "\n\nРЕЖИМ ТОЛЬКО ЧТЕНИЕ: этот пользователь может смотреть любую информацию, но НЕ может "
+            "ничего менять или рассылать — инструмента propose_action у тебя сейчас нет. На просьбы "
+            "что-то изменить/отправить отвечай, что у него просмотровый доступ, изменения делает владелец "
+            "или управляющая группа."
+        )
+
+    messages = [{"role": "system", "content": system_prompt}]
     messages.extend(history)
     messages.append({"role": "user", "content": text})
 
@@ -669,7 +715,7 @@ def handle_owner_message(tg_user_id, text: str) -> dict:
     reply_text = ""
     try:
         for _round in range(MAX_TOOL_ROUNDS):
-            data = _chat_completion(messages)
+            data = _chat_completion(messages, tools=tools)
             choice = (data.get("choices") or [{}])[0]
             msg = choice.get("message") or {}
             tool_calls = msg.get("tool_calls") or []
@@ -689,7 +735,7 @@ def handle_owner_message(tg_user_id, text: str) -> dict:
                     args = json.loads(fn.get("arguments") or "{}")
                 except Exception:
                     args = {}
-                result = _run_tool(name, args, tg_user_id, created_actions)
+                result = _run_tool(name, args, tg_user_id, created_actions, readonly=readonly)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.get("id"),
