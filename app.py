@@ -2684,24 +2684,35 @@ def execute_ai_action(action: dict):
                 existing.add(norm)
                 if target_chat:
                     linked += 1
-        extras = [
-            str(bl.get("code") or "")
-            for bl in db.get_bl_by_batch(batch_id)
-            if _normalize_bl_code(str(bl.get("code") or "")) not in plan_keys
-        ]
+        # BLs that are NOT in the plan get REMOVED from the batch: the
+        # cargo isn't on this truck, so leaving them would send wrong
+        # tracking to their groups on the next broadcast. The permanent
+        # bl_link_history keeps the group link for when the BL reappears
+        # in another plan/batch.
+        removed = []
+        remove_failed = []
+        for bl in db.get_bl_by_batch(batch_id):
+            code = str(bl.get("code") or "")
+            if _normalize_bl_code(code) in plan_keys:
+                continue
+            try:
+                db.delete_bl(bl["id"])
+                removed.append(code)
+            except Exception as exc:
+                app.logger.exception("Plan sync: failed to delete bl_id=%s", bl.get("id"))
+                remove_failed.append(f"{code} ({exc})")
         msg = (
             f"Синхронизация «{batch['name']}» с планом «{params.get('plan_title', '')}» "
             f"({params.get('plan_date', '')}): добавлено {len(added)} BL"
-            f" (групп привязано автоматически: {linked}), уже были: {already}."
+            f" (групп привязано автоматически: {linked}), уже были: {already}, удалено вне плана: {len(removed)}."
         )
         if added:
             msg += f" Новые: {', '.join(added[:15])}."
-        if extras:
-            msg += (
-                f" ⚠️ В партии остались BL вне плана ({len(extras)}): {', '.join(extras[:12])}"
-                " — не удалял, реши вручную."
-            )
-        return True, msg
+        if removed:
+            msg += f" Удалены: {', '.join(removed[:15])}."
+        if remove_failed:
+            msg += f" ⚠️ Не удалось удалить: {', '.join(remove_failed[:5])}."
+        return not remove_failed, msg
 
     if kind == "send_tracking_batch":
         batch_id = int(params.get("batch_id") or 0)
