@@ -2633,6 +2633,76 @@ def execute_ai_action(action: dict):
         telegram_send_message(target_chat, text)
         return True, f"Сообщение отправлено в чат {target_chat}"
 
+    if kind == "sync_batch_from_plan":
+        batch_id = int(params.get("batch_id") or 0)
+        batch = db.get_batch(batch_id)
+        if not batch:
+            return False, "Партия не найдена"
+        marks = params.get("marks") or []
+        if not marks:
+            return False, "В заявке нет снапшота BL из плана"
+        plan_keys = {_normalize_bl_code(str(m.get("mark") or "")) for m in marks if str(m.get("mark") or "").strip()}
+        existing = {
+            _normalize_bl_code(str(bl.get("code") or ""))
+            for bl in db.get_bl_by_batch(batch_id)
+        }
+        chat_lookup = _build_chat_code_lookup()
+        known_chat_ids = _known_chat_id_set()
+        added = []
+        linked = 0
+        already = 0
+        for m in marks:
+            code = str(m.get("mark") or "").strip()
+            if not code:
+                continue
+            norm = _normalize_bl_code(code)
+            if norm in existing:
+                already += 1
+                continue
+            # Same auto-attach chain as the manual sheet import: match a
+            # group by title first, then the permanent link history.
+            target_chat = _find_chat_for_bl_code(code, chat_lookup)
+            if not target_chat:
+                hist = db.lookup_bl_link_history(code)
+                if hist and (not known_chat_ids or hist["chat_id"] in known_chat_ids):
+                    target_chat = hist["chat_id"]
+            created = db.add_bl(
+                batch_id=batch_id,
+                code=code,
+                client_name="",
+                chat_id=target_chat,
+                cargo_type="",
+                weight_kg=m.get("kg", 0),
+                volume_cbm=m.get("cbm", 0),
+                quantity_places=m.get("ctn", 0),
+                quantity_places_breakdown="",
+                cargo_description="",
+                message_language=getattr(db, "DEFAULT_MESSAGE_LANGUAGE", "uz_latn"),
+            )
+            if created:
+                added.append(code)
+                existing.add(norm)
+                if target_chat:
+                    linked += 1
+        extras = [
+            str(bl.get("code") or "")
+            for bl in db.get_bl_by_batch(batch_id)
+            if _normalize_bl_code(str(bl.get("code") or "")) not in plan_keys
+        ]
+        msg = (
+            f"Синхронизация «{batch['name']}» с планом «{params.get('plan_title', '')}» "
+            f"({params.get('plan_date', '')}): добавлено {len(added)} BL"
+            f" (групп привязано автоматически: {linked}), уже были: {already}."
+        )
+        if added:
+            msg += f" Новые: {', '.join(added[:15])}."
+        if extras:
+            msg += (
+                f" ⚠️ В партии остались BL вне плана ({len(extras)}): {', '.join(extras[:12])}"
+                " — не удалял, реши вручную."
+            )
+        return True, msg
+
     if kind == "send_tracking_batch":
         batch_id = int(params.get("batch_id") or 0)
         batch = db.get_batch(batch_id)

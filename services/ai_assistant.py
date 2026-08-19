@@ -122,8 +122,24 @@ def _system_prompt() -> str:
 9. SALES MONITOR (ТВ-экран отдела продаж, профиль sales). План месяца в м³. LTL = кубы из шитса Ombor,
    FTL = целые фуры (1 фура = N м³). Большой круг «BAJARILDI» = (LTL м³ + FTL м³) / план, вокруг него капли LTL/FTL.
 
-10. ПЕРЕНОС ПРИБЫВШИХ. Владелец планирует подключить два Google Sheets для переноса прибывших грузов —
-    эта функция ЕЩЁ НЕ НАСТРОЕНА. Если спросят — честно скажи, что ждёшь настройки шитсов.
+10. ПЛАНЫ ПОГРУЗКИ (шитс партий) — ключевой процесс жизни партии.
+    Партия ОТКРЫВАЕТСЯ по плану погрузки китайской фуры из шитса планов (месячные вкладки типа «AVGUST 2026»).
+    Блок плана в шитсе: дата отправки + название + список SHIPPING MARK (BL) с CTN/CBM/KG.
+    • Китайская фура (kind=china): «YIWU TO HORGOS - YARGXOL», «ZHONGSHAN TO HORGOS YARGXOL»
+      (старые названия: «YIWU MUHAMMAD», «ZHONGSHAN YARGXOL») — погрузка со склада Китая до Хоргоса.
+    • Казахская фура (kind=kazakh): «HORGOS TO TASHKENT YIWU + ZH YARGXOL» — погрузка в Хоргосе до Ташкента;
+      обычно ОБЪЕДИНЯЕТ BL обеих китайских фур (YIWU + ZHONGSHAN) одной даты.
+    ЖИЗНЕННЫЙ ЦИКЛ: партия открыта по китайскому плану → фура едет до Хоргоса → статус «Horgos (Qozoq)» →
+    логисты перегружают груз в казахскую фуру → состав BL партии нужно ПЕРЕСИНХРОНИЗИРОВАТЬ по казахскому
+    плану той же даты (раньше владелец делал это вручную — теперь это твоя работа, через подтверждение).
+    Как делать: get_loading_plans → сравни план с партией (get_batch_detail) → propose_action
+    kind='sync_batch_from_plan' (batch_id, tab, plan_title, plan_date). Синхронизация ДОБАВЛЯЕТ недостающие
+    BL (Telegram-группы подтягиваются автоматически из истории привязок); BL, которых нет в плане, НЕ удаляются —
+    они попадут в отчёт, решение по ним принимает человек.
+    Когда предлагаешь смену статуса на «Horgos (Qozoq)» — сам предложи следом и синхронизацию по казахскому плану.
+
+11. ПЕРЕНОС ПРИБЫВШИХ. Второй шитс для переноса прибывших грузов будет настроен позже —
+    если спросят, честно скажи, что ждёшь настройки.
 
 ════════ ТВОИ ПРАВИЛА ════════
 
@@ -209,18 +225,38 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_loading_plans",
+            "description": (
+                "Планы погрузки из шитса партий (месячные вкладки, например 'AVGUST 2026'). "
+                "Каждый блок: дата отправки, название плана, список SHIPPING MARK (BL) с CTN/CBM/KG и датой прихода. "
+                "kind='china' — фура со склада Китая до Хоргоса (по этому плану открывается партия); "
+                "kind='kazakh' — казахская фура Horgos→Tashkent (обычно объединяет BL обеих китайских фур; "
+                "по нему пересинхронизируется состав партии после статуса Horgos (Qozoq))."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"tab": {"type": "string", "description": "вкладка; пусто = текущий месяц"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "propose_action",
             "description": (
                 "Создать ЗАЯВКУ на действие (требует подтверждения владельца кнопками). "
                 "kind: 'set_batch_status' (params: batch_id, status — точное название из цепочки статусов), "
                 "'send_tracking_batch' (params: batch_id — разослать трекинг по группам партии), "
-                "'send_group_message' (params: chat_id, text — отправить сообщение в конкретную группу). "
+                "'send_group_message' (params: chat_id, text — отправить сообщение в конкретную группу), "
+                "'sync_batch_from_plan' (params: batch_id, tab, plan_title, plan_date — добавить в партию "
+                "недостающие BL из плана погрузки с авто-привязкой Telegram-групп; лишние BL не удаляются). "
                 "summary: короткое человекочитаемое описание действия по-русски."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_group_message"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_group_message", "sync_batch_from_plan"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -406,7 +442,31 @@ def _tool_get_send_logs(args: dict) -> dict:
     return {"logs": [dict(r) for r in rows]}
 
 
-ALLOWED_ACTION_KINDS = {"set_batch_status", "send_tracking_batch", "send_group_message"}
+def _tool_get_loading_plans(args: dict) -> dict:
+    from services import loading_plan_service
+
+    result = loading_plan_service.get_loading_plans(str(args.get("tab") or ""))
+    if not result.get("ok"):
+        return {"error": result.get("error"), "tabs": result.get("tabs")}
+    plans = []
+    for block in result["plans"]:
+        plans.append({
+            "date": block["date"],
+            "title": block["title"],
+            "kind": block["kind"],
+            "warehouses": block["warehouses"],
+            "total_ctn": block["total_ctn"],
+            "total_cbm": block["total_cbm"],
+            "total_kg": block["total_kg"],
+            "marks": [
+                {"mark": it["mark"], "cbm": it["cbm"], "arrive": it["arrive"]}
+                for it in block["items"]
+            ],
+        })
+    return {"tab": result["tab"], "tabs": result["tabs"], "plans": plans}
+
+
+ALLOWED_ACTION_KINDS = {"set_batch_status", "send_tracking_batch", "send_group_message", "sync_batch_from_plan"}
 
 
 def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> dict:
@@ -440,6 +500,39 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
         text = str(params.get("text") or "").strip()
         if not chat_id or not text:
             return {"error": "Нужны chat_id и text"}
+    elif kind == "sync_batch_from_plan":
+        from services import loading_plan_service
+
+        batch = db.get_batch(int(params.get("batch_id") or 0))
+        if not batch:
+            return {"error": "batch_id не найден"}
+        plan = loading_plan_service.find_plan(
+            str(params.get("tab") or ""),
+            str(params.get("plan_title") or ""),
+            str(params.get("plan_date") or ""),
+        )
+        if not plan:
+            return {
+                "error": "План не найден или найдено несколько — уточни tab, plan_title и plan_date "
+                         "(посмотри get_loading_plans)."
+            }
+        # Snapshot the plan composition INTO the pending action: the owner
+        # approves exactly this list, later sheet edits can't change it.
+        agg: dict = {}
+        for it in plan["items"]:
+            key = it["mark"].strip().upper()
+            entry = agg.setdefault(key, {"mark": it["mark"].strip(), "ctn": 0.0, "cbm": 0.0, "kg": 0.0})
+            entry["ctn"] += it["ctn"]
+            entry["cbm"] += it["cbm"]
+            entry["kg"] += it["kg"]
+        params["marks"] = [
+            {"mark": e["mark"], "ctn": round(e["ctn"], 2), "cbm": round(e["cbm"], 3), "kg": round(e["kg"], 2)}
+            for e in agg.values()
+        ]
+        params["batch_name"] = batch["name"]
+        params["tab"] = plan["tab"]
+        params["plan_title"] = plan["title"]
+        params["plan_date"] = plan["date"]
 
     action_id = db.ai_create_pending_action(tg_user_id, kind, json.dumps(params, ensure_ascii=False), summary)
     created_actions.append({"id": action_id, "kind": kind, "summary": summary})
@@ -464,6 +557,8 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list) -> 
             return _tool_get_problems(args)
         if name == "get_send_logs":
             return _tool_get_send_logs(args)
+        if name == "get_loading_plans":
+            return _tool_get_loading_plans(args)
         if name == "propose_action":
             return _tool_propose_action(args, tg_user_id, created_actions)
         return {"error": f"Неизвестный инструмент {name}"}
