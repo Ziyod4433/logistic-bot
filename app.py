@@ -2526,12 +2526,10 @@ def handle_telegram_message(message: dict):
         return
 
     if text == "/start":
+        # Bot relaunch (19.08.2026): no welcome bundle anymore — no text,
+        # no video, no voice. The bot joins groups silently, stays active
+        # everywhere and only answers @mention questions.
         db.clear_chat_state(chat_id)
-        button_text = get_track_button_text(chat_id=chat_id)
-        if chat_type in {"group", "supergroup"}:
-            send_group_welcome_bundle(chat_id, button_text)
-        else:
-            send_with_track_keyboard(chat_id, "Привет!\n\nЗдесь ты будешь получать обновления по статусу своих грузов.")
         return
 
     if text == "/chatid":
