@@ -4801,6 +4801,10 @@ def _split_tracking_rendered_message(rendered: str) -> tuple[str, str, str]:
 
 
 def _render_single_message(bl: dict, batch_name: str) -> str:
+    # Новый шаблон «вариант 7» (два блока + линия маршрута) — по
+    # умолчанию; TRACKING_TEMPLATE_STYLE=legacy возвращает старый.
+    if (os.environ.get("TRACKING_TEMPLATE_STYLE", "v7").strip().lower() != "legacy"):
+        return render_message_v7(bl, batch_name)
     language = _normalize_message_language(bl.get("message_language"))
     template = _inject_packing_list_placeholder(
         _inject_arrival_eta_placeholder(
@@ -4895,6 +4899,10 @@ def _render_single_message(bl: dict, batch_name: str) -> str:
 
 
 def render_message(bl: dict, batch_name: str, include_related_batches: bool = True) -> str:
+    # v7 всегда рендерит один BL (слияние блоков связанных партий —
+    # механика старого шаблона, v7 отправляется по-партийно).
+    if (os.environ.get("TRACKING_TEMPLATE_STYLE", "v7").strip().lower() != "legacy"):
+        return render_message_v7(dict(bl or {}), batch_name)
     primary_bl = dict(bl or {})
     chat_id = str(primary_bl.get("chat_id") or "").strip()
     primary_language = _normalize_message_language(primary_bl.get("message_language"))
@@ -6302,3 +6310,182 @@ def ai_update_pending_action_params(action_id, params_json):
         conn.commit()
     finally:
         conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# ШАБЛОН ТРЕКИНГА V7 — «два блока» (утверждён владельцем 20.08.2026)
+# ═══════════════════════════════════════════════════════════════
+# HOLAT: срок → линия маршрута → текущая точка; MA'LUMOT одной строкой.
+# Линия вычисляется из позиции статуса на маршруте (казахская или
+# кыргызская ветка). Отключение: TRACKING_TEMPLATE_STYLE=legacy.
+
+_V7_ROUTE_KAZAKH = [
+    "Xitoy", "Horgos (Qozoq)", "Nurjo'li", "Jarkent", "Almata", "Taraz",
+    "Shimkent", "Qonusbay", "Saryagash", "Yallama", "Toshkent(Chuqursoy ULS da)",
+]
+_V7_ROUTE_KYRGYZ = [
+    "Xitoy", "Kashgar (Qirg'iz)", "Irkeshtam", "Osh", "Dostlik", "Andijon",
+    "Toshkent(Chuqursoy ULS da)",
+]
+_V7_CHINA_ALIASES = {"Xitoy", "Yiwu", "Zhongshan"}
+
+_V7_STATUS_COUNTRY = {
+    "Xitoy": "cn", "Yiwu": "cn", "Zhongshan": "cn",
+    "Horgos (Qozoq)": "border_kz", "Nurjo'li": "kz", "Jarkent": "kz",
+    "Almata": "kz", "Taraz": "kz", "Shimkent": "kz", "Qonusbay": "kz",
+    "Saryagash": "kz", "Yallama": "border_uz",
+    "Kashgar (Qirg'iz)": "cn", "Irkeshtam": "border_kg", "Osh": "kg",
+    "Dostlik": "border_uz", "Andijon": "uz",
+    "Toshkent(Chuqursoy ULS da)": "uz",
+}
+
+_V7_COUNTRY_NAMES = {
+    "uz_latn": {"cn": "Xitoy", "kz": "Qozog'iston", "kg": "Qirg'iziston", "uz": "O'zbekiston",
+                "border_kz": "Xitoy–Qozoq chegarasi", "border_kg": "Xitoy–Qirg'iz chegarasi",
+                "border_uz": "O'zbekiston chegarasi"},
+    "uz_cyrl": {"cn": "Хитой", "kz": "Қозоғистон", "kg": "Қирғизистон", "uz": "Ўзбекистон",
+                "border_kz": "Хитой–Қозоқ чегараси", "border_kg": "Хитой–Қирғиз чегараси",
+                "border_uz": "Ўзбекистон чегараси"},
+    "ru": {"cn": "Китай", "kz": "Казахстан", "kg": "Кыргызстан", "uz": "Узбекистан",
+           "border_kz": "граница Китай–Казахстан", "border_kg": "граница Китай–Кыргызстан",
+           "border_uz": "граница Узбекистана"},
+    "en": {"cn": "China", "kz": "Kazakhstan", "kg": "Kyrgyzstan", "uz": "Uzbekistan",
+           "border_kz": "China–Kazakhstan border", "border_kg": "China–Kyrgyzstan border",
+           "border_uz": "Uzbekistan border"},
+}
+
+_V7_STRINGS = {
+    "uz_latn": {
+        "greeting": "👋Assalomu alaykum hurmatli mijoz!",
+        "holat": "📍 YUK HOLATI",
+        "now": "Hozir",
+        "arrived_note": "yetib keldi",
+        "joy": "joy",
+        "packing": "🖇 Tovar bo'yicha packing list⤵️",
+        "eta_empty": "aniqlashtirilmoqda",
+    },
+    "uz_cyrl": {
+        "greeting": "👋Ассалому алайкум ҳурматли мижоз!",
+        "holat": "📍 ЮК ҲОЛАТИ",
+        "now": "Ҳозир",
+        "arrived_note": "етиб келди",
+        "joy": "жой",
+        "packing": "🖇 Товар бўйича packing list⤵️",
+        "eta_empty": "аниқлаштирилмоқда",
+    },
+    "ru": {
+        "greeting": "👋Здравствуйте, уважаемый клиент!",
+        "holat": "📍 СТАТУС ГРУЗА",
+        "now": "Сейчас",
+        "arrived_note": "груз прибыл",
+        "joy": "мест",
+        "packing": "🖇 Packing list по товару⤵️",
+        "eta_empty": "уточняется",
+    },
+    "en": {
+        "greeting": "👋Hello, dear client!",
+        "holat": "📍 CARGO STATUS",
+        "now": "Now",
+        "arrived_note": "arrived",
+        "joy": "pcs",
+        "packing": "🖇 Packing list below⤵️",
+        "eta_empty": "to be confirmed",
+    },
+}
+
+
+def _v7_route_progress(status: str):
+    """(progress 0..1, arrived) по позиции статуса на его маршруте."""
+    normalized = _normalize_status(status or "Xitoy")
+    if normalized in (DELIVERED_STATUS, LEGACY_DELIVERED_STATUS, "Toshkent(Chuqursoy ULS da)"):
+        return 1.0, True
+    if normalized in _V7_CHINA_ALIASES:
+        return 0.0, False
+    route = _V7_ROUTE_KYRGYZ if normalized in _V7_ROUTE_KYRGYZ else _V7_ROUTE_KAZAKH
+    try:
+        idx = route.index(normalized)
+    except ValueError:
+        return 0.0, False
+    return idx / (len(route) - 1), False
+
+
+def _v7_route_line(status: str) -> str:
+    progress, arrived = _v7_route_progress(status)
+    if arrived:
+        nodes = ["✅"] * 5 + ["📦"]
+    else:
+        pos = min(5, max(0, round(progress * 5)))
+        nodes = []
+        for i in range(6):
+            if i < pos:
+                nodes.append("✅")
+            elif i == pos:
+                nodes.append("🚚")
+            else:
+                nodes.append("○")
+    return "🇨🇳 " + "──".join(nodes) + " 🇺🇿"
+
+
+def _v7_place_label(status: str, language: str) -> str:
+    normalized = _normalize_status(status or "Xitoy")
+    label = _message_status_label(normalized, language)
+    country_key = _V7_STATUS_COUNTRY.get(normalized)
+    if not country_key:
+        return label
+    country = _V7_COUNTRY_NAMES.get(language, _V7_COUNTRY_NAMES["uz_latn"]).get(country_key, "")
+    if not country or country.lower() in label.lower():
+        return label
+    return f"{label} ({country})"
+
+
+def render_message_v7(bl: dict, batch_name: str) -> str:
+    """Шаблон «вариант 7»: HOLAT-блок + реквизиты одной строкой."""
+    language = _normalize_message_language(bl.get("message_language"))
+    strings = _V7_STRINGS.get(language, _V7_STRINGS["uz_latn"])
+
+    status = bl.get("status", "Xitoy")
+    batch = get_batch(bl.get("batch_id")) if bl.get("batch_id") else None
+    eta_destination = ((batch or {}).get("eta_destination") or "").strip()
+    arrival_eta = ((batch or {}).get("eta_to_toshkent") or "").strip()
+    eta_value = _localize_eta_value(arrival_eta, language) or strings["eta_empty"]
+    eta_label = _eta_destination_label(eta_destination, language)
+    is_customer_delivery = is_customer_delivery_eta(eta_destination)
+
+    progress, arrived = _v7_route_progress(status)
+    place = _v7_place_label(status, language)
+    if arrived:
+        toshkent_names = {"uz_latn": "Toshkent", "uz_cyrl": "Тошкент", "ru": "Ташкент", "en": "Tashkent"}
+        uz_country = _V7_COUNTRY_NAMES.get(language, _V7_COUNTRY_NAMES["uz_latn"])["uz"]
+        place = f"{toshkent_names.get(language, 'Toshkent')} ({uz_country}) — {strings['arrived_note']} ✅"
+
+    weight_value = _to_float(bl.get("weight_kg"))
+    volume_value = _to_float(bl.get("volume_cbm"))
+    places_breakdown = str(bl.get("quantity_places_breakdown") or "").strip()
+    places_value = places_breakdown or (_to_int(bl.get("quantity_places")) or "")
+    bl_code = _display_bl_code(bl.get("code", ""), bl.get("merged_codes", ""))
+
+    req_parts = [f"🆔 <b>{html.escape(str(bl_code))}</b>", f"🚛 <b>{html.escape(str(batch_name))}</b>"]
+    if places_value:
+        req_parts.append(f"{html.escape(str(places_value))} {strings['joy']}")
+    if weight_value:
+        req_parts.append(f"{weight_value:g} kg")
+    if volume_value:
+        req_parts.append(f"{volume_value:g} m³")
+
+    lines = [
+        strings["greeting"],
+        "━━━━━━━━━━━━━━━",
+        f"<b>{strings['holat']}</b>",
+        "",
+    ]
+    if not arrived:
+        lines.append(f"⏳ {eta_label}: <b>{html.escape(eta_value)}</b>")
+    lines.extend([
+        _v7_route_line(status),
+        f"{strings['now']}: <b>{html.escape(place)}</b>",
+        "━━━━━━━━━━━━━━━",
+        " · ".join(req_parts),
+    ])
+    if not is_customer_delivery:
+        lines.append(strings["packing"])
+    return "\n".join(lines)

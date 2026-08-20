@@ -4213,13 +4213,65 @@ def handle_my_chat_member_update(chat_update: dict):
         return
 
 
+def _caption_visible_len(text: str) -> int:
+    """Длина подписи без HTML-тегов (лимит Telegram — 1024 видимых)."""
+    return len(re.sub(r"<[^>]+>", "", text or ""))
+
+
+def _send_tracking_with_files_inline(chat_id, rendered_message: str, files: list):
+    """Трекинг-сообщение с packing list ВНУТРИ: один файл → sendDocument
+    с подписью; 2-10 файлов → альбом документов с общей подписью.
+    Возвращает raw-ответ Telegram или бросает исключение."""
+    entries = []
+    for f in files:
+        path = f.get("file_path")
+        if path and os.path.exists(path):
+            entries.append((path, f.get("filename") or os.path.basename(path)))
+    if not entries:
+        raise ValueError("no files on disk")
+    if len(entries) == 1:
+        path, name = entries[0]
+        with open(path, "rb") as fh:
+            return telegram_api(
+                "sendDocument",
+                timeout=120,
+                data={"chat_id": chat_id, "caption": rendered_message, "parse_mode": "HTML"},
+                files={"document": (name, fh)},
+            )
+    handles = []
+    try:
+        upload = {}
+        media = []
+        for i, (path, name) in enumerate(entries[:10]):
+            key = f"file{i}"
+            fh = open(path, "rb")
+            handles.append(fh)
+            upload[key] = (name, fh)
+            media.append({"type": "document", "media": f"attach://{key}"})
+        # подпись альбома отображается, когда она только у одного элемента
+        media[-1]["caption"] = rendered_message
+        media[-1]["parse_mode"] = "HTML"
+        return telegram_api(
+            "sendMediaGroup",
+            timeout=180,
+            data={"chat_id": chat_id, "media": json.dumps(media, ensure_ascii=False)},
+            files=upload,
+        )
+    finally:
+        for fh in handles:
+            try:
+                fh.close()
+            except Exception:
+                pass
+
+
 def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     """Render and send tracking for a single BL (no merging with other batches).
 
-    Right after the message goes out we also deliver every packing list
-    attached to this BL so the client receives "info → files → info →
-    files" in strict batch order instead of all infos first and then a
-    bucket of files at the end.
+    Packing lists go INSIDE the tracking message (document caption /
+    document album) when possible: 1-10 files and the caption fits
+    Telegram's 1024-char limit. Otherwise — the old flow: text message,
+    then the files right after it.
     """
     chat_id = bl.get("chat_id")
     if not chat_id:
@@ -4227,6 +4279,36 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
 
     language = normalize_message_language(bl.get("message_language"))
     rendered_message = db.render_message(bl, batch_name, include_related_batches=False)
+
+    # ── файлы внутри сообщения ──
+    try:
+        files = db.get_files(bl.get("id")) or []
+    except Exception:
+        files = []
+    if files and 1 <= len(files) <= 10 and _caption_visible_len(rendered_message) <= 1000:
+        try:
+            resp = _send_tracking_with_files_inline(chat_id, rendered_message, files)
+            db.record_tracking_delivery(bl, include_related_batches=False)
+            try:
+                result = (resp or {}).get("result")
+                if isinstance(result, list) and result:
+                    # sendMediaGroup возвращает массив сообщений
+                    msg_id = (result[0] or {}).get("message_id")
+                else:
+                    msg_id = _extract_message_id(resp)
+                if msg_id:
+                    db.record_sent_telegram_message(
+                        bl_id=bl.get("id"), batch_id=bl.get("batch_id"),
+                        chat_id=chat_id, message_id=msg_id, kind="tracking",
+                    )
+            except Exception:
+                app.logger.exception("Failed to record tracking message id (inline files)")
+            return True, ""
+        except Exception:
+            app.logger.exception(
+                "Inline-files tracking send failed for bl_id=%s — falling back to text+files",
+                bl.get("id"),
+            )
 
     delivered = False
     last_error = ""
