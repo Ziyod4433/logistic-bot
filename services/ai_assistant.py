@@ -98,6 +98,10 @@ def _system_prompt() -> str:
     from datetime import datetime
 
     statuses = " → ".join(db.STATUSES)
+    ask_hour = (os.getenv("TRACKING_ASK_HOUR", "7") or "7").strip()
+    packing_hour = (os.getenv("PACKING_REMINDER_HOUR", "9") or "9").strip()
+    digest_hour = (os.getenv("TRACKING_DIGEST_HOUR", "9") or "9").strip()
+    digest_id = (os.getenv("TRACKING_DIGEST_TG_ID", "7713376668") or "").strip()
     return f"""Ты — AI-ассистент логистической компании BURAQ Logistics (карго Китай → Узбекистан).
 Ты работаешь внутри админ-панели (Flask-сайт) и общаешься с ВЛАДЕЛЬЦЕМ компании в личном чате Telegram.
 Сегодня: {datetime.now().strftime('%d.%m.%Y %H:%M')}.
@@ -118,12 +122,19 @@ def _system_prompt() -> str:
    в истории (bl_link_history) — при импорте новой партии из шитса группы подставляются автоматически.
 
 3. ЕЖЕДНЕВНЫЙ ТРЕКИНГ (главный процесс).
-   Оператор каждый день обновляет статус партии по факту движения фуры, затем жмёт «отправить трекинг»:
-   бот рассылает в группу каждого BL сообщение (фото фуры + текущий статус + ETA) на языке группы (uz/ru/кириллица/en).
-   Индикация в панели: зелёная строка = трекинг отправлен сегодня, жёлтая = 1 день без отправки, красная = 2+ дней.
-   Логи всех отправок хранятся (send_logs). Каждое утро бот сам присылает в управляющую группу список
-   активных партий с кнопками: тап открывает карточку-форму (статусы, точка назначения, ETA-текст) — логисты
-   обновляют партии прямо кнопками; рассылка по клиентским группам оттуда идёт через кнопку подтверждения.
+   Утром в {ask_hour}:00 по Ташкенту бот САМ присылает в группы с включённой формой (/formon; по умолчанию —
+   управляющая группа) список активных партий и кнопку Mini App-формы «Параметры партии»
+   (в группах — прямая ссылка t.me/бот/form, в личке — синяя кнопка-меню «📝 Forma» и /form).
+   В форме логисты обновляют: статус (точка маршрута), ETA-текст, Qaysi nuqtaga и Holat (kutilmagan vaziyat —
+   поломка фуры, доп. досмотр на границе и т.п.; это внутренняя пометка, клиентам НЕ отправляется).
+   «Сохранить» — тихое сохранение (уведомление в группу-источник); «TASDIQLASH» — бот шлёт в группу карточку
+   «Hammasi to'g'rimi?» и ТОЛЬКО после второго ✅ рассылает трекинг по клиентским группам.
+   КЛИЕНТСКОЕ ТРЕКИНГ-СООБЩЕНИЕ — ЧИСТЫЙ ТЕКСТ, БЕЗ ФОТО (точные шаблоны бери ТОЛЬКО инструментом
+   get_message_templates, не выдумывай): приветствие → партия, дата, BL-код → текущий статус → срок прибытия →
+   вес/объём/места → затем отдельными сообщениями кнопки скачивания packing list. Язык = язык группы
+   (uz латиница / uz кириллица / ru / en). Если у клиента несколько BL в связанных партиях — блоки объединяются.
+   Индикация в панели: зелёная строка = трекинг отправлен сегодня, жёлтая = 1 день, красная = 2+ дней.
+   Логи отправок хранятся (send_logs).
 
 4. КНОПКА «YUK HOLATI» в группах клиентов: клиент сам запрашивает статус. Бот показывает ТОЛЬКО партии
    В ПУТИ. Если груз уже в статусе «Toshkent(Chuqursoy ULS da)» или доставлен — бот отвечает
@@ -177,7 +188,15 @@ def _system_prompt() -> str:
     не совпало ни у кого — файл в отчёт «неоднозначные», человек решает. Отчёт на узбекском: прикрепил /
     расхождения mesta / неоднозначные / без совпадений. get_missing_packing_lists — текущий список без файлов.
 
-12. ШИТС «FURA STATUSLARI» (лист в шитсе статусов) — жизненный цикл партии, ведут логисты:
+12. РАСПИСАНИЕ БОТА (всё по Ташкенту, знай это ТОЧНО):
+    • {ask_hour}:00 — утренний запрос обновления трекинга (список партий + кнопка формы) в группы с /formon;
+    • {packing_hour}:00 — запрос packing list у Jigar в управляющей группе (BL активных партий без файлов);
+    • с {digest_hour}:00 — утренний дайджест трекинга наблюдателю (id {digest_id}): бот ждёт, пока логисты
+      обновят хотя бы один статус за день, к 13:00 шлёт в любом случае с пометкой;
+    • каждые 5 минут — синхронизация партий с листом «Fura statuslari» (прибытие/выдача);
+    • каждую минуту — исполнение запланированных задач владельца (schedule_task).
+
+13. ШИТС «FURA STATUSLARI» (лист в шитсе статусов) — жизненный цикл партии, ведут логисты:
     колонка REYS NOMERI = партия (BLddmmyyyy; дата в имени партии = дата ВЫЕЗДА фуры со склада,
     отдельной колонки выезда нет), BOJXONAGA TUSHDI = дата прибытия в Ташкент (то же самое событие,
     что живой статус «Toshkent(Chuqursoy ULS da)» — один ведётся в шитсе, другой ставят логисты вживую),
@@ -269,6 +288,18 @@ TOOLS = [
                 "properties": {"limit": {"type": "integer", "description": "сколько вернуть, по умолчанию 15"}},
                 "required": [],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_message_templates",
+            "description": (
+                "ТОЧНЫЕ шаблоны сообщений, которые бот реально отправляет: клиентское трекинг-сообщение "
+                "(рендер настоящим кодом, uz и ru) и утренние служебные тексты. Используй ВСЕГДА, когда "
+                "спрашивают про шаблоны/тексты сообщений — ничего не выдумывай."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     {
@@ -498,6 +529,35 @@ def _tool_get_send_logs(args: dict) -> dict:
     finally:
         conn.close()
     return {"logs": [dict(r) for r in rows]}
+
+
+def _tool_get_message_templates(_args: dict) -> dict:
+    sample = {
+        "id": 0, "code": "BL-171", "client_name": "SARDOR", "chat_id": "",
+        "status": "Almata", "message_language": "uz_latn",
+        "weight_kg": 730, "volume_cbm": 5.2, "quantity_places": 40,
+        "quantity_places_breakdown": "", "cargo_type": "", "cargo_description": "",
+        "merged_codes": "",
+    }
+    uz = db.render_message(dict(sample), "14.08.2026", include_related_batches=False)
+    sample["message_language"] = "ru"
+    ru = db.render_message(dict(sample), "14.08.2026", include_related_batches=False)
+    ask_hour = (os.getenv("TRACKING_ASK_HOUR", "7") or "7").strip()
+    packing_hour = (os.getenv("PACKING_REMINDER_HOUR", "9") or "9").strip()
+    return {
+        "tracking_client_message_uz_latn": uz,
+        "tracking_client_message_ru": ru,
+        "notes": (
+            "Клиентский трекинг — ЧИСТЫЙ ТЕКСТ (HTML), БЕЗ фото. После него отдельными сообщениями приходят "
+            "кнопки скачивания packing list. Пустой срок прибытия = ETA партии не заполнен. Языки: uz_latn, "
+            "uz_cyrl, ru, en — по языку группы. Несколько BL клиента в связанных партиях объединяются блоками."
+        ),
+        "morning_service_texts": {
+            "tracking_ask": f"«🌅 Assalomu alaykum! Treking ma'lumotlarini yangilash vaqti bo'ldi» + список партий + кнопка формы (в {ask_hour}:00, группы с /formon)",
+            "packing_ask": f"«🌅 Assalomu alaykum, Jigar!» + BL без packing list по партиям + просьба прислать ZIP/ссылку (в {packing_hour}:00, управляющая группа)",
+            "tasdiqlash_card": "«📝 <имя> treking ma'lumotlarini to'ldirdi: партия/holat/nuqta/ETA … ❓ Hammasi to'g'rimi?» + кнопки ✅/❌",
+        },
+    }
 
 
 def _tool_get_missing_packing_lists(_args: dict) -> dict:
@@ -916,6 +976,8 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_get_loading_plans(args)
         if name == "get_missing_packing_lists":
             return _tool_get_missing_packing_lists(args)
+        if name == "get_message_templates":
+            return _tool_get_message_templates(args)
         if name == "propose_action":
             return _tool_propose_action(args, tg_user_id, created_actions)
         return {"error": f"Неизвестный инструмент {name}"}
