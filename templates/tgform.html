@@ -66,6 +66,12 @@ h1 .hl{color:var(--amber)}
   padding:15px 14px; margin-bottom:10px; cursor:pointer;
 }
 .batch:active{background:var(--bg4)}
+.batch.done{
+  border-color:var(--green);
+  box-shadow:0 0 14px rgba(16,185,129,.25);
+  background:linear-gradient(135deg, rgba(16,185,129,.10), var(--bg3));
+}
+.batch.done .bname{color:var(--green)}
 .bname{font-family:'IBM Plex Mono',monospace; font-weight:500; font-size:15px; color:var(--amber)}
 .bmeta{font-size:11.5px; color:var(--muted2); margin-top:3px}
 .bstatus{
@@ -102,6 +108,11 @@ h1 .hl{color:var(--amber)}
 <div id="screen-list">
   <h1>Активные <span class="hl">партии</span></h1>
   <div id="list-body"><div class="spin"></div></div>
+  <button class="btn btn-main btn-big" id="list-confirm-btn" style="display:none" onclick="confirmSend()">✅ TASDIQLASH</button>
+  <div class="hint" id="list-confirm-hint" style="display:none;text-align:center;margin-top:8px">
+    Yashil partiyalar bo'yicha guruhga bitta tasdiqlash so'rovi boradi —
+    ikkinchi ✅ dan keyin treking mijoz guruhlariga yuboriladi.
+  </div>
 </div>
 
 <div id="screen-form">
@@ -130,13 +141,11 @@ h1 .hl{color:var(--amber)}
 
   <div class="btnrow">
     <button class="btn btn-ghost" onclick="showList()">Отмена</button>
-    <button class="btn btn-ghost" id="save-btn" onclick="save()">Сохранить</button>
+    <button class="btn btn-main" id="save-btn" onclick="save()">💾 Saqlash</button>
   </div>
-
-  <button class="btn btn-main btn-big" id="confirm-btn" onclick="confirmSend()">✅ TASDIQLASH</button>
   <div class="hint" style="text-align:center;margin-top:8px">
-    Tasdiqlashdan so'ng bot guruhda yana bir bor so'raydi («Hammasi to'g'rimi?») —
-    ikkinchi tasdiqdan keyingina treking mijoz guruhlariga yuboriladi.
+    Saqlangan partiya ro'yxatda yashil bo'ladi. Hammasini yangilab bo'lgach,
+    ro'yxat oynasidagi TASDIQLASH tugmasini bosing.
   </div>
 </div>
 
@@ -188,22 +197,33 @@ function showList() {
 
 function renderList() {
   const body = document.getElementById("list-body");
+  const updated = new Set(DATA.updated_batch_ids || []);
+  const confirmBtn = document.getElementById("list-confirm-btn");
+  const confirmHint = document.getElementById("list-confirm-hint");
   if (!DATA.batches.length) {
     body.innerHTML = '<div class="note">Aktiv partiyalar yo\'q.</div>';
+    confirmBtn.style.display = "none";
+    confirmHint.style.display = "none";
     return;
   }
-  body.innerHTML = DATA.batches.map(b => `
-    <div class="batch" onclick="openForm(${b.id})">
+  body.innerHTML = DATA.batches.map(b => {
+    const done = updated.has(b.id);
+    return `
+    <div class="batch${done ? " done" : ""}" onclick="openForm(${b.id})">
       <div>
-        <div class="bname">📦 ${esc(b.name)}</div>
+        <div class="bname">${done ? "✅" : "📦"} ${esc(b.name)}</div>
         <div class="bmeta">${b.bl_count} BL${b.eta_to_toshkent ? " · " + esc(b.eta_to_toshkent) : ""}</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <span class="bstatus">${esc(b.status)}</span>
         <span class="arrow">›</span>
       </div>
-    </div>`).join("") +
-    '<div class="note">Partiyani tanlang — parametrlar formasi ochiladi.</div>';
+    </div>`;
+  }).join("") +
+    '<div class="note">Partiyani tanlang — parametrlar formasi ochiladi. Yangilangani yashil bo\'ladi.</div>';
+  const hasUpdated = DATA.batches.some(b => updated.has(b.id));
+  confirmBtn.style.display = hasUpdated ? "block" : "none";
+  confirmHint.style.display = hasUpdated ? "block" : "none";
 }
 
 function openForm(id) {
@@ -279,15 +299,12 @@ async function save() {
 }
 
 async function confirmSend() {
-  if (!current) return;
-  const btn = document.getElementById("confirm-btn");
+  const btn = document.getElementById("list-confirm-btn");
   btn.disabled = true;
   try {
-    await api("/tgform/api/confirm", formPayload());
+    const r = await api("/tgform/api/confirm", {});
     if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
-    toast("✅ Guruhga tasdiqlash so'rovi yuborildi");
-    await load();
-    showList();
+    toast("✅ Guruhga tasdiqlash so'rovi yuborildi (" + (r.batches_in_basket || 0) + " partiya)");
   } catch (e) {
     toast("⚠️ " + e.message, true);
   } finally {

@@ -3890,10 +3890,15 @@ def tgform_api_list():
         for b in db.get_batches()
         if not (b.get("client_delivery_date") or "")
     ]
+    # обновлённые через форму партии (корзина группы) — зелёные в списке
+    group_id = _resolve_src_group((request.json or {}).get("src_chat_id"))
+    _, basket_params = _tgform_get_basket(group_id)
+    updated_ids = [int(x) for x in (basket_params.get("batch_ids") or [])]
     return jsonify({
         "ok": True,
         "user_name": (user.get("first_name") or ""),
         "batches": batches,
+        "updated_batch_ids": updated_ids,
         "statuses": list(db.STATUSES),
         "destinations": [
             {"value": key, "label": label}
@@ -3938,10 +3943,46 @@ def _tgform_apply_save(user: dict, data: dict):
     return db.get_batch(batch_id), None
 
 
+def _tgform_get_basket(group_id):
+    """(action|None, params) — корзина обновлённых партий этой группы."""
+    action = db.ai_find_pending_action(f"tgformgrp:{group_id}", "send_tracking_multi")
+    if not action:
+        return None, {}
+    try:
+        params = json.loads(action.get("params_json") or "{}")
+    except Exception:
+        params = {}
+    return action, params
+
+
+def _tgform_add_to_basket(group_id, batch_id: int, sender_name: str):
+    """Сохранённая через форму партия попадает в корзину группы — в
+    списке она подсвечивается зелёным, карточка подтверждения строится
+    из корзины по нажатию TASDIQLASH в главном меню."""
+    action, params = _tgform_get_basket(group_id)
+    batch_ids = [int(x) for x in (params.get("batch_ids") or [])]
+    if int(batch_id) not in batch_ids:
+        batch_ids.append(int(batch_id))
+    filled_by = params.get("filled_by") or []
+    if sender_name and sender_name not in filled_by:
+        filled_by.append(sender_name)
+    params["batch_ids"] = batch_ids
+    params["filled_by"] = filled_by
+    summary = "Разослать трекинг партий: " + ", ".join(
+        str((db.get_batch(bid) or {}).get("name") or bid) for bid in batch_ids
+    )
+    if action is None:
+        db.ai_create_pending_action(
+            f"tgformgrp:{group_id}", "send_tracking_multi",
+            json.dumps(params, ensure_ascii=False), summary,
+        )
+    else:
+        db.ai_update_pending_action_params(action["id"], json.dumps(params, ensure_ascii=False))
+    return batch_ids
+
+
 @app.route("/tgform/api/save", methods=["POST"])
 def tgform_api_save():
-    from html import escape as html_escape
-
     user, err = _webapp_auth_or_403()
     if err:
         return err
@@ -3949,71 +3990,38 @@ def tgform_api_save():
     batch, save_err = _tgform_apply_save(user, data)
     if save_err:
         return save_err
-    # Учёт: об изменении через форму сообщаем в группу, из которой
-    # форма была открыта (или в управляющую).
-    notify_chat = _resolve_src_group(data.get("src_chat_id"))
+    # партия — в корзину группы (зелёная в списке, войдёт в карточку
+    # подтверждения по TASDIQLASH из главного меню)
+    group_id = _resolve_src_group(data.get("src_chat_id"))
     sender_name = str(user.get("first_name") or user.get("id") or "").strip()
-    incident = (batch.get("incident_note") or "").strip()
-    try:
-        telegram_send_message(
-            notify_chat,
-            (
-                f"📝 <b>{html_escape(sender_name)}</b> partiya <b>{html_escape(batch['name'])}</b> "
-                f"ma'lumotini yangiladi:\n"
-                f"🚚 {html_escape(batch.get('status') or '')} · "
-                f"📍 {html_escape(batch.get('eta_destination') or 'Toshkent')} · "
-                f"⏱ {html_escape(batch.get('eta_to_toshkent') or '—')}"
-                + (f"\n⚠️ {html_escape(incident)}" if incident else "")
-            ),
-            disable_notification=True,
-        )
-    except Exception:
-        app.logger.exception("TGFORM save notify failed")
-    return jsonify({"ok": True})
+    updated = _tgform_add_to_basket(group_id, batch["id"], sender_name)
+    return jsonify({"ok": True, "updated_batch_ids": updated})
 
 
 @app.route("/tgform/api/confirm", methods=["POST"])
 def tgform_api_confirm():
-    """Большая кнопка TASDIQLASH: сохраняет форму и запускает ВТОРОЕ
-    подтверждение — бот пишет в управляющую группу карточку «Hammasi
-    to'g'rimi?»; рассылка трекинга по клиентским группам уходит только
-    после ✅ в группе (существующий approval-механизм)."""
+    """TASDIQLASH из ГЛАВНОГО МЕНЮ формы: строит ОДНУ сводную карточку из
+    корзины обновлённых партий и шлёт её в группу на второе одобрение.
+    После ✅ в группе карточка исчезает и трекинги рассылаются."""
     from html import escape as html_escape
-    from services import ai_assistant
 
     user, err = _webapp_auth_or_403()
     if err:
         return err
+    from services import ai_assistant
+
+    if ai_assistant.is_readonly_user((user or {}).get("id")):
+        return jsonify({"error": "Sizda faqat ko'rish huquqi bor"}), 403
     data = request.json or {}
-    batch, save_err = _tgform_apply_save(user, data)
-    if save_err:
-        return save_err
-
-    # ОДНА сводная карточка на группу: каждое нажатие TASDIQLASH добавляет
-    # партию в «корзину» рассылки, старая карточка удаляется, присылается
-    # обновлённая — с ЕДИНЫМ подтверждением в конце.
     group_id = _resolve_src_group(data.get("src_chat_id"))
-    basket_key = f"tgformgrp:{group_id}"
-    sender_name = str(user.get("first_name") or user.get("id") or "").strip()
-
-    action = db.ai_find_pending_action(basket_key, "send_tracking_multi")
-    if action:
-        try:
-            params = json.loads(action.get("params_json") or "{}")
-        except Exception:
-            params = {}
-        action_id = action["id"]
-    else:
-        params = {}
-        action_id = None
+    action, params = _tgform_get_basket(group_id)
     batch_ids = [int(x) for x in (params.get("batch_ids") or [])]
-    if batch["id"] not in batch_ids:
-        batch_ids.append(batch["id"])
+    if not action or not batch_ids:
+        return jsonify({"error": "Avval partiyalarni yangilang — hali hech narsa o'zgartirilmagan."}), 400
+    action_id = action["id"]
     filled_by = params.get("filled_by") or []
-    if sender_name and sender_name not in filled_by:
-        filled_by.append(sender_name)
 
-    # убираем предыдущую карточку этой корзины
+    # старую карточку (если была) убираем
     old_card = params.get("card_message_id")
     if old_card:
         try:
@@ -4021,7 +4029,6 @@ def tgform_api_confirm():
         except Exception:
             pass
 
-    # сводный текст по всем партиям корзины
     lines = ["📝 Treking ma'lumotlari yangilandi — tarqatishga tayyor:", ""]
     for i, bid in enumerate(batch_ids, 1):
         b = db.get_batch(bid)
@@ -4041,19 +4048,6 @@ def tgform_api_confirm():
         "❓ <b>Hammasi to'g'rimi?</b> Tasdiqlansa, treking YUQORIDAGI BARCHA partiyalar bo'yicha "
         "mijoz guruhlariga yuboriladi."
     )
-
-    summary = "Разослать трекинг партий: " + ", ".join(
-        str((db.get_batch(bid) or {}).get("name") or bid) for bid in batch_ids
-    )
-    params = {
-        "batch_ids": batch_ids,
-        "filled_by": filled_by,
-    }
-    if action_id is None:
-        action_id = db.ai_create_pending_action(
-            basket_key, "send_tracking_multi",
-            json.dumps(params, ensure_ascii=False), summary,
-        )
     keyboard = {
         "inline_keyboard": [[
             {"text": "✅ TASDIQLAYMAN — yuborilsin", "callback_data": f"aiact:ok:{action_id}"},
