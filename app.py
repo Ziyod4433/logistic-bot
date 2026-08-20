@@ -7683,6 +7683,24 @@ def api_save_template():
 
 # Хуки прямого исполнения для владельческого режима ассистента
 # (ai_assistant не может импортировать app — цикл).
+def configure_telegram_menu_button():
+    """Синяя кнопка-меню слева от поля ввода (как «Open» у BotFather):
+    в личке бота открывает Mini App формы напрямую."""
+    if not BOT_TOKEN or not WEBHOOK_BASE_URL:
+        return
+    try:
+        telegram_api("setChatMenuButton", json={
+            "menu_button": {
+                "type": "web_app",
+                "text": "📝 Forma",
+                "web_app": {"url": _tgform_url()},
+            }
+        })
+        app.logger.info("Telegram menu button configured")
+    except Exception as exc:
+        app.logger.warning("setChatMenuButton failed: %s", exc)
+
+
 def _wire_ai_assistant_hooks():
     from services import ai_assistant as _ai
 
@@ -7708,6 +7726,7 @@ if __name__ == "__main__":
             app.logger.info("Telegram webhook configured")
         except Exception as exc:
             app.logger.warning("Failed to configure Telegram webhook: %s", exc)
+        configure_telegram_menu_button()
     else:
         app.logger.warning("Telegram webhook is not configured. Set BOT_TOKEN and WEBHOOK_BASE_URL.")
 
