@@ -4247,6 +4247,27 @@ def _structure_tracking_text(rendered_message: str) -> str:
     return structured
 
 
+def _packing_files_keyboard(files: list) -> dict | None:
+    """Файлы «внизу» ОДНОГО сообщения: Telegram не умеет показывать
+    документы ПОД текстом, поэтому каждый файл — кнопка-строка с его
+    именем под сообщением; нажатие скачивает файл с сайта напрямую
+    (без лишних сообщений в чате)."""
+    base = (WEBHOOK_BASE_URL or "").rstrip("/")
+    if not base:
+        return None
+    rows = []
+    for f in files:
+        token = (f.get("public_token") or "").strip()
+        if not token:
+            continue
+        name = (f.get("filename") or "").strip() or os.path.basename(f.get("file_path") or "")
+        label = name if len(name) <= 60 else name[:57] + "…"
+        rows.append([{"text": f"📄 {label}", "url": f"{base}/public/file/{token}"}])
+        if len(rows) >= 30:
+            break
+    return {"inline_keyboard": rows} if rows else None
+
+
 def _send_tracking_album(chat_id, files: list, caption_html: str):
     """ОДНО сообщение: альбом packing list с текстом трекинга в подписи
     (Telegram показывает подпись под файлами; середина текста — цитатой).
@@ -4379,11 +4400,12 @@ def _send_packing_files_reply(chat_id, files: list, reply_to_message_id, quote_h
 def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     """Render and send tracking for a single BL (no merging with other batches).
 
-    Delivery shape: ONE message — the packing-list document album with the
-    tracking text as its caption (greeting and the packing-list line as
-    plain text, everything between them in a native <blockquote>). No
-    files / caption over 1024 chars / album failure — the text goes out
-    as its own message and the files follow without quoting anything.
+    Delivery shape: ONE message — the tracking text (greeting and the
+    packing-list line plain, everything between them in a native
+    <blockquote>) with the packing lists as URL-buttons UNDER the text
+    (Telegram can't render documents below a caption, buttons can sit
+    below). Fallbacks: no public links → document album with the text as
+    its caption; album/caption impossible → text message, files after.
     """
     chat_id = bl.get("chat_id")
     if not chat_id:
@@ -4422,7 +4444,27 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
             except Exception:
                 app.logger.exception("Failed to record tracking message id")
 
-    # ── ОСНОВНОЙ ПУТЬ: ОДНО сообщение — альбом файлов + текст подписью ──
+    # ── ОСНОВНОЙ ПУТЬ: ОДНО сообщение — текст, файлы КНОПКАМИ ВНИЗУ ──
+    if include_files:
+        files_keyboard = _packing_files_keyboard(files)
+        if files_keyboard:
+            try:
+                resp = send_with_track_keyboard(
+                    chat_id,
+                    structured_message,
+                    language=language,
+                    reply_markup=files_keyboard,
+                )
+                db.record_tracking_delivery(bl, include_related_batches=False)
+                _record_message_ids([resp], caption_index=0)
+                return True, ""
+            except Exception:
+                app.logger.exception(
+                    "Buttons tracking send failed for bl_id=%s — falling back",
+                    bl.get("id"),
+                )
+
+    # ── ЗАПАСНОЙ ПУТЬ 1: ОДНО сообщение — альбом файлов + текст подписью ──
     if include_files and _caption_visible_len(structured_message) <= 1024:
         try:
             responses = _send_tracking_album(chat_id, files, structured_message)
@@ -4435,7 +4477,7 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
                 bl.get("id"),
             )
 
-    # ── ЗАПАСНОЙ ПУТЬ: текст отдельным сообщением, файлы следом ──
+    # ── ЗАПАСНОЙ ПУТЬ 2: текст отдельным сообщением, файлы следом ──
     delivered = False
     last_error = ""
     sent_response = None
