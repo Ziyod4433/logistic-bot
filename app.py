@@ -4213,6 +4213,28 @@ def handle_my_chat_member_update(chat_update: dict):
         return
 
 
+def _tracking_quote_html(rendered_message: str) -> str:
+    """Цитата для альбома packing list — ВЕСЬ текст трекинга. Если он
+    длиннее лимита цитаты Telegram (1024 видимых символа), берём целые
+    строки с начала, сколько влезает (цитата обязана быть точной
+    подстрокой сообщения)."""
+    def _visible(s: str) -> int:
+        return len(re.sub(r"<[^>]+>", "", s or ""))
+
+    text = (rendered_message or "").strip()
+    if _visible(text) <= 900:
+        return text
+    acc = []
+    total = 0
+    for line in text.split("\n"):
+        line_len = _visible(line) + 1
+        if total + line_len > 900:
+            break
+        acc.append(line)
+        total += line_len
+    return "\n".join(acc)
+
+
 def _send_packing_files_reply(chat_id, files: list, reply_to_message_id, quote_html: str = ""):
     """Packing list ОДНИМ сообщением следом за текстом трекинга: альбом
     документов отправляется ОТВЕТОМ на текст, так что сверху в нём видна
@@ -4287,10 +4309,10 @@ def _send_packing_files_reply(chat_id, files: list, reply_to_message_id, quote_h
 def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     """Render and send tracking for a single BL (no merging with other batches).
 
-    Delivery shape: the approved "variant 6" text (emoji-labelled column),
-    then ONE follow-up message with all packing lists — a document album
-    sent as a REPLY to the text, so the album carries a quote of the
-    tracking ("📦 BL: …") on top and the files below it.
+    Delivery shape: the site's tracking text, then ONE follow-up message
+    with all packing lists — a document album sent as a REPLY to the text
+    with the WHOLE tracking text as the reply quote, so the album shows
+    the full text in a quote block on top and the files below it.
     """
     chat_id = bl.get("chat_id")
     if not chat_id:
@@ -4313,6 +4335,7 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     delivered = False
     last_error = ""
     sent_response = None
+    sent_as_html = True
     try:
         sent_response = send_with_track_keyboard(
             chat_id,
@@ -4333,6 +4356,7 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
             )
             db.record_tracking_delivery(bl, include_related_batches=False)
             delivered = True
+            sent_as_html = False
             last_error = ""
         except Exception as fallback_exc:
             return False, str(fallback_exc or exc)
@@ -4354,12 +4378,12 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
         except Exception:
             app.logger.exception("Failed to record tracking message id")
 
-    # Packing lists — ONE follow-up album replying to the tracking text,
-    # so the album shows a "📦 BL: …" quote on top and the files below.
+    # Packing lists — ONE follow-up album replying to the tracking text
+    # with the WHOLE text as the quote, so the album shows the full
+    # tracking in a quote block on top and the files below.
     if delivered and files and not (view or {}).get("is_customer_delivery"):
-        quote_html = ""
-        if view:
-            quote_html = f"📦 BL: <b>{html.escape(view['bl_code'])}</b>"
+        # после plain-фолбэка HTML-цитата не совпадёт с текстом — без цитаты
+        quote_html = _tracking_quote_html(rendered_message) if sent_as_html else ""
         try:
             responses = _send_packing_files_reply(chat_id, files, text_message_id, quote_html)
             for resp in responses:

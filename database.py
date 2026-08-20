@@ -4801,9 +4801,9 @@ def _split_tracking_rendered_message(rendered: str) -> tuple[str, str, str]:
 
 
 def _render_single_message(bl: dict, batch_name: str) -> str:
-    # Новый шаблон «вариант 7» (два блока + линия маршрута) — по
-    # умолчанию; TRACKING_TEMPLATE_STYLE=legacy возвращает старый.
-    if (os.environ.get("TRACKING_TEMPLATE_STYLE", "v7").strip().lower() != "legacy"):
+    # По умолчанию — первоначальный шаблон сайта (раздел «Шаблон
+    # сообщения»); TRACKING_TEMPLATE_STYLE=v7 включает колонку-«вариант 6».
+    if (os.environ.get("TRACKING_TEMPLATE_STYLE", "legacy").strip().lower() == "v7"):
         return render_message_v7(bl, batch_name)
     language = _normalize_message_language(bl.get("message_language"))
     template = _inject_packing_list_placeholder(
@@ -4899,9 +4899,9 @@ def _render_single_message(bl: dict, batch_name: str) -> str:
 
 
 def render_message(bl: dict, batch_name: str, include_related_batches: bool = True) -> str:
-    # v7 всегда рендерит один BL (слияние блоков связанных партий —
-    # механика старого шаблона, v7 отправляется по-партийно).
-    if (os.environ.get("TRACKING_TEMPLATE_STYLE", "v7").strip().lower() != "legacy"):
+    # v7/«вариант 6» рендерит один BL (слияние блоков связанных партий —
+    # механика первоначального шаблона, который теперь и есть дефолт).
+    if (os.environ.get("TRACKING_TEMPLATE_STYLE", "legacy").strip().lower() == "v7"):
         return render_message_v7(dict(bl or {}), batch_name)
     primary_bl = dict(bl or {})
     chat_id = str(primary_bl.get("chat_id") or "").strip()
@@ -6313,11 +6313,11 @@ def ai_update_pending_action_params(action_id, params_json):
 
 
 # ═══════════════════════════════════════════════════════════════
-# ШАБЛОН ТРЕКИНГА V7 — «два блока» (утверждён владельцем 20.08.2026)
+# АЛЬТЕРНАТИВНЫЙ ШАБЛОН ТРЕКИНГА (вариант 6, «колонка») — НЕ дефолт
 # ═══════════════════════════════════════════════════════════════
-# HOLAT: срок → линия маршрута → текущая точка; MA'LUMOT одной строкой.
-# Линия вычисляется из позиции статуса на маршруте (казахская или
-# кыргызская ветка). Отключение: TRACKING_TEMPLATE_STYLE=legacy.
+# Дефолт — первоначальный шаблон сайта (message_template); включение
+# колонки: TRACKING_TEMPLATE_STYLE=v7. tracking_view_data ниже нужен
+# всегда (is_customer_delivery и данные для цитаты-альбома).
 
 _V7_ROUTE_KAZAKH = [
     "Xitoy", "Horgos (Qozoq)", "Nurjo'li", "Jarkent", "Almata", "Taraz",
@@ -6497,10 +6497,8 @@ def _v7_place_label(status: str, language: str) -> str:
 
 
 def render_message_v7(bl: dict, batch_name: str) -> str:
-    """Утверждённый шаблон «вариант 6»: колонка строк с эмодзи-метками.
-
-    Первая строка блока («📦 BL: …») дублируется в цитате альбома
-    packing list — app._send_packing_files_reply строит её так же."""
+    """Шаблон «вариант 6» (колонка строк с эмодзи-метками) — включается
+    только через TRACKING_TEMPLATE_STYLE=v7; дефолт — шаблон сайта."""
     view = tracking_view_data(bl, batch_name)
     strings = view["strings"]
 
