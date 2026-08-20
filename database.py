@@ -883,6 +883,18 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_tsm_recalled
             ON tracking_sent_messages(recalled_at);
 
+        CREATE TABLE IF NOT EXISTS tracking_live_maps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+            message_id INTEGER NOT NULL,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            live INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            UNIQUE(chat_id, batch_id)
+        );
+
         CREATE TABLE IF NOT EXISTS message_template (
             id INTEGER PRIMARY KEY,
             content TEXT NOT NULL,
@@ -3355,6 +3367,50 @@ def record_tracking_delivery(primary_bl: dict, include_related_batches: bool = T
             )
         conn.commit()
         return bundle
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Live tracking maps: one live-location message per (client chat, batch).
+# The bot moves the marker via editMessageLiveLocation on status changes.
+# ─────────────────────────────────────────────────────────────────────────
+def get_live_map(chat_id, batch_id) -> dict | None:
+    chat_value = str(chat_id or "").strip()
+    if not chat_value or not batch_id:
+        return None
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM tracking_live_maps WHERE chat_id = ? AND batch_id = ?",
+            (chat_value, int(batch_id)),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def save_live_map(chat_id, batch_id, message_id, latitude, longitude, live: int = 1) -> None:
+    chat_value = str(chat_id or "").strip()
+    if not chat_value or not batch_id or not message_id:
+        return
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO tracking_live_maps(
+                chat_id, batch_id, message_id, latitude, longitude, live, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+            ON CONFLICT(chat_id, batch_id) DO UPDATE SET
+                message_id = excluded.message_id,
+                latitude = excluded.latitude,
+                longitude = excluded.longitude,
+                live = excluded.live,
+                updated_at = excluded.updated_at
+            """,
+            (chat_value, int(batch_id), int(message_id), float(latitude), float(longitude), 1 if live else 0),
+        )
+        conn.commit()
     finally:
         conn.close()
 

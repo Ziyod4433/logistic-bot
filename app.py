@@ -4270,13 +4270,111 @@ def _send_tracking_with_files_inline(chat_id, rendered_message: str, files: list
                 pass
 
 
+LIVE_LOCATION_FOREVER = 0x7FFFFFFF  # live-геолокация, редактируемая бессрочно (Bot API 7.0+)
+
+
+def _ensure_live_tracking_map(chat_id, bl: dict) -> None:
+    """Живая карта фуры в клиентской группе: ОДНО location-сообщение на
+    (чат, партию). Новый статус — маркер передвигается через
+    editMessageLiveLocation; по прибытии в Toshkent live останавливается.
+    Best-effort: любая ошибка логируется и не блокирует отправку текста."""
+    from services import tracking_map
+
+    batch_id = bl.get("batch_id")
+    if not batch_id:
+        return
+    position = tracking_map.position_for_status(bl.get("status"))
+    if not position:
+        return
+    lat, lon, final = position
+
+    def _stop_live(message_id):
+        try:
+            telegram_api(
+                "stopMessageLiveLocation",
+                data={"chat_id": chat_id, "message_id": message_id},
+            )
+        except Exception:
+            app.logger.warning("stopMessageLiveLocation failed for chat=%s", chat_id)
+
+    rec = None
+    try:
+        rec = db.get_live_map(chat_id, batch_id)
+    except Exception:
+        app.logger.exception("Live map lookup failed for batch_id=%s", batch_id)
+
+    if rec and rec.get("message_id"):
+        same_spot = (
+            abs(float(rec.get("latitude") or 0.0) - lat) < 1e-4
+            and abs(float(rec.get("longitude") or 0.0) - lon) < 1e-4
+        )
+        if rec.get("live"):
+            edited = True
+            if not same_spot:
+                try:
+                    telegram_api(
+                        "editMessageLiveLocation",
+                        data={
+                            "chat_id": chat_id,
+                            "message_id": rec["message_id"],
+                            "latitude": lat,
+                            "longitude": lon,
+                        },
+                    )
+                except Exception:
+                    # сообщение удалили из чата / edit недоступен — новая карта
+                    app.logger.warning(
+                        "Live map edit failed for chat=%s batch=%s — resending",
+                        chat_id, batch_id,
+                    )
+                    edited = False
+            if edited:
+                live_flag = 1
+                if final:
+                    _stop_live(rec["message_id"])
+                    live_flag = 0
+                db.save_live_map(chat_id, batch_id, rec["message_id"], lat, lon, live=live_flag)
+                return
+        elif same_spot or final:
+            # остановленная карта уже стоит в финальной/актуальной точке
+            return
+
+    payload = {"chat_id": chat_id, "latitude": lat, "longitude": lon}
+    if not final:
+        payload["live_period"] = LIVE_LOCATION_FOREVER
+    try:
+        resp = telegram_api("sendLocation", data=payload)
+    except Exception:
+        if "live_period" not in payload:
+            app.logger.exception("sendLocation failed for chat=%s", chat_id)
+            return
+        payload.pop("live_period")
+        try:
+            resp = telegram_api("sendLocation", data=payload)
+        except Exception:
+            app.logger.exception("sendLocation failed for chat=%s", chat_id)
+            return
+    msg_id = _extract_message_id(resp)
+    if not msg_id:
+        return
+    db.save_live_map(chat_id, batch_id, msg_id, lat, lon, live=0 if final else 1)
+    try:
+        db.record_sent_telegram_message(
+            bl_id=bl.get("id"), batch_id=batch_id,
+            chat_id=chat_id, message_id=msg_id, kind="tracking",
+        )
+    except Exception:
+        app.logger.exception("Failed to record live map message id")
+
+
 def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     """Render and send tracking for a single BL (no merging with other batches).
 
-    Packing lists go INSIDE the tracking message (document caption /
-    document album) when possible: 1-10 files and the caption fits
-    Telegram's 1024-char limit. Otherwise — the old flow: text message,
-    then the files right after it.
+    Delivery shape: a LIVE MAP (native Telegram live location, the truck
+    marker moves as statuses change) on top, then the v7 text message with
+    packing lists inside (document caption / document album) when possible:
+    1-10 files and the caption fits Telegram's 1024-char limit. Otherwise —
+    the old flow: text message, then the files right after it.
     """
     chat_id = bl.get("chat_id")
     if not chat_id:
@@ -4290,50 +4388,13 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     except Exception:
         files = []
 
-    # ── ОСНОВНОЙ ПУТЬ: карточка-PNG («окно») + файлы ВНИЗУ ──
+    # ── ЖИВАЯ КАРТА: маркер фуры над текстом трекинга ──
     try:
-        from services import tracking_card
-
-        view = db.tracking_view_data(bl, batch_name)
-        card_png = tracking_card.render_card(view)
+        _ensure_live_tracking_map(chat_id, bl)
     except Exception:
-        card_png = None
-        app.logger.exception("Tracking card render failed for bl_id=%s", bl.get("id"))
-    if card_png:
-        try:
-            strings = view["strings"]
-            caption = view["requisites_plain"]
-            if files and not view["is_customer_delivery"]:
-                caption += "\n" + strings["packing"]
-            resp = telegram_api(
-                "sendPhoto",
-                timeout=120,
-                data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
-                files={"photo": ("tracking.png", io.BytesIO(card_png))},
-            )
-            db.record_tracking_delivery(bl, include_related_batches=False)
-            try:
-                msg_id = _extract_message_id(resp)
-                if msg_id:
-                    db.record_sent_telegram_message(
-                        bl_id=bl.get("id"), batch_id=bl.get("batch_id"),
-                        chat_id=chat_id, message_id=msg_id, kind="tracking",
-                    )
-            except Exception:
-                app.logger.exception("Failed to record tracking card message id")
-            # packing list — внизу, после карточки
-            if files and not view["is_customer_delivery"]:
-                try:
-                    _send_tracking_with_files_inline(chat_id, "", files)
-                except Exception:
-                    app.logger.exception("Files-below delivery failed for bl_id=%s", bl.get("id"))
-            return True, ""
-        except Exception:
-            app.logger.exception(
-                "Card tracking send failed for bl_id=%s — falling back", bl.get("id")
-            )
+        app.logger.exception("Live tracking map failed for bl_id=%s", bl.get("id"))
 
-    # ── ЗАПАСНОЙ ПУТЬ 1: текст с файлами внутри (caption) ──
+    # ── ОСНОВНОЙ ТЕКСТ: v7 с файлами внутри (caption) ──
     if files and 1 <= len(files) <= 10 and _caption_visible_len(rendered_message) <= 1000:
         try:
             resp = _send_tracking_with_files_inline(chat_id, rendered_message, files)
