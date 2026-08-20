@@ -102,15 +102,14 @@ DEFAULT_TEMPLATE = """👋Assalomu alaykum hurmatli mijoz!
 
 📦 Sizning yukingiz bo‘yicha yangilangan treking ma’lumotlari:⤵️
 ━━━━━━━━━━━━━━━
-🚛 Partiya: <b>{batch_date}</b>
-🗓Bugungi sana: <b>{today_date}</b>
-🆔 BL-kod: <b>{bl_code}</b>
-
 📍 Joriy holati:
 -<b>{status}</b>
 
 ⏳{arrival_eta_label}:
 -<b>{arrival_eta}</b>
+
+🚛 Partiya: <b>{batch_date}</b>
+🆔 BL-kod: <b>{bl_code}</b>
 ━━━━━━━━━━━━━━━
 📄 Yuk haqida ma'lumotlar:
 {cargo_info}
@@ -1582,6 +1581,14 @@ def init_db():
         cursor.execute("INSERT INTO message_template(id, content) VALUES(1, ?)", (DEFAULT_TEMPLATE,))
     else:
         current_template = (row["content"] or "").strip()
+        # Шаблоны «дефолтной семьи» (с этим приветствием) всё равно
+        # рендерятся кодовым DEFAULT_TEMPLATE — синхронизируем и копию
+        # в БД, чтобы раздел «Шаблон сообщения» показывал актуальный вид.
+        if (
+            "Assalomu alaykum hurmatli mijoz" in current_template
+            and current_template != DEFAULT_TEMPLATE.strip()
+        ):
+            current_template = ""
         if not current_template or current_template == LEGACY_DEFAULT_TEMPLATE.strip():
             cursor.execute(
                 """
@@ -2572,19 +2579,10 @@ def _inject_bl_code_placeholder(template: str) -> str:
 
 
 def _inject_today_date_placeholder(template: str) -> str:
-    if "{today_date}" in template:
-        return template
-
+    # Строка «Bugungi sana» убрана по решению владельца: ничего не
+    # добавляем, а существующую строку с {today_date} вырезаем.
     template = (template or "").replace("\r\n", "\n")
-    patterns = [
-        r"(🚛\s*Partiya:\s*[^\n]+)",
-        r"(📌\s*Partiya:\s*[^\n]+)",
-    ]
-    for pattern in patterns:
-        updated = re.sub(pattern, r"\1\n🗓Bugungi sana: <b>{today_date}</b>", template, count=1)
-        if updated != template:
-            return updated
-    return template
+    return re.sub(r"\n?🗓[^\n]*\{today_date\}[^\n]*", "", template)
 
 
 def _normalize_client_template(template: str) -> str:

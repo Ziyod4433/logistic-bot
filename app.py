@@ -4213,26 +4213,96 @@ def handle_my_chat_member_update(chat_update: dict):
         return
 
 
-def _tracking_quote_html(rendered_message: str) -> str:
-    """Цитата для альбома packing list — ВЕСЬ текст трекинга. Если он
-    длиннее лимита цитаты Telegram (1024 видимых символа), берём целые
-    строки с начала, сколько влезает (цитата обязана быть точной
-    подстрокой сообщения)."""
-    def _visible(s: str) -> int:
-        return len(re.sub(r"<[^>]+>", "", s or ""))
+def _caption_visible_len(text: str) -> int:
+    """Длина текста без HTML-тегов (лимит подписи Telegram — 1024 видимых)."""
+    return len(re.sub(r"<[^>]+>", "", text or ""))
 
+
+def _structure_tracking_text(rendered_message: str) -> str:
+    """Приветствие и строка packing list — обычным текстом, всё между
+    ними — нативной цитатой Telegram (<blockquote>)."""
     text = (rendered_message or "").strip()
-    if _visible(text) <= 900:
+    lines = text.split("\n")
+    if len(lines) < 3:
         return text
-    acc = []
-    total = 0
-    for line in text.split("\n"):
-        line_len = _visible(line) + 1
-        if total + line_len > 900:
-            break
-        acc.append(line)
-        total += line_len
-    return "\n".join(acc)
+    greeting = lines[0]
+    middle = lines[1:]
+    tail = ""
+    while middle and not middle[-1].strip():
+        middle.pop()
+    if middle and re.search(r"packing\s*list", middle[-1], re.I):
+        tail = middle.pop()
+    while middle and not middle[0].strip():
+        middle.pop(0)
+    while middle and not middle[-1].strip():
+        middle.pop()
+    # разделитель перед packing-строкой уходит вместе с ней из цитаты
+    if tail and middle and set(middle[-1].strip()) == {"━"}:
+        middle.pop()
+    if not middle:
+        return text
+    structured = f"{greeting}\n<blockquote>" + "\n".join(middle) + "</blockquote>"
+    if tail:
+        structured += f"\n{tail}"
+    return structured
+
+
+def _send_tracking_album(chat_id, files: list, caption_html: str):
+    """ОДНО сообщение: альбом packing list с текстом трекинга в подписи
+    (Telegram показывает подпись под файлами; середина текста — цитатой).
+    >10 файлов — несколько альбомов, подпись на последнем. Возвращает
+    список raw-ответов Telegram."""
+    entries = []
+    for f in files:
+        path = f.get("file_path")
+        if path and os.path.exists(path):
+            entries.append((path, f.get("filename") or os.path.basename(path)))
+    if not entries:
+        raise ValueError("no files on disk")
+
+    chunks = [entries[i:i + 10] for i in range(0, len(entries), 10)]
+    responses = []
+    for idx, chunk in enumerate(chunks):
+        with_caption = idx == len(chunks) - 1
+        if len(chunk) == 1:
+            path, name = chunk[0]
+            data = {"chat_id": chat_id}
+            if with_caption:
+                data["caption"] = caption_html
+                data["parse_mode"] = "HTML"
+            with open(path, "rb") as fh:
+                resp = telegram_api(
+                    "sendDocument", timeout=120, data=data,
+                    files={"document": (name, fh)},
+                )
+        else:
+            handles = []
+            try:
+                upload = {}
+                media = []
+                for i, (path, name) in enumerate(chunk):
+                    key = f"file{i}"
+                    fh = open(path, "rb")
+                    handles.append(fh)
+                    upload[key] = (name, fh)
+                    media.append({"type": "document", "media": f"attach://{key}"})
+                if with_caption:
+                    # подпись альбома видна, когда она только у одного элемента
+                    media[-1]["caption"] = caption_html
+                    media[-1]["parse_mode"] = "HTML"
+                resp = telegram_api(
+                    "sendMediaGroup", timeout=180,
+                    data={"chat_id": chat_id, "media": json.dumps(media, ensure_ascii=False)},
+                    files=upload,
+                )
+            finally:
+                for fh in handles:
+                    try:
+                        fh.close()
+                    except Exception:
+                        pass
+        responses.append(resp)
+    return responses
 
 
 def _send_packing_files_reply(chat_id, files: list, reply_to_message_id, quote_html: str = ""):
@@ -4309,10 +4379,11 @@ def _send_packing_files_reply(chat_id, files: list, reply_to_message_id, quote_h
 def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     """Render and send tracking for a single BL (no merging with other batches).
 
-    Delivery shape: the site's tracking text, then ONE follow-up message
-    with all packing lists — a document album sent as a REPLY to the text
-    with the WHOLE tracking text as the reply quote, so the album shows
-    the full text in a quote block on top and the files below it.
+    Delivery shape: ONE message — the packing-list document album with the
+    tracking text as its caption (greeting and the packing-list line as
+    plain text, everything between them in a native <blockquote>). No
+    files / caption over 1024 chars / album failure — the text goes out
+    as its own message and the files follow without quoting anything.
     """
     chat_id = bl.get("chat_id")
     if not chat_id:
@@ -4320,6 +4391,7 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
 
     language = normalize_message_language(bl.get("message_language"))
     rendered_message = db.render_message(bl, batch_name, include_related_batches=False)
+    structured_message = _structure_tracking_text(rendered_message)
 
     try:
         files = db.get_files(bl.get("id")) or []
@@ -4331,15 +4403,46 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
         view = db.tracking_view_data(bl, batch_name)
     except Exception:
         app.logger.exception("Tracking view data failed for bl_id=%s", bl.get("id"))
+    include_files = bool(files) and not (view or {}).get("is_customer_delivery")
 
+    def _record_message_ids(responses, caption_index):
+        for i, resp in enumerate(responses):
+            try:
+                result = (resp or {}).get("result")
+                if isinstance(result, list) and result:
+                    msg_id = (result[0] or {}).get("message_id")
+                else:
+                    msg_id = _extract_message_id(resp)
+                if msg_id:
+                    db.record_sent_telegram_message(
+                        bl_id=bl.get("id"), batch_id=bl.get("batch_id"),
+                        chat_id=chat_id, message_id=msg_id,
+                        kind="tracking" if i == caption_index else "file",
+                    )
+            except Exception:
+                app.logger.exception("Failed to record tracking message id")
+
+    # ── ОСНОВНОЙ ПУТЬ: ОДНО сообщение — альбом файлов + текст подписью ──
+    if include_files and _caption_visible_len(structured_message) <= 1024:
+        try:
+            responses = _send_tracking_album(chat_id, files, structured_message)
+            db.record_tracking_delivery(bl, include_related_batches=False)
+            _record_message_ids(responses, caption_index=len(responses) - 1)
+            return True, ""
+        except Exception:
+            app.logger.exception(
+                "Single-message tracking album failed for bl_id=%s — falling back",
+                bl.get("id"),
+            )
+
+    # ── ЗАПАСНОЙ ПУТЬ: текст отдельным сообщением, файлы следом ──
     delivered = False
     last_error = ""
     sent_response = None
-    sent_as_html = True
     try:
         sent_response = send_with_track_keyboard(
             chat_id,
-            rendered_message,
+            structured_message,
             language=language,
         )
         db.record_tracking_delivery(bl, include_related_batches=False)
@@ -4356,52 +4459,18 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
             )
             db.record_tracking_delivery(bl, include_related_batches=False)
             delivered = True
-            sent_as_html = False
             last_error = ""
         except Exception as fallback_exc:
             return False, str(fallback_exc or exc)
 
-    # Remember the message_id so the operator can recall it later via
-    # /api/batches/<id>/recall-tracking. Best-effort — never blocks send.
-    text_message_id = None
     if delivered:
-        try:
-            text_message_id = _extract_message_id(sent_response)
-            if text_message_id:
-                db.record_sent_telegram_message(
-                    bl_id=bl.get("id"),
-                    batch_id=bl.get("batch_id"),
-                    chat_id=chat_id,
-                    message_id=text_message_id,
-                    kind="tracking",
-                )
-        except Exception:
-            app.logger.exception("Failed to record tracking message id")
-
-    # Packing lists — ONE follow-up album replying to the tracking text
-    # with the WHOLE text as the quote, so the album shows the full
-    # tracking in a quote block on top and the files below.
-    if delivered and files and not (view or {}).get("is_customer_delivery"):
-        # после plain-фолбэка HTML-цитата не совпадёт с текстом — без цитаты
-        quote_html = _tracking_quote_html(rendered_message) if sent_as_html else ""
-        try:
-            responses = _send_packing_files_reply(chat_id, files, text_message_id, quote_html)
-            for resp in responses:
-                try:
-                    result = (resp or {}).get("result")
-                    if isinstance(result, list) and result:
-                        file_msg_id = (result[0] or {}).get("message_id")
-                    else:
-                        file_msg_id = _extract_message_id(resp)
-                    if file_msg_id:
-                        db.record_sent_telegram_message(
-                            bl_id=bl.get("id"), batch_id=bl.get("batch_id"),
-                            chat_id=chat_id, message_id=file_msg_id, kind="file",
-                        )
-                except Exception:
-                    app.logger.exception("Failed to record packing album message id")
-        except Exception:
-            app.logger.exception("Packing album delivery failed for bl_id=%s", bl.get("id"))
+        _record_message_ids([sent_response], caption_index=0)
+        if include_files:
+            try:
+                responses = _send_packing_files_reply(chat_id, files, None, "")
+                _record_message_ids(responses, caption_index=-1)
+            except Exception:
+                app.logger.exception("Packing album delivery failed for bl_id=%s", bl.get("id"))
 
     return True, last_error
 
