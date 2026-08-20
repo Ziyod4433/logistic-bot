@@ -146,6 +146,10 @@ h1 .hl{color:var(--amber)}
 const tg = window.Telegram && window.Telegram.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 const initData = (tg && tg.initData) || "";
+// Из какой группы открыта форма: direct-link кнопки несут startapp=src<chat_id>
+const startParam = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) ||
+  new URLSearchParams(location.search).get("tgWebAppStartParam") || "";
+const srcChatId = startParam.startsWith("src") ? startParam.slice(3) : "";
 
 let DATA = null;
 let current = null;
@@ -162,7 +166,7 @@ async function api(path, payload) {
   const r = await fetch(path, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(Object.assign({init_data: initData}, payload || {})),
+    body: JSON.stringify(Object.assign({init_data: initData, src_chat_id: srcChatId}, payload || {})),
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error === "auth" ? "Avtorizatsiya xatosi — formani bot tugmasidan oching" :

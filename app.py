@@ -3517,22 +3517,26 @@ def handle_tgform_toggle_command(message: dict, command: str) -> None:
         groups.add(chat_id)
         _save_tgform_groups(groups)
         _FORM_MEMBER_CACHE.clear()
-        username = get_bot_username() or ""
-        keyboard = (
-            {"inline_keyboard": [[
-                {"text": "📝 Formani ochish", "url": f"https://t.me/{username}?start=form"}
-            ]]}
-            if username else None
-        )
-        telegram_send_message(
+        resp = telegram_send_message(
             chat_id,
             (
                 "✅ Treking Mini App bu guruhda <b>YOQILDI</b>.\n"
                 f"Har kuni ertalab soat {TRACKING_ASK_HOUR}:00 da yangilash so'rovi keladi. "
-                "Guruh a'zolari formadan foydalana oladi. Hoziroq ochish:"
+                "Guruh a'zolari formadan foydalana oladi. Tugma doimiy turishi uchun xabarni qadab qo'ydim:"
             ),
-            reply_markup=keyboard,
+            reply_markup=_tgform_group_keyboard(chat_id),
         )
+        # закрепляем, чтобы кнопка была постоянно доступна возле чата
+        message_id = ((resp or {}).get("result") or {}).get("message_id")
+        if message_id:
+            try:
+                telegram_api("pinChatMessage", json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "disable_notification": True,
+                })
+            except Exception:
+                app.logger.warning("pinChatMessage failed in %s (нет прав закрепления?)", chat_id)
     else:
         groups.discard(chat_id)
         _save_tgform_groups(groups)
@@ -3549,6 +3553,34 @@ def handle_tgform_toggle_command(message: dict, command: str) -> None:
 def _tgform_url() -> str:
     base = (WEBHOOK_BASE_URL or "").rstrip("/")
     return f"{base}/tgform" if base else ""
+
+
+# Короткое имя Mini App из BotFather (/newapp): ссылка t.me/<bot>/<name>
+# открывает приложение ПРЯМО в группе (web_app-кнопки в группах Telegram
+# запрещает — BUTTON_TYPE_INVALID).
+TGFORM_APP_SHORTNAME = os.getenv("TGFORM_APP_SHORTNAME", "form").strip() or "form"
+
+
+def _tgform_group_keyboard(chat_id) -> dict | None:
+    """Кнопка для группы: direct-link Mini App со startapp=src<chat_id> —
+    страница узнаёт, из какой группы её открыли, и шлёт подтверждения
+    туда же."""
+    username = get_bot_username() or ""
+    if not username:
+        return None
+    url = f"https://t.me/{username}/{TGFORM_APP_SHORTNAME}?startapp=src{chat_id}"
+    return {"inline_keyboard": [[{"text": "📝 Formani ochish", "url": url}]]}
+
+
+def _resolve_src_group(src_chat_id) -> str:
+    """Группа-источник формы для уведомлений/подтверждений: должна быть
+    из включённых; иначе — управляющая группа."""
+    from services import ai_assistant
+
+    src = str(src_chat_id or "").strip()
+    if src and src in _tgform_enabled_groups():
+        return src
+    return ai_assistant.control_group_id()
 
 
 def send_tracking_form_button(chat_id):
@@ -3605,7 +3637,6 @@ def send_tracking_update_request(force: bool = False, target_chat_id=None):
     lines.append("Quyidagi tugma orqali formani oching:")
     text = "\n".join(lines)
 
-    username = get_bot_username() or ""
     for chat_id in targets:
         target_is_private = not str(chat_id).startswith("-")
         if target_is_private:
@@ -3613,9 +3644,8 @@ def send_tracking_update_request(force: bool = False, target_chat_id=None):
                 {"text": "📝 Formani ochish", "web_app": {"url": _tgform_url()}}
             ]]}
         else:
-            keyboard = {"inline_keyboard": [[
-                {"text": "📝 Formani ochish", "url": f"https://t.me/{username}?start=form"}
-            ]]} if username else None
+            # direct-link Mini App открывается прямо в группе
+            keyboard = _tgform_group_keyboard(chat_id)
         try:
             telegram_send_message(chat_id, text, reply_markup=keyboard)
         except Exception:
@@ -3760,12 +3790,35 @@ def _tgform_apply_save(user: dict, data: dict):
 
 @app.route("/tgform/api/save", methods=["POST"])
 def tgform_api_save():
+    from html import escape as html_escape
+
     user, err = _webapp_auth_or_403()
     if err:
         return err
-    batch, save_err = _tgform_apply_save(user, request.json or {})
+    data = request.json or {}
+    batch, save_err = _tgform_apply_save(user, data)
     if save_err:
         return save_err
+    # Учёт: об изменении через форму сообщаем в группу, из которой
+    # форма была открыта (или в управляющую).
+    notify_chat = _resolve_src_group(data.get("src_chat_id"))
+    sender_name = str(user.get("first_name") or user.get("id") or "").strip()
+    incident = (batch.get("incident_note") or "").strip()
+    try:
+        telegram_send_message(
+            notify_chat,
+            (
+                f"📝 <b>{html_escape(sender_name)}</b> partiya <b>{html_escape(batch['name'])}</b> "
+                f"ma'lumotini yangiladi:\n"
+                f"🚚 {html_escape(batch.get('status') or '')} · "
+                f"📍 {html_escape(batch.get('eta_destination') or 'Toshkent')} · "
+                f"⏱ {html_escape(batch.get('eta_to_toshkent') or '—')}"
+                + (f"\n⚠️ {html_escape(incident)}" if incident else "")
+            ),
+            disable_notification=True,
+        )
+    except Exception:
+        app.logger.exception("TGFORM save notify failed")
     return jsonify({"ok": True})
 
 
@@ -3781,11 +3834,14 @@ def tgform_api_confirm():
     user, err = _webapp_auth_or_403()
     if err:
         return err
-    batch, save_err = _tgform_apply_save(user, request.json or {})
+    data = request.json or {}
+    batch, save_err = _tgform_apply_save(user, data)
     if save_err:
         return save_err
 
-    group_id = ai_assistant.control_group_id()
+    # Карточка «Hammasi to'g'rimi?» уходит в группу, из которой открыта
+    # форма (если она из включённых), иначе — в управляющую.
+    group_id = _resolve_src_group(data.get("src_chat_id"))
     summary = f"Разослать трекинг партии «{batch['name']}» по группам клиентов"
     action_id = db.ai_create_pending_action(
         f"tgform:{user.get('id')}",
