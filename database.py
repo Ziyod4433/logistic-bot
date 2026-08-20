@@ -6272,3 +6272,33 @@ def ai_cancel_scheduled_task(task_id) -> bool:
         return cur.rowcount > 0
     finally:
         conn.close()
+
+
+def ai_find_pending_action(tg_user_id, kind):
+    """Последняя PENDING-заявка данного вида для данного ключа (корзина
+    множественного подтверждения трекинга)."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT * FROM ai_pending_actions
+            WHERE tg_user_id = ? AND kind = ? AND status = 'pending'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (str(tg_user_id), str(kind)),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def ai_update_pending_action_params(action_id, params_json):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE ai_pending_actions SET params_json = ? WHERE id = ?",
+            (str(params_json), int(action_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()

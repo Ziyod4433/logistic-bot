@@ -2810,44 +2810,63 @@ def execute_ai_action(action: dict):
         return not remove_failed, msg
 
     if kind == "send_tracking_batch":
-        batch_id = int(params.get("batch_id") or 0)
-        batch = db.get_batch(batch_id)
-        if not batch:
-            return False, "Партия не найдена"
-        bl_rows = [
-            bl for bl in db.get_bl_by_batch(batch_id)
-            if bl.get("chat_id") and not bl.get("send_excluded") and not bl.get("tracking_sent_current")
-        ]
-        sent_chats: set = set()
-        dispatch = []
-        for bl in bl_rows:
-            cid = str(bl.get("chat_id") or "").strip()
-            if not cid or cid in sent_chats:
-                continue
-            sent_chats.add(cid)
-            dispatch.append(bl)
-        if not dispatch:
-            return False, "Нет BL для отправки: все уже отправлены, исключены или без групп"
-        ok_count = 0
-        fail_count = 0
-        for bl in dispatch:
-            with _BULK_SEND_SLOTS:
-                try:
-                    success, error_msg = send_bl_package(bl, batch["name"], include_related_batches=False)
-                except Exception as exc:
-                    success, error_msg = False, str(exc)
-                    app.logger.exception("AI tracking send failed for bl_id=%s", bl.get("id"))
+        return _execute_tracking_broadcast(int(params.get("batch_id") or 0))
+
+    if kind == "send_tracking_multi":
+        batch_ids = params.get("batch_ids") or []
+        if not batch_ids:
+            return False, "Список партий пуст"
+        lines = []
+        all_ok = True
+        for raw_id in batch_ids:
             try:
-                db.add_log(bl["id"], bl["code"], batch["name"], bl["chat_id"], bl["status"], success, error_msg)
-            except Exception:
-                app.logger.exception("AI tracking send: log write failed")
-            if success:
-                ok_count += 1
-            else:
-                fail_count += 1
-        return fail_count == 0, f"Трекинг партии «{batch['name']}»: ✅ {ok_count} · ❌ {fail_count}"
+                ok, msg = _execute_tracking_broadcast(int(raw_id))
+            except Exception as exc:
+                ok, msg = False, f"Ошибка: {exc}"
+            all_ok = all_ok and ok
+            lines.append(("✅ " if ok else "⚠️ ") + msg)
+        return all_ok, "\n".join(lines)
 
     return False, f"Неизвестное действие: {kind}"
+
+
+def _execute_tracking_broadcast(batch_id: int):
+    """Разослать трекинг одной партии по клиентским группам её BL."""
+    batch = db.get_batch(batch_id)
+    if not batch:
+        return False, "Партия не найдена"
+    bl_rows = [
+        bl for bl in db.get_bl_by_batch(batch_id)
+        if bl.get("chat_id") and not bl.get("send_excluded") and not bl.get("tracking_sent_current")
+    ]
+    sent_chats: set = set()
+    dispatch = []
+    for bl in bl_rows:
+        cid = str(bl.get("chat_id") or "").strip()
+        if not cid or cid in sent_chats:
+            continue
+        sent_chats.add(cid)
+        dispatch.append(bl)
+    if not dispatch:
+        return False, f"«{batch['name']}»: нет BL для отправки (все уже отправлены, исключены или без групп)"
+    ok_count = 0
+    fail_count = 0
+    for bl in dispatch:
+        with _BULK_SEND_SLOTS:
+            try:
+                success, error_msg = send_bl_package(bl, batch["name"], include_related_batches=False)
+            except Exception as exc:
+                success, error_msg = False, str(exc)
+                app.logger.exception("AI tracking send failed for bl_id=%s", bl.get("id"))
+        try:
+            db.add_log(bl["id"], bl["code"], batch["name"], bl["chat_id"], bl["status"], success, error_msg)
+        except Exception:
+            app.logger.exception("AI tracking send: log write failed")
+        if success:
+            ok_count += 1
+        else:
+            fail_count += 1
+    return fail_count == 0, f"Трекинг «{batch['name']}»: ✅ {ok_count} · ❌ {fail_count}"
 
 
 def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
@@ -2874,17 +2893,26 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
 
     action = db.ai_get_pending_action(action_id)
     origin_chat = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+    card_message_id = (callback_query.get("message") or {}).get("message_id")
     if not action:
         telegram_answer_callback_query(callback_id, "Заявка не найдена")
         return
     if action.get("status") != "pending":
         telegram_answer_callback_query(callback_id, f"Уже обработано: {action.get('status')}")
         return
+    is_basket = action.get("kind") == "send_tracking_multi"
 
     if verdict == "no":
         db.ai_finish_pending_action(action_id, "rejected")
-        telegram_answer_callback_query(callback_id, "Отклонено")
-        if origin_chat:
+        telegram_answer_callback_query(callback_id, "Bekor qilindi" if is_basket else "Отклонено")
+        if is_basket:
+            # сводная карточка TASDIQLASH просто исчезает
+            if origin_chat and card_message_id:
+                try:
+                    telegram_delete_message(origin_chat, card_message_id)
+                except Exception:
+                    pass
+        elif origin_chat:
             telegram_send_message(origin_chat, f"❌ Заявка #{action_id} отклонена. Ничего не изменено.")
         return
 
@@ -2895,7 +2923,13 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
     # Mark as approved synchronously so a double-click can't run it twice,
     # then execute on a worker thread (tracking sends can take minutes).
     db.ai_finish_pending_action(action_id, "approved")
-    telegram_answer_callback_query(callback_id, "✅ Выполняю...")
+    telegram_answer_callback_query(callback_id, "✅ Yuborilmoqda..." if is_basket else "✅ Выполняю...")
+    # после второго одобрения сводная карточка исчезает
+    if is_basket and origin_chat and card_message_id:
+        try:
+            telegram_delete_message(origin_chat, card_message_id)
+        except Exception:
+            pass
 
     def _worker():
         try:
@@ -3955,36 +3989,82 @@ def tgform_api_confirm():
     if save_err:
         return save_err
 
-    # Карточка «Hammasi to'g'rimi?» уходит в группу, из которой открыта
-    # форма (если она из включённых), иначе — в управляющую.
+    # ОДНА сводная карточка на группу: каждое нажатие TASDIQLASH добавляет
+    # партию в «корзину» рассылки, старая карточка удаляется, присылается
+    # обновлённая — с ЕДИНЫМ подтверждением в конце.
     group_id = _resolve_src_group(data.get("src_chat_id"))
-    summary = f"Разослать трекинг партии «{batch['name']}» по группам клиентов"
-    action_id = db.ai_create_pending_action(
-        f"tgform:{user.get('id')}",
-        "send_tracking_batch",
-        json.dumps({"batch_id": batch["id"], "batch_name": batch["name"]}, ensure_ascii=False),
-        summary,
-    )
+    basket_key = f"tgformgrp:{group_id}"
     sender_name = str(user.get("first_name") or user.get("id") or "").strip()
-    incident = (batch.get("incident_note") or "").strip()
-    incident_line = f"⚠️ Kutilmagan vaziyat: <b>{html_escape(incident)}</b>\n" if incident else ""
-    text = (
-        f"📝 <b>{html_escape(sender_name)}</b> treking ma'lumotlarini to'ldirdi:\n\n"
-        f"📦 Partiya: <b>{html_escape(batch['name'])}</b>\n"
-        f"🚚 Holat: <b>{html_escape(batch.get('status') or '')}</b>\n"
-        f"📍 Nuqta: {html_escape(batch.get('eta_destination') or 'Toshkent')}\n"
-        f"⏱ ETA: {html_escape(batch.get('eta_to_toshkent') or '—')}\n"
-        f"{incident_line}\n"
-        "❓ <b>Hammasi to'g'rimi?</b> Tasdiqlansa, treking mijoz guruhlariga yuboriladi."
+
+    action = db.ai_find_pending_action(basket_key, "send_tracking_multi")
+    if action:
+        try:
+            params = json.loads(action.get("params_json") or "{}")
+        except Exception:
+            params = {}
+        action_id = action["id"]
+    else:
+        params = {}
+        action_id = None
+    batch_ids = [int(x) for x in (params.get("batch_ids") or [])]
+    if batch["id"] not in batch_ids:
+        batch_ids.append(batch["id"])
+    filled_by = params.get("filled_by") or []
+    if sender_name and sender_name not in filled_by:
+        filled_by.append(sender_name)
+
+    # убираем предыдущую карточку этой корзины
+    old_card = params.get("card_message_id")
+    if old_card:
+        try:
+            telegram_delete_message(group_id, int(old_card))
+        except Exception:
+            pass
+
+    # сводный текст по всем партиям корзины
+    lines = ["📝 Treking ma'lumotlari yangilandi — tarqatishga tayyor:", ""]
+    for i, bid in enumerate(batch_ids, 1):
+        b = db.get_batch(bid)
+        if not b:
+            continue
+        lines.append(
+            f"{i}) 📦 <b>{html_escape(b['name'])}</b> — {html_escape(b.get('status') or '')} · "
+            f"{html_escape(b.get('eta_destination') or 'Toshkent')} · ⏱ {html_escape(b.get('eta_to_toshkent') or '—')}"
+        )
+        incident = (b.get("incident_note") or "").strip()
+        if incident:
+            lines.append(f"    ⚠️ {html_escape(incident)}")
+    lines.append("")
+    if filled_by:
+        lines.append("To'ldirdi: " + ", ".join(html_escape(n) for n in filled_by))
+    lines.append(
+        "❓ <b>Hammasi to'g'rimi?</b> Tasdiqlansa, treking YUQORIDAGI BARCHA partiyalar bo'yicha "
+        "mijoz guruhlariga yuboriladi."
     )
+
+    summary = "Разослать трекинг партий: " + ", ".join(
+        str((db.get_batch(bid) or {}).get("name") or bid) for bid in batch_ids
+    )
+    params = {
+        "batch_ids": batch_ids,
+        "filled_by": filled_by,
+    }
+    if action_id is None:
+        action_id = db.ai_create_pending_action(
+            basket_key, "send_tracking_multi",
+            json.dumps(params, ensure_ascii=False), summary,
+        )
     keyboard = {
         "inline_keyboard": [[
             {"text": "✅ TASDIQLAYMAN — yuborilsin", "callback_data": f"aiact:ok:{action_id}"},
             {"text": "❌ Yo'q", "callback_data": f"aiact:no:{action_id}"},
         ]]
     }
-    telegram_send_message(group_id, text, reply_markup=keyboard)
-    return jsonify({"ok": True})
+    resp = telegram_send_message(group_id, "\n".join(lines), reply_markup=keyboard)
+    params["card_message_id"] = ((resp or {}).get("result") or {}).get("message_id")
+    params["card_chat_id"] = group_id
+    db.ai_update_pending_action_params(action_id, json.dumps(params, ensure_ascii=False))
+    return jsonify({"ok": True, "batches_in_basket": len(batch_ids)})
 
 
 
