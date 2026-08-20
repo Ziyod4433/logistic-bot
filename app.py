@@ -4231,11 +4231,15 @@ def _send_tracking_with_files_inline(chat_id, rendered_message: str, files: list
         raise ValueError("no files on disk")
     if len(entries) == 1:
         path, name = entries[0]
+        payload = {"chat_id": chat_id}
+        if rendered_message:
+            payload["caption"] = rendered_message
+            payload["parse_mode"] = "HTML"
         with open(path, "rb") as fh:
             return telegram_api(
                 "sendDocument",
                 timeout=120,
-                data={"chat_id": chat_id, "caption": rendered_message, "parse_mode": "HTML"},
+                data=payload,
                 files={"document": (name, fh)},
             )
     handles = []
@@ -4249,8 +4253,9 @@ def _send_tracking_with_files_inline(chat_id, rendered_message: str, files: list
             upload[key] = (name, fh)
             media.append({"type": "document", "media": f"attach://{key}"})
         # подпись альбома отображается, когда она только у одного элемента
-        media[-1]["caption"] = rendered_message
-        media[-1]["parse_mode"] = "HTML"
+        if rendered_message:
+            media[-1]["caption"] = rendered_message
+            media[-1]["parse_mode"] = "HTML"
         return telegram_api(
             "sendMediaGroup",
             timeout=180,
@@ -4280,11 +4285,55 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     language = normalize_message_language(bl.get("message_language"))
     rendered_message = db.render_message(bl, batch_name, include_related_batches=False)
 
-    # ── файлы внутри сообщения ──
     try:
         files = db.get_files(bl.get("id")) or []
     except Exception:
         files = []
+
+    # ── ОСНОВНОЙ ПУТЬ: карточка-PNG («окно») + файлы ВНИЗУ ──
+    try:
+        from services import tracking_card
+
+        view = db.tracking_view_data(bl, batch_name)
+        card_png = tracking_card.render_card(view)
+    except Exception:
+        card_png = None
+        app.logger.exception("Tracking card render failed for bl_id=%s", bl.get("id"))
+    if card_png:
+        try:
+            strings = view["strings"]
+            caption = view["requisites_plain"]
+            if files and not view["is_customer_delivery"]:
+                caption += "\n" + strings["packing"]
+            resp = telegram_api(
+                "sendPhoto",
+                timeout=120,
+                data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
+                files={"photo": ("tracking.png", io.BytesIO(card_png))},
+            )
+            db.record_tracking_delivery(bl, include_related_batches=False)
+            try:
+                msg_id = _extract_message_id(resp)
+                if msg_id:
+                    db.record_sent_telegram_message(
+                        bl_id=bl.get("id"), batch_id=bl.get("batch_id"),
+                        chat_id=chat_id, message_id=msg_id, kind="tracking",
+                    )
+            except Exception:
+                app.logger.exception("Failed to record tracking card message id")
+            # packing list — внизу, после карточки
+            if files and not view["is_customer_delivery"]:
+                try:
+                    _send_tracking_with_files_inline(chat_id, "", files)
+                except Exception:
+                    app.logger.exception("Files-below delivery failed for bl_id=%s", bl.get("id"))
+            return True, ""
+        except Exception:
+            app.logger.exception(
+                "Card tracking send failed for bl_id=%s — falling back", bl.get("id")
+            )
+
+    # ── ЗАПАСНОЙ ПУТЬ 1: текст с файлами внутри (caption) ──
     if files and 1 <= len(files) <= 10 and _caption_visible_len(rendered_message) <= 1000:
         try:
             resp = _send_tracking_with_files_inline(chat_id, rendered_message, files)

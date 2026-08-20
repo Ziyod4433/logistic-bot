@@ -6437,9 +6437,8 @@ def _v7_place_label(status: str, language: str) -> str:
         return label
     return f"{label} ({country})"
 
-
-def render_message_v7(bl: dict, batch_name: str) -> str:
-    """Шаблон «вариант 7»: HOLAT-блок + реквизиты одной строкой."""
+def tracking_view_data(bl: dict, batch_name: str) -> dict:
+    """Структурированные данные трекинга для текста v7 и карточки-PNG."""
     language = _normalize_message_language(bl.get("message_language"))
     strings = _V7_STRINGS.get(language, _V7_STRINGS["uz_latn"])
 
@@ -6456,7 +6455,7 @@ def render_message_v7(bl: dict, batch_name: str) -> str:
     if arrived:
         toshkent_names = {"uz_latn": "Toshkent", "uz_cyrl": "Тошкент", "ru": "Ташкент", "en": "Tashkent"}
         uz_country = _V7_COUNTRY_NAMES.get(language, _V7_COUNTRY_NAMES["uz_latn"])["uz"]
-        place = f"{toshkent_names.get(language, 'Toshkent')} ({uz_country}) — {strings['arrived_note']} ✅"
+        place = f"{toshkent_names.get(language, 'Toshkent')} ({uz_country})"
 
     weight_value = _to_float(bl.get("weight_kg"))
     volume_value = _to_float(bl.get("volume_cbm"))
@@ -6464,13 +6463,52 @@ def render_message_v7(bl: dict, batch_name: str) -> str:
     places_value = places_breakdown or (_to_int(bl.get("quantity_places")) or "")
     bl_code = _display_bl_code(bl.get("code", ""), bl.get("merged_codes", ""))
 
-    req_parts = [f"🆔 <b>{html.escape(str(bl_code))}</b>", f"🚛 <b>{html.escape(str(batch_name))}</b>"]
+    req_parts_plain = [str(bl_code), str(batch_name)]
     if places_value:
-        req_parts.append(f"{html.escape(str(places_value))} {strings['joy']}")
+        req_parts_plain.append(f"{places_value} {strings['joy']}")
     if weight_value:
-        req_parts.append(f"{weight_value:g} kg")
+        req_parts_plain.append(f"{weight_value:g} kg")
     if volume_value:
-        req_parts.append(f"{volume_value:g} m³")
+        req_parts_plain.append(f"{volume_value:g} m³")
+
+    country_names = _V7_COUNTRY_NAMES.get(language, _V7_COUNTRY_NAMES["uz_latn"])
+    return {
+        "language": language,
+        "strings": strings,
+        "eta_label": eta_label,
+        "eta_value": eta_value,
+        "place": place,
+        "progress": progress,
+        "arrived": arrived,
+        "bl_code": str(bl_code),
+        "batch_name": str(batch_name),
+        "places_value": str(places_value),
+        "weight_kg": f"{weight_value:g}" if weight_value else "",
+        "volume_m3": f"{volume_value:g}" if volume_value else "",
+        "requisites_plain": " · ".join(req_parts_plain),
+        "is_customer_delivery": is_customer_delivery,
+        "endpoint_left": country_names["cn"],
+        "endpoint_right": {"uz_latn": "Toshkent", "uz_cyrl": "Тошкент", "ru": "Ташкент", "en": "Tashkent"}.get(language, "Toshkent"),
+    }
+
+
+def render_message_v7(bl: dict, batch_name: str) -> str:
+    """Шаблон «вариант 7»: HOLAT-блок + реквизиты одной строкой."""
+    view = tracking_view_data(bl, batch_name)
+    strings = view["strings"]
+    status = bl.get("status", "Xitoy")
+
+    place_text = view["place"]
+    if view["arrived"]:
+        place_text = f"{place_text} — {strings['arrived_note']} ✅"
+
+    req_parts = [f"🆔 <b>{html.escape(view['bl_code'])}</b>", f"🚛 <b>{html.escape(view['batch_name'])}</b>"]
+    if view["places_value"]:
+        req_parts.append(f"{html.escape(view['places_value'])} {strings['joy']}")
+    if view["weight_kg"]:
+        req_parts.append(f"{view['weight_kg']} kg")
+    if view["volume_m3"]:
+        req_parts.append(f"{view['volume_m3']} m³")
 
     lines = [
         strings["greeting"],
@@ -6478,14 +6516,14 @@ def render_message_v7(bl: dict, batch_name: str) -> str:
         f"<b>{strings['holat']}</b>",
         "",
     ]
-    if not arrived:
-        lines.append(f"⏳ {eta_label}: <b>{html.escape(eta_value)}</b>")
+    if not view["arrived"]:
+        lines.append(f"⏳ {view['eta_label']}: <b>{html.escape(view['eta_value'])}</b>")
     lines.extend([
         _v7_route_line(status),
-        f"{strings['now']}: <b>{html.escape(place)}</b>",
+        f"{strings['now']}: <b>{html.escape(place_text)}</b>",
         "━━━━━━━━━━━━━━━",
         " · ".join(req_parts),
     ])
-    if not is_customer_delivery:
+    if not view["is_customer_delivery"]:
         lines.append(strings["packing"])
     return "\n".join(lines)
