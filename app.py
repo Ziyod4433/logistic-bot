@@ -3467,7 +3467,7 @@ _TRACKING_DIGEST_SETTING = "tracking_digest_last_date"
 # Авторизация: подпись Telegram initData + (админ/просмотровый id или
 # членство в управляющей группе через getChatMember).
 
-TRACKING_ASK_HOUR = int(os.getenv("TRACKING_ASK_HOUR", "9") or 9)
+TRACKING_ASK_HOUR = int(os.getenv("TRACKING_ASK_HOUR", "7") or 7)
 _TRACKING_ASK_SETTING = "tracking_ask_last_date"
 _FORM_MEMBER_CACHE: dict = {}
 
@@ -3634,41 +3634,91 @@ def tgform_api_list():
     })
 
 
+def _tgform_apply_save(user: dict, data: dict):
+    """Сохранение параметров партии из мини-формы. Возвращает
+    (batch_dict, None) либо (None, (json_response, http_code))."""
+    from services import ai_assistant
+
+    if ai_assistant.is_readonly_user((user or {}).get("id")):
+        return None, (jsonify({"error": "Sizda faqat ko'rish huquqi bor"}), 403)
+    try:
+        batch_id = int(data.get("batch_id") or 0)
+    except (TypeError, ValueError):
+        return None, (jsonify({"error": "bad batch_id"}), 400)
+    batch = db.get_batch(batch_id)
+    if not batch:
+        return None, (jsonify({"error": "Партия не найдена"}), 404)
+    status = str(data.get("status") or batch.get("status") or "Xitoy").strip()
+    valid_statuses = set(db.STATUSES) | {db.DELIVERED_STATUS, db.LEGACY_DELIVERED_STATUS}
+    if status not in valid_statuses:
+        return None, (jsonify({"error": "Недопустимый статус"}), 400)
+    destination = str(data.get("eta_destination") or batch.get("eta_destination") or "Toshkent").strip()
+    if destination not in db.ETA_DESTINATION_LABELS:
+        destination = "Toshkent"
+    eta_text = str(data.get("eta_to_toshkent") or "").strip()
+    db.update_batch(
+        batch_id, batch["name"], status, eta_text, destination,
+        batch.get("client_delivery_date") or "",
+    )
+    app.logger.info(
+        "TGFORM save by %s (%s): batch %s -> status=%r dest=%r eta=%r",
+        user.get("id"), user.get("first_name"), batch["name"], status, destination, eta_text,
+    )
+    return db.get_batch(batch_id), None
+
+
 @app.route("/tgform/api/save", methods=["POST"])
 def tgform_api_save():
+    user, err = _webapp_auth_or_403()
+    if err:
+        return err
+    batch, save_err = _tgform_apply_save(user, request.json or {})
+    if save_err:
+        return save_err
+    return jsonify({"ok": True})
+
+
+@app.route("/tgform/api/confirm", methods=["POST"])
+def tgform_api_confirm():
+    """Большая кнопка TASDIQLASH: сохраняет форму и запускает ВТОРОЕ
+    подтверждение — бот пишет в управляющую группу карточку «Hammasi
+    to'g'rimi?»; рассылка трекинга по клиентским группам уходит только
+    после ✅ в группе (существующий approval-механизм)."""
+    from html import escape as html_escape
     from services import ai_assistant
 
     user, err = _webapp_auth_or_403()
     if err:
         return err
-    if ai_assistant.is_readonly_user((user or {}).get("id")):
-        return jsonify({"error": "Sizda faqat ko'rish huquqi bor"}), 403
-    data = request.json or {}
-    try:
-        batch_id = int(data.get("batch_id") or 0)
-    except (TypeError, ValueError):
-        return jsonify({"error": "bad batch_id"}), 400
-    batch = db.get_batch(batch_id)
-    if not batch:
-        return jsonify({"error": "Партия не найдена"}), 404
-    status = str(data.get("status") or batch.get("status") or "Xitoy").strip()
-    valid_statuses = set(db.STATUSES) | {db.DELIVERED_STATUS, db.LEGACY_DELIVERED_STATUS}
-    if status not in valid_statuses:
-        return jsonify({"error": "Недопустимый статус"}), 400
-    destination = str(data.get("eta_destination") or batch.get("eta_destination") or "Toshkent").strip()
-    if destination not in db.ETA_DESTINATION_LABELS:
-        destination = "Toshkent"
-    eta_text = str(data.get("eta_to_toshkent") or "").strip()
-    delivery = str(data.get("client_delivery_date") or "").strip()
-    if delivery and re.match(r"^\d{4}-\d{2}-\d{2}$", delivery):
-        # input type=date отдаёт yyyy-mm-dd — храним как на сайте
-        delivery = f"{delivery[8:10]}.{delivery[5:7]}.{delivery[0:4]}"
-    db.update_batch(batch_id, batch["name"], status, eta_text, destination, delivery)
-    app.logger.info(
-        "TGFORM save by %s (%s): batch %s -> status=%r dest=%r eta=%r delivery=%r",
-        user.get("id"), user.get("first_name"), batch["name"], status, destination, eta_text, delivery,
+    batch, save_err = _tgform_apply_save(user, request.json or {})
+    if save_err:
+        return save_err
+
+    group_id = ai_assistant.control_group_id()
+    summary = f"Разослать трекинг партии «{batch['name']}» по группам клиентов"
+    action_id = db.ai_create_pending_action(
+        f"tgform:{user.get('id')}",
+        "send_tracking_batch",
+        json.dumps({"batch_id": batch["id"], "batch_name": batch["name"]}, ensure_ascii=False),
+        summary,
     )
-    return jsonify({"ok": True, "deactivated": bool(delivery)})
+    sender_name = str(user.get("first_name") or user.get("id") or "").strip()
+    text = (
+        f"📝 <b>{html_escape(sender_name)}</b> treking ma'lumotlarini to'ldirdi:\n\n"
+        f"📦 Partiya: <b>{html_escape(batch['name'])}</b>\n"
+        f"🚚 Holat: <b>{html_escape(batch.get('status') or '')}</b>\n"
+        f"📍 Nuqta: {html_escape(batch.get('eta_destination') or 'Toshkent')}\n"
+        f"⏱ ETA: {html_escape(batch.get('eta_to_toshkent') or '—')}\n\n"
+        "❓ <b>Hammasi to'g'rimi?</b> Tasdiqlansa, treking mijoz guruhlariga yuboriladi."
+    )
+    keyboard = {
+        "inline_keyboard": [[
+            {"text": "✅ TASDIQLAYMAN — yuborilsin", "callback_data": f"aiact:ok:{action_id}"},
+            {"text": "❌ Yo'q", "callback_data": f"aiact:no:{action_id}"},
+        ]]
+    }
+    telegram_send_message(group_id, text, reply_markup=keyboard)
+    return jsonify({"ok": True})
 
 
 
