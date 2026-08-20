@@ -2624,6 +2624,8 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
         return
 
     readonly = ai_assistant.is_readonly_user(sender_id)
+    # Владельческий режим (прямые инструменты) — только личка админа.
+    owner_direct = ai_assistant.is_admin(sender_id)
 
     def _worker():
         try:
@@ -2631,7 +2633,7 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
             # agent loop with tools can take a while and the chat looked
             # dead in the meantime.
             with TypingIndicator(chat_id):
-                result = ai_assistant.handle_owner_message(sender_id, text, readonly=readonly)
+                result = ai_assistant.handle_owner_message(sender_id, text, readonly=readonly, owner_direct=owner_direct)
         except Exception as exc:
             app.logger.exception("AI assistant failure")
             try:
@@ -2984,6 +2986,63 @@ def send_packing_list_reminder(force: bool = False):
     return True, f"{len(missing)} BL without packing list"
 
 
+def _run_due_ai_tasks():
+    """Исполнение запланированных задач ассистента (владельческий режим):
+    отправка сообщений/упоминаний и опросов по расписанию."""
+    from html import escape as html_escape
+
+    now_str = datetime.now(db.TASHKENT_TZ).strftime("%Y-%m-%d %H:%M")
+    for task in db.ai_due_scheduled_tasks(now_str):
+        try:
+            params = json.loads(task.get("params_json") or "{}")
+        except Exception:
+            params = {}
+        ok = True
+        try:
+            chat_id = str(params.get("chat_id") or "").strip()
+            if task["kind"] == "send_message":
+                text = str(params.get("text") or "")
+                mention_id = str(params.get("mention_user_id") or "").strip()
+                if mention_id:
+                    label = html_escape(str(params.get("mention_label") or "👤"))
+                    text = f'<a href="tg://user?id={mention_id}">{label}</a>, {text}'
+                telegram_send_message(chat_id, text)
+            elif task["kind"] == "send_poll":
+                telegram_api("sendPoll", json={
+                    "chat_id": chat_id,
+                    "question": str(params.get("question") or "")[:300],
+                    "options": json.dumps([str(o)[:100] for o in (params.get("options") or [])][:10], ensure_ascii=False),
+                    "is_anonymous": bool(params.get("is_anonymous", False)),
+                })
+            else:
+                ok = False
+        except Exception:
+            ok = False
+            app.logger.exception("Scheduled AI task %s failed", task["id"])
+        if ok and task.get("recurrence") == "daily":
+            try:
+                from datetime import timedelta
+
+                next_dt = datetime.strptime(task["run_at"], "%Y-%m-%d %H:%M") + timedelta(days=1)
+                # если бот долго не работал — не «догоняем» по дню за тик,
+                # а сразу перематываем на ближайшее будущее время
+                now_naive = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
+                while next_dt <= now_naive:
+                    next_dt += timedelta(days=1)
+                db.ai_mark_scheduled_task(task["id"], "pending", next_dt.strftime("%Y-%m-%d %H:%M"))
+            except Exception:
+                db.ai_mark_scheduled_task(task["id"], "failed")
+        else:
+            db.ai_mark_scheduled_task(task["id"], "done" if ok else "failed")
+        if not ok:
+            try:
+                creator = str(task.get("created_by") or "").strip()
+                if creator.isdigit():
+                    telegram_send_message(creator, f"⚠️ Запланированная задача #{task['id']} не выполнилась.", parse_mode=None)
+            except Exception:
+                pass
+
+
 def _packing_reminder_scheduler():
     """Morning tick (every 5 min): packing-list ask + tracking digest.
     Both are self-guarded by per-day settings keys."""
@@ -3006,9 +3065,11 @@ def _packing_reminder_scheduler():
             synced = sync_batches_from_fura_statuses()
             if synced:
                 app.logger.info("Fura-status sync: %s batch updates", synced)
+            # запланированные задачи ассистента (сообщения/опросы)
+            _run_due_ai_tasks()
         except Exception:
             app.logger.exception("Morning scheduler tick failed")
-        time.sleep(300)
+        time.sleep(60)
 
 
 def _build_active_bl_index():
@@ -7618,6 +7679,26 @@ def api_save_template():
             db.save_status_detail(status_name, detail)
 
     return jsonify({"ok": True})
+
+
+# Хуки прямого исполнения для владельческого режима ассистента
+# (ai_assistant не может импортировать app — цикл).
+def _wire_ai_assistant_hooks():
+    from services import ai_assistant as _ai
+
+    _ai.direct_send_message = lambda chat_id, text: telegram_send_message(chat_id, text)
+    _ai.direct_send_poll = lambda chat_id, question, options, is_anonymous=False: telegram_api(
+        "sendPoll",
+        json={
+            "chat_id": chat_id,
+            "question": str(question)[:300],
+            "options": json.dumps([str(o)[:100] for o in options][:10], ensure_ascii=False),
+            "is_anonymous": bool(is_anonymous),
+        },
+    )
+
+
+_wire_ai_assistant_hooks()
 
 
 if __name__ == "__main__":

@@ -755,6 +755,18 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_ai_assistant_messages_user
             ON ai_assistant_messages(tg_user_id, id);
 
+        CREATE TABLE IF NOT EXISTS ai_scheduled_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_by TEXT NOT NULL DEFAULT '',
+            run_at TEXT NOT NULL,
+            recurrence TEXT NOT NULL DEFAULT 'once',
+            kind TEXT NOT NULL,
+            params_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'pending',
+            last_run_at TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
         CREATE TABLE IF NOT EXISTS ai_pending_actions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tg_user_id TEXT NOT NULL,
@@ -6172,5 +6184,91 @@ def ai_finish_pending_action(action_id, status, result=""):
             (str(status), str(result or ""), int(action_id)),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── AI scheduled tasks (владельческий режим ассистента) ────────────
+
+def ai_create_scheduled_task(created_by, run_at, recurrence, kind, params_json):
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO ai_scheduled_tasks (created_by, run_at, recurrence, kind, params_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (str(created_by), str(run_at), str(recurrence or "once"), str(kind), str(params_json)),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def ai_list_scheduled_tasks(status="pending"):
+    conn = get_conn()
+    try:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM ai_scheduled_tasks WHERE status = ? ORDER BY run_at",
+                (status,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM ai_scheduled_tasks ORDER BY id DESC LIMIT 50"
+            ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def ai_due_scheduled_tasks(now_str):
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM ai_scheduled_tasks WHERE status = 'pending' AND run_at <= ? ORDER BY run_at",
+            (str(now_str),),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def ai_mark_scheduled_task(task_id, status, next_run_at=None):
+    conn = get_conn()
+    try:
+        if next_run_at:
+            conn.execute(
+                """
+                UPDATE ai_scheduled_tasks
+                SET status = ?, run_at = ?, last_run_at = datetime('now','localtime')
+                WHERE id = ?
+                """,
+                (str(status), str(next_run_at), int(task_id)),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE ai_scheduled_tasks
+                SET status = ?, last_run_at = datetime('now','localtime')
+                WHERE id = ?
+                """,
+                (str(status), int(task_id)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ai_cancel_scheduled_task(task_id) -> bool:
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE ai_scheduled_tasks SET status = 'cancelled' WHERE id = ? AND status = 'pending'",
+            (int(task_id),),
+        )
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()

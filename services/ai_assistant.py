@@ -18,6 +18,7 @@ Only Telegram user ids listed in AI_ASSISTANT_ADMIN_IDS may talk to it
 
 import json
 import os
+import re
 import threading
 
 import requests as req
@@ -546,6 +547,257 @@ def _tool_get_loading_plans(args: dict) -> dict:
     return {"tab": result["tab"], "tabs": result["tabs"], "plans": plans}
 
 
+# Runtime-хуки прямого исполнения (устанавливает app.py при импорте —
+# ai_assistant не может импортировать app из-за цикла).
+direct_send_message = None   # fn(chat_id, text) -> None
+direct_send_poll = None      # fn(chat_id, question, options, is_anonymous) -> None
+
+# ── ВЛАДЕЛЬЧЕСКИЙ РЕЖИМ: прямые инструменты без подтверждения ──────
+# Доступны ТОЛЬКО в личке владельца (owner_direct=True).
+OWNER_DIRECT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "send_chat_message",
+            "description": (
+                "СРАЗУ отправить сообщение в любой чат/группу (без подтверждения). "
+                "Можно отметить человека: mention_user_id (его Telegram id) + mention_label (как назвать) — "
+                "упоминание кликабельно и приходит с уведомлением. Telegram HTML разрешён."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chat_id": {"type": "string", "description": "id чата (группы отрицательные, личка = tg id)"},
+                    "text": {"type": "string"},
+                    "mention_user_id": {"type": "string", "description": "tg id человека для @упоминания (опц.)"},
+                    "mention_label": {"type": "string", "description": "имя для упоминания (опц.)"},
+                },
+                "required": ["chat_id", "text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_poll",
+            "description": "СРАЗУ создать опрос в чате/группе (Telegram poll). 2-10 вариантов.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chat_id": {"type": "string"},
+                    "question": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string"}},
+                    "is_anonymous": {"type": "boolean", "description": "по умолчанию false (видно кто голосовал)"},
+                },
+                "required": ["chat_id", "question", "options"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_task",
+            "description": (
+                "Запланировать отправку сообщения или опроса на время (Ташкент). "
+                "when: 'HH:MM' (сегодня; если время прошло — завтра) или 'YYYY-MM-DD HH:MM' или 'DD.MM.YYYY HH:MM'. "
+                "daily=true — повторять каждый день. kind: 'send_message' (нужен text, опц. mention_user_id/mention_label) "
+                "или 'send_poll' (нужны question и options)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "when": {"type": "string"},
+                    "daily": {"type": "boolean"},
+                    "kind": {"type": "string", "enum": ["send_message", "send_poll"]},
+                    "chat_id": {"type": "string"},
+                    "text": {"type": "string"},
+                    "mention_user_id": {"type": "string"},
+                    "mention_label": {"type": "string"},
+                    "question": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["when", "kind", "chat_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_scheduled_tasks",
+            "description": "Список запланированных задач (id, время, повтор, что и куда).",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_scheduled_task",
+            "description": "Отменить запланированную задачу по id.",
+            "parameters": {
+                "type": "object",
+                "properties": {"task_id": {"type": "integer"}},
+                "required": ["task_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_groups",
+            "description": "Известные боту Telegram-группы: название, chat_id, активна ли. Для выбора куда писать/опрашивать.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+]
+
+
+def _mention_html(user_id, label) -> str:
+    from html import escape
+    return f'<a href="tg://user?id={str(user_id).strip()}">{escape(str(label or "👤"))}</a>'
+
+
+def _guard_target_chat(chat_id) -> str | None:
+    value = str(chat_id or "").strip()
+    if not value:
+        return "chat_id пуст"
+    if value in confidential_chat_ids():
+        return "Эта группа строго конфиденциальна — туда писать нельзя."
+    return None
+
+
+def _tool_send_chat_message(args: dict) -> dict:
+    err = _guard_target_chat(args.get("chat_id"))
+    if err:
+        return {"error": err}
+    if not callable(direct_send_message):
+        return {"error": "direct_send_message hook is not wired"}
+    text = str(args.get("text") or "").strip()
+    if not text:
+        return {"error": "Пустой текст"}
+    mention_id = str(args.get("mention_user_id") or "").strip()
+    if mention_id:
+        text = f"{_mention_html(mention_id, args.get('mention_label'))}, {text}"
+    direct_send_message(str(args.get("chat_id")).strip(), text)
+    return {"ok": True, "sent_to": str(args.get("chat_id")).strip()}
+
+
+def _tool_send_poll(args: dict) -> dict:
+    err = _guard_target_chat(args.get("chat_id"))
+    if err:
+        return {"error": err}
+    if not callable(direct_send_poll):
+        return {"error": "direct_send_poll hook is not wired"}
+    question = str(args.get("question") or "").strip()
+    options = [str(o).strip() for o in (args.get("options") or []) if str(o).strip()]
+    if not question or len(options) < 2:
+        return {"error": "Нужен вопрос и минимум 2 варианта"}
+    direct_send_poll(str(args.get("chat_id")).strip(), question, options[:10], bool(args.get("is_anonymous", False)))
+    return {"ok": True}
+
+
+def _parse_when(value: str):
+    from datetime import datetime, timedelta
+
+    tz = db.TASHKENT_TZ
+    raw = str(value or "").strip()
+    now = datetime.now(tz)
+    try:
+        if re.match(r"^\d{1,2}:\d{2}$", raw):
+            hh, mm = raw.split(":")
+            candidate = now.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+            if candidate <= now:
+                candidate += timedelta(days=1)
+            return candidate
+        if re.match(r"^\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}$", raw):
+            return datetime.strptime(raw, "%Y-%m-%d %H:%M").replace(tzinfo=tz)
+        if re.match(r"^\d{2}\.\d{2}\.\d{4}\s+\d{1,2}:\d{2}$", raw):
+            return datetime.strptime(raw, "%d.%m.%Y %H:%M").replace(tzinfo=tz)
+    except ValueError:
+        return None
+    return None
+
+
+def _tool_schedule_task(args: dict, tg_user_id: str) -> dict:
+    err = _guard_target_chat(args.get("chat_id"))
+    if err:
+        return {"error": err}
+    kind = str(args.get("kind") or "").strip()
+    if kind not in {"send_message", "send_poll"}:
+        return {"error": "kind должен быть send_message или send_poll"}
+    when = _parse_when(str(args.get("when") or ""))
+    if not when:
+        return {"error": "Не понял время. Форматы: 'HH:MM', 'YYYY-MM-DD HH:MM', 'DD.MM.YYYY HH:MM'"}
+    params = {"chat_id": str(args.get("chat_id")).strip()}
+    if kind == "send_message":
+        text = str(args.get("text") or "").strip()
+        if not text:
+            return {"error": "Для send_message нужен text"}
+        params["text"] = text
+        if str(args.get("mention_user_id") or "").strip():
+            params["mention_user_id"] = str(args.get("mention_user_id")).strip()
+            params["mention_label"] = str(args.get("mention_label") or "").strip()
+    else:
+        question = str(args.get("question") or "").strip()
+        options = [str(o).strip() for o in (args.get("options") or []) if str(o).strip()]
+        if not question or len(options) < 2:
+            return {"error": "Для send_poll нужны question и минимум 2 options"}
+        params["question"] = question
+        params["options"] = options[:10]
+    recurrence = "daily" if args.get("daily") else "once"
+    task_id = db.ai_create_scheduled_task(
+        tg_user_id, when.strftime("%Y-%m-%d %H:%M"), recurrence, kind,
+        json.dumps(params, ensure_ascii=False),
+    )
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "run_at": when.strftime("%d.%m.%Y %H:%M"),
+        "recurrence": recurrence,
+    }
+
+
+def _tool_list_scheduled_tasks(_args: dict) -> dict:
+    tasks = db.ai_list_scheduled_tasks("pending")
+    return {
+        "tasks": [
+            {
+                "id": t["id"],
+                "run_at": t["run_at"],
+                "recurrence": t["recurrence"],
+                "kind": t["kind"],
+                "params": json.loads(t.get("params_json") or "{}"),
+            }
+            for t in tasks
+        ]
+    }
+
+
+def _tool_cancel_scheduled_task(args: dict) -> dict:
+    ok = db.ai_cancel_scheduled_task(int(args.get("task_id") or 0))
+    return {"ok": ok} if ok else {"error": "Задача не найдена или уже не pending"}
+
+
+def _tool_list_groups(_args: dict) -> dict:
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT chat_id, title, is_active FROM telegram_chats ORDER BY is_active DESC, last_seen_at DESC LIMIT 60"
+        ).fetchall()
+    finally:
+        conn.close()
+    hidden = confidential_chat_ids()
+    return {
+        "groups": [
+            {
+                "chat_id": ("🔒 конфиденциально" if str(r["chat_id"]) in hidden else r["chat_id"]),
+                "title": ("🔒" if str(r["chat_id"]) in hidden else (r["title"] or "")),
+                "active": bool(r["is_active"]),
+            }
+            for r in rows
+        ]
+    }
+
+
 ALLOWED_ACTION_KINDS = {"set_batch_status", "send_tracking_batch", "send_group_message", "sync_batch_from_plan"}
 
 
@@ -625,10 +877,29 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
     }
 
 
-def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list, readonly: bool = False) -> dict:
+_OWNER_TOOL_NAMES = {t["function"]["name"] for t in OWNER_DIRECT_TOOLS}
+
+
+def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
+              readonly: bool = False, owner_direct: bool = False) -> dict:
     try:
         if readonly and name == "propose_action":
             return {"error": "У этого пользователя доступ только на чтение — действия недоступны."}
+        if name in _OWNER_TOOL_NAMES:
+            if not owner_direct:
+                return {"error": "Прямые инструменты доступны только владельцу в личке."}
+            if name == "send_chat_message":
+                return _tool_send_chat_message(args)
+            if name == "send_poll":
+                return _tool_send_poll(args)
+            if name == "schedule_task":
+                return _tool_schedule_task(args, tg_user_id)
+            if name == "list_scheduled_tasks":
+                return _tool_list_scheduled_tasks(args)
+            if name == "cancel_scheduled_task":
+                return _tool_cancel_scheduled_task(args)
+            if name == "list_groups":
+                return _tool_list_groups(args)
         if name == "get_overview":
             return _tool_get_overview(args)
         if name == "get_batch_detail":
@@ -682,12 +953,14 @@ def _chat_completion(messages, use_model=None, tools=None):
     return response.json()
 
 
-def handle_owner_message(tg_user_id, text: str, readonly: bool = False) -> dict:
+def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_direct: bool = False) -> dict:
     """Process one owner/staff message. Returns {"reply", "pending": [...]}.
 
     readonly=True (просмотровый доступ): все READ-инструменты доступны,
     propose_action вырезан — пользователь физически не может ничего
-    изменить или разослать."""
+    изменить или разослать.
+    owner_direct=True (личка владельца): дополнительно ПРЯМЫЕ инструменты
+    без подтверждений — сообщения/упоминания, опросы, задачи по расписанию."""
     tg_user_id = str(tg_user_id)
     text = str(text or "").strip()
 
@@ -714,6 +987,21 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False) -> dict:
             "ничего менять или рассылать — инструмента propose_action у тебя сейчас нет. На просьбы "
             "что-то изменить/отправить отвечай, что у него просмотровый доступ, изменения делает владелец "
             "или управляющая группа."
+        )
+    elif owner_direct:
+        tools = TOOLS + OWNER_DIRECT_TOOLS
+        system_prompt += (
+            "\n\nРЕЖИМ ВЛАДЕЛЬЦА (личка): тебе доступны ПРЯМЫЕ инструменты, исполняемые СРАЗУ, без карточек "
+            "подтверждения — владелец сам даёт команду, это и есть подтверждение:\n"
+            "• send_chat_message — написать в любой чат/группу, можно отметить человека "
+            "(mention_user_id + mention_label; id ищи через list_groups, get_batch_detail, find_bl или спроси владельца);\n"
+            "• send_poll — создать опрос в группе;\n"
+            "• schedule_task — запланировать сообщение/опрос на время (once или daily, время Ташкента), "
+            "list_scheduled_tasks / cancel_scheduled_task — управлять планом;\n"
+            "• list_groups — список известных групп с chat_id.\n"
+            "Выполняй такие просьбы немедленно и отчитывайся, что сделано. "
+            "ИСКЛЮЧЕНИЯ: конфиденциальная группа — по-прежнему абсолютное табу; массовая рассылка трекинга "
+            "по клиентским группам — по-прежнему только через propose_action (send_tracking_batch)."
         )
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -744,7 +1032,7 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False) -> dict:
                     args = json.loads(fn.get("arguments") or "{}")
                 except Exception:
                     args = {}
-                result = _run_tool(name, args, tg_user_id, created_actions, readonly=readonly)
+                result = _run_tool(name, args, tg_user_id, created_actions, readonly=readonly, owner_direct=owner_direct)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.get("id"),
