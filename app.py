@@ -2518,6 +2518,18 @@ def handle_telegram_message(message: dict):
         handle_tgform_toggle_command(message, bot_command)
         return
 
+    # /form в группе (нативное меню команд «/» видно у поля ввода) —
+    # мгновенно даёт кнопку открытия Mini App
+    if bot_command == "form" and chat_type in {"group", "supergroup"}:
+        if str(chat_id) in _tgform_enabled_groups():
+            telegram_send_message(
+                chat_id,
+                "📝 Formani ochish:",
+                reply_markup=_tgform_group_keyboard(chat_id),
+                disable_notification=True,
+            )
+        return
+
     if bot_command in AI_STATUS_COMMANDS:
         send_ai_diagnostic(chat_id, chat)
         return
@@ -3609,7 +3621,7 @@ def handle_tgform_toggle_command(message: dict, command: str) -> None:
         groups.add(chat_id)
         _save_tgform_groups(groups)
         _FORM_MEMBER_CACHE.clear()
-        resp = telegram_send_message(
+        telegram_send_message(
             chat_id,
             (
                 "✅ Treking Mini App bu guruhda <b>YOQILDI</b>.\n"
@@ -3618,28 +3630,20 @@ def handle_tgform_toggle_command(message: dict, command: str) -> None:
             ),
             reply_markup=_tgform_group_keyboard(chat_id),
         )
-        # закрепляем сообщение с кнопкой (постоянный доступ сверху)
-        message_id = ((resp or {}).get("result") or {}).get("message_id")
-        pin_ok = False
-        if message_id:
+        # если раньше закрепляли сообщение формы — снимаем (закреп отменён)
+        old_pin = db.get_setting(f"tgform_pin_{chat_id}")
+        if old_pin:
             try:
-                telegram_api("pinChatMessage", json={
-                    "chat_id": chat_id,
-                    "message_id": message_id,
-                    "disable_notification": True,
-                })
-                pin_ok = True
-                db.set_setting(f"tgform_pin_{chat_id}", str(message_id))
+                telegram_api("unpinChatMessage", json={"chat_id": chat_id, "message_id": int(old_pin)})
             except Exception:
-                app.logger.warning("pinChatMessage failed in %s (нет прав закрепления?)", chat_id)
+                pass
+            db.set_setting(f"tgform_pin_{chat_id}", "")
         # постоянная кнопка у поля ввода (reply-клавиатура)
-        followup = "⬇️ Pastdagi doimiy «📝 Treking forma» tugmasi ham qo'shildi — istalgan vaqtda bosing."
-        if not pin_ok:
-            followup += (
-                "\n⚠️ Xabarni qadab qo'ya olmadim — botga «Закреплять сообщения» "
-                "admin huquqini bersangiz, tugma yuqorida ham doimiy turadi."
-            )
-        telegram_send_message(chat_id, followup, reply_markup=_tgform_reply_keyboard())
+        telegram_send_message(
+            chat_id,
+            "⬇️ Pastdagi doimiy «📝 Treking forma» tugmasi qo'shildi — istalgan vaqtda bosing. /form buyrug'i ham ishlaydi.",
+            reply_markup=_tgform_reply_keyboard(),
+        )
     else:
         groups.discard(chat_id)
         _save_tgform_groups(groups)
@@ -7699,6 +7703,19 @@ def configure_telegram_menu_button():
         app.logger.info("Telegram menu button configured")
     except Exception as exc:
         app.logger.warning("setChatMenuButton failed: %s", exc)
+    try:
+        # зарегистрированные команды включают в ГРУППАХ нативную кнопку «/»
+        # у поля ввода — самый близкий аналог кнопки-меню из лички
+        telegram_api("setMyCommands", json={
+            "commands": [
+                {"command": "form", "description": "📝 Treking formasini ochish"},
+                {"command": "formon", "description": "Mini App ni guruhda yoqish (admin)"},
+                {"command": "formoff", "description": "Mini App ni guruhda o'chirish (admin)"},
+            ]
+        })
+        app.logger.info("Bot commands registered")
+    except Exception as exc:
+        app.logger.warning("setMyCommands failed: %s", exc)
 
 
 def _wire_ai_assistant_hooks():
