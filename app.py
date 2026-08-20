@@ -2494,6 +2494,10 @@ def handle_telegram_message(message: dict):
     if handle_group_remove_request(message, bot_command):
         return
 
+    if bot_command in {"formon", "form_on", "formoff", "form_off"} and chat_type in {"group", "supergroup"}:
+        handle_tgform_toggle_command(message, bot_command)
+        return
+
     if bot_command in AI_STATUS_COMMANDS:
         send_ai_diagnostic(chat_id, chat)
         return
@@ -3469,7 +3473,77 @@ _TRACKING_DIGEST_SETTING = "tracking_digest_last_date"
 
 TRACKING_ASK_HOUR = int(os.getenv("TRACKING_ASK_HOUR", "7") or 7)
 _TRACKING_ASK_SETTING = "tracking_ask_last_date"
+_TGFORM_GROUPS_SETTING = "tgform_enabled_groups"
 _FORM_MEMBER_CACHE: dict = {}
+
+
+def _tgform_enabled_groups() -> set:
+    """Группы, где Mini App активирован (/formon / /formoff).
+
+    Пока настройка ни разу не менялась — по умолчанию управляющая
+    группа. "__none__" = явно выключено везде."""
+    from services import ai_assistant
+
+    raw = (db.get_setting(_TGFORM_GROUPS_SETTING) or "").strip()
+    if not raw:
+        return {ai_assistant.control_group_id()}
+    if raw == "__none__":
+        return set()
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+
+def _save_tgform_groups(groups: set) -> None:
+    db.set_setting(_TGFORM_GROUPS_SETTING, ",".join(sorted(groups)) if groups else "__none__")
+
+
+def handle_tgform_toggle_command(message: dict, command: str) -> None:
+    """/formon | /formoff в группе — активация/деактивация Mini App.
+    Разрешено владельцу (admin ids) и администраторам самой группы."""
+    from services import ai_assistant
+
+    chat = message.get("chat") or {}
+    chat_id = str(chat.get("id") or "")
+    sender_id = str(((message.get("from") or {}).get("id")) or "")
+    if sender_id not in ai_assistant.admin_ids() and sender_id not in get_chat_admin_ids(chat_id):
+        telegram_send_message(chat_id, "❌ Bu buyruqni faqat guruh admini ishlatishi mumkin.")
+        return
+    if chat_id in CONFIDENTIAL_CHAT_IDS:
+        telegram_send_message(chat_id, "❌ Bu guruhda forma yoqilmaydi.")
+        return
+
+    groups = _tgform_enabled_groups()
+    enable = command in {"formon", "form_on"}
+    if enable:
+        groups.add(chat_id)
+        _save_tgform_groups(groups)
+        _FORM_MEMBER_CACHE.clear()
+        username = get_bot_username() or ""
+        keyboard = (
+            {"inline_keyboard": [[
+                {"text": "📝 Formani ochish", "url": f"https://t.me/{username}?start=form"}
+            ]]}
+            if username else None
+        )
+        telegram_send_message(
+            chat_id,
+            (
+                "✅ Treking Mini App bu guruhda <b>YOQILDI</b>.\n"
+                f"Har kuni ertalab soat {TRACKING_ASK_HOUR}:00 da yangilash so'rovi keladi. "
+                "Guruh a'zolari formadan foydalana oladi. Hoziroq ochish:"
+            ),
+            reply_markup=keyboard,
+        )
+    else:
+        groups.discard(chat_id)
+        _save_tgform_groups(groups)
+        _FORM_MEMBER_CACHE.clear()
+        telegram_send_message(
+            chat_id,
+            (
+                "❌ Treking Mini App bu guruhda <b>O'CHIRILDI</b> — "
+                "ertalabki so'rovlar kelmaydi, guruh a'zolarining forma ruxsati bekor qilindi."
+            ),
+        )
 
 
 def _tgform_url() -> str:
@@ -3501,19 +3575,24 @@ def send_tracking_update_request(force: bool = False, target_chat_id=None):
     from services import ai_assistant
     from html import escape as html_escape
 
-    chat_id = target_chat_id or ai_assistant.control_group_id()
-    if not chat_id or not BOT_TOKEN:
+    if not BOT_TOKEN:
         return False, "not configured"
     today = datetime.now(db.TASHKENT_TZ).strftime("%Y-%m-%d")
     if target_chat_id is None:
         if not force and db.get_setting(_TRACKING_ASK_SETTING) == today:
             return False, "already asked today"
+        targets = sorted(_tgform_enabled_groups())
+        if not targets:
+            db.set_setting(_TRACKING_ASK_SETTING, today)
+            return False, "mini app disabled in all groups"
+    else:
+        targets = [target_chat_id]
     batches = [b for b in db.get_batches() if not (b.get("client_delivery_date") or "")]
     if not batches:
         if target_chat_id is None:
             db.set_setting(_TRACKING_ASK_SETTING, today)
         else:
-            telegram_send_message(chat_id, "ℹ️ Aktiv partiyalar yo'q.")
+            telegram_send_message(target_chat_id, "ℹ️ Aktiv partiyalar yo'q.")
         return False, "no active batches"
 
     lines = [
@@ -3524,21 +3603,26 @@ def send_tracking_update_request(force: bool = False, target_chat_id=None):
         lines.append(f"📦 <b>{html_escape(b['name'])}</b> — {html_escape(b['status'])}")
     lines.append("")
     lines.append("Quyidagi tugma orqali formani oching:")
+    text = "\n".join(lines)
 
-    target_is_private = target_chat_id is not None and not str(chat_id).startswith("-")
-    if target_is_private:
-        keyboard = {"inline_keyboard": [[
-            {"text": "📝 Formani ochish", "web_app": {"url": _tgform_url()}}
-        ]]}
-    else:
-        username = get_bot_username() or ""
-        keyboard = {"inline_keyboard": [[
-            {"text": "📝 Formani ochish", "url": f"https://t.me/{username}?start=form"}
-        ]]} if username else None
-    telegram_send_message(chat_id, "\n".join(lines), reply_markup=keyboard)
+    username = get_bot_username() or ""
+    for chat_id in targets:
+        target_is_private = not str(chat_id).startswith("-")
+        if target_is_private:
+            keyboard = {"inline_keyboard": [[
+                {"text": "📝 Formani ochish", "web_app": {"url": _tgform_url()}}
+            ]]}
+        else:
+            keyboard = {"inline_keyboard": [[
+                {"text": "📝 Formani ochish", "url": f"https://t.me/{username}?start=form"}
+            ]]} if username else None
+        try:
+            telegram_send_message(chat_id, text, reply_markup=keyboard)
+        except Exception:
+            app.logger.exception("Tracking ask delivery failed for chat %s", chat_id)
     if target_chat_id is None:
         db.set_setting(_TRACKING_ASK_SETTING, today)
-    return True, f"{len(batches)} batches"
+    return True, f"{len(batches)} batches → {len(targets)} chats"
 
 
 def _validate_webapp_init_data(init_data: str):
@@ -3565,8 +3649,8 @@ def _validate_webapp_init_data(init_data: str):
 
 
 def _webapp_user_allowed(user_id) -> bool:
-    """Админы/просмотровые — сразу; остальные — по членству в
-    управляющей группе (getChatMember, кэш 10 минут)."""
+    """Админы/просмотровые — сразу; остальные — по членству в ЛЮБОЙ
+    группе, где Mini App активирован (getChatMember, кэш 10 минут)."""
     from services import ai_assistant
 
     uid = str(user_id)
@@ -3577,15 +3661,18 @@ def _webapp_user_allowed(user_id) -> bool:
     if cached and cached[1] > now:
         return cached[0]
     allowed = False
-    try:
-        resp = telegram_api(
-            "getChatMember",
-            json={"chat_id": ai_assistant.control_group_id(), "user_id": int(uid)},
-        )
-        status = ((resp.get("result") or {}).get("status")) or ""
-        allowed = status in {"creator", "administrator", "member"}
-    except Exception:
-        allowed = False
+    for group_id in _tgform_enabled_groups():
+        try:
+            resp = telegram_api(
+                "getChatMember",
+                json={"chat_id": group_id, "user_id": int(uid)},
+            )
+            status = ((resp.get("result") or {}).get("status")) or ""
+            if status in {"creator", "administrator", "member"}:
+                allowed = True
+                break
+        except Exception:
+            continue
     _FORM_MEMBER_CACHE[uid] = (allowed, now + 600)
     return allowed
 
