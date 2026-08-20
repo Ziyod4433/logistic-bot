@@ -2017,6 +2017,10 @@ def handle_callback_query(callback_query: dict):
         handle_ai_action_callback(callback_query, callback_id, data)
         return
 
+    if data.startswith("trkform:"):
+        handle_trkform_callback(callback_query, callback_id, data)
+        return
+
     if data.startswith(f"{FILE_ALL_PREFIX}:"):
         # New bulk button: deliver every packing list attached to the BL.
         try:
@@ -2472,6 +2476,15 @@ def handle_telegram_message(message: dict):
 
     if not chat_id or not text:
         return
+
+    # Ответ на запрос ETA-текста (форма трекинга в управляющей группе)
+    reply_to_id = ((message.get("reply_to_message") or {}).get("message_id"))
+    if reply_to_id:
+        with TRKFORM_ETA_LOCK:
+            waiting = TRKFORM_ETA_WAITING.pop(int(reply_to_id), None)
+        if waiting:
+            handle_trkform_eta_reply(waiting, chat_id, text)
+            return
 
     if chat_type in {"group", "supergroup"} and not text.startswith("/"):
         app.logger.info(
@@ -2944,6 +2957,10 @@ def _packing_reminder_scheduler():
                 sent, info = send_packing_list_reminder()
                 if sent:
                     app.logger.info("Packing reminder sent: %s", info)
+            if now.hour == TRACKING_ASK_HOUR:
+                sent, info = send_tracking_update_request()
+                if sent:
+                    app.logger.info("Tracking update request sent: %s", info)
             if now.hour >= TRACKING_DIGEST_HOUR:
                 sent, info = send_tracking_digest()
                 if sent:
@@ -3436,6 +3453,247 @@ TRACKING_DIGEST_TG_ID = os.getenv("TRACKING_DIGEST_TG_ID", "7713376668").strip()
 TRACKING_DIGEST_HOUR = int(os.getenv("TRACKING_DIGEST_HOUR", "9") or 9)
 _TRACKING_DIGEST_FALLBACK_HOUR = 13
 _TRACKING_DIGEST_SETTING = "tracking_digest_last_date"
+
+
+# ═══════════════════════════════════════════════════════════════
+# MORNING TRACKING FORM (управляющая группа)
+# ═══════════════════════════════════════════════════════════════
+# Каждое утро бот присылает в управляющую группу список активных партий.
+# Тап по партии открывает КАРТОЧКУ-ФОРМУ (аналог окна «Параметры партии»
+# на сайте): статусы и точки назначения — кнопками, ETA-текст — ответом
+# на сообщение. Изменения сохраняются сразу; рассылка по клиентским
+# группам — только через существующую кнопку подтверждения.
+
+TRACKING_ASK_HOUR = int(os.getenv("TRACKING_ASK_HOUR", "9") or 9)
+_TRACKING_ASK_SETTING = "tracking_ask_last_date"
+# ожидание ETA-текста: prompt_message_id → {batch_id, card_chat_id, card_message_id}
+TRKFORM_ETA_WAITING: dict = {}
+TRKFORM_ETA_LOCK = threading.Lock()
+
+
+def telegram_edit_message_text(chat_id, message_id, text, reply_markup=None, parse_mode="HTML"):
+    payload = {"chat_id": chat_id, "message_id": message_id, "text": text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        return telegram_api("editMessageText", json=payload)
+    except Exception:
+        app.logger.exception("editMessageText failed for chat %s", chat_id)
+        return None
+
+
+def send_tracking_update_request(force: bool = False):
+    """Утренний запрос: список активных партий кнопками."""
+    from services import ai_assistant
+
+    chat_id = ai_assistant.control_group_id()
+    if not chat_id or not BOT_TOKEN:
+        return False, "not configured"
+    today = datetime.now(db.TASHKENT_TZ).strftime("%Y-%m-%d")
+    if not force and db.get_setting(_TRACKING_ASK_SETTING) == today:
+        return False, "already asked today"
+    batches = [b for b in db.get_batches() if not (b.get("client_delivery_date") or "")]
+    if not batches:
+        db.set_setting(_TRACKING_ASK_SETTING, today)
+        return False, "no active batches"
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": f"📦 {b['name']} — {b['status']}", "callback_data": f"trkform:open:{b['id']}"}]
+            for b in batches[:30]
+        ]
+    }
+    telegram_send_message(
+        chat_id,
+        (
+            "🌅 Assalomu alaykum! Treking ma'lumotlarini yangilash vaqti bo'ldi.\n"
+            "Partiyani tanlang — kartochka ochiladi va tugmalar bilan yangilaysiz:"
+        ),
+        reply_markup=keyboard,
+    )
+    db.set_setting(_TRACKING_ASK_SETTING, today)
+    return True, f"{len(batches)} batches"
+
+
+def _trkform_card_text(batch: dict) -> str:
+    from html import escape as html_escape
+
+    return (
+        f"📦 <b>Partiya {html_escape(batch['name'])}</b>\n\n"
+        f"🚚 Holat: <b>{html_escape(batch.get('status') or '')}</b>\n"
+        f"📍 Nuqta: {html_escape(batch.get('eta_destination') or 'Toshkent')}\n"
+        f"⏱ Taxminiy muddat (ETA): {html_escape(batch.get('eta_to_toshkent') or '—')}\n\n"
+        "Tugmalar bilan yangilang — o'zgarishlar darhol saqlanadi.\n"
+        "🟢 — joriy holat, 🟣 — joriy nuqta."
+    )
+
+
+def _trkform_keyboard(batch: dict) -> dict:
+    rows = []
+    cur_status = batch.get("status") or ""
+    statuses = db.STATUSES
+    for i in range(0, len(statuses), 2):
+        row = []
+        for j, status in enumerate(statuses[i:i + 2]):
+            idx = i + j
+            mark = "🟢 " if status == cur_status else ""
+            row.append({"text": f"{mark}{status}", "callback_data": f"trkform:st:{batch['id']}:{idx}"})
+        rows.append(row)
+    rows.append([{"text": "· QAYSI NUQTAGA ·", "callback_data": "trkform:noop:0"}])
+    dests = list(db.ETA_DESTINATION_LABELS.keys())
+    cur_dest = batch.get("eta_destination") or "Toshkent"
+    for i in range(0, len(dests), 2):
+        row = []
+        for j, dest in enumerate(dests[i:i + 2]):
+            idx = i + j
+            mark = "🟣 " if dest == cur_dest else ""
+            row.append({"text": f"{mark}{dest}", "callback_data": f"trkform:ds:{batch['id']}:{idx}"})
+        rows.append(row)
+    rows.append([{"text": "✏️ ETA matnini kiritish", "callback_data": f"trkform:eta:{batch['id']}"}])
+    rows.append([
+        {"text": "🚀 Guruhlarga tarqatish", "callback_data": f"trkform:send:{batch['id']}"},
+        {"text": "✔️ Tayyor", "callback_data": "trkform:close:0"},
+    ])
+    return {"inline_keyboard": rows}
+
+
+def handle_trkform_callback(callback_query: dict, callback_id, data: str):
+    from services import ai_assistant
+
+    message = callback_query.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    message_id = message.get("message_id")
+    if not chat_id or not ai_assistant.is_control_chat(chat_id):
+        telegram_answer_callback_query(callback_id, "Bu tugma faqat boshqaruv guruhida ishlaydi")
+        return
+
+    parts = data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    if action == "noop":
+        telegram_answer_callback_query(callback_id, "")
+        return
+    if action == "close":
+        telegram_answer_callback_query(callback_id, "Yopildi")
+        try:
+            telegram_delete_message(chat_id, message_id)
+        except Exception:
+            pass
+        return
+
+    try:
+        batch_id = int(parts[2])
+    except (IndexError, TypeError, ValueError):
+        telegram_answer_callback_query(callback_id, "Xato")
+        return
+    batch = db.get_batch(batch_id)
+    if not batch:
+        telegram_answer_callback_query(callback_id, "Partiya topilmadi")
+        return
+
+    if action == "open":
+        telegram_answer_callback_query(callback_id, "")
+        telegram_send_message(chat_id, _trkform_card_text(batch), reply_markup=_trkform_keyboard(batch))
+        return
+
+    if action == "st":
+        try:
+            idx = int(parts[3])
+        except (IndexError, TypeError, ValueError):
+            telegram_answer_callback_query(callback_id, "Xato")
+            return
+        if 0 <= idx < len(db.STATUSES):
+            new_status = db.STATUSES[idx]
+            db.update_batch(
+                batch_id, batch["name"], new_status,
+                batch.get("eta_to_toshkent") or "",
+                batch.get("eta_destination") or "Toshkent",
+                batch.get("client_delivery_date") or "",
+            )
+            batch = db.get_batch(batch_id)
+            telegram_answer_callback_query(callback_id, f"✅ {new_status}")
+            telegram_edit_message_text(chat_id, message_id, _trkform_card_text(batch), reply_markup=_trkform_keyboard(batch))
+        return
+
+    if action == "ds":
+        dests = list(db.ETA_DESTINATION_LABELS.keys())
+        try:
+            idx = int(parts[3])
+        except (IndexError, TypeError, ValueError):
+            telegram_answer_callback_query(callback_id, "Xato")
+            return
+        if 0 <= idx < len(dests):
+            db.update_batch(
+                batch_id, batch["name"], batch.get("status") or "Xitoy",
+                batch.get("eta_to_toshkent") or "",
+                dests[idx],
+                batch.get("client_delivery_date") or "",
+            )
+            batch = db.get_batch(batch_id)
+            telegram_answer_callback_query(callback_id, f"✅ {dests[idx]}")
+            telegram_edit_message_text(chat_id, message_id, _trkform_card_text(batch), reply_markup=_trkform_keyboard(batch))
+        return
+
+    if action == "eta":
+        telegram_answer_callback_query(callback_id, "")
+        from html import escape as html_escape
+
+        resp = telegram_send_message(
+            chat_id,
+            (
+                f"✏️ <b>{html_escape(batch['name'])}</b> uchun ETA matnini "
+                "SHU XABARGA JAVOB (reply) qilib yozing.\n"
+                "Masalan: Horgosga qarab kelmoqda (1-2 kunda yetib boradi)"
+            ),
+            reply_markup={"force_reply": True, "selective": False},
+        )
+        prompt_id = ((resp or {}).get("result") or {}).get("message_id")
+        if prompt_id:
+            with TRKFORM_ETA_LOCK:
+                TRKFORM_ETA_WAITING[int(prompt_id)] = {
+                    "batch_id": batch_id,
+                    "card_chat_id": chat_id,
+                    "card_message_id": message_id,
+                }
+        return
+
+    if action == "send":
+        summary = f"Разослать трекинг партии «{batch['name']}» по группам клиентов"
+        action_id = db.ai_create_pending_action(
+            f"group:{chat_id}",
+            "send_tracking_batch",
+            json.dumps({"batch_id": batch_id, "batch_name": batch["name"]}, ensure_ascii=False),
+            summary,
+        )
+        telegram_answer_callback_query(callback_id, "Tasdiqlash so'raladi")
+        send_ai_action_approval(chat_id, {"id": action_id, "summary": summary})
+        return
+
+    telegram_answer_callback_query(callback_id, "Noma'lum amal")
+
+
+def handle_trkform_eta_reply(waiting: dict, chat_id, text: str):
+    from html import escape as html_escape
+
+    batch = db.get_batch(waiting["batch_id"])
+    if not batch:
+        return
+    db.update_batch(
+        batch["id"], batch["name"], batch.get("status") or "Xitoy",
+        text.strip(),
+        batch.get("eta_destination") or "Toshkent",
+        batch.get("client_delivery_date") or "",
+    )
+    batch = db.get_batch(batch["id"])
+    telegram_send_message(
+        chat_id,
+        f"✅ <b>{html_escape(batch['name'])}</b>: ETA saqlandi — {html_escape(text.strip())}",
+    )
+    telegram_edit_message_text(
+        waiting["card_chat_id"], waiting["card_message_id"],
+        _trkform_card_text(batch), reply_markup=_trkform_keyboard(batch),
+    )
 
 
 def sync_batches_from_fura_statuses():
