@@ -883,18 +883,6 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_tsm_recalled
             ON tracking_sent_messages(recalled_at);
 
-        CREATE TABLE IF NOT EXISTS tracking_live_maps (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id TEXT NOT NULL,
-            batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
-            message_id INTEGER NOT NULL,
-            latitude REAL NOT NULL,
-            longitude REAL NOT NULL,
-            live INTEGER NOT NULL DEFAULT 1,
-            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-            UNIQUE(chat_id, batch_id)
-        );
-
         CREATE TABLE IF NOT EXISTS message_template (
             id INTEGER PRIMARY KEY,
             content TEXT NOT NULL,
@@ -3367,50 +3355,6 @@ def record_tracking_delivery(primary_bl: dict, include_related_batches: bool = T
             )
         conn.commit()
         return bundle
-    finally:
-        conn.close()
-
-
-# ─────────────────────────────────────────────────────────────────────────
-# Live tracking maps: one live-location message per (client chat, batch).
-# The bot moves the marker via editMessageLiveLocation on status changes.
-# ─────────────────────────────────────────────────────────────────────────
-def get_live_map(chat_id, batch_id) -> dict | None:
-    chat_value = str(chat_id or "").strip()
-    if not chat_value or not batch_id:
-        return None
-    conn = get_conn()
-    try:
-        row = conn.execute(
-            "SELECT * FROM tracking_live_maps WHERE chat_id = ? AND batch_id = ?",
-            (chat_value, int(batch_id)),
-        ).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
-
-
-def save_live_map(chat_id, batch_id, message_id, latitude, longitude, live: int = 1) -> None:
-    chat_value = str(chat_id or "").strip()
-    if not chat_value or not batch_id or not message_id:
-        return
-    conn = get_conn()
-    try:
-        conn.execute(
-            """
-            INSERT INTO tracking_live_maps(
-                chat_id, batch_id, message_id, latitude, longitude, live, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime'))
-            ON CONFLICT(chat_id, batch_id) DO UPDATE SET
-                message_id = excluded.message_id,
-                latitude = excluded.latitude,
-                longitude = excluded.longitude,
-                live = excluded.live,
-                updated_at = excluded.updated_at
-            """,
-            (chat_value, int(batch_id), int(message_id), float(latitude), float(longitude), 1 if live else 0),
-        )
-        conn.commit()
     finally:
         conn.close()
 
@@ -6414,6 +6358,7 @@ _V7_STRINGS = {
     "uz_latn": {
         "greeting": "👋Assalomu alaykum hurmatli mijoz!",
         "holat": "📍 YUK HOLATI",
+        "batch_label": "Partiya",
         "now": "Hozir",
         "arrived_note": "yetib keldi",
         "joy": "joy",
@@ -6423,6 +6368,7 @@ _V7_STRINGS = {
     "uz_cyrl": {
         "greeting": "👋Ассалому алайкум ҳурматли мижоз!",
         "holat": "📍 ЮК ҲОЛАТИ",
+        "batch_label": "Партия",
         "now": "Ҳозир",
         "arrived_note": "етиб келди",
         "joy": "жой",
@@ -6432,6 +6378,7 @@ _V7_STRINGS = {
     "ru": {
         "greeting": "👋Здравствуйте, уважаемый клиент!",
         "holat": "📍 СТАТУС ГРУЗА",
+        "batch_label": "Партия",
         "now": "Сейчас",
         "arrived_note": "груз прибыл",
         "joy": "мест",
@@ -6441,6 +6388,7 @@ _V7_STRINGS = {
     "en": {
         "greeting": "👋Hello, dear client!",
         "holat": "📍 CARGO STATUS",
+        "batch_label": "Batch",
         "now": "Now",
         "arrived_note": "arrived",
         "joy": "pcs",
@@ -6549,37 +6497,36 @@ def _v7_place_label(status: str, language: str) -> str:
 
 
 def render_message_v7(bl: dict, batch_name: str) -> str:
-    """Шаблон «вариант 7»: HOLAT-блок + реквизиты одной строкой."""
+    """Утверждённый шаблон «вариант 6»: колонка строк с эмодзи-метками.
+
+    Первая строка блока («📦 BL: …») дублируется в цитате альбома
+    packing list — app._send_packing_files_reply строит её так же."""
     view = tracking_view_data(bl, batch_name)
     strings = view["strings"]
-    status = bl.get("status", "Xitoy")
 
     place_text = view["place"]
     if view["arrived"]:
         place_text = f"{place_text} — {strings['arrived_note']} ✅"
 
-    req_parts = [f"🆔 <b>{html.escape(view['bl_code'])}</b>", f"🚛 <b>{html.escape(view['batch_name'])}</b>"]
-    if view["places_value"]:
-        req_parts.append(f"{html.escape(view['places_value'])} {strings['joy']}")
-    if view["weight_kg"]:
-        req_parts.append(f"{view['weight_kg']} kg")
-    if view["volume_m3"]:
-        req_parts.append(f"{view['volume_m3']} m³")
-
     lines = [
         strings["greeting"],
         "━━━━━━━━━━━━━━━",
-        f"<b>{strings['holat']}</b>",
-        "",
+        f"📦 BL: <b>{html.escape(view['bl_code'])}</b>",
+        f"🚛 {strings['batch_label']}: <b>{html.escape(view['batch_name'])}</b>",
+        f"📍 {strings['now']}: <b>{html.escape(place_text)}</b>",
     ]
     if not view["arrived"]:
         lines.append(f"⏳ {view['eta_label']}: <b>{html.escape(view['eta_value'])}</b>")
-    lines.extend([
-        _v7_route_line(status),
-        f"{strings['now']}: <b>{html.escape(place_text)}</b>",
-        "━━━━━━━━━━━━━━━",
-        " · ".join(req_parts),
-    ])
+    measures = []
+    if view["places_value"]:
+        measures.append(f"{html.escape(view['places_value'])} {strings['joy']}")
+    if view["weight_kg"]:
+        measures.append(f"{view['weight_kg']} kg")
+    if view["volume_m3"]:
+        measures.append(f"{view['volume_m3']} m³")
+    if measures:
+        lines.append("⚖️ " + " · ".join(measures))
     if not view["is_customer_delivery"]:
+        lines.append("━━━━━━━━━━━━━━━")
         lines.append(strings["packing"])
     return "\n".join(lines)

@@ -4213,168 +4213,84 @@ def handle_my_chat_member_update(chat_update: dict):
         return
 
 
-def _caption_visible_len(text: str) -> int:
-    """Длина подписи без HTML-тегов (лимит Telegram — 1024 видимых)."""
-    return len(re.sub(r"<[^>]+>", "", text or ""))
-
-
-def _send_tracking_with_files_inline(chat_id, rendered_message: str, files: list):
-    """Трекинг-сообщение с packing list ВНУТРИ: один файл → sendDocument
-    с подписью; 2-10 файлов → альбом документов с общей подписью.
-    Возвращает raw-ответ Telegram или бросает исключение."""
+def _send_packing_files_reply(chat_id, files: list, reply_to_message_id, quote_html: str = ""):
+    """Packing list ОДНИМ сообщением следом за текстом трекинга: альбом
+    документов отправляется ОТВЕТОМ на текст, так что сверху в нём видна
+    цитата («📦 BL: …»), а под ней файлы. >10 файлов — несколько альбомов
+    (цитата только у первого). Возвращает список raw-ответов Telegram."""
     entries = []
     for f in files:
         path = f.get("file_path")
         if path and os.path.exists(path):
             entries.append((path, f.get("filename") or os.path.basename(path)))
     if not entries:
-        raise ValueError("no files on disk")
-    if len(entries) == 1:
-        path, name = entries[0]
-        payload = {"chat_id": chat_id}
-        if rendered_message:
-            payload["caption"] = rendered_message
-            payload["parse_mode"] = "HTML"
-        with open(path, "rb") as fh:
-            return telegram_api(
-                "sendDocument",
-                timeout=120,
-                data=payload,
-                files={"document": (name, fh)},
-            )
-    handles = []
-    try:
-        upload = {}
-        media = []
-        for i, (path, name) in enumerate(entries[:10]):
-            key = f"file{i}"
-            fh = open(path, "rb")
-            handles.append(fh)
-            upload[key] = (name, fh)
-            media.append({"type": "document", "media": f"attach://{key}"})
-        # подпись альбома отображается, когда она только у одного элемента
-        if rendered_message:
-            media[-1]["caption"] = rendered_message
-            media[-1]["parse_mode"] = "HTML"
-        return telegram_api(
-            "sendMediaGroup",
-            timeout=180,
-            data={"chat_id": chat_id, "media": json.dumps(media, ensure_ascii=False)},
-            files=upload,
-        )
-    finally:
-        for fh in handles:
-            try:
-                fh.close()
-            except Exception:
-                pass
+        return []
 
-
-LIVE_LOCATION_FOREVER = 0x7FFFFFFF  # live-геолокация, редактируемая бессрочно (Bot API 7.0+)
-
-
-def _ensure_live_tracking_map(chat_id, bl: dict) -> None:
-    """Живая карта фуры в клиентской группе: ОДНО location-сообщение на
-    (чат, партию). Новый статус — маркер передвигается через
-    editMessageLiveLocation; по прибытии в Toshkent live останавливается.
-    Best-effort: любая ошибка логируется и не блокирует отправку текста."""
-    from services import tracking_map
-
-    batch_id = bl.get("batch_id")
-    if not batch_id:
-        return
-    position = tracking_map.position_for_status(bl.get("status"))
-    if not position:
-        return
-    lat, lon, final = position
-
-    def _stop_live(message_id):
+    def _attempt(chunk, reply_params):
+        if len(chunk) == 1:
+            path, name = chunk[0]
+            data = {"chat_id": chat_id}
+            if reply_params:
+                data["reply_parameters"] = json.dumps(reply_params, ensure_ascii=False)
+            with open(path, "rb") as fh:
+                return telegram_api(
+                    "sendDocument", timeout=120, data=data,
+                    files={"document": (name, fh)},
+                )
+        handles = []
         try:
-            telegram_api(
-                "stopMessageLiveLocation",
-                data={"chat_id": chat_id, "message_id": message_id},
-            )
-        except Exception:
-            app.logger.warning("stopMessageLiveLocation failed for chat=%s", chat_id)
-
-    rec = None
-    try:
-        rec = db.get_live_map(chat_id, batch_id)
-    except Exception:
-        app.logger.exception("Live map lookup failed for batch_id=%s", batch_id)
-
-    if rec and rec.get("message_id"):
-        same_spot = (
-            abs(float(rec.get("latitude") or 0.0) - lat) < 1e-4
-            and abs(float(rec.get("longitude") or 0.0) - lon) < 1e-4
-        )
-        if rec.get("live"):
-            edited = True
-            if not same_spot:
+            upload = {}
+            media = []
+            for i, (path, name) in enumerate(chunk):
+                key = f"file{i}"
+                fh = open(path, "rb")
+                handles.append(fh)
+                upload[key] = (name, fh)
+                media.append({"type": "document", "media": f"attach://{key}"})
+            data = {"chat_id": chat_id, "media": json.dumps(media, ensure_ascii=False)}
+            if reply_params:
+                data["reply_parameters"] = json.dumps(reply_params, ensure_ascii=False)
+            return telegram_api("sendMediaGroup", timeout=180, data=data, files=upload)
+        finally:
+            for fh in handles:
                 try:
-                    telegram_api(
-                        "editMessageLiveLocation",
-                        data={
-                            "chat_id": chat_id,
-                            "message_id": rec["message_id"],
-                            "latitude": lat,
-                            "longitude": lon,
-                        },
-                    )
+                    fh.close()
                 except Exception:
-                    # сообщение удалили из чата / edit недоступен — новая карта
-                    app.logger.warning(
-                        "Live map edit failed for chat=%s batch=%s — resending",
-                        chat_id, batch_id,
-                    )
-                    edited = False
-            if edited:
-                live_flag = 1
-                if final:
-                    _stop_live(rec["message_id"])
-                    live_flag = 0
-                db.save_live_map(chat_id, batch_id, rec["message_id"], lat, lon, live=live_flag)
-                return
-        elif same_spot or final:
-            # остановленная карта уже стоит в финальной/актуальной точке
-            return
+                    pass
 
-    payload = {"chat_id": chat_id, "latitude": lat, "longitude": lon}
-    if not final:
-        payload["live_period"] = LIVE_LOCATION_FOREVER
-    try:
-        resp = telegram_api("sendLocation", data=payload)
-    except Exception:
-        if "live_period" not in payload:
-            app.logger.exception("sendLocation failed for chat=%s", chat_id)
-            return
-        payload.pop("live_period")
+    responses = []
+    for start in range(0, len(entries), 10):
+        chunk = entries[start:start + 10]
+        params = None
+        if reply_to_message_id:
+            params = {"message_id": int(reply_to_message_id), "allow_sending_without_reply": True}
+            if quote_html and start == 0:
+                params = {**params, "quote": quote_html, "quote_parse_mode": "HTML"}
         try:
-            resp = telegram_api("sendLocation", data=payload)
+            resp = _attempt(chunk, params)
         except Exception:
-            app.logger.exception("sendLocation failed for chat=%s", chat_id)
-            return
-    msg_id = _extract_message_id(resp)
-    if not msg_id:
-        return
-    db.save_live_map(chat_id, batch_id, msg_id, lat, lon, live=0 if final else 1)
-    try:
-        db.record_sent_telegram_message(
-            bl_id=bl.get("id"), batch_id=batch_id,
-            chat_id=chat_id, message_id=msg_id, kind="tracking",
-        )
-    except Exception:
-        app.logger.exception("Failed to record live map message id")
+            if params and "quote" in params:
+                # цитата не совпала с текстом сообщения — обычный ответ
+                plain = {"message_id": params["message_id"], "allow_sending_without_reply": True}
+                try:
+                    resp = _attempt(chunk, plain)
+                except Exception:
+                    resp = _attempt(chunk, None)
+            elif params:
+                resp = _attempt(chunk, None)
+            else:
+                raise
+        responses.append(resp)
+    return responses
 
 
 def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     """Render and send tracking for a single BL (no merging with other batches).
 
-    Delivery shape: a LIVE MAP (native Telegram live location, the truck
-    marker moves as statuses change) on top, then the v7 text message with
-    packing lists inside (document caption / document album) when possible:
-    1-10 files and the caption fits Telegram's 1024-char limit. Otherwise —
-    the old flow: text message, then the files right after it.
+    Delivery shape: the approved "variant 6" text (emoji-labelled column),
+    then ONE follow-up message with all packing lists — a document album
+    sent as a REPLY to the text, so the album carries a quote of the
+    tracking ("📦 BL: …") on top and the files below it.
     """
     chat_id = bl.get("chat_id")
     if not chat_id:
@@ -4388,37 +4304,11 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     except Exception:
         files = []
 
-    # ── ЖИВАЯ КАРТА: маркер фуры над текстом трекинга ──
+    view = None
     try:
-        _ensure_live_tracking_map(chat_id, bl)
+        view = db.tracking_view_data(bl, batch_name)
     except Exception:
-        app.logger.exception("Live tracking map failed for bl_id=%s", bl.get("id"))
-
-    # ── ОСНОВНОЙ ТЕКСТ: v7 с файлами внутри (caption) ──
-    if files and 1 <= len(files) <= 10 and _caption_visible_len(rendered_message) <= 1000:
-        try:
-            resp = _send_tracking_with_files_inline(chat_id, rendered_message, files)
-            db.record_tracking_delivery(bl, include_related_batches=False)
-            try:
-                result = (resp or {}).get("result")
-                if isinstance(result, list) and result:
-                    # sendMediaGroup возвращает массив сообщений
-                    msg_id = (result[0] or {}).get("message_id")
-                else:
-                    msg_id = _extract_message_id(resp)
-                if msg_id:
-                    db.record_sent_telegram_message(
-                        bl_id=bl.get("id"), batch_id=bl.get("batch_id"),
-                        chat_id=chat_id, message_id=msg_id, kind="tracking",
-                    )
-            except Exception:
-                app.logger.exception("Failed to record tracking message id (inline files)")
-            return True, ""
-        except Exception:
-            app.logger.exception(
-                "Inline-files tracking send failed for bl_id=%s — falling back to text+files",
-                bl.get("id"),
-            )
+        app.logger.exception("Tracking view data failed for bl_id=%s", bl.get("id"))
 
     delivered = False
     last_error = ""
@@ -4449,27 +4339,45 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
 
     # Remember the message_id so the operator can recall it later via
     # /api/batches/<id>/recall-tracking. Best-effort — never blocks send.
+    text_message_id = None
     if delivered:
         try:
-            msg_id = _extract_message_id(sent_response)
-            if msg_id:
+            text_message_id = _extract_message_id(sent_response)
+            if text_message_id:
                 db.record_sent_telegram_message(
                     bl_id=bl.get("id"),
                     batch_id=bl.get("batch_id"),
                     chat_id=chat_id,
-                    message_id=msg_id,
+                    message_id=text_message_id,
                     kind="tracking",
                 )
         except Exception:
             app.logger.exception("Failed to record tracking message id")
 
-    # Auto-attach packing lists right after the message, before moving on
-    # to the next batch in the bundle.
-    if delivered:
+    # Packing lists — ONE follow-up album replying to the tracking text,
+    # so the album shows a "📦 BL: …" quote on top and the files below.
+    if delivered and files and not (view or {}).get("is_customer_delivery"):
+        quote_html = ""
+        if view:
+            quote_html = f"📦 BL: <b>{html.escape(view['bl_code'])}</b>"
         try:
-            _send_attached_files_for_bl(chat_id, bl.get("id"))
+            responses = _send_packing_files_reply(chat_id, files, text_message_id, quote_html)
+            for resp in responses:
+                try:
+                    result = (resp or {}).get("result")
+                    if isinstance(result, list) and result:
+                        file_msg_id = (result[0] or {}).get("message_id")
+                    else:
+                        file_msg_id = _extract_message_id(resp)
+                    if file_msg_id:
+                        db.record_sent_telegram_message(
+                            bl_id=bl.get("id"), batch_id=bl.get("batch_id"),
+                            chat_id=chat_id, message_id=file_msg_id, kind="file",
+                        )
+                except Exception:
+                    app.logger.exception("Failed to record packing album message id")
         except Exception:
-            app.logger.exception("Auto file delivery failed for bl_id=%s", bl.get("id"))
+            app.logger.exception("Packing album delivery failed for bl_id=%s", bl.get("id"))
 
     return True, last_error
 
