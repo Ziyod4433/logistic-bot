@@ -1,4 +1,5 @@
 ﻿import base64
+import hashlib
 import hmac
 import html
 import json
@@ -2018,7 +2019,9 @@ def handle_callback_query(callback_query: dict):
         return
 
     if data.startswith("trkform:"):
-        handle_trkform_callback(callback_query, callback_id, data)
+        # Старая кнопочная форма заменена мини-приложением (/tgform);
+        # старые карточки в истории чата просто гаснут.
+        telegram_answer_callback_query(callback_id, "Forma yangilandi — /form buyrug'ini yuboring")
         return
 
     if data.startswith(f"{FILE_ALL_PREFIX}:"):
@@ -2477,14 +2480,6 @@ def handle_telegram_message(message: dict):
     if not chat_id or not text:
         return
 
-    # Ответ на запрос ETA-текста (форма трекинга в управляющей группе)
-    reply_to_id = ((message.get("reply_to_message") or {}).get("message_id"))
-    if reply_to_id:
-        with TRKFORM_ETA_LOCK:
-            waiting = TRKFORM_ETA_WAITING.pop(int(reply_to_id), None)
-        if waiting:
-            handle_trkform_eta_reply(waiting, chat_id, text)
-            return
 
     if chat_type in {"group", "supergroup"} and not text.startswith("/"):
         app.logger.info(
@@ -2517,11 +2512,15 @@ def handle_telegram_message(message: dict):
             send_with_track_keyboard(chat_id, get_menu_restore_text(language), language=language)
         return
 
-    if text == "/start":
-        # Bot relaunch (19.08.2026): no welcome bundle anymore — no text,
-        # no video, no voice. The bot joins groups silently, stays active
-        # everywhere and only answers @mention questions.
+    if text == "/start" or text.startswith("/start "):
+        # Bot relaunch (19.08.2026): no welcome bundle anymore. The only
+        # /start payload is "form" — the group button deep-links here so
+        # the private chat can get the Web App button (в группах Telegram
+        # web_app-кнопки не разрешает).
         db.clear_chat_state(chat_id)
+        payload = text[7:].strip().lower() if text.startswith("/start ") else ""
+        if payload == "form" and chat_type == "private":
+            send_tracking_form_button(chat_id)
         return
 
     if text == "/chatid":
@@ -2585,8 +2584,8 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
         ai_assistant.reset_history(sender_id)
         telegram_send_message(chat_id, "🧹 История диалога с ассистентом очищена.")
         return
-    if lowered in {"/form", "/trekform", "/tracking"} and ai_assistant.is_admin(sender_id):
-        send_tracking_update_request(target_chat_id=chat_id)
+    if lowered in {"/form", "/trekform", "/tracking"}:
+        send_tracking_form_button(chat_id)
         return
 
     readonly = ai_assistant.is_readonly_user(sender_id)
@@ -3459,41 +3458,48 @@ _TRACKING_DIGEST_SETTING = "tracking_digest_last_date"
 
 
 # ═══════════════════════════════════════════════════════════════
-# MORNING TRACKING FORM (управляющая группа)
+# TRACKING MINI APP (Telegram Web App «Параметры партии»)
 # ═══════════════════════════════════════════════════════════════
-# Каждое утро бот присылает в управляющую группу список активных партий.
-# Тап по партии открывает КАРТОЧКУ-ФОРМУ (аналог окна «Параметры партии»
-# на сайте): статусы и точки назначения — кнопками, ETA-текст — ответом
-# на сообщение. Изменения сохраняются сразу; рассылка по клиентским
-# группам — только через существующую кнопку подтверждения.
+# Утром бот присылает в управляющую группу список активных партий и
+# кнопку, открывающую МИНИ-ПРИЛОЖЕНИЕ — страницу в стиле окна
+# «Параметры партии» на сайте: сначала список активных партий, тап по
+# партии открывает её форму (статус, ETA-текст, точка, дата выдачи).
+# Авторизация: подпись Telegram initData + (админ/просмотровый id или
+# членство в управляющей группе через getChatMember).
 
 TRACKING_ASK_HOUR = int(os.getenv("TRACKING_ASK_HOUR", "9") or 9)
 _TRACKING_ASK_SETTING = "tracking_ask_last_date"
-# ожидание ETA-текста: prompt_message_id → {batch_id, card_chat_id, card_message_id}
-TRKFORM_ETA_WAITING: dict = {}
-TRKFORM_ETA_LOCK = threading.Lock()
+_FORM_MEMBER_CACHE: dict = {}
 
 
-def telegram_edit_message_text(chat_id, message_id, text, reply_markup=None, parse_mode="HTML"):
-    payload = {"chat_id": chat_id, "message_id": message_id, "text": text}
-    if parse_mode:
-        payload["parse_mode"] = parse_mode
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-    try:
-        return telegram_api("editMessageText", json=payload)
-    except Exception:
-        app.logger.exception("editMessageText failed for chat %s", chat_id)
-        return None
+def _tgform_url() -> str:
+    base = (WEBHOOK_BASE_URL or "").rstrip("/")
+    return f"{base}/tgform" if base else ""
+
+
+def send_tracking_form_button(chat_id):
+    """Личная кнопка Web App (в группах Telegram их не разрешает)."""
+    url = _tgform_url()
+    if not url:
+        telegram_send_message(chat_id, "⚠️ WEBHOOK_BASE_URL sozlanmagan — forma ochilmaydi.")
+        return
+    telegram_send_message(
+        chat_id,
+        "📝 Partiya parametrlarini yangilash formasi:",
+        reply_markup={"inline_keyboard": [[
+            {"text": "📝 Formani ochish", "web_app": {"url": url}}
+        ]]},
+    )
 
 
 def send_tracking_update_request(force: bool = False, target_chat_id=None):
-    """Запрос обновления трекинга: список активных партий кнопками.
+    """Утренний запрос в управляющую группу (или по требованию).
 
-    Без target_chat_id — утренняя отправка в управляющую группу (раз в
-    день); с target_chat_id — по требованию (например, /form в личке
-    админа), без суточного ограничителя."""
+    В группах web_app-кнопки запрещены Telegram'ом, поэтому там кнопка-
+    ссылка t.me/<bot>?start=form: тап открывает личку бота, где он сразу
+    присылает web_app-кнопку формы."""
     from services import ai_assistant
+    from html import escape as html_escape
 
     chat_id = target_chat_id or ai_assistant.control_group_id()
     if not chat_id or not BOT_TOKEN:
@@ -3509,205 +3515,161 @@ def send_tracking_update_request(force: bool = False, target_chat_id=None):
         else:
             telegram_send_message(chat_id, "ℹ️ Aktiv partiyalar yo'q.")
         return False, "no active batches"
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": f"📦 {b['name']} — {b['status']}", "callback_data": f"trkform:open:{b['id']}"}]
-            for b in batches[:30]
-        ]
-    }
-    telegram_send_message(
-        chat_id,
-        (
-            "🌅 Assalomu alaykum! Treking ma'lumotlarini yangilash vaqti bo'ldi.\n"
-            "Partiyani tanlang — kartochka ochiladi va tugmalar bilan yangilaysiz:"
-        ),
-        reply_markup=keyboard,
-    )
+
+    lines = [
+        "🌅 Assalomu alaykum! Treking ma'lumotlarini yangilash vaqti bo'ldi.",
+        "",
+    ]
+    for b in batches[:30]:
+        lines.append(f"📦 <b>{html_escape(b['name'])}</b> — {html_escape(b['status'])}")
+    lines.append("")
+    lines.append("Quyidagi tugma orqali formani oching:")
+
+    target_is_private = target_chat_id is not None and not str(chat_id).startswith("-")
+    if target_is_private:
+        keyboard = {"inline_keyboard": [[
+            {"text": "📝 Formani ochish", "web_app": {"url": _tgform_url()}}
+        ]]}
+    else:
+        username = get_bot_username() or ""
+        keyboard = {"inline_keyboard": [[
+            {"text": "📝 Formani ochish", "url": f"https://t.me/{username}?start=form"}
+        ]]} if username else None
+    telegram_send_message(chat_id, "\n".join(lines), reply_markup=keyboard)
     if target_chat_id is None:
         db.set_setting(_TRACKING_ASK_SETTING, today)
     return True, f"{len(batches)} batches"
 
 
-def _trkform_card_text(batch: dict) -> str:
-    from html import escape as html_escape
+def _validate_webapp_init_data(init_data: str):
+    """Проверка подписи Telegram WebApp initData → user dict или None."""
+    try:
+        from urllib.parse import parse_qsl
 
-    return (
-        f"📦 <b>Partiya {html_escape(batch['name'])}</b>\n\n"
-        f"🚚 Holat: <b>{html_escape(batch.get('status') or '')}</b>\n"
-        f"📍 Nuqta: {html_escape(batch.get('eta_destination') or 'Toshkent')}\n"
-        f"⏱ Taxminiy muddat (ETA): {html_escape(batch.get('eta_to_toshkent') or '—')}\n\n"
-        "Tugmalar bilan yangilang — o'zgarishlar darhol saqlanadi.\n"
-        "🟢 — joriy holat, 🟣 — joriy nuqta."
-    )
-
-
-def _trkform_keyboard(batch: dict) -> dict:
-    rows = []
-    cur_status = batch.get("status") or ""
-    statuses = db.STATUSES
-    for i in range(0, len(statuses), 2):
-        row = []
-        for j, status in enumerate(statuses[i:i + 2]):
-            idx = i + j
-            mark = "🟢 " if status == cur_status else ""
-            row.append({"text": f"{mark}{status}", "callback_data": f"trkform:st:{batch['id']}:{idx}"})
-        rows.append(row)
-    rows.append([{"text": "· QAYSI NUQTAGA ·", "callback_data": "trkform:noop:0"}])
-    dests = list(db.ETA_DESTINATION_LABELS.keys())
-    cur_dest = batch.get("eta_destination") or "Toshkent"
-    for i in range(0, len(dests), 2):
-        row = []
-        for j, dest in enumerate(dests[i:i + 2]):
-            idx = i + j
-            mark = "🟣 " if dest == cur_dest else ""
-            row.append({"text": f"{mark}{dest}", "callback_data": f"trkform:ds:{batch['id']}:{idx}"})
-        rows.append(row)
-    rows.append([{"text": "✏️ ETA matnini kiritish", "callback_data": f"trkform:eta:{batch['id']}"}])
-    rows.append([
-        {"text": "🚀 Guruhlarga tarqatish", "callback_data": f"trkform:send:{batch['id']}"},
-        {"text": "✔️ Tayyor", "callback_data": "trkform:close:0"},
-    ])
-    return {"inline_keyboard": rows}
+        pairs = dict(parse_qsl(str(init_data or ""), keep_blank_values=True))
+        their_hash = pairs.pop("hash", "")
+        if not their_hash:
+            return None
+        data_check = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
+        secret = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        calc = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calc, their_hash):
+            return None
+        auth_date = int(pairs.get("auth_date") or 0)
+        if auth_date and time.time() - auth_date > 86400:
+            return None
+        user = json.loads(pairs.get("user") or "{}")
+        return user if user.get("id") else None
+    except Exception:
+        return None
 
 
-def handle_trkform_callback(callback_query: dict, callback_id, data: str):
+def _webapp_user_allowed(user_id) -> bool:
+    """Админы/просмотровые — сразу; остальные — по членству в
+    управляющей группе (getChatMember, кэш 10 минут)."""
     from services import ai_assistant
 
-    message = callback_query.get("message") or {}
-    chat = message.get("chat") or {}
-    chat_id = chat.get("id")
-    message_id = message.get("message_id")
-    # Форма работает в управляющей группе и в личках админов (личка =
-    # chat_id совпадает с tg id владельца).
-    if not chat_id or not (ai_assistant.is_control_chat(chat_id) or ai_assistant.is_admin(chat_id)):
-        telegram_answer_callback_query(callback_id, "Bu tugma faqat boshqaruv guruhida ishlaydi")
-        return
-
-    parts = data.split(":")
-    action = parts[1] if len(parts) > 1 else ""
-    if action == "noop":
-        telegram_answer_callback_query(callback_id, "")
-        return
-    if action == "close":
-        telegram_answer_callback_query(callback_id, "Yopildi")
-        try:
-            telegram_delete_message(chat_id, message_id)
-        except Exception:
-            pass
-        return
-
+    uid = str(user_id)
+    if ai_assistant.is_admin(uid) or ai_assistant.is_readonly_user(uid):
+        return True
+    now = time.time()
+    cached = _FORM_MEMBER_CACHE.get(uid)
+    if cached and cached[1] > now:
+        return cached[0]
+    allowed = False
     try:
-        batch_id = int(parts[2])
-    except (IndexError, TypeError, ValueError):
-        telegram_answer_callback_query(callback_id, "Xato")
-        return
+        resp = telegram_api(
+            "getChatMember",
+            json={"chat_id": ai_assistant.control_group_id(), "user_id": int(uid)},
+        )
+        status = ((resp.get("result") or {}).get("status")) or ""
+        allowed = status in {"creator", "administrator", "member"}
+    except Exception:
+        allowed = False
+    _FORM_MEMBER_CACHE[uid] = (allowed, now + 600)
+    return allowed
+
+
+def _webapp_auth_or_403():
+    data = request.json or {}
+    user = _validate_webapp_init_data(data.get("init_data") or "")
+    if not user:
+        return None, (jsonify({"error": "auth"}), 403)
+    if not _webapp_user_allowed(user.get("id")):
+        return None, (jsonify({"error": "forbidden"}), 403)
+    return user, None
+
+
+@app.route("/tgform")
+def tgform_page():
+    return render_template("tgform.html")
+
+
+@app.route("/tgform/api/list", methods=["POST"])
+def tgform_api_list():
+    user, err = _webapp_auth_or_403()
+    if err:
+        return err
+    batches = [
+        {
+            "id": b["id"],
+            "name": b["name"],
+            "status": b["status"],
+            "eta_to_toshkent": b.get("eta_to_toshkent") or "",
+            "eta_destination": b.get("eta_destination") or "Toshkent",
+            "bl_count": b.get("bl_count") or 0,
+        }
+        for b in db.get_batches()
+        if not (b.get("client_delivery_date") or "")
+    ]
+    return jsonify({
+        "ok": True,
+        "user_name": (user.get("first_name") or ""),
+        "batches": batches,
+        "statuses": list(db.STATUSES),
+        "destinations": [
+            {"value": key, "label": label}
+            for key, label in db.ETA_DESTINATION_LABELS.items()
+        ],
+    })
+
+
+@app.route("/tgform/api/save", methods=["POST"])
+def tgform_api_save():
+    from services import ai_assistant
+
+    user, err = _webapp_auth_or_403()
+    if err:
+        return err
+    if ai_assistant.is_readonly_user((user or {}).get("id")):
+        return jsonify({"error": "Sizda faqat ko'rish huquqi bor"}), 403
+    data = request.json or {}
+    try:
+        batch_id = int(data.get("batch_id") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "bad batch_id"}), 400
     batch = db.get_batch(batch_id)
     if not batch:
-        telegram_answer_callback_query(callback_id, "Partiya topilmadi")
-        return
-
-    if action == "open":
-        telegram_answer_callback_query(callback_id, "")
-        telegram_send_message(chat_id, _trkform_card_text(batch), reply_markup=_trkform_keyboard(batch))
-        return
-
-    if action == "st":
-        try:
-            idx = int(parts[3])
-        except (IndexError, TypeError, ValueError):
-            telegram_answer_callback_query(callback_id, "Xato")
-            return
-        if 0 <= idx < len(db.STATUSES):
-            new_status = db.STATUSES[idx]
-            db.update_batch(
-                batch_id, batch["name"], new_status,
-                batch.get("eta_to_toshkent") or "",
-                batch.get("eta_destination") or "Toshkent",
-                batch.get("client_delivery_date") or "",
-            )
-            batch = db.get_batch(batch_id)
-            telegram_answer_callback_query(callback_id, f"✅ {new_status}")
-            telegram_edit_message_text(chat_id, message_id, _trkform_card_text(batch), reply_markup=_trkform_keyboard(batch))
-        return
-
-    if action == "ds":
-        dests = list(db.ETA_DESTINATION_LABELS.keys())
-        try:
-            idx = int(parts[3])
-        except (IndexError, TypeError, ValueError):
-            telegram_answer_callback_query(callback_id, "Xato")
-            return
-        if 0 <= idx < len(dests):
-            db.update_batch(
-                batch_id, batch["name"], batch.get("status") or "Xitoy",
-                batch.get("eta_to_toshkent") or "",
-                dests[idx],
-                batch.get("client_delivery_date") or "",
-            )
-            batch = db.get_batch(batch_id)
-            telegram_answer_callback_query(callback_id, f"✅ {dests[idx]}")
-            telegram_edit_message_text(chat_id, message_id, _trkform_card_text(batch), reply_markup=_trkform_keyboard(batch))
-        return
-
-    if action == "eta":
-        telegram_answer_callback_query(callback_id, "")
-        from html import escape as html_escape
-
-        resp = telegram_send_message(
-            chat_id,
-            (
-                f"✏️ <b>{html_escape(batch['name'])}</b> uchun ETA matnini "
-                "SHU XABARGA JAVOB (reply) qilib yozing.\n"
-                "Masalan: Horgosga qarab kelmoqda (1-2 kunda yetib boradi)"
-            ),
-            reply_markup={"force_reply": True, "selective": False},
-        )
-        prompt_id = ((resp or {}).get("result") or {}).get("message_id")
-        if prompt_id:
-            with TRKFORM_ETA_LOCK:
-                TRKFORM_ETA_WAITING[int(prompt_id)] = {
-                    "batch_id": batch_id,
-                    "card_chat_id": chat_id,
-                    "card_message_id": message_id,
-                }
-        return
-
-    if action == "send":
-        summary = f"Разослать трекинг партии «{batch['name']}» по группам клиентов"
-        action_id = db.ai_create_pending_action(
-            f"group:{chat_id}",
-            "send_tracking_batch",
-            json.dumps({"batch_id": batch_id, "batch_name": batch["name"]}, ensure_ascii=False),
-            summary,
-        )
-        telegram_answer_callback_query(callback_id, "Tasdiqlash so'raladi")
-        send_ai_action_approval(chat_id, {"id": action_id, "summary": summary})
-        return
-
-    telegram_answer_callback_query(callback_id, "Noma'lum amal")
-
-
-def handle_trkform_eta_reply(waiting: dict, chat_id, text: str):
-    from html import escape as html_escape
-
-    batch = db.get_batch(waiting["batch_id"])
-    if not batch:
-        return
-    db.update_batch(
-        batch["id"], batch["name"], batch.get("status") or "Xitoy",
-        text.strip(),
-        batch.get("eta_destination") or "Toshkent",
-        batch.get("client_delivery_date") or "",
+        return jsonify({"error": "Партия не найдена"}), 404
+    status = str(data.get("status") or batch.get("status") or "Xitoy").strip()
+    valid_statuses = set(db.STATUSES) | {db.DELIVERED_STATUS, db.LEGACY_DELIVERED_STATUS}
+    if status not in valid_statuses:
+        return jsonify({"error": "Недопустимый статус"}), 400
+    destination = str(data.get("eta_destination") or batch.get("eta_destination") or "Toshkent").strip()
+    if destination not in db.ETA_DESTINATION_LABELS:
+        destination = "Toshkent"
+    eta_text = str(data.get("eta_to_toshkent") or "").strip()
+    delivery = str(data.get("client_delivery_date") or "").strip()
+    if delivery and re.match(r"^\d{4}-\d{2}-\d{2}$", delivery):
+        # input type=date отдаёт yyyy-mm-dd — храним как на сайте
+        delivery = f"{delivery[8:10]}.{delivery[5:7]}.{delivery[0:4]}"
+    db.update_batch(batch_id, batch["name"], status, eta_text, destination, delivery)
+    app.logger.info(
+        "TGFORM save by %s (%s): batch %s -> status=%r dest=%r eta=%r delivery=%r",
+        user.get("id"), user.get("first_name"), batch["name"], status, destination, eta_text, delivery,
     )
-    batch = db.get_batch(batch["id"])
-    telegram_send_message(
-        chat_id,
-        f"✅ <b>{html_escape(batch['name'])}</b>: ETA saqlandi — {html_escape(text.strip())}",
-    )
-    telegram_edit_message_text(
-        waiting["card_chat_id"], waiting["card_message_id"],
-        _trkform_card_text(batch), reply_markup=_trkform_keyboard(batch),
-    )
+    return jsonify({"ok": True, "deactivated": bool(delivery)})
+
 
 
 def sync_batches_from_fura_statuses():

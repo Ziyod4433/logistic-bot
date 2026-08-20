@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Параметры партии</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0f; --bg3:#15151f; --bg4:#1b1b28; --bg5:#212132;
+  --border:#232334; --border2:#2b2b40;
+  --amber:#7ee7ff; --amber2:#9a7bff; --purple:#a78bfa;
+  --green:#10b981; --red:#f43f5e;
+  --text:#e8eaf2; --muted:#4d5470; --muted2:#7d86a8;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:'DM Sans','Inter',sans-serif;
+  min-height:100vh; padding:18px 16px 40px;
+}
+h1{
+  font-family:'Syne',sans-serif; font-size:24px; font-weight:800; margin-bottom:18px;
+}
+h1 .hl{color:var(--amber)}
+.lbl{
+  font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--muted2); margin:16px 0 7px;
+}
+.inp,select.inp{
+  width:100%; background:var(--bg3); border:1px solid var(--border2); border-radius:12px;
+  color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:14px;
+  padding:13px 14px; outline:none; -webkit-appearance:none; appearance:none;
+}
+.inp:focus{border-color:var(--amber2)}
+.hint{font-size:11.5px; color:var(--muted2); line-height:1.55; margin-top:6px}
+.pills{display:flex; flex-wrap:wrap; gap:8px}
+.pill{
+  border:1px solid var(--border2); background:var(--bg4); color:var(--text);
+  border-radius:999px; padding:9px 13px; font-size:12.5px; font-family:'DM Sans',sans-serif;
+  cursor:pointer; user-select:none;
+}
+.pill.on{
+  background:var(--amber2); border-color:var(--amber2); color:#0a0a0f; font-weight:700;
+  box-shadow:0 0 18px rgba(154,123,255,.45);
+}
+.btnrow{display:flex; gap:10px; justify-content:flex-end; margin-top:26px}
+.btn{
+  border:none; border-radius:12px; padding:13px 22px; font-size:14px; font-weight:700;
+  font-family:'DM Sans',sans-serif; cursor:pointer;
+}
+.btn-ghost{background:var(--bg4); color:var(--text); border:1px solid var(--border2)}
+.btn-main{background:linear-gradient(135deg,#b7a6f8,#9a7bff); color:#0a0a0f}
+.btn:disabled{opacity:.55}
+/* список партий */
+.batch{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  background:var(--bg3); border:1px solid var(--border2); border-radius:14px;
+  padding:15px 14px; margin-bottom:10px; cursor:pointer;
+}
+.batch:active{background:var(--bg4)}
+.bname{font-family:'IBM Plex Mono',monospace; font-weight:500; font-size:15px; color:var(--amber)}
+.bmeta{font-size:11.5px; color:var(--muted2); margin-top:3px}
+.bstatus{
+  font-size:11px; font-family:'IBM Plex Mono',monospace; color:var(--text);
+  background:var(--bg5); border:1px solid var(--border2); border-radius:999px;
+  padding:5px 10px; white-space:nowrap;
+}
+.arrow{color:var(--muted2); font-size:18px}
+.note{
+  background:var(--bg3); border:1px solid var(--border2); border-radius:12px;
+  padding:14px; font-size:13px; color:var(--muted2); line-height:1.6; margin-top:14px;
+}
+.toast{
+  position:fixed; left:16px; right:16px; bottom:18px; z-index:50;
+  background:var(--green); color:#04120c; font-weight:700; border-radius:12px;
+  padding:13px 16px; text-align:center; display:none;
+}
+.toast.err{background:var(--red); color:#fff}
+#screen-form{display:none}
+.back{
+  display:inline-flex; align-items:center; gap:6px; color:var(--muted2);
+  font-size:13px; margin-bottom:12px; cursor:pointer;
+}
+.spin{
+  margin:60px auto; width:34px; height:34px; border-radius:50%;
+  border:3px solid var(--border2); border-top-color:var(--amber2);
+  animation:sp 0.9s linear infinite;
+}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div id="screen-list">
+  <h1>Активные <span class="hl">партии</span></h1>
+  <div id="list-body"><div class="spin"></div></div>
+</div>
+
+<div id="screen-form">
+  <div class="back" onclick="showList()">‹ Партии</div>
+  <h1>Параметры <span class="hl">партии</span></h1>
+
+  <div class="lbl">Партия</div>
+  <input class="inp" id="f-name" readonly>
+
+  <div class="lbl">Статус партии</div>
+  <select class="inp" id="f-status"></select>
+
+  <div class="lbl">Taxminiy yetib kelish muddati</div>
+  <input class="inp" id="f-eta" placeholder="masalan: Horgosga qarab kelmoqda (1-2 kunda)">
+  <div class="hint">Укажи вручную, сколько осталось до выбранной конечной точки. Этот текст попадёт в клиентское сообщение.</div>
+
+  <div class="lbl">Qaysi nuqtaga</div>
+  <div class="pills" id="f-dest"></div>
+
+  <div class="lbl">Дата доставки клиентам</div>
+  <input class="inp" id="f-delivery" type="date">
+  <div class="hint">После сохранения этой даты партия автоматически перейдёт в раздел неактивных.</div>
+  <div class="hint" style="margin-top:10px">Статус и этот срок будут общими для всей партии.</div>
+
+  <div class="btnrow">
+    <button class="btn btn-ghost" onclick="showList()">Отмена</button>
+    <button class="btn btn-main" id="save-btn" onclick="save()">Сохранить</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const initData = (tg && tg.initData) || "";
+
+let DATA = null;
+let current = null;
+
+function toast(text, err) {
+  const el = document.getElementById("toast");
+  el.textContent = text;
+  el.className = "toast" + (err ? " err" : "");
+  el.style.display = "block";
+  setTimeout(() => { el.style.display = "none"; }, 2600);
+}
+
+async function api(path, payload) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(Object.assign({init_data: initData}, payload || {})),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error === "auth" ? "Avtorizatsiya xatosi — formani bot tugmasidan oching" :
+                             data.error === "forbidden" ? "Sizga bu forma uchun ruxsat yo'q" :
+                             (data.error || ("HTTP " + r.status)));
+  return data;
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function showList() {
+  document.getElementById("screen-form").style.display = "none";
+  document.getElementById("screen-list").style.display = "block";
+  current = null;
+  if (tg) tg.BackButton && tg.BackButton.hide();
+}
+
+function renderList() {
+  const body = document.getElementById("list-body");
+  if (!DATA.batches.length) {
+    body.innerHTML = '<div class="note">Aktiv partiyalar yo\'q.</div>';
+    return;
+  }
+  body.innerHTML = DATA.batches.map(b => `
+    <div class="batch" onclick="openForm(${b.id})">
+      <div>
+        <div class="bname">📦 ${esc(b.name)}</div>
+        <div class="bmeta">${b.bl_count} BL${b.eta_to_toshkent ? " · " + esc(b.eta_to_toshkent) : ""}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="bstatus">${esc(b.status)}</span>
+        <span class="arrow">›</span>
+      </div>
+    </div>`).join("") +
+    '<div class="note">Partiyani tanlang — parametrlar formasi ochiladi.</div>';
+}
+
+function openForm(id) {
+  current = DATA.batches.find(b => b.id === id);
+  if (!current) return;
+  document.getElementById("f-name").value = current.name;
+  const sel = document.getElementById("f-status");
+  sel.innerHTML = DATA.statuses.map(s =>
+    `<option value="${esc(s)}"${s === current.status ? " selected" : ""}>${esc(s)}</option>`).join("");
+  document.getElementById("f-eta").value = current.eta_to_toshkent || "";
+  const dest = document.getElementById("f-dest");
+  dest.innerHTML = DATA.destinations.map(d =>
+    `<div class="pill${d.value === current.eta_destination ? " on" : ""}" data-v="${esc(d.value)}">${esc(d.label)}</div>`).join("");
+  dest.querySelectorAll(".pill").forEach(p => {
+    p.onclick = () => {
+      dest.querySelectorAll(".pill").forEach(x => x.classList.remove("on"));
+      p.classList.add("on");
+    };
+  });
+  document.getElementById("f-delivery").value = "";
+  document.getElementById("screen-list").style.display = "none";
+  document.getElementById("screen-form").style.display = "block";
+  if (tg && tg.BackButton) { tg.BackButton.show(); tg.BackButton.onClick(showList); }
+  window.scrollTo(0, 0);
+}
+
+async function save() {
+  if (!current) return;
+  const btn = document.getElementById("save-btn");
+  btn.disabled = true;
+  try {
+    const destEl = document.querySelector("#f-dest .pill.on");
+    const payload = {
+      batch_id: current.id,
+      status: document.getElementById("f-status").value,
+      eta_to_toshkent: document.getElementById("f-eta").value.trim(),
+      eta_destination: destEl ? destEl.dataset.v : current.eta_destination,
+      client_delivery_date: document.getElementById("f-delivery").value,
+    };
+    const r = await api("/tgform/api/save", payload);
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+    toast(r.deactivated ? "✅ Saqlandi — partiya noaktiv bo'ldi" : "✅ Saqlandi");
+    await load();
+    showList();
+  } catch (e) {
+    toast("⚠️ " + e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function load() {
+  try {
+    DATA = await api("/tgform/api/list");
+    renderList();
+  } catch (e) {
+    document.getElementById("list-body").innerHTML =
+      '<div class="note">⚠️ ' + esc(e.message) + '</div>';
+  }
+}
+load();
+</script>
+</body>
+</html>
