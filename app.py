@@ -3617,6 +3617,7 @@ def tgform_api_list():
             "status": b["status"],
             "eta_to_toshkent": b.get("eta_to_toshkent") or "",
             "eta_destination": b.get("eta_destination") or "Toshkent",
+            "incident_note": b.get("incident_note") or "",
             "bl_count": b.get("bl_count") or 0,
         }
         for b in db.get_batches()
@@ -3660,9 +3661,12 @@ def _tgform_apply_save(user: dict, data: dict):
         batch_id, batch["name"], status, eta_text, destination,
         batch.get("client_delivery_date") or "",
     )
+    if "incident_note" in data:
+        db.set_batch_incident(batch_id, str(data.get("incident_note") or ""))
     app.logger.info(
-        "TGFORM save by %s (%s): batch %s -> status=%r dest=%r eta=%r",
+        "TGFORM save by %s (%s): batch %s -> status=%r dest=%r eta=%r incident=%r",
         user.get("id"), user.get("first_name"), batch["name"], status, destination, eta_text,
+        str(data.get("incident_note") or ""),
     )
     return db.get_batch(batch_id), None
 
@@ -3703,12 +3707,15 @@ def tgform_api_confirm():
         summary,
     )
     sender_name = str(user.get("first_name") or user.get("id") or "").strip()
+    incident = (batch.get("incident_note") or "").strip()
+    incident_line = f"⚠️ Kutilmagan vaziyat: <b>{html_escape(incident)}</b>\n" if incident else ""
     text = (
         f"📝 <b>{html_escape(sender_name)}</b> treking ma'lumotlarini to'ldirdi:\n\n"
         f"📦 Partiya: <b>{html_escape(batch['name'])}</b>\n"
         f"🚚 Holat: <b>{html_escape(batch.get('status') or '')}</b>\n"
         f"📍 Nuqta: {html_escape(batch.get('eta_destination') or 'Toshkent')}\n"
-        f"⏱ ETA: {html_escape(batch.get('eta_to_toshkent') or '—')}\n\n"
+        f"⏱ ETA: {html_escape(batch.get('eta_to_toshkent') or '—')}\n"
+        f"{incident_line}\n"
         "❓ <b>Hammasi to'g'rimi?</b> Tasdiqlansa, treking mijoz guruhlariga yuboriladi."
     )
     keyboard = {
@@ -3841,6 +3848,9 @@ def send_tracking_digest(force: bool = False):
             detail.append(html_escape(dest))
         if detail:
             lines.append("   " + " · ".join(detail))
+        incident = (b.get("incident_note") or "").strip()
+        if incident:
+            lines.append(f"   ⚠️ {html_escape(incident)}")
     lines.append("")
     lines.append("✅ — status bugun yangilangan · ⏳ — hali yangilanmagan")
     if not updated:

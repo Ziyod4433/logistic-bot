@@ -1293,6 +1293,7 @@ def init_db():
     )
 
     batch_columns = [
+        ("incident_note", "TEXT DEFAULT ''"),
         ("status", "TEXT DEFAULT 'Xitoy'"),
         ("expected_date", "TEXT DEFAULT ''"),
         ("actual_date", "TEXT DEFAULT ''"),
@@ -1748,6 +1749,20 @@ def update_batch(
         return True
     except sqlite3.IntegrityError:
         return False
+    finally:
+        conn.close()
+
+
+def set_batch_incident(batch_id, note: str) -> None:
+    """Kutilmagan vaziyat (поломка фуры, доп. досмотр на границе и т.п.).
+    Пустая строка = инцидента нет."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE batches SET incident_note = ? WHERE id = ?",
+            (str(note or "").strip()[:200], int(batch_id)),
+        )
+        conn.commit()
     finally:
         conn.close()
 

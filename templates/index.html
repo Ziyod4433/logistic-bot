@@ -4660,7 +4660,10 @@ function renderBatchMeta(batch) {
   const clientDeliveryDate = batch.client_delivery_date
     ? `<span class="badge badge-green">📅 Дата доставки клиентам: ${esc(batch.client_delivery_date)}</span>`
     : ``;
-  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${arrivalEta}${delay}${clientDeliveryDate}</div>`;
+  const incident = (batch.incident_note || "").trim()
+    ? `<span class="badge badge-red">⚠️ ${esc(batch.incident_note)}</span>`
+    : ``;
+  bar.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap">${arrivalEta}${delay}${incident}${clientDeliveryDate}</div>`;
 }
 
 function renderKnownChats() {

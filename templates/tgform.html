@@ -120,6 +120,12 @@ h1 .hl{color:var(--amber)}
 
   <div class="lbl">Qaysi nuqtaga</div>
   <div class="pills" id="f-dest"></div>
+
+  <div class="lbl">Holat (kutilmagan vaziyat)</div>
+  <div class="pills" id="f-incident-pills"></div>
+  <input class="inp" id="f-incident" placeholder="masalan: Fura buzildi — ta'mirda" style="margin-top:8px">
+  <div class="hint">Fura buzilishi, chegarada qo'shimcha ko'rik kabi vaziyatlarni belgilang yoki o'zingiz yozing. Bo'sh = muammo yo'q.</div>
+
   <div class="hint" style="margin-top:10px">Статус и срок будут общими для всей партии.</div>
 
   <div class="btnrow">
@@ -213,6 +219,27 @@ function openForm(id) {
       p.classList.add("on");
     };
   });
+  // Holat (kutilmagan vaziyat): быстрые варианты + свободный текст
+  const INCIDENTS = ["Yo'q", "🔧 Fura buzildi", "🛃 Chegarada qo'shimcha ko'rik", "🚧 Chegarada navbat", "🌩 Ob-havo sharoiti"];
+  const incInput = document.getElementById("f-incident");
+  incInput.value = current.incident_note || "";
+  const incPills = document.getElementById("f-incident-pills");
+  incPills.innerHTML = INCIDENTS.map(name => {
+    const isNone = name === "Yo'q";
+    const on = isNone ? !incInput.value : incInput.value === name;
+    return `<div class="pill${on ? " on" : ""}" data-inc="${esc(isNone ? "" : name)}">${esc(name)}</div>`;
+  }).join("");
+  const syncIncPills = () => {
+    incPills.querySelectorAll(".pill").forEach(p => {
+      const v = p.dataset.inc;
+      p.classList.toggle("on", v === "" ? !incInput.value.trim() : incInput.value === v);
+    });
+  };
+  incPills.querySelectorAll(".pill").forEach(p => {
+    p.onclick = () => { incInput.value = p.dataset.inc; syncIncPills(); };
+  });
+  incInput.oninput = syncIncPills;
+
   document.getElementById("screen-list").style.display = "none";
   document.getElementById("screen-form").style.display = "block";
   if (tg && tg.BackButton) { tg.BackButton.show(); tg.BackButton.onClick(showList); }
@@ -226,6 +253,7 @@ function formPayload() {
     status: document.getElementById("f-status").value,
     eta_to_toshkent: document.getElementById("f-eta").value.trim(),
     eta_destination: destEl ? destEl.dataset.v : current.eta_destination,
+    incident_note: document.getElementById("f-incident").value.trim(),
   };
 }
 
