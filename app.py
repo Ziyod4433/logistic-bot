@@ -583,11 +583,31 @@ def is_group_chat_id(chat_id) -> bool:
 # now return REMOVE_REPLY_MARKUP so every outgoing message actively strips
 # any keyboard still cached on the client side. Typing the button text
 # manually still works (the TRACK_BUTTON_TEXTS handler is kept).
+# ИСКЛЮЧЕНИЕ: в группах, где включён Mini App трекинга (/formon), у поля
+# ввода держится постоянная кнопка «📝 Treking forma» — тап по ней даёт
+# кнопку открытия формы.
+TRACKING_FORM_BUTTON_TEXT = "📝 Treking forma"
+
+
+def _tgform_reply_keyboard() -> dict:
+    return {
+        "keyboard": [[{"text": TRACKING_FORM_BUTTON_TEXT}]],
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+        "is_persistent": True,
+    }
+
+
 def build_main_reply_markup(*, chat_id=None, language: str | None = None) -> dict:
     return REMOVE_REPLY_MARKUP
 
 
 def build_group_track_reply_markup(*, chat_id=None, language: str | None = None) -> dict:
+    try:
+        if chat_id is not None and str(chat_id) in _tgform_enabled_groups():
+            return _tgform_reply_keyboard()
+    except Exception:
+        pass
     return REMOVE_REPLY_MARKUP
 
 
@@ -2560,6 +2580,17 @@ def handle_telegram_message(message: dict):
         # to the group-AI handler either.
         return
 
+    # Постоянная кнопка «📝 Treking forma» у поля ввода (включённые группы)
+    if text == TRACKING_FORM_BUTTON_TEXT and chat_type in {"group", "supergroup"}:
+        if str(chat_id) in _tgform_enabled_groups():
+            telegram_send_message(
+                chat_id,
+                "📝 Formani ochish uchun tugmani bosing:",
+                reply_markup=_tgform_group_keyboard(chat_id),
+                disable_notification=True,
+            )
+        return
+
     # ZIP-ссылка (Google Drive / прямой URL) в управляющей группе —
     # большие архивы packing list приходят так (Telegram >20MB не отдаёт).
     if maybe_handle_control_group_zip_link(message):
@@ -3522,12 +3553,13 @@ def handle_tgform_toggle_command(message: dict, command: str) -> None:
             (
                 "✅ Treking Mini App bu guruhda <b>YOQILDI</b>.\n"
                 f"Har kuni ertalab soat {TRACKING_ASK_HOUR}:00 da yangilash so'rovi keladi. "
-                "Guruh a'zolari formadan foydalana oladi. Tugma doimiy turishi uchun xabarni qadab qo'ydim:"
+                "Guruh a'zolari formadan foydalana oladi:"
             ),
             reply_markup=_tgform_group_keyboard(chat_id),
         )
-        # закрепляем, чтобы кнопка была постоянно доступна возле чата
+        # закрепляем сообщение с кнопкой (постоянный доступ сверху)
         message_id = ((resp or {}).get("result") or {}).get("message_id")
+        pin_ok = False
         if message_id:
             try:
                 telegram_api("pinChatMessage", json={
@@ -3535,18 +3567,37 @@ def handle_tgform_toggle_command(message: dict, command: str) -> None:
                     "message_id": message_id,
                     "disable_notification": True,
                 })
+                pin_ok = True
+                db.set_setting(f"tgform_pin_{chat_id}", str(message_id))
             except Exception:
                 app.logger.warning("pinChatMessage failed in %s (нет прав закрепления?)", chat_id)
+        # постоянная кнопка у поля ввода (reply-клавиатура)
+        followup = "⬇️ Pastdagi doimiy «📝 Treking forma» tugmasi ham qo'shildi — istalgan vaqtda bosing."
+        if not pin_ok:
+            followup += (
+                "\n⚠️ Xabarni qadab qo'ya olmadim — botga «Закреплять сообщения» "
+                "admin huquqini bersangiz, tugma yuqorida ham doimiy turadi."
+            )
+        telegram_send_message(chat_id, followup, reply_markup=_tgform_reply_keyboard())
     else:
         groups.discard(chat_id)
         _save_tgform_groups(groups)
         _FORM_MEMBER_CACHE.clear()
+        # снимаем закреп и постоянную кнопку
+        pinned_id = db.get_setting(f"tgform_pin_{chat_id}")
+        if pinned_id:
+            try:
+                telegram_api("unpinChatMessage", json={"chat_id": chat_id, "message_id": int(pinned_id)})
+            except Exception:
+                pass
+            db.set_setting(f"tgform_pin_{chat_id}", "")
         telegram_send_message(
             chat_id,
             (
                 "❌ Treking Mini App bu guruhda <b>O'CHIRILDI</b> — "
                 "ertalabki so'rovlar kelmaydi, guruh a'zolarining forma ruxsati bekor qilindi."
             ),
+            reply_markup=REMOVE_REPLY_MARKUP,
         )
 
 
