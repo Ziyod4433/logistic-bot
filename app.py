@@ -2585,6 +2585,9 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
         ai_assistant.reset_history(sender_id)
         telegram_send_message(chat_id, "🧹 История диалога с ассистентом очищена.")
         return
+    if lowered in {"/form", "/trekform", "/tracking"} and ai_assistant.is_admin(sender_id):
+        send_tracking_update_request(target_chat_id=chat_id)
+        return
 
     readonly = ai_assistant.is_readonly_user(sender_id)
 
@@ -3484,19 +3487,27 @@ def telegram_edit_message_text(chat_id, message_id, text, reply_markup=None, par
         return None
 
 
-def send_tracking_update_request(force: bool = False):
-    """Утренний запрос: список активных партий кнопками."""
+def send_tracking_update_request(force: bool = False, target_chat_id=None):
+    """Запрос обновления трекинга: список активных партий кнопками.
+
+    Без target_chat_id — утренняя отправка в управляющую группу (раз в
+    день); с target_chat_id — по требованию (например, /form в личке
+    админа), без суточного ограничителя."""
     from services import ai_assistant
 
-    chat_id = ai_assistant.control_group_id()
+    chat_id = target_chat_id or ai_assistant.control_group_id()
     if not chat_id or not BOT_TOKEN:
         return False, "not configured"
     today = datetime.now(db.TASHKENT_TZ).strftime("%Y-%m-%d")
-    if not force and db.get_setting(_TRACKING_ASK_SETTING) == today:
-        return False, "already asked today"
+    if target_chat_id is None:
+        if not force and db.get_setting(_TRACKING_ASK_SETTING) == today:
+            return False, "already asked today"
     batches = [b for b in db.get_batches() if not (b.get("client_delivery_date") or "")]
     if not batches:
-        db.set_setting(_TRACKING_ASK_SETTING, today)
+        if target_chat_id is None:
+            db.set_setting(_TRACKING_ASK_SETTING, today)
+        else:
+            telegram_send_message(chat_id, "ℹ️ Aktiv partiyalar yo'q.")
         return False, "no active batches"
     keyboard = {
         "inline_keyboard": [
@@ -3512,7 +3523,8 @@ def send_tracking_update_request(force: bool = False):
         ),
         reply_markup=keyboard,
     )
-    db.set_setting(_TRACKING_ASK_SETTING, today)
+    if target_chat_id is None:
+        db.set_setting(_TRACKING_ASK_SETTING, today)
     return True, f"{len(batches)} batches"
 
 
@@ -3565,7 +3577,9 @@ def handle_trkform_callback(callback_query: dict, callback_id, data: str):
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
     message_id = message.get("message_id")
-    if not chat_id or not ai_assistant.is_control_chat(chat_id):
+    # Форма работает в управляющей группе и в личках админов (личка =
+    # chat_id совпадает с tg id владельца).
+    if not chat_id or not (ai_assistant.is_control_chat(chat_id) or ai_assistant.is_admin(chat_id)):
         telegram_answer_callback_query(callback_id, "Bu tugma faqat boshqaruv guruhida ishlaydi")
         return
 
