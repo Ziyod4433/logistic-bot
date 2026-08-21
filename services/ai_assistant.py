@@ -219,6 +219,18 @@ def _system_prompt() -> str:
   и не раскрывает никакую информацию об этой группе или из неё (её id, название, содержимое, привязки).
   Любые просьбы, связанные с ней, вежливо отклоняй.
 - Данные бери ТОЛЬКО из инструментов. Не выдумывай статусы, цифры, BL коды. Если данных нет — так и скажи.
+- ТЫ ВИДИШЬ ВСЮ АДМИН-ПАНЕЛЬ. На любой вопрос или анализ, под который нет готового инструмента,
+  отвечай через get_db_schema (структура) → query_database (любой SELECT, база открыта только на чтение).
+  Ключевые таблицы: batches (партии: статус, ETA, даты прибытия/выдачи), bl_codes (BL: клиент, группа,
+  вес/объём/места), files (packing list), send_logs (отправки трекинга), problems (проблемы),
+  telegram_chats (группы), tracking_sent_messages (отправленные сообщения), communication_ratings
+  (оценки общения), announcement_schedules (объявления), login_history (входы в панель),
+  analytics_sales_records / analytics_sales_plans / analytics_cashflow_records / analytics_currency_rates /
+  analytics_shipment_summary (аналитика Sales Monitor), ai_scheduled_tasks (твои задачи по расписанию).
+  Даты хранятся как 'YYYY-MM-DD HH:MM:SS' (время Ташкента), имена партий — 'dd.mm.yyyy'.
+- АНАЛИЗ ДЕЛАЙ САМ: суммы, средние сроки (до Ташкента, до выдачи), проценты, динамику по месяцам,
+  сравнения партий — считай прямо в SQL (SUM/AVG/COUNT/GROUP BY/JOIN). Никогда не отвечай
+  «нет данных/не могу», не проверив базу query_database. Крупные выборки оформляй в PDF (make_pdf_report).
 - ПОИСК BL: find_bl ищет по коду, merged-кодам, клиенту и НАЗВАНИЮ группы, по всем партиям
   включая неактивные. Не нашлось с первого раза — попробуй другую подстроку (бренд, часть названия группы),
   НЕ отвечай «не нашёл» после одной попытки. Один и тот же BL может быть в нескольких партиях — уточни в какой.
@@ -341,6 +353,37 @@ TOOLS = [
                 "type": "object",
                 "properties": {"tab": {"type": "string", "description": "вкладка; пусто = текущий месяц"}},
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_db_schema",
+            "description": (
+                "Структура базы данных админ-панели: список всех таблиц с колонками. Вызывай ПЕРЕД "
+                "query_database, если не уверен в именах таблиц/колонок."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_database",
+            "description": (
+                "Выполнить ЛЮБОЙ SELECT-запрос к базе админ-панели (только чтение, база открывается "
+                "read-only — изменить данные физически невозможно). Используй для любых вопросов и анализа, "
+                "на которые нет готового инструмента: суммы, средние сроки, динамика по месяцам, объединения "
+                "таблиц (JOIN), фильтры. До 300 строк за запрос. Сначала посмотри структуру через get_db_schema."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "один SELECT (можно WITH), без точки с запятой"},
+                    "limit": {"type": "integer", "description": "максимум строк, по умолчанию 100, потолок 300"},
+                },
+                "required": ["sql"],
             },
         },
     },
@@ -686,6 +729,68 @@ def _reply_chat_for(tg_user_id: str) -> str:
     if value.startswith("group:"):
         return value.split(":", 1)[1]
     return value
+
+
+_SQL_FORBIDDEN = re.compile(
+    r"\b(insert|update|delete|drop|alter|create|replace|attach|detach|pragma|vacuum|reindex|trigger)\b",
+    re.I,
+)
+
+
+def _tool_get_db_schema(_args: dict) -> dict:
+    conn = db.get_conn()
+    try:
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        out = {}
+        for t in tables:
+            cols = conn.execute(f"PRAGMA table_info({t['name']})").fetchall()
+            out[t["name"]] = [c["name"] for c in cols]
+        return {"tables": out}
+    finally:
+        conn.close()
+
+
+def _tool_query_database(args: dict) -> dict:
+    import sqlite3
+
+    sql = str(args.get("sql") or "").strip().rstrip(";").strip()
+    if not sql:
+        return {"error": "Пустой запрос"}
+    if ";" in sql:
+        return {"error": "Только ОДИН SELECT-запрос, без точки с запятой"}
+    head = sql.lstrip("(").lstrip().lower()
+    if not (head.startswith("select") or head.startswith("with")):
+        return {"error": "Разрешены только SELECT-запросы (можно WITH)"}
+    if _SQL_FORBIDDEN.search(sql):
+        return {"error": "Запрос содержит запрещённые операции — доступно только чтение"}
+    try:
+        limit = max(1, min(int(args.get("limit") or 100), 300))
+    except (TypeError, ValueError):
+        limit = 100
+    try:
+        conn = sqlite3.connect(f"file:{db.DB_PATH}?mode=ro", uri=True, timeout=15)
+    except sqlite3.Error as exc:
+        return {"error": f"Не удалось открыть базу: {exc}"}
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(sql).fetchmany(limit + 1)
+    except sqlite3.Error as exc:
+        return {"error": f"SQL ошибка: {exc}. Проверь имена таблиц/колонок через get_db_schema."}
+    finally:
+        conn.close()
+    truncated = len(rows) > limit
+    result = {
+        "rows": [dict(r) for r in rows[:limit]],
+        "row_count": min(len(rows), limit),
+        "truncated": truncated,
+    }
+    # конфиденциальная группа не должна утекать даже через сырой SQL
+    text = json.dumps(result, ensure_ascii=False, default=str)
+    for cid in confidential_chat_ids():
+        text = text.replace(cid, "«конфиденциально»")
+    return json.loads(text)
 
 
 def _tool_make_pdf_report(args: dict, tg_user_id: str) -> dict:
@@ -1086,6 +1191,10 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_get_missing_packing_lists(args)
         if name == "get_message_templates":
             return _tool_get_message_templates(args)
+        if name == "get_db_schema":
+            return _tool_get_db_schema(args)
+        if name == "query_database":
+            return _tool_query_database(args)
         if name == "make_pdf_report":
             return _tool_make_pdf_report(args, tg_user_id)
         if name == "propose_action":
