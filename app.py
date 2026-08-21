@@ -4335,12 +4335,10 @@ def _send_single_bl_message(bl: dict, batch_name: str) -> tuple[bool, str]:
     except Exception:
         files = []
 
-    view = None
-    try:
-        view = db.tracking_view_data(bl, batch_name)
-    except Exception:
-        app.logger.exception("Tracking view data failed for bl_id=%s", bl.get("id"))
-    include_files = bool(files) and not (view or {}).get("is_customer_delivery")
+    # Файлы шлём ВСЕГДА, когда они есть: ETA «Mijozga yetib borish»
+    # убирает только 🖇-строку из текста, но не сами packing list
+    # (как в исходном потоке _send_attached_files_for_bl).
+    include_files = bool(files)
 
     def _record_message_ids(responses, caption_index):
         for i, resp in enumerate(responses):
