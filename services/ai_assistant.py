@@ -219,6 +219,14 @@ def _system_prompt() -> str:
   и не раскрывает никакую информацию об этой группе или из неё (её id, название, содержимое, привязки).
   Любые просьбы, связанные с ней, вежливо отклоняй.
 - Данные бери ТОЛЬКО из инструментов. Не выдумывай статусы, цифры, BL коды. Если данных нет — так и скажи.
+- ПОИСК BL: find_bl ищет по коду, merged-кодам, клиенту и НАЗВАНИЮ группы, по всем партиям
+  включая неактивные. Не нашлось с первого раза — попробуй другую подстроку (бренд, часть названия группы),
+  НЕ отвечай «не нашёл» после одной попытки. Один и тот же BL может быть в нескольких партиях — уточни в какой.
+- ТРЕКИНГ ОДНОГО BL: просят отправить трекинг конкретному BL/клиенту → find_bl (возьми bl_id) →
+  propose_action kind='send_tracking_bl' (params: bl_id). Для всей партии — send_tracking_batch.
+- PDF-ОТЧЁТЫ: make_pdf_report присылает готовый PDF файлом прямо в чат (batches / batch_detail /
+  late_cargo / problems / send_logs). Просят отчёт, сводку, выгрузку, «в PDF/файлом» — используй его сразу,
+  это чтение данных, подтверждения не нужно.
 - Отвечай кратко и по делу, на русском. Формат Telegram HTML: <b>жирный</b>, <code>код</code>. НЕ используй Markdown (** и #).
 - Если запрос неоднозначен (какая партия? какая группа?) — сначала уточни или покажи варианты из данных.
 - Ты пока в режиме обучения: общаешься только с владельцем. Рассылки клиентам — только через подтверждение."""
@@ -253,10 +261,15 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "find_bl",
-            "description": "Поиск BL по коду или имени клиента (подстрока). Возвращает BL со статусом партии и привязкой к группе.",
+            "description": (
+                "Поиск BL по подстроке: код BL, объединённые коды (merged), имя клиента или "
+                "НАЗВАНИЕ Telegram-группы. Ищет по ВСЕМ партиям, включая неактивные. Возвращает bl_id, "
+                "batch_id, статус партии, файлы, вес/объём/места. Если не нашлось по коду — ищи по бренду, "
+                "клиенту или названию группы."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {"query": {"type": "string", "description": "часть BL кода или имени клиента"}},
+                "properties": {"query": {"type": "string", "description": "часть кода BL / merged-кода / клиента / названия группы"}},
                 "required": ["query"],
             },
         },
@@ -334,11 +347,36 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "make_pdf_report",
+            "description": (
+                "Сформировать PDF-отчёт и прислать его ФАЙЛОМ прямо в этот чат. report: "
+                "'batches' — все партии (активные и неактивные) со статусами, весом/объёмом и датами; "
+                "'batch_detail' — одна партия со всеми BL (params: batch — id или часть имени); "
+                "'late_cargo' — опаздывающие грузы из шитса статусов; "
+                "'problems' — зафиксированные проблемы; "
+                "'send_logs' — последние отправки трекинга (params: limit, по умолчанию 30). "
+                "Используй, когда просят отчёт/сводку/выгрузку файлом или что-то «в PDF»."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "report": {"type": "string", "enum": ["batches", "batch_detail", "late_cargo", "problems", "send_logs"]},
+                    "batch": {"type": "string", "description": "для batch_detail: id или часть имени партии"},
+                    "limit": {"type": "integer", "description": "для send_logs: сколько строк"},
+                },
+                "required": ["report"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "propose_action",
             "description": (
                 "Создать ЗАЯВКУ на действие (требует подтверждения владельца кнопками). "
                 "kind: 'set_batch_status' (params: batch_id, status — точное название из цепочки статусов), "
                 "'send_tracking_batch' (params: batch_id — разослать трекинг по группам партии), "
+                "'send_tracking_bl' (params: bl_id — отправить трекинг ОДНОГО BL в его группу; bl_id ищи через find_bl), "
                 "'send_group_message' (params: chat_id, text — отправить сообщение в конкретную группу), "
                 "'sync_batch_from_plan' (params: batch_id, tab, plan_title, plan_date — привести состав партии "
                 "ТОЧНО к плану погрузки: недостающие BL добавляются с авто-привязкой Telegram-групп, а BL, "
@@ -348,7 +386,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_group_message", "sync_batch_from_plan"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "send_group_message", "sync_batch_from_plan"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -436,32 +474,54 @@ def _tool_find_bl(args: dict) -> dict:
     query = str(args.get("query") or "").strip()
     if len(query) < 2:
         return {"error": "Запрос слишком короткий"}
+    like = f"%{query}%"
     conn = db.get_conn()
     try:
         rows = conn.execute(
             """
-            SELECT bl.id, bl.code, bl.client_name, bl.chat_id, bl.batch_id,
+            SELECT bl.id, bl.code, COALESCE(bl.merged_codes,'') AS merged_codes,
+                   bl.client_name, bl.chat_id, bl.batch_id,
+                   bl.quantity_places, bl.weight_kg, bl.volume_cbm,
                    b.name AS batch_name, b.status AS batch_status,
-                   COALESCE(b.client_delivery_date,'') AS delivered_date
-            FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id
-            WHERE UPPER(bl.code) LIKE UPPER(?) OR UPPER(COALESCE(bl.client_name,'')) LIKE UPPER(?)
+                   COALESCE(b.client_delivery_date,'') AS delivered_date,
+                   COALESCE(tc.title,'') AS group_title,
+                   (SELECT COUNT(*) FROM files f WHERE f.bl_id = bl.id) AS file_count
+            FROM bl_codes bl
+            JOIN batches b ON b.id = bl.batch_id
+            LEFT JOIN telegram_chats tc ON tc.chat_id = bl.chat_id
+            WHERE UPPER(bl.code) LIKE UPPER(?)
+               OR UPPER(COALESCE(bl.merged_codes,'')) LIKE UPPER(?)
+               OR UPPER(COALESCE(bl.client_name,'')) LIKE UPPER(?)
+               OR UPPER(COALESCE(tc.title,'')) LIKE UPPER(?)
             ORDER BY bl.id DESC LIMIT 25
             """,
-            (f"%{query}%", f"%{query}%"),
+            (like, like, like, like),
         ).fetchall()
     finally:
         conn.close()
+    if not rows:
+        return {
+            "matches": [],
+            "hint": "Ничего не нашлось. Попробуй другую подстроку: бренд, часть merged-кода, имя клиента или название группы.",
+        }
     return {
         "matches": [
             {
                 "bl_id": r["id"],
                 "code": r["code"],
+                "merged_codes": r["merged_codes"],
                 "client": r["client_name"] or "",
                 "group_linked": bool(r["chat_id"]),
+                "group_title": r["group_title"],
                 "chat_id": _mask_chat_id(r["chat_id"] or ""),
+                "batch_id": r["batch_id"],
                 "batch": r["batch_name"],
                 "batch_status": r["batch_status"],
                 "batch_active": not r["delivered_date"],
+                "files": r["file_count"],
+                "places": r["quantity_places"],
+                "weight_kg": r["weight_kg"],
+                "volume_m3": r["volume_cbm"],
             }
             for r in rows
         ]
@@ -616,6 +676,40 @@ def _tool_get_loading_plans(args: dict) -> dict:
 # ai_assistant не может импортировать app из-за цикла).
 direct_send_message = None   # fn(chat_id, text) -> None
 direct_send_poll = None      # fn(chat_id, question, options, is_anonymous) -> None
+direct_send_document = None  # fn(chat_id, data_bytes, filename, caption) -> None
+
+
+def _reply_chat_for(tg_user_id: str) -> str:
+    """Чат, куда доставлять файлы этого диалога: личка = сам user id,
+    диалог в управляющей группе приходит как 'group:<chat_id>'."""
+    value = str(tg_user_id or "").strip()
+    if value.startswith("group:"):
+        return value.split(":", 1)[1]
+    return value
+
+
+def _tool_make_pdf_report(args: dict, tg_user_id: str) -> dict:
+    if not callable(direct_send_document):
+        return {"error": "direct_send_document hook is not wired"}
+    from services import report_pdf
+
+    report = str(args.get("report") or "").strip()
+    chat_id = _reply_chat_for(tg_user_id)
+    if not chat_id:
+        return {"error": "Не удалось определить чат для отправки файла"}
+    if report == "batch_detail":
+        found = _find_batch(str(args.get("batch") or ""))
+        if not found:
+            return {"error": "Партия не найдена — уточни имя или id (см. get_overview)"}
+        if "__ambiguous__" in found:
+            return {"error": "Найдено несколько партий, уточни какая", "candidates": found["__ambiguous__"]}
+        args = {**args, "batch_id": found["id"]}
+    try:
+        pdf_bytes, filename, caption = report_pdf.build_report(report, args)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    direct_send_document(chat_id, pdf_bytes, filename, caption)
+    return {"ok": True, "sent_file": filename, "note": "PDF-отчёт отправлен файлом в этот чат."}
 
 # ── ВЛАДЕЛЬЧЕСКИЙ РЕЖИМ: прямые инструменты без подтверждения ──────
 # Доступны ТОЛЬКО в личке владельца (owner_direct=True).
@@ -863,7 +957,7 @@ def _tool_list_groups(_args: dict) -> dict:
     }
 
 
-ALLOWED_ACTION_KINDS = {"set_batch_status", "send_tracking_batch", "send_group_message", "sync_batch_from_plan"}
+ALLOWED_ACTION_KINDS = {"set_batch_status", "send_tracking_batch", "send_tracking_bl", "send_group_message", "sync_batch_from_plan"}
 
 
 def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> dict:
@@ -892,6 +986,15 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
         if not batch:
             return {"error": "batch_id не найден"}
         params["batch_name"] = batch["name"]
+    elif kind == "send_tracking_bl":
+        bl = db.get_bl_by_id(int(params.get("bl_id") or 0))
+        if not bl:
+            return {"error": "bl_id не найден — найди BL через find_bl и возьми его bl_id"}
+        if not (bl.get("chat_id") or "").strip():
+            return {"error": f"BL {bl.get('code')} не привязан к Telegram-группе — отправлять некуда"}
+        batch = db.get_batch(bl.get("batch_id"))
+        params["bl_code"] = bl.get("code")
+        params["batch_name"] = (batch or {}).get("name") or ""
     elif kind == "send_group_message":
         chat_id = str(params.get("chat_id") or "").strip()
         text = str(params.get("text") or "").strip()
@@ -983,6 +1086,8 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_get_missing_packing_lists(args)
         if name == "get_message_templates":
             return _tool_get_message_templates(args)
+        if name == "make_pdf_report":
+            return _tool_make_pdf_report(args, tg_user_id)
         if name == "propose_action":
             return _tool_propose_action(args, tg_user_id, created_actions)
         return {"error": f"Неизвестный инструмент {name}"}

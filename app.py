@@ -2812,6 +2812,26 @@ def execute_ai_action(action: dict):
     if kind == "send_tracking_batch":
         return _execute_tracking_broadcast(int(params.get("batch_id") or 0))
 
+    if kind == "send_tracking_bl":
+        bl = db.get_bl_by_id(int(params.get("bl_id") or 0))
+        if not bl:
+            return False, "BL не найден"
+        if not (bl.get("chat_id") or "").strip():
+            return False, f"BL {bl.get('code')} не привязан к группе"
+        batch = db.get_batch(bl.get("batch_id"))
+        batch_name = (batch or {}).get("name") or ""
+        try:
+            success, error_msg = send_bl_package(dict(bl), batch_name, include_related_batches=False)
+        except Exception as exc:
+            success, error_msg = False, str(exc)
+        try:
+            db.add_log(bl["id"], bl["code"], batch_name, bl["chat_id"], bl.get("status"), success, error_msg)
+        except Exception:
+            app.logger.exception("send_tracking_bl: log write failed")
+        if success:
+            return True, f"Трекинг BL {bl['code']} («{batch_name}») отправлен в группу"
+        return False, f"Не отправилось: {error_msg or 'ошибка'}"
+
     if kind == "send_tracking_multi":
         batch_ids = params.get("batch_ids") or []
         if not batch_ids:
@@ -7911,6 +7931,12 @@ def _wire_ai_assistant_hooks():
     from services import ai_assistant as _ai
 
     _ai.direct_send_message = lambda chat_id, text: telegram_send_message(chat_id, text)
+    _ai.direct_send_document = lambda chat_id, data, filename, caption="": telegram_api(
+        "sendDocument",
+        timeout=120,
+        data={"chat_id": chat_id, "caption": str(caption or "")[:1024]},
+        files={"document": (filename, io.BytesIO(data))},
+    )
     _ai.direct_send_poll = lambda chat_id, question, options, is_anonymous=False: telegram_api(
         "sendPoll",
         json={
