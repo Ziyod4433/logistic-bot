@@ -2725,8 +2725,12 @@ def execute_ai_action(action: dict):
         text = str(params.get("text") or "").strip()
         if not target_chat or not text:
             return False, "Пустой chat_id или текст"
+        mention_id = str(params.get("mention_user_id") or "").strip()
+        if mention_id:
+            label = html.escape(str(params.get("mention_label") or "").strip() or "👤")
+            text = f'<a href="tg://user?id={mention_id}">{label}</a>, {text}'
         telegram_send_message(target_chat, text)
-        return True, f"Сообщение отправлено в чат {target_chat}"
+        return True, f"Сообщение отправлено в чат {target_chat}" + (" (с отметкой)" if mention_id else "")
 
     if kind == "sync_batch_from_plan":
         batch_id = int(params.get("batch_id") or 0)

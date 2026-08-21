@@ -102,6 +102,8 @@ def _system_prompt() -> str:
     packing_hour = (os.getenv("PACKING_REMINDER_HOUR", "9") or "9").strip()
     digest_hour = (os.getenv("TRACKING_DIGEST_HOUR", "9") or "9").strip()
     digest_id = (os.getenv("TRACKING_DIGEST_TG_ID", "7713376668") or "").strip()
+    packing_id = (os.getenv("PACKING_RESPONSIBLE_TG_ID", "8526226966") or "").strip()
+    packing_name = (os.getenv("PACKING_RESPONSIBLE_NAME", "Jigar") or "Jigar").strip()
     return f"""Ты — AI-ассистент логистической компании BURAQ Logistics (карго Китай → Узбекистан).
 Ты работаешь внутри админ-панели (Flask-сайт) и общаешься с ВЛАДЕЛЬЦЕМ компании в личном чате Telegram.
 Сегодня: {datetime.now().strftime('%d.%m.%Y %H:%M')}.
@@ -180,7 +182,8 @@ def _system_prompt() -> str:
     Когда предлагаешь смену статуса на «Horgos (Qozoq)» — сам предложи следом и синхронизацию по казахскому плану.
 
 11. УТРЕННИЙ СБОР PACKING LIST. Каждое утро (по Ташкенту) бот сам пишет в управляющую группу,
-    отмечает ответственного (Jigar, на узбекском) и перечисляет BL активных партий без packing list.
+    отмечает ответственного ({packing_name}, tg id {packing_id} — этот id используй как mention_user_id,
+    когда просят отметить ответственного за packing list) и перечисляет BL активных партий без packing list.
     Jigar кидает в группу ZIP-архив, ссылку на ZIP в Google Drive или ссылку на Drive-ПАПКУ с файлами
     (архивы >20 МБ Telegram не отдаёт — только ссылкой; RAR не поддерживается, просить ZIP) —
     бот сам скачивает, распаковывает и сопоставляет файлы с BL активных партий.
@@ -428,7 +431,8 @@ TOOLS = [
                 "kind: 'set_batch_status' (params: batch_id, status — точное название из цепочки статусов), "
                 "'send_tracking_batch' (params: batch_id — разослать трекинг по группам партии), "
                 "'send_tracking_bl' (params: bl_id — отправить трекинг ОДНОГО BL в его группу; bl_id ищи через find_bl), "
-                "'send_group_message' (params: chat_id, text — отправить сообщение в конкретную группу), "
+                "'send_group_message' (params: chat_id, text; опционально mention_user_id + mention_label — "
+                "кликабельно отметить человека в начале сообщения, например ответственного за packing list), "
                 "'sync_batch_from_plan' (params: batch_id, tab, plan_title, plan_date — привести состав партии "
                 "ТОЧНО к плану погрузки: недостающие BL добавляются с авто-привязкой Telegram-групп, а BL, "
                 "которых в плане нет, УДАЛЯЮТСЯ из партии — иначе их группы получат чужой трекинг). "
@@ -1115,6 +1119,9 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
             return {"error": "Нужны chat_id и text"}
         if chat_id in confidential_chat_ids():
             return {"error": "Эта группа строго конфиденциальна — бот туда не пишет. Заявка не создана."}
+        mention_id = str(params.get("mention_user_id") or "").strip()
+        if mention_id and not mention_id.isdigit():
+            return {"error": "mention_user_id должен быть числовым Telegram id"}
     elif kind == "sync_batch_from_plan":
         from services import loading_plan_service
 
@@ -1168,7 +1175,11 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return {"error": "У этого пользователя доступ только на чтение — действия недоступны."}
         if name in _OWNER_TOOL_NAMES:
             if not owner_direct:
-                return {"error": "Прямые инструменты доступны только владельцу в личке."}
+                return {"error": (
+                    "Прямые инструменты доступны только владельцу в личке. Здесь используй "
+                    "propose_action: для сообщения в группу — kind='send_group_message' "
+                    "(params: chat_id, text, опционально mention_user_id + mention_label для отметки человека)."
+                )}
             if name == "send_chat_message":
                 return _tool_send_chat_message(args)
             if name == "send_poll":
