@@ -50,6 +50,25 @@ def is_admin(tg_user_id) -> bool:
     return str(tg_user_id) in admin_ids()
 
 
+def operator_ids() -> set:
+    """Staff allowed to CHANGE things: create action proposals and press
+    the ✅/❌ approval buttons. No owner-direct tools (those stay in the
+    owner's private chat only)."""
+    raw = os.getenv("AI_ASSISTANT_OPERATOR_IDS", "7827297533")
+    return {part.strip() for part in str(raw).split(",") if part.strip()}
+
+
+def is_operator(tg_user_id) -> bool:
+    return str(tg_user_id) in operator_ids()
+
+
+def can_change(tg_user_id) -> bool:
+    """Кто вправе создавать заявки на изменения и подтверждать их.
+    Все остальные (в т.ч. прочие участники управляющей группы) — только
+    собеседники: смотреть данные можно, менять нельзя."""
+    return is_admin(tg_user_id) or is_operator(tg_user_id)
+
+
 def readonly_ids() -> set:
     """Users allowed to TALK to the assistant in private, but with READ
     tools only — no propose_action, nothing can be changed or sent."""
@@ -58,7 +77,7 @@ def readonly_ids() -> set:
 
 
 def is_readonly_user(tg_user_id) -> bool:
-    return str(tg_user_id) in readonly_ids() and not is_admin(tg_user_id)
+    return str(tg_user_id) in readonly_ids() and not can_change(tg_user_id)
 
 
 def control_group_id() -> str:
@@ -252,7 +271,10 @@ def _system_prompt() -> str:
   это чтение данных, подтверждения не нужно.
 - Отвечай кратко и по делу, на русском. Формат Telegram HTML: <b>жирный</b>, <code>код</code>. НЕ используй Markdown (** и #).
 - Если запрос неоднозначен (какая партия? какая группа?) — сначала уточни или покажи варианты из данных.
-- Ты пока в режиме обучения: общаешься только с владельцем. Рассылки клиентам — только через подтверждение."""
+- КТО ЧТО МОЖЕТ: смотреть данные и спрашивать тебя может весь персонал управляющей группы; создавать
+  заявки на изменения и подтверждать их — только владелец и ответственный оператор. Остальным на просьбу
+  что-то изменить отвечай дружелюбно: «это подтверждает владелец или ответственный». Мини-форму
+  «Treking forma» это правило НЕ касается — её заполняют и подтверждают логисты как обычно."""
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1172,7 +1194,11 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
               readonly: bool = False, owner_direct: bool = False) -> dict:
     try:
         if readonly and name == "propose_action":
-            return {"error": "У этого пользователя доступ только на чтение — действия недоступны."}
+            return {"error": (
+                "Действия недоступны: у этого собеседника нет прав на изменения. "
+                "Менять данные и рассылать может владелец или ответственный оператор — "
+                "предложи обратиться к ним."
+            )}
         if name in _OWNER_TOOL_NAMES:
             if not owner_direct:
                 return {"error": (
@@ -1255,7 +1281,24 @@ def _chat_completion(messages, use_model=None, tools=None):
     return response.json()
 
 
-def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_direct: bool = False) -> dict:
+COMPANION_PROMPT = """
+
+РЕЖИМ СОБЕСЕДНИКА: с тобой сейчас говорит сотрудник БЕЗ прав на изменения.
+• Общайся живо и дружелюбно, с лёгким уместным юмором — одна необидная шутка или тёплая
+  фраза на ответ, не больше; ты коллега, а не клоун. С серьёзными темами (проблемы, опоздания,
+  претензии клиентов) юмор выключай совсем.
+• Данные показывать МОЖНО: статусы партий, где чей груз, сроки, packing list, отчёты — отвечай
+  так же точно, как владельцу. Юмор НИКОГДА не меняет цифры и коды: факты только из инструментов.
+• Изменять и рассылать ты для него НЕ можешь — инструмента propose_action у тебя сейчас нет.
+  Просят поменять статус, разослать трекинг, написать в группу — по-доброму объясни, что такие
+  вещи подтверждает владелец или ответственный оператор, и предложи позвать их.
+• Не рассуждай о том, у кого какие права и чьи id в списке — просто скажи «это подтверждает
+  владелец или ответственный».
+"""
+
+
+def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_direct: bool = False,
+                         companion: bool = False) -> dict:
     """Process one owner/staff message. Returns {"reply", "pending": [...]}.
 
     readonly=True (просмотровый доступ): все READ-инструменты доступны,
@@ -1282,7 +1325,11 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
 
     system_prompt = _system_prompt()
     tools = TOOLS
-    if readonly:
+    if companion:
+        # участник управляющей группы без прав на изменения
+        tools = [t for t in TOOLS if t["function"]["name"] != "propose_action"]
+        system_prompt += COMPANION_PROMPT
+    elif readonly:
         tools = [t for t in TOOLS if t["function"]["name"] != "propose_action"]
         system_prompt += (
             "\n\nРЕЖИМ ТОЛЬКО ЧТЕНИЕ: этот пользователь может смотреть любую информацию, но НЕ может "
@@ -1334,7 +1381,8 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
                     args = json.loads(fn.get("arguments") or "{}")
                 except Exception:
                     args = {}
-                result = _run_tool(name, args, tg_user_id, created_actions, readonly=readonly, owner_direct=owner_direct)
+                result = _run_tool(name, args, tg_user_id, created_actions,
+                                   readonly=readonly or companion, owner_direct=owner_direct)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.get("id"),

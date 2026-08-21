@@ -2202,11 +2202,14 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
 
     from services import ai_assistant
 
-    # ── ACCESS MODEL (19.08.2026) ────────────────────────────────────
-    # Exactly ONE staff group (AI_CONTROL_GROUP_ID) has full rights over
-    # the bot — its members talk to the FULL assistant (all read tools +
-    # approval-gated actions) by @mentioning it. Every other group is a
-    # client group where the bot stays COMPLETELY silent for now.
+    # ── ACCESS MODEL (21.08.2026) ────────────────────────────────────
+    # Exactly ONE staff group (AI_CONTROL_GROUP_ID) talks to the bot by
+    # @mentioning it. Inside that group only the owner and the operator
+    # ids (ai_assistant.can_change) may trigger changes; everyone else
+    # gets the same data but in companion mode — read-only, light humor.
+    # Every other group is a client group where the bot stays silent.
+    # NOTE: this does NOT touch the Treking forma (Mini App) — its access
+    # stays membership-based (_webapp_user_allowed, /formon, /formoff).
     if not ai_assistant.is_control_chat(chat_id):
         return False
 
@@ -2225,10 +2228,16 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
     # the group id.
     assistant_input = f"{sender_name}: {question}" if sender_name else question
 
+    # Права на изменения — только владелец и операторы; остальным бот
+    # отвечает как собеседник (данные показывает, менять не может).
+    companion_mode = not ai_assistant.can_change(sender.get("id"))
+
     def _worker():
         try:
             with TypingIndicator(chat_id):
-                result = ai_assistant.handle_owner_message(f"group:{chat_id}", assistant_input)
+                result = ai_assistant.handle_owner_message(
+                    f"group:{chat_id}", assistant_input, companion=companion_mode
+                )
         except Exception as exc:
             app.logger.exception("Control-group assistant failure")
             try:
@@ -2574,7 +2583,8 @@ def handle_telegram_message(message: dict):
     if chat_type == "private":
         from services import ai_assistant
 
-        if ai_assistant.is_admin(sender_id) or ai_assistant.is_readonly_user(sender_id):
+        if (ai_assistant.can_change(sender_id)
+                or ai_assistant.is_readonly_user(sender_id)):
             handle_ai_assistant_private_message(chat_id, sender_id, text)
             return
 
@@ -2636,7 +2646,8 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
         return
 
     readonly = ai_assistant.is_readonly_user(sender_id)
-    # Владельческий режим (прямые инструменты) — только личка админа.
+    # Владельческий режим (прямые инструменты) — только личка владельца;
+    # оператор может создавать заявки, но не исполнять напрямую.
     owner_direct = ai_assistant.is_admin(sender_id)
 
     def _worker():
@@ -2898,11 +2909,6 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
 
     voter = callback_query.get("from") or {}
     origin_chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
-    # Approvals: the owner (admin ids) anywhere, or ANY member of the
-    # control group when the buttons live in that group.
-    if not (ai_assistant.is_admin(voter.get("id")) or ai_assistant.is_control_chat(origin_chat_id)):
-        telegram_answer_callback_query(callback_id, "Недостаточно прав")
-        return
 
     parts = data.split(":")
     if len(parts) != 3:
@@ -2925,6 +2931,16 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
         telegram_answer_callback_query(callback_id, f"Уже обработано: {action.get('status')}")
         return
     is_basket = action.get("kind") == "send_tracking_multi"
+
+    # Права на подтверждение: владелец и операторы — везде. ИСКЛЮЧЕНИЕ —
+    # карточка TASDIQLASH мини-формы (send_tracking_multi): это часть
+    # Treking forma, её по-прежнему подтверждает любой участник группы.
+    if not ai_assistant.can_change(voter.get("id")):
+        if not (is_basket and ai_assistant.is_control_chat(origin_chat_id)):
+            telegram_answer_callback_query(
+                callback_id, "Bu amalni faqat mas'ul xodim tasdiqlaydi"
+            )
+            return
 
     if verdict == "no":
         db.ai_finish_pending_action(action_id, "rejected")
