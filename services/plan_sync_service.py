@@ -329,7 +329,10 @@ def suffix_for_block(block: dict) -> str:
 
 
 def batch_name_for_block(block: dict) -> str:
-    date = str(block.get("date") or "").strip()
+    # дата в блоке может быть подписана «14.08.2026-2» (вторая фура дня) —
+    # имя партии всегда каноничное dd.mm.yyyy, дубль различается суффиксом
+    key = date_key(block.get("date"))
+    date = f"{key[:2]}.{key[2:4]}.{key[4:]}" if len(key) == 8 else str(block.get("date") or "").strip()
     suffix = suffix_for_block(block)
     ordinal = int(block.get("ordinal") or 1)
     name = f"{date} {suffix}".strip()

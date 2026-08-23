@@ -81,6 +81,17 @@ def default_tab(tabs: list, today: date | None = None) -> str:
     return best or (tabs[-1] if tabs else "")
 
 
+_DATE_STR_RE = re.compile(r"^\s*\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4}")
+
+
+def _is_block_date(value) -> bool:
+    """Ячейка-дата блока: настоящая дата ИЛИ строка вида «14.08.2026»,
+    «14.08.2026-2» (так логисты подписывают ВТОРУЮ фуру того же дня)."""
+    if isinstance(value, (datetime, date)):
+        return True
+    return isinstance(value, str) and bool(_DATE_STR_RE.match(value))
+
+
 def _is_title(value) -> bool:
     if not isinstance(value, str):
         return False
@@ -119,7 +130,7 @@ def _parse_tab(grid: list) -> list:
     for i in range(n_rows - 2):
         row = grid[i]
         for j, cell in enumerate(row):
-            if not isinstance(cell, (datetime, date)):
+            if not _is_block_date(cell):
                 continue
             title_cell = grid[i + 1][j] if j < len(grid[i + 1]) else None
             if not _is_title(title_cell):
@@ -144,7 +155,10 @@ def _parse_tab(grid: list) -> list:
                 empty_streak = 0
                 if mark.upper() == "TOTAL":
                     break
-                if isinstance(mark_cell, (datetime, date)):
+                if isinstance(mark_cell, (datetime, date)) or (
+                    isinstance(mark_cell, str) and _DATE_STR_RE.match(mark_cell)
+                    and _is_title(grid[k + 1][j] if k + 1 < n_rows and j < len(grid[k + 1]) else None)
+                ):
                     # наткнулись на дату следующего блока в этой же колонке
                     break
                 def cval(off):
