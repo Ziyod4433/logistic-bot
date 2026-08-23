@@ -170,7 +170,13 @@ def _parse_tab(grid: list) -> list:
             if not items:
                 continue
             upper_title = title.upper()
-            kind = "kazakh" if "HORGOS TO" in upper_title else "china"
+            # казахская фура: «HORGOS TO TASHKENT…», «HORGOS - TASHKENT…»,
+            # «HORGOS YARGXOL» — всё, что начинается с HORGOS или содержит
+            # HORGOS не в виде «TO HORGOS» (китайская: «YIWU TO HORGOS…»)
+            compact = re.sub(r"\s+", " ", upper_title).strip()
+            kind = "china"
+            if compact.startswith("HORGOS") or ("HORGOS" in compact and "TO HORGOS" not in compact):
+                kind = "kazakh"
             warehouses = [w for w in ("YIWU", "ZHONGSHAN") if w in upper_title]
             if kind == "kazakh" and ("ZH" in upper_title and "ZHONGSHAN" not in warehouses):
                 warehouses.append("ZHONGSHAN")

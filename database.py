@@ -1305,6 +1305,11 @@ def init_db():
 
     batch_columns = [
         ("incident_note", "TEXT DEFAULT ''"),
+        # привязка партии к блоку плана погрузки (авто-синхронизация)
+        ("plan_tab", "TEXT DEFAULT ''"),
+        ("plan_title", "TEXT DEFAULT ''"),
+        ("plan_date", "TEXT DEFAULT ''"),
+        ("plan_kind", "TEXT DEFAULT ''"),
         ("status", "TEXT DEFAULT 'Xitoy'"),
         ("expected_date", "TEXT DEFAULT ''"),
         ("actual_date", "TEXT DEFAULT ''"),
@@ -1679,7 +1684,7 @@ def create_batch(
     conn = get_conn()
     try:
         status = _normalize_status(status)
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO batches(name, status, expected_date, actual_date, eta_to_toshkent, eta_destination, client_delivery_date, route_started_at, toshkent_arrived_at, status_updated_at) VALUES(?, ?, '', '', ?, ?, ?, ?, ?, datetime('now','localtime'))",
             (
                 (name or "").strip(),
@@ -1692,7 +1697,8 @@ def create_batch(
             ),
         )
         conn.commit()
-        return True
+        # id новой партии (truthy) — старые вызовы, ждавшие bool, не ломаются
+        return cur.lastrowid
     except sqlite3.IntegrityError:
         return False
     finally:
@@ -1768,6 +1774,40 @@ def update_batch(
         return True
     except sqlite3.IntegrityError:
         return False
+    finally:
+        conn.close()
+
+
+def update_bl_figures(bl_id, ctn, breakdown: str, cbm, kg) -> None:
+    """Обновить места/кубы/вес BL из плана погрузки (точечно, не трогая
+    остальные поля)."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE bl_codes
+            SET quantity_places = ?, quantity_places_breakdown = ?,
+                volume_cbm = ?, weight_kg = ?
+            WHERE id = ?
+            """,
+            (int(round(float(ctn or 0))), str(breakdown or ""), float(cbm or 0), float(kg or 0), int(bl_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_batch_plan_ref(batch_id, tab: str, title: str, plan_date: str, kind: str) -> None:
+    """Запомнить, из какого блока плана погрузки живёт эта партия —
+    чтобы ежедневная сверка не гадала, когда на одну дату два плана."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE batches SET plan_tab = ?, plan_title = ?, plan_date = ?, plan_kind = ? WHERE id = ?",
+            (str(tab or "")[:60], str(title or "")[:120], str(plan_date or "")[:20],
+             str(kind or "")[:16], int(batch_id)),
+        )
+        conn.commit()
     finally:
         conn.close()
 
@@ -3667,6 +3707,28 @@ def move_bl_to_batch(bl_id, target_batch_id):
             "UPDATE problems SET batch_id = ? WHERE bl_id = ?",
             (target_batch_id, bl_id),
         )
+        # Груз переезжает ЦЕЛИКОМ: исключение из рассылки и учёт последней
+        # отправки трекинга следуют за BL (иначе замолчанный клиент снова
+        # получит сообщения, а у партии-донора «последний трекинг» будет
+        # считать чужой груз).
+        try:
+            conn.execute(
+                "DELETE FROM batch_send_exclusions WHERE batch_id = ? AND bl_id = ?",
+                (target_batch_id, bl_id),
+            )
+            conn.execute(
+                "UPDATE batch_send_exclusions SET batch_id = ? WHERE bl_id = ? AND batch_id = ?",
+                (target_batch_id, bl_id, current_batch_id),
+            )
+        except sqlite3.Error:
+            pass
+        try:
+            conn.execute(
+                "UPDATE tracking_delivery_coverage SET batch_id = ? WHERE bl_id = ? AND batch_id = ?",
+                (target_batch_id, bl_id, current_batch_id),
+            )
+        except sqlite3.Error:
+            pass
 
         conn.commit()
         return {
@@ -6175,6 +6237,26 @@ def ai_get_pending_action(action_id):
     finally:
         conn.close()
     return dict(row) if row else None
+
+
+def ai_claim_pending_action(action_id, new_status) -> bool:
+    """Атомарно перевести заявку из pending в new_status (compare-and-set).
+    False — заявку уже забрал кто-то другой (человек нажал кнопку, пока
+    планировщик шёл к автоприменению, или наоборот)."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE ai_pending_actions
+            SET status = ?, decided_at = datetime('now','localtime')
+            WHERE id = ? AND status = 'pending'
+            """,
+            (str(new_status), int(action_id)),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
 
 
 def ai_finish_pending_action(action_id, status, result=""):

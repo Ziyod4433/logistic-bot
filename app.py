@@ -11,7 +11,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from urllib.parse import parse_qs, urlparse
 
@@ -2824,6 +2824,9 @@ def execute_ai_action(action: dict):
             msg += f" ⚠️ Не удалось удалить: {', '.join(remove_failed[:5])}."
         return not remove_failed, msg
 
+    if kind == "apply_kazakh_plan":
+        return _apply_kazakh_plan(params)
+
     if kind == "send_tracking_batch":
         return _execute_tracking_broadcast(int(params.get("batch_id") or 0))
 
@@ -2932,18 +2935,27 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
         return
     is_basket = action.get("kind") == "send_tracking_multi"
 
-    # Права на подтверждение: владелец и операторы — везде. ИСКЛЮЧЕНИЕ —
-    # карточка TASDIQLASH мини-формы (send_tracking_multi): это часть
-    # Treking forma, её по-прежнему подтверждает любой участник группы.
+    # Права на подтверждение: владелец и операторы — везде. ИСКЛЮЧЕНИЯ:
+    # карточка TASDIQLASH мини-формы (send_tracking_multi) — часть
+    # Treking forma, её по-прежнему подтверждает любой участник группы;
+    # перенос казахского плана — подтверждает и Hoji dodam (его и
+    # спрашивают).
     if not ai_assistant.can_change(voter.get("id")):
-        if not (is_basket and ai_assistant.is_control_chat(origin_chat_id)):
+        allowed = is_basket and ai_assistant.is_control_chat(origin_chat_id)
+        if (action.get("kind") == "apply_kazakh_plan"
+                and str(voter.get("id") or "") == HOJI_DODAM_TG_ID):
+            allowed = True
+        if not allowed:
             telegram_answer_callback_query(
                 callback_id, "Bu amalni faqat mas'ul xodim tasdiqlaydi"
             )
             return
 
     if verdict == "no":
-        db.ai_finish_pending_action(action_id, "rejected")
+        # compare-and-set: планировщик мог забрать заявку на автоприменение
+        if not db.ai_claim_pending_action(action_id, "rejected"):
+            telegram_answer_callback_query(callback_id, "Уже обработано")
+            return
         telegram_answer_callback_query(callback_id, "Bekor qilindi" if is_basket else "Отклонено")
         if is_basket:
             # сводная карточка TASDIQLASH просто исчезает
@@ -2960,9 +2972,12 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
         telegram_answer_callback_query(callback_id, "Неизвестное действие")
         return
 
-    # Mark as approved synchronously so a double-click can't run it twice,
-    # then execute on a worker thread (tracking sends can take minutes).
-    db.ai_finish_pending_action(action_id, "approved")
+    # Mark as approved ATOMICALLY (compare-and-set) so a double-click or a
+    # concurrent scheduler auto-apply can't run it twice, then execute on a
+    # worker thread (tracking sends can take minutes).
+    if not db.ai_claim_pending_action(action_id, "approved"):
+        telegram_answer_callback_query(callback_id, "Уже обработано")
+        return
     telegram_answer_callback_query(callback_id, "✅ Yuborilmoqda..." if is_basket else "✅ Выполняю...")
     # после второго одобрения сводная карточка исчезает
     if is_basket and origin_chat and card_message_id:
@@ -3147,6 +3162,13 @@ def _packing_reminder_scheduler():
                 sent, info = send_tracking_digest()
                 if sent:
                     app.logger.info("Tracking digest sent: %s", info)
+            # 06:30 — утренняя сверка партий с планами погрузки
+            if (now.hour, now.minute) >= (PLAN_SYNC_HOUR, PLAN_SYNC_MINUTE):
+                done, info = run_morning_plan_sync()
+                if done:
+                    app.logger.info("Morning plan sync: %s", info)
+            # Хоргос: вопросы о переносе казахского плана + автоприменение
+            check_kazakh_plan_asks()
             # авто-жизненный цикл партий из «Fura statuslari»
             synced = sync_batches_from_fura_statuses()
             if synced:
@@ -4119,13 +4141,48 @@ def sync_batches_from_fura_statuses():
     if not data.get("ok"):
         return 0
     records = data["records"]
+    records_all = data.get("records_all") or {}
     changed = 0
     arrived_set = set(db.ARRIVED_STATUSES)
+    from services import plan_sync_service as pss
     for batch in db.get_batches():
-        digits = re.sub(r"\D", "", str(batch.get("name") or ""))
+        name = str(batch.get("name") or "")
+        digits = pss.date_key(name)  # «14.08.2026 YIWU 2» → 14082026
         if len(digits) != 8:
             continue
-        rec = records.get(digits)
+        # Две партии одной даты («14.08.2026 YIWU» / «14.08.2026 ZH») —
+        # строку рейса выбираем по суффиксу склада, а не по одним цифрам,
+        # иначе одна строка закрыла бы обе партии. Повторные строки с тем
+        # же суффиксом схлопываем (последняя побеждает, как и раньше).
+        raw_candidates = records_all.get(digits) or ([records[digits]] if digits in records else [])
+        if not raw_candidates:
+            continue
+        by_suffix: dict = {}
+        for c in raw_candidates:
+            by_suffix[c.get("suffix") or ""] = c
+        candidates = list(by_suffix.values())
+        batch_suffix = fura_status_service.warehouse_suffix(name)
+        rec = None
+        if len(candidates) == 1:
+            only = candidates[0]
+            if not (only.get("suffix") and batch_suffix and only["suffix"] != batch_suffix):
+                rec = only
+        else:
+            if batch_suffix and batch_suffix in by_suffix:
+                rec = by_suffix[batch_suffix]
+            elif batch_suffix and "" in by_suffix:
+                # «BL14082026» + «BL14082026 ZH» → строка без суффикса
+                # принадлежит второй партии (YIWU), иначе она зависла бы навсегда
+                rec = by_suffix[""]
+            elif not batch_suffix:
+                # партия без суффикса (ручная/легаси «14.08.2026»): строка без
+                # суффикса — её; иначе, если партию не ведёт автоматика по
+                # планам, — прежнее поведение «последняя строка побеждает»
+                if "" in by_suffix:
+                    rec = by_suffix[""]
+                elif not (batch.get("plan_kind") or "").strip():
+                    rec = raw_candidates[-1]
+            # иначе неоднозначно — не трогаем
         if not rec:
             continue
         was_active = not (batch.get("client_delivery_date") or "").strip()
@@ -4183,6 +4240,800 @@ def sync_batches_from_fura_statuses():
                     conn.close()
                 changed += 1
     return changed
+
+
+# ═══════════════════════════════════════════════════════════════
+# АВТО-ПАРТИИ ИЗ ПЛАНОВ ПОГРУЗКИ (шитс SKLAD, утверждено 21.08.2026)
+# ═══════════════════════════════════════════════════════════════
+# 06:30 — утренняя сверка: авто-открытие партий по новым китайским
+# планам, добавление/обновление BL (без удалений), отчёт в управляющую
+# группу только при изменениях. Статус «Horgos (Qozoq)» — бот просит
+# разрешения перенести казахский план (отмечая Hoji dodam) и, если
+# ответа нет час, применяет сам. Дедубликатор: при переносе груз
+# ПЕРЕЕЗЖАЕТ между партиями (файлы/группы сохраняются), раздельные
+# грузы одного клиента в двух фурах не трогаются.
+
+HOJI_DODAM_TG_ID = os.getenv("HOJI_DODAM_TG_ID", "1514716826").strip()
+HOJI_DODAM_NAME = os.getenv("HOJI_DODAM_NAME", "Hoji dodam").strip() or "Hoji dodam"
+PLAN_SYNC_HOUR = int(os.getenv("PLAN_SYNC_HOUR", "6") or 6)
+PLAN_SYNC_MINUTE = int(os.getenv("PLAN_SYNC_MINUTE", "30") or 30)
+PLAN_KAZAKH_AUTO_MINUTES = int(os.getenv("PLAN_KAZAKH_AUTO_MINUTES", "60") or 60)
+# Партии, перешедшие в Хоргос ДО включения автоматики, не трогаем задним
+# числом (их состав логисты уже привели вручную).
+PLAN_ASK_SINCE = (os.getenv("PLAN_ASK_SINCE", "2026-08-22 00:00:00") or "").strip()
+_PLAN_SYNC_SETTING = "plan_sync_last_date"
+_PLAN_SYNC_ATTEMPT_SETTING = "plan_sync_last_attempt"
+_PLAN_SYNC_RETRY_MINUTES = 30     # сбой скачивания/пустой шитс — не долбить каждую минуту
+_PLAN_ASK_THROTTLE_SECONDS = 300
+_PLAN_ASK_RETRY_MINUTES = 30      # после сбоя применения/доставки — спросить заново
+_TG_TEXT_LIMIT = 3500
+_plan_ask_last_check = 0.0
+
+
+def _send_long_message(chat_id, text: str) -> None:
+    """Длинные отчёты — несколькими сообщениями (лимит Telegram 4096)."""
+    lines = (text or "").split("\n")
+    chunk: list[str] = []
+    size = 0
+    chunks: list[str] = []
+    for line in lines:
+        extra = len(line) + 1
+        if chunk and size + extra > _TG_TEXT_LIMIT:
+            chunks.append("\n".join(chunk))
+            chunk, size = [], 0
+        chunk.append(line)
+        size += extra
+    if chunk:
+        chunks.append("\n".join(chunk))
+    for part in chunks:
+        try:
+            telegram_send_message(chat_id, part)
+        except Exception:
+            app.logger.exception("Long message part delivery failed")
+
+
+def _plan_staff_mentions() -> str:
+    """Кого отмечать, когда нужна помощь людей (BL без группы и т.п.)."""
+    from services import ai_assistant
+    people = []
+    for uid in sorted(ai_assistant.admin_ids()):
+        people.append((uid, "xo'jayin"))
+    people.append((HOJI_DODAM_TG_ID, HOJI_DODAM_NAME))
+    people.append((PACKING_RESPONSIBLE_TG_ID, PACKING_RESPONSIBLE_NAME))
+    seen = set()
+    parts = []
+    for uid, label in people:
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        parts.append(f'<a href="tg://user?id={uid}">{html.escape(label)}</a>')
+    return " ".join(parts)
+
+
+def _plan_batch_codes(batch_id) -> set:
+    from services import plan_sync_service as pss
+    return {pss.normalize_mark(bl.get("code")) for bl in db.get_bl_by_batch(batch_id)}
+
+
+def _plan_add_bl(batch_id, entry, chat_lookup, known_chat_ids, unlinked: list) -> bool:
+    """Добавить BL из плана с авто-привязкой группы (цепочка как при
+    ручном импорте: название группы → постоянная история связок)."""
+    code = entry["code"]
+    target_chat = _find_chat_for_bl_code(code, chat_lookup)
+    if not target_chat:
+        hist = db.lookup_bl_link_history(code)
+        if hist and (not known_chat_ids or hist["chat_id"] in known_chat_ids):
+            target_chat = hist["chat_id"]
+    created = db.add_bl(
+        batch_id=batch_id,
+        code=code,
+        client_name="",
+        chat_id=target_chat,
+        cargo_type="",
+        weight_kg=entry.get("kg", 0),
+        volume_cbm=entry.get("cbm", 0),
+        quantity_places=entry.get("ctn", 0),
+        quantity_places_breakdown=entry.get("breakdown", ""),
+        cargo_description="",
+        message_language=getattr(db, "DEFAULT_MESSAGE_LANGUAGE", "uz_latn"),
+    )
+    if created and not target_chat:
+        unlinked.append(code)
+    return bool(created)
+
+
+def _safe_move_bl(bl_id, target_batch_id) -> bool:
+    """Перенос BL между партиями (db.move_bl_to_batch бросает ValueError
+    при дубле кода в целевой партии и т.п. — для синхронизации это
+    «не переехал», а не авария)."""
+    try:
+        db.move_bl_to_batch(bl_id, target_batch_id)
+        return True
+    except ValueError as exc:
+        app.logger.warning("Plan sync: move bl_id=%s -> batch %s refused: %s", bl_id, target_batch_id, exc)
+        return False
+    except Exception:
+        app.logger.exception("Plan sync: move bl_id=%s -> batch %s failed", bl_id, target_batch_id)
+        return False
+
+
+def _bl_problem_total(bl_id) -> int:
+    """Все проблемы BL, включая закрытые (история — тоже ценность)."""
+    conn = db.get_conn()
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n FROM problems WHERE bl_id = ?", (int(bl_id),)).fetchone()
+        return int(row["n"] if row else 0)
+    finally:
+        conn.close()
+
+
+def _bl_is_bare(bl: dict) -> bool:
+    """BL без файлов, без истории проблем и без объединённых кодов — такой
+    дубль можно убрать без потерь."""
+    if (bl.get("file_count") or 0) or (bl.get("problem_count") or 0):
+        return False
+    if str(bl.get("merged_codes") or "").strip():
+        return False
+    try:
+        return _bl_problem_total(bl["id"]) == 0
+    except Exception:
+        return False
+
+
+def _carry_chat(from_bl: dict, to_bl: dict) -> None:
+    """Привязка к группе и введённые вручную поля (клиент, описание, язык,
+    ответственные) не должны пропасть при слиянии дублей: всё непустое
+    с исчезающей строки переносится на выжившую, если у той пусто."""
+    if (from_bl.get("chat_id") or "").strip() and not (to_bl.get("chat_id") or "").strip():
+        try:
+            db.set_bl_chat_id(to_bl["id"], from_bl["chat_id"])
+        except Exception:
+            app.logger.exception("merge: carry chat to bl_id=%s failed", to_bl.get("id"))
+    sets, vals = [], []
+    for col in ("client_name", "cargo_description", "cargo_type", "moderator_tg_id", "sales_manager_tg_id"):
+        value = str(from_bl.get(col) or "").strip()
+        if value and not str(to_bl.get(col) or "").strip():
+            sets.append(f"{col} = ?")
+            vals.append(value)
+    default_lang = getattr(db, "DEFAULT_MESSAGE_LANGUAGE", "uz_latn")
+    lang_from = str(from_bl.get("message_language") or "").strip()
+    lang_to = str(to_bl.get("message_language") or "").strip()
+    if lang_from and lang_from != default_lang and (not lang_to or lang_to == default_lang):
+        sets.append("message_language = ?")
+        vals.append(lang_from)
+    if not sets:
+        return
+    conn = db.get_conn()
+    try:
+        conn.execute(f"UPDATE bl_codes SET {', '.join(sets)} WHERE id = ?", (*vals, int(to_bl["id"])))
+        conn.commit()
+    except Exception:
+        app.logger.exception("merge: carry fields to bl_id=%s failed", to_bl.get("id"))
+    finally:
+        conn.close()
+
+
+def _merge_duplicate_into(target_bl: dict, donor_bl: dict, target_batch_id) -> str:
+    """Один груз оказался в двух партиях (обычно: мы добавили копию, пока
+    у партии-донора отставал статус). Сводим к ОДНОЙ строке, не теряя
+    ни файлов, ни привязки к группе: голую копию убираем, строку с
+    файлами оставляем. Возвращает 'moved' | 'dropped' | 'kept'."""
+    target_bare, donor_bare = _bl_is_bare(target_bl), _bl_is_bare(donor_bl)
+    if target_bare and not donor_bare:
+        # наша копия пустая, у донора файлы — переезжает строка донора
+        _carry_chat(target_bl, donor_bl)
+        snapshot = dict(target_bl)
+        try:
+            db.delete_bl(target_bl["id"])
+        except Exception:
+            app.logger.exception("merge: delete bare target bl_id=%s failed", target_bl.get("id"))
+            return "kept"
+        if _safe_move_bl(donor_bl["id"], target_batch_id):
+            return "moved"
+        # переезд не удался — вернуть нашу строку, чтобы партия не осталась без груза
+        try:
+            db.add_bl(
+                batch_id=target_batch_id, code=snapshot.get("code"),
+                client_name=snapshot.get("client_name") or "", chat_id=snapshot.get("chat_id") or "",
+                cargo_type=snapshot.get("cargo_type") or "", weight_kg=snapshot.get("weight_kg") or 0,
+                volume_cbm=snapshot.get("volume_cbm") or 0, quantity_places=snapshot.get("quantity_places") or 0,
+                quantity_places_breakdown=snapshot.get("quantity_places_breakdown") or "",
+                cargo_description=snapshot.get("cargo_description") or "",
+                message_language=snapshot.get("message_language") or getattr(db, "DEFAULT_MESSAGE_LANGUAGE", "uz_latn"),
+                moderator_tg_id=snapshot.get("moderator_tg_id") or "",
+                sales_manager_tg_id=snapshot.get("sales_manager_tg_id") or "",
+            )
+            if snapshot.get("send_excluded"):
+                restored = [x for x in db.get_bl_by_batch(target_batch_id) if x.get("code") == snapshot.get("code")]
+                if restored:
+                    try:
+                        db.set_batch_send_exclusion(restored[0]["id"], True)
+                    except Exception:
+                        pass
+        except Exception:
+            app.logger.exception("merge: restore target bl %s failed", snapshot.get("code"))
+        return "kept"
+    if donor_bare:
+        # у донора ничего ценного — его копия лишняя (группу забираем себе)
+        _carry_chat(donor_bl, target_bl)
+        try:
+            db.delete_bl(donor_bl["id"])
+            return "dropped"
+        except Exception:
+            app.logger.exception("merge: delete bare donor bl_id=%s failed", donor_bl.get("id"))
+    return "kept"  # у обеих строк есть файлы/история — пусть решит человек
+
+
+def run_morning_plan_sync(force: bool = False):
+    """Утренняя сверка партий с планами погрузки (06:30, раз в день)."""
+    from services import ai_assistant, plan_sync_service as pss
+
+    now = datetime.now(db.TASHKENT_TZ)
+    today = now.strftime("%Y-%m-%d")
+    if not force:
+        if (now.hour, now.minute) < (PLAN_SYNC_HOUR, PLAN_SYNC_MINUTE):
+            return False, "too early"
+        if db.get_setting(_PLAN_SYNC_SETTING) == today:
+            return False, "already done today"
+        last_attempt = _parse_local_ts(db.get_setting(_PLAN_SYNC_ATTEMPT_SETTING))
+        if last_attempt and (now.replace(tzinfo=None) - last_attempt) < timedelta(minutes=_PLAN_SYNC_RETRY_MINUTES):
+            return False, "retry later"
+    db.set_setting(_PLAN_SYNC_ATTEMPT_SETTING, now.strftime("%Y-%m-%d %H:%M:%S"))
+
+    try:
+        blocks = pss.all_blocks(force=True)
+    except Exception as exc:
+        # день НЕ сжигаем — повтор через _PLAN_SYNC_RETRY_MINUTES
+        app.logger.exception("Plan sync: sheet download failed")
+        return False, f"sheet error: {exc}"
+    if not blocks:
+        return False, "no plan blocks"
+    db.set_setting(_PLAN_SYNC_SETTING, today)
+
+    report: list[str] = []
+    unlinked_all: list[str] = []
+    chat_lookup = _build_chat_code_lookup()
+    known_chat_ids = _known_chat_id_set()
+    batches_all = db.get_batches()
+    active = [b for b in batches_all if not (b.get("client_delivery_date") or "").strip()]
+    codes_cache: dict[int, set] = {}
+
+    def codes_of(batch) -> set:
+        bid = batch["id"]
+        if bid not in codes_cache:
+            codes_cache[bid] = _plan_batch_codes(bid)
+        return codes_cache[bid]
+
+    # ── 1. авто-открытие партий по новым китайским планам ──
+    # владельца ищем среди ВСЕХ партий (и закрытых тоже): план доставленной
+    # партии не должен открыть «зомби»-дубликат
+    for block in pss.fresh_china_blocks(blocks, now.date()):
+        try:
+            owner = pss.find_batch_for_china_block(block, batches_all, codes_of, blocks=blocks)
+            if owner is not None:
+                is_active = not (owner.get("client_delivery_date") or "").strip()
+                if is_active and pss.stage_for_status(owner.get("status")) == "china":
+                    db.set_batch_plan_ref(owner["id"], block["tab"], pss.ref_title(block), block["date"], "china")
+                    owner["plan_tab"], owner["plan_title"] = block["tab"], pss.ref_title(block)
+                    owner["plan_date"], owner["plan_kind"] = block["date"], "china"
+                continue
+            name = pss.batch_name_for_block(block)
+            # второй перевозчик с того же склада в тот же день → «… YIWU 2»
+            taken_names = {str(b.get("name") or "").strip().upper() for b in batches_all}
+            if name.upper() in taken_names:
+                n = 2
+                while f"{name} {n}".upper() in taken_names:
+                    n += 1
+                name = f"{name} {n}"
+            batch_id = db.create_batch(name, status="Xitoy")
+            if not batch_id:
+                continue
+            db.set_batch_plan_ref(batch_id, block["tab"], pss.ref_title(block), block["date"], "china")
+            plan = pss.aggregate_block(block)
+            added, unlinked = 0, []
+            for entry in plan.values():
+                if _plan_add_bl(batch_id, entry, chat_lookup, known_chat_ids, unlinked):
+                    added += 1
+            codes_cache.pop(batch_id, None)
+            report.append(
+                f"🚚 Открыта партия <b>{html.escape(name)}</b> по плану "
+                f"«{html.escape(block['title'])}»: {added} BL, "
+                f"групп привязано {added - len(unlinked)}."
+            )
+            unlinked_all.extend(unlinked)
+            fresh = db.get_batch(batch_id)
+            if fresh:
+                active.append(fresh)
+                batches_all.append(fresh)
+        except Exception:
+            app.logger.exception("Plan sync: auto-open failed for block %s", block.get("title"))
+
+    # ── 2. сверка состава существующих партий со «своим» планом ──
+    for batch in list(active):
+        try:
+            stage = pss.stage_for_status(batch.get("status"))
+            if stage == "kazakh":
+                if (batch.get("plan_kind") or "") != "kazakh":
+                    continue  # казахский план ещё не применён — этим занимается ask-флоу
+                # применённый казахский план: ТОЛЬКО через дедубликатор (переезды,
+                # а не новые дубли одного груза в двух партиях)
+                ok, msg, changed = _apply_kazakh_plan_impl({"batch_id": batch["id"]}, blocks=blocks)
+                if ok and changed:
+                    report.append(msg)
+                elif not ok:
+                    report.append(f"⚠️ <b>{html.escape(batch['name'])}</b>: {msg}")
+                codes_cache.pop(batch["id"], None)
+                continue
+            block, _why = pss.find_block_for_batch(batch, blocks, codes_of(batch), batches=batches_all)
+            if block is None:
+                continue
+            db.set_batch_plan_ref(batch["id"], block["tab"], pss.ref_title(block), block["date"], block["kind"])
+            plan = pss.aggregate_block(block)
+            diff = pss.diff_against_plan(db.get_bl_by_batch(batch["id"]), plan)
+            # грузы, которые дедубликатор уже увёз в сестринскую партию той же
+            # даты (перегрузка в Хоргосе прошла) — обратно не добавляем
+            moved_to_sibling: set = set()
+            for sibling in batches_all:   # и уже закрытые сестры тоже
+                if sibling["id"] == batch["id"] or (sibling.get("plan_kind") or "") != "kazakh":
+                    continue
+                if pss.date_key(sibling.get("name")) != pss.date_key(batch.get("name")):
+                    continue
+                moved_to_sibling |= codes_of(sibling)
+            added, unlinked = [], []
+            for entry in diff["add"]:
+                if pss.normalize_mark(entry["code"]) in moved_to_sibling:
+                    continue
+                if _plan_add_bl(batch["id"], entry, chat_lookup, known_chat_ids, unlinked):
+                    added.append(entry["code"])
+            for upd in diff["update"]:
+                entry = upd["plan"]
+                db.update_bl_figures(upd["bl"]["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+            codes_cache.pop(batch["id"], None)
+            if added or diff["update"]:
+                parts = []
+                if added:
+                    parts.append("добавлены: " + ", ".join(html.escape(c) for c in added[:12]))
+                if diff["update"]:
+                    parts.append(f"обновлены цифры: {len(diff['update'])} BL")
+                report.append(f"📝 <b>{html.escape(batch['name'])}</b> — " + "; ".join(parts) + ".")
+            unlinked_all.extend(unlinked)
+        except Exception:
+            app.logger.exception("Plan sync: batch %s sync failed", batch.get("name"))
+
+    # ── 3. отчёт (только при изменениях) ──
+    if unlinked_all:
+        codes = ", ".join(html.escape(c) for c in sorted(set(unlinked_all))[:20])
+        report.append(
+            f"⚠️ {_plan_staff_mentions()} — bu BL'larga Telegram guruh topilmadi: "
+            f"<b>{codes}</b>. Bot guruhga qo'shilmagan bo'lishi mumkin — "
+            "guruhga qo'shing yoki panelda qo'lda ulang."
+        )
+    if report:
+        _send_long_message(
+            ai_assistant.control_group_id(),
+            "🗂 <b>Планы погрузки — утренняя сверка</b>\n\n" + "\n".join(report),
+        )
+    return True, f"{len(report)} changes"
+
+
+def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
+    """Привести партию к казахскому плану (перегрузка в Хоргосе).
+    Возвращает (ok, сообщение, были_ли_изменения).
+
+    Дедубликатор: груз из плана, числящийся в ДРУГОЙ партии, чья фура
+    тоже в Хоргосе (казахская стадия, или та же дата с отставшим
+    статусом), ПЕРЕЕЗЖАЕТ сюда (файлы и привязка группы сохраняются) —
+    кроме раздельного груза (код есть и в СОБСТВЕННОМ казахском плане той
+    партии). Уже появившиеся дубли сводятся к одной строке. «Лишние» BL не
+    удаляются: если их казахский план у другой партии уже применён —
+    переезжают туда, иначе остаются (застряли в Хоргосе). Идемпотентно:
+    повторный запуск без изменений в шитсе ничего не делает."""
+    from services import plan_sync_service as pss
+
+    batch = db.get_batch(int(params.get("batch_id") or 0))
+    if not batch:
+        return False, "Партия не найдена", False
+    if blocks is None:
+        try:
+            blocks = pss.all_blocks(force=True)
+        except Exception:
+            app.logger.exception("Kazakh apply: sheet download failed")
+            return False, "Шитс планов недоступен — попробую позже", False
+
+    batches = db.get_batches()
+    my_codes = _plan_batch_codes(batch["id"])
+    _codes_cache: dict = {batch["id"]: my_codes}
+
+    def codes_of(b) -> set:
+        if b["id"] not in _codes_cache:
+            _codes_cache[b["id"]] = _plan_batch_codes(b["id"])
+        return _codes_cache[b["id"]]
+
+    block = None
+    is_kz_ref = (batch.get("plan_kind") or "") == "kazakh"
+    ref_title = params.get("plan_title") or (is_kz_ref and batch.get("plan_title")) or ""
+    ref_date = params.get("plan_date") or (is_kz_ref and batch.get("plan_date")) or ""
+    if ref_title:
+        # одноимённых блоков на дату может быть несколько, и их порядковые
+        # номера могут поехать при правках листа — выбираем по пересечению
+        # состава внутри группы, а не по точному «#N»
+        pseudo = {"plan_title": ref_title, "plan_date": ref_date, "plan_tab": params.get("tab") or batch.get("plan_tab")}
+        block = pss.resolve_ref_block(pseudo, blocks, "kazakh", my_codes)
+    if block is None:
+        block, _why = pss.find_block_for_batch(batch, blocks, my_codes, batches=batches)
+        if block is None or block.get("kind") != "kazakh":
+            return False, f"Казахский план для «{html.escape(batch['name'])}» не найден в шитсе", False
+
+    # один казахский блок — одна партия: уже применён к другой → не трогаем.
+    # Чужая привязка тоже разрешается по пересечению (а не по «#N»)
+    owners = []
+    for other in batches:
+        if other["id"] == batch["id"] or (other.get("plan_kind") or "") != "kazakh":
+            continue
+        if not pss.block_same_group_as_ref(block, other.get("plan_title"), other.get("plan_date")):
+            continue
+        other_block = pss.resolve_ref_block(other, blocks, "kazakh", codes_of(other))
+        if other_block is block:
+            owners.append(other)
+    if owners:
+        return False, (
+            f"План «{html.escape(block['title'])}» ({html.escape(block['date'])}) уже применён к партии "
+            f"«{html.escape(owners[0]['name'])}» — к «{html.escape(batch['name'])}» не применяю."
+        ), False
+
+    plan = pss.aggregate_block(block)
+    chat_lookup = _build_chat_code_lookup()
+    known_chat_ids = _known_chat_id_set()
+    others = [
+        b for b in batches
+        if b["id"] != batch["id"] and not (b.get("client_delivery_date") or "").strip()
+    ]
+    donor_index: dict[str, list] = {}
+    for other in others:
+        if not pss.donor_eligible(other, batch, block=block):
+            continue
+        for bl in db.get_bl_by_batch(other["id"]):
+            donor_index.setdefault(pss.normalize_mark(bl.get("code")), []).append((bl, other))
+
+    have = {pss.normalize_mark(bl.get("code")): bl for bl in db.get_bl_by_batch(batch["id"])}
+    added, moved_in, updated, unlinked, kept_split, merged, kept_dups = [], [], [], [], [], [], []
+
+    for key, entry in plan.items():
+        bl = have.get(key)
+        if bl is not None:
+            changes_needed = (
+                abs(float(bl.get("quantity_places") or 0) - entry["ctn"]) > pss.CTN_EPS
+                or abs(float(bl.get("volume_cbm") or 0) - entry["cbm"]) > pss.CBM_EPS
+                or abs(float(bl.get("weight_kg") or 0) - entry["kg"]) > pss.KG_EPS
+            )
+            if changes_needed:
+                db.update_bl_figures(bl["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+                updated.append(entry["code"])
+            # дубль того же груза у донора (отставший статус и т.п.) → свести
+            for donor_bl, donor_batch in donor_index.get(key, []):
+                if pss.donor_owns_code(donor_batch, key, blocks, batches, block, codes_of=codes_of):
+                    continue  # раздельный груз — законно в обеих
+                outcome = _merge_duplicate_into(bl, donor_bl, batch["id"])
+                if outcome in ("moved", "dropped"):
+                    merged.append(f"{html.escape(entry['code'])} (дубль в «{html.escape(donor_batch['name'])}»)")
+                    if outcome == "moved":
+                        db.update_bl_figures(donor_bl["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+                    break
+                kept_dups.append(f"{html.escape(entry['code'])} (и в «{html.escape(donor_batch['name'])}»)")
+            continue
+        moved = False
+        for donor_bl, donor_batch in donor_index.get(key, []):
+            if pss.donor_owns_code(donor_batch, key, blocks, batches, block, codes_of=codes_of):
+                kept_split.append(entry["code"])  # раздельный груз: часть той фурой, часть этой
+                continue
+            if _safe_move_bl(donor_bl["id"], batch["id"]):
+                db.update_bl_figures(donor_bl["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+                moved_in.append(f"{html.escape(entry['code'])} (из «{html.escape(donor_batch['name'])}»)")
+                moved = True
+                break
+        if moved:
+            continue
+        if _plan_add_bl(batch["id"], entry, chat_lookup, known_chat_ids, unlinked):
+            added.append(entry["code"])
+
+    moved_away, stuck = [], []
+    for key, bl in list(have.items()):
+        if key in plan:
+            continue
+        # «свои» казахские планы — только этой перегрузки (от даты нашего
+        # блока до +3 недель) и только у НЕ прибывших партий: коды клиентов
+        # повторяются из рейса в рейс, прошлый рейс — другой груз
+        target = None
+        for b2 in pss.kazakh_blocks_containing(blocks, key, exclude_block=block, window_from=block):
+            applied = [
+                b for b in pss.block_attached_to(b2, others, kind="kazakh", blocks=blocks, codes_of=codes_of)
+                if not pss.is_arrived(b)
+            ]
+            if applied:
+                target = applied[0]
+                break
+        if target:
+            target_have = {pss.normalize_mark(x.get("code")): x for x in db.get_bl_by_batch(target["id"])}
+            if key in target_have:
+                # цель уже держит этот груз — у нас лишний дубль
+                outcome = _merge_duplicate_into(target_have[key], bl, target["id"])
+                if outcome in ("moved", "dropped"):
+                    moved_away.append(f"{html.escape(str(bl.get('code')))} (→ «{html.escape(target['name'])}», дубль сведён)")
+                    continue
+                kept_dups.append(f"{html.escape(str(bl.get('code')))} (и в «{html.escape(target['name'])}»)")
+                continue
+            elif _safe_move_bl(bl["id"], target["id"]):
+                moved_away.append(f"{html.escape(str(bl.get('code')))} (→ «{html.escape(target['name'])}»)")
+                continue
+        stuck.append(html.escape(str(bl.get("code"))))
+
+    db.set_batch_plan_ref(batch["id"], block["tab"], pss.ref_title(block), block["date"], "kazakh")
+
+    parts = [
+        f"🇰🇿 «{html.escape(batch['name'])}»: применён казахский план "
+        f"«{html.escape(block['title'])}» ({html.escape(block['date'])})."
+    ]
+    if moved_in:
+        parts.append("Переехали сюда: " + ", ".join(moved_in[:12]) + ".")
+    if added:
+        parts.append("Добавлены: " + ", ".join(html.escape(c) for c in added[:12]) + ".")
+    if updated:
+        parts.append(f"Обновлены цифры: {len(updated)} BL.")
+    if merged:
+        parts.append("Сведены дубли: " + ", ".join(merged[:12]) + ".")
+    if kept_split:
+        parts.append("Раздельный груз (обе партии): " + ", ".join(html.escape(c) for c in sorted(set(kept_split))[:8]) + ".")
+    if moved_away:
+        parts.append("Уехали в свои партии: " + ", ".join(moved_away[:12]) + ".")
+    if stuck:
+        parts.append("⚓ Остались в Хоргосе (нет в применённых казахских планах): " + ", ".join(stuck[:12]) + ".")
+    if kept_dups:
+        parts.append(
+            "⚠️ Один груз в двух партиях, у обеих строк есть файлы/история — решите вручную: "
+            + ", ".join(sorted(set(kept_dups))[:8]) + "."
+        )
+    if unlinked:
+        parts.append("⚠️ Без Telegram-группы: " + ", ".join(html.escape(c) for c in unlinked[:12]) + ".")
+    changed = bool(moved_in or added or updated or moved_away or merged or kept_dups)
+    return True, " ".join(parts), changed
+
+
+def _apply_kazakh_plan(params: dict):
+    ok, msg, _changed = _apply_kazakh_plan_impl(params)
+    return ok, msg
+
+
+def _parse_local_ts(value: str):
+    try:
+        return datetime.strptime(str(value or "")[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _kazakh_ask_eligible(batch: dict, since_ts, pss) -> bool:
+    """Партия — кандидат на вопрос о казахском плане: активна, на казахской
+    стадии, ещё не применяла план, не прибыла, и её ведёт автоматика:
+    либо партию сопровождал китайский план (plan_kind=china), либо она
+    создана уже после включения автоматики. Старые партии, доехавшие до
+    Хоргоса до этого, не трогаем задним числом — даже когда их статус
+    двигается дальше."""
+    if (batch.get("client_delivery_date") or "").strip():
+        return False
+    if pss.stage_for_status(batch.get("status")) != "kazakh":
+        return False
+    if (batch.get("plan_kind") or "") == "kazakh":
+        return False
+    if pss.is_arrived(batch):
+        return False
+    if (batch.get("plan_kind") or "") == "china":
+        return True
+    created = str(batch.get("created_at") or "")[:19]
+    since = PLAN_ASK_SINCE[:19]
+    if since and created and created < since:
+        return False
+    return True
+
+
+def _last_kazakh_ask(ask_key: str):
+    """Последняя заявка по партии + флаг «сбой достаточно давно, можно
+    спросить заново» — сравнение времени делаем в SQL, той же «localtime»,
+    которой и записаны отметки (часовой пояс сервера не важен)."""
+    conn = db.get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT status, params_json,
+                   CASE WHEN COALESCE(decided_at, created_at) <= datetime('now','localtime', ?)
+                        THEN 1 ELSE 0 END AS retry_due
+            FROM ai_pending_actions
+            WHERE tg_user_id = ? AND kind = 'apply_kazakh_plan'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (f"-{_PLAN_ASK_RETRY_MINUTES} minutes", ask_key),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def _ask_allowed_after(last: dict, block_key: tuple, pss, batch: dict | None = None) -> bool:
+    """Можно ли задать новый вопрос, если по партии уже была заявка."""
+    try:
+        last_params = json.loads(last.get("params_json") or "{}")
+    except Exception:
+        last_params = {}
+    last_key = (str(last_params.get("plan_title") or "").upper(), pss.date_key(last_params.get("plan_date")))
+    status = last.get("status")
+    if status == "failed":
+        return bool(last.get("retry_due"))       # сбой — повтор через _PLAN_ASK_RETRY_MINUTES
+    if status == "rejected":
+        return last_key != block_key             # отказали по этому плану — не настаиваем
+    if status == "executed" and batch is not None and (batch.get("plan_kind") or "") != "kazakh":
+        # план когда-то применяли, но партию откатили в Китай и привязка
+        # переписалась на китайскую — при новом приезде в Хоргос спросим снова
+        return True
+    return False                                 # pending / approved / executed
+
+
+def check_kazakh_plan_asks():
+    """Партии, дошедшие до Хоргоса без применённого казахского плана —
+    спросить разрешения (отмечая Hoji dodam); просроченные вопросы —
+    применить автоматически. Тик ~раз в 5 минут."""
+    global _plan_ask_last_check
+    import time as _time
+    now_mono = _time.monotonic()
+    if now_mono - _plan_ask_last_check < _PLAN_ASK_THROTTLE_SECONDS:
+        return
+    _plan_ask_last_check = now_mono
+
+    from services import ai_assistant, plan_sync_service as pss
+
+    control_chat = ai_assistant.control_group_id()
+    now_local = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
+    since_ts = _parse_local_ts(PLAN_ASK_SINCE)
+
+    # 1) просроченные вопросы → автоприменение (атомарно забираем заявку:
+    #    человек мог нажать кнопку в эту же секунду)
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM ai_pending_actions
+            WHERE kind = 'apply_kazakh_plan' AND status = 'pending'
+              AND created_at <= datetime('now','localtime', ?)
+            """,
+            (f"-{PLAN_KAZAKH_AUTO_MINUTES} minutes",),
+        ).fetchall()
+        # осиротевшие «approved» (процесс упал между claim и исполнением)
+        conn.execute(
+            """
+            UPDATE ai_pending_actions
+            SET status = 'failed', result = 'orphaned approved', decided_at = datetime('now','localtime')
+            WHERE kind = 'apply_kazakh_plan' AND status = 'approved'
+              AND COALESCE(decided_at, created_at) <= datetime('now','localtime', ?)
+            """,
+            (f"-{_PLAN_ASK_RETRY_MINUTES} minutes",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    for row in rows:
+        action = dict(row)
+        if not db.ai_claim_pending_action(action["id"], "approved"):
+            continue
+        try:
+            ok, msg = execute_ai_action(action)
+        except Exception as exc:
+            ok, msg = False, str(exc)
+        db.ai_finish_pending_action(action["id"], "executed" if ok else "failed", msg)
+        try:
+            telegram_send_message(
+                control_chat,
+                ("⏳ Javob bo'lmadi — o'zim o'tkazdim.\n" if ok else "⚠️ Avto-o'tkazish xato (qayta urinaman): ") + msg,
+            )
+        except Exception:
+            app.logger.exception("Kazakh auto-apply notify failed")
+
+    # 2) новые вопросы
+    batches = db.get_batches()
+    conn = db.get_conn()
+    try:
+        pending_rows = conn.execute(
+            "SELECT params_json FROM ai_pending_actions WHERE kind = 'apply_kazakh_plan' AND status = 'pending'"
+        ).fetchall()
+    finally:
+        conn.close()
+    pending_blocks: set = set()
+    for prow in pending_rows:
+        try:
+            p = json.loads(prow["params_json"] or "{}")
+            pending_blocks.add((str(p.get("plan_title") or "").upper(), pss.date_key(p.get("plan_date"))))
+        except Exception:
+            continue
+
+    blocks = None
+    for batch in batches:
+        if not _kazakh_ask_eligible(batch, since_ts, pss):
+            continue
+        if blocks is None:
+            try:
+                blocks = pss.all_blocks()
+            except Exception:
+                app.logger.exception("Kazakh ask: sheet download failed")
+                return
+        block, _why = pss.find_block_for_batch(batch, blocks, _plan_batch_codes(batch["id"]), batches=batches)
+        if block is None or block.get("kind") != "kazakh":
+            continue  # казахского плана ещё нет — спросим, когда появится
+        block_key = (pss.ref_title(block).upper(), pss.date_key(block["date"]))
+        ask_key = f"plansync:{batch['id']}"
+        last = _last_kazakh_ask(ask_key)
+        if last and not _ask_allowed_after(last, block_key, pss, batch):
+            continue
+        if block_key in pending_blocks:
+            continue  # по этому плану уже висит вопрос (сестринская партия)
+        # общий план «YIWU + ZH» на две партии — вопрос задаёт та, у которой
+        # пересечение состава больше; при равенстве — с меньшим id.
+        # Сестра, чей груз в этом плане преобладает, но которая ещё не дошла
+        # до Хоргоса (статус отстаёт) — тоже причина подождать: иначе её
+        # фуру «перегрузили» бы, пока она физически в Китае.
+        # Среди дошедших соперница — только та, что САМА собирается спросить
+        # про этот же блок (её лучший блок — этот, и по нему ей не отказывали).
+        plan_keys = set(pss.aggregate_block(block).keys())
+        my_hits = len(plan_keys & _plan_batch_codes(batch["id"]))
+        skip = False
+        for sibling in batches:
+            if sibling["id"] == batch["id"]:
+                continue
+            if pss.date_key(sibling.get("name")) != pss.date_key(batch.get("name")):
+                continue
+            if (sibling.get("client_delivery_date") or "").strip() or pss.is_arrived(sibling):
+                continue
+            hits = len(plan_keys & _plan_batch_codes(sibling["id"]))
+            if not _kazakh_ask_eligible(sibling, since_ts, pss):
+                # сестра ещё в Китае (или иначе не готова): если её груза в
+                # плане БОЛЬШЕ нашего — ждём её
+                if (sibling.get("plan_kind") or "") != "kazakh" and hits > my_hits:
+                    skip = True
+                    break
+                continue
+            sib_block, _w = pss.find_block_for_batch(sibling, blocks, _plan_batch_codes(sibling["id"]), batches=batches)
+            if sib_block is not block:
+                continue
+            sib_last = _last_kazakh_ask(f"plansync:{sibling['id']}")
+            if sib_last and not _ask_allowed_after(sib_last, block_key, pss, sibling):
+                continue
+            if hits > my_hits or (hits == my_hits and sibling["id"] < batch["id"]):
+                skip = True
+                break
+        if skip:
+            continue
+        params = {
+            "batch_id": batch["id"],
+            "batch_name": batch["name"],
+            "tab": block["tab"],
+            "plan_title": pss.ref_title(block),
+            "plan_date": block["date"],
+        }
+        summary = f"Перенести казахский план «{block['title']}» ({block['date']}) в партию «{batch['name']}»"
+        action_id = db.ai_create_pending_action(ask_key, "apply_kazakh_plan", json.dumps(params, ensure_ascii=False), summary)
+        mention = f'<a href="tg://user?id={HOJI_DODAM_TG_ID}">{html.escape(HOJI_DODAM_NAME)}</a>'
+        text = (
+            f"{mention}, <b>{html.escape(batch['name'])}</b> partiya Horgosga yetib keldi.\n"
+            f"Horgos→Tashkent planini ({html.escape(block['date'])} — {html.escape(block['title'])}, "
+            f"{len(plan_keys)} BL) shu partiyaga o'tkazsam maylimi?\n"
+            f"⏳ {PLAN_KAZAKH_AUTO_MINUTES} daqiqada javob bo'lmasa — o'zim o'tkazaman."
+        )
+        keyboard = {"inline_keyboard": [[
+            {"text": "✅ Ha", "callback_data": f"aiact:ok:{action_id}"},
+            {"text": "❌ Yo'q", "callback_data": f"aiact:no:{action_id}"},
+        ]]}
+        try:
+            telegram_send_message(control_chat, text, reply_markup=keyboard)
+            pending_blocks.add(block_key)
+        except Exception:
+            # вопрос не дошёл — не применять молча через час; спросим заново
+            app.logger.exception("Kazakh ask delivery failed")
+            db.ai_finish_pending_action(action_id, "failed", "ask delivery failed")
 
 
 def send_tracking_digest(force: bool = False):

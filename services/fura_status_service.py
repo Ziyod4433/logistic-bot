@@ -33,6 +33,17 @@ _cache: dict = {}
 _REYS_RE = re.compile(r"BL\s*-?\s*(\d{8})")
 
 
+def warehouse_suffix(text: str) -> str:
+    """YIWU | ZH | '' — склад из хвоста имени партии/рейса
+    («14.08.2026 YIWU», «BL14082026 ZH», «BL01072026-YW»)."""
+    tail = str(text or "").upper()
+    if re.search(r"\b(YIWU|YW)\b", tail):
+        return "YIWU"
+    if re.search(r"\b(ZHONGSHAN|ZH)\b", tail):
+        return "ZH"
+    return ""
+
+
 def _find_col(header: list, needle: str, fallback: int) -> int:
     needle = needle.upper()
     for j, cell in enumerate(header):
@@ -63,6 +74,7 @@ def get_fura_statuses(force: bool = False) -> dict:
     tarqatildi_col = _find_col(header, "YUKLAR TARQATILDI", 22)
 
     records: dict = {}
+    records_all: dict = {}
     for row in rows[1:]:
         reys_raw = row[reys_col].strip() if reys_col < len(row) else ""
         match = _REYS_RE.search(reys_raw.upper())
@@ -71,10 +83,19 @@ def get_fura_statuses(force: bool = False) -> dict:
         key = match.group(1)
         bojxona = ombor_service._parse_date(row[bojxona_col].strip()) if bojxona_col < len(row) else None
         tarqatildi = ombor_service._parse_date(row[tarqatildi_col].strip()) if tarqatildi_col < len(row) else None
+        rec = {
+            "reys": reys_raw,
+            "bojxona": bojxona,
+            "tarqatildi": tarqatildi,
+            # суффикс склада в номере рейса («BL14082026 ZH», «BL01072026-YW»,
+            # «YIWU BL14082026»): две партии одной даты различаются только им
+            "suffix": warehouse_suffix(reys_raw),
+        }
         # последняя строка по данному рейсу побеждает (обычно уникальны)
-        records[key] = {"reys": reys_raw, "bojxona": bojxona, "tarqatildi": tarqatildi}
+        records[key] = rec
+        records_all.setdefault(key, []).append(rec)
 
-    value = {"ok": True, "records": records, "count": len(records)}
+    value = {"ok": True, "records": records, "records_all": records_all, "count": len(records)}
     with _lock:
         _cache["data"] = {"value": value, "expires_at": time.monotonic() + CACHE_TTL_SECONDS}
     return value
