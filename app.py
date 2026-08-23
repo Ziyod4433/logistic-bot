@@ -2827,6 +2827,28 @@ def execute_ai_action(action: dict):
     if kind == "apply_kazakh_plan":
         return _apply_kazakh_plan(params)
 
+    if kind == "link_bl_group":
+        bl = db.get_bl_by_id(int(params.get("bl_id") or 0))
+        if not bl:
+            return False, "BL не найден"
+        chat_id = str(params.get("chat_id") or "").strip()
+        if not chat_id:
+            return False, "Пустой chat_id"
+        from services import ai_assistant as _ai
+        if chat_id in _ai.confidential_chat_ids():
+            return False, "Конфиденциальная группа — привязка запрещена"
+        if not db.set_bl_chat_id(bl["id"], chat_id):
+            return False, "Не удалось сохранить привязку"
+        title = params.get("chat_title") or chat_id
+        return True, f"BL {bl.get('code')} привязан к группе «{title}» (партия «{params.get('batch_name') or ''}»)"
+
+    if kind == "run_plan_sync":
+        try:
+            done, info = run_morning_plan_sync(force=True)
+        except Exception as exc:
+            return False, f"Сверка упала: {exc}"
+        return bool(done), ("Сверка планов выполнена: " + str(info)) if done else f"Сверка не выполнена: {info}"
+
     if kind == "send_tracking_batch":
         return _execute_tracking_broadcast(int(params.get("batch_id") or 0))
 

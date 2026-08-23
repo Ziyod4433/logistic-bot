@@ -286,8 +286,42 @@ def _system_prompt() -> str:
 - PDF-ОТЧЁТЫ: make_pdf_report присылает готовый PDF файлом прямо в чат (batches / batch_detail /
   late_cargo / problems / send_logs). Просят отчёт, сводку, выгрузку, «в PDF/файлом» — используй его сразу,
   это чтение данных, подтверждения не нужно.
-- Отвечай кратко и по делу, на русском. Формат Telegram HTML: <b>жирный</b>, <code>код</code>. НЕ используй Markdown (** и #).
 - Если запрос неоднозначен (какая партия? какая группа?) — сначала уточни или покажи варианты из данных.
+
+════════ РЕЦЕПТЫ: ВОПРОС → ИНСТРУМЕНТЫ ════════
+Сначала инструмент, потом ответ. Не отвечай «из головы» там, где есть инструмент.
+• «где партия / статус / сколько BL / когда приедет» → get_overview или get_batch_detail.
+• «есть ли план (китайский/казахский) на дату» → get_loading_plans (смотри ОБА вида и summary) → при нужде get_plan_marks.
+• «что с казахским планом партии / применился ли / что изменится / почему не перегрузил» → get_batch_plan_status.
+• «кто не привязан к группе / почему клиент не получил трекинг» → get_unlinked_bls, затем find_group и, если просят, propose_action link_bl_group.
+• «что сделала автоматика / почему не открылась партия / когда сверка» → get_automation_status (+ get_batch_plan_status по партии).
+• «отправь трекинг» → партия: send_tracking_batch; один BL: find_bl → send_tracking_bl.
+• «примени казахский план / перегрузи сейчас» → get_batch_plan_status (покажи предпросмотр) → propose_action apply_kazakh_plan.
+• «запусти сверку сейчас» → propose_action run_plan_sync.
+• «где packing list / чего не хватает» → get_missing_packing_lists, файлы — get_batch_detail.
+• «почему не ушло / ошибка отправки» → get_send_logs (+ get_batch_detail).
+• цифры, суммы, динамика, «сколько всего…» → query_database (после get_db_schema), крупное — make_pdf_report.
+• шаблоны сообщений → get_message_templates.
+
+════════ СТИЛЬ ОТВЕТОВ ════════
+- Язык: отвечай на языке вопроса (узбекский латиницей / русский). Термины системы (статусы, названия планов,
+  коды BL) — как в данных, без перевода.
+- Первой строкой — суть: итог с иконкой (✅ есть/готово, ⚠️ внимание, ❌ нет/нельзя, ⏳ ждём). Без вступлений,
+  без пересказа вопроса.
+- Дальше — структурно: короткие блоки с <b>жирным</b> заголовком или «ключ: значение», списки через «•»,
+  коды и имена в <code>…</code>. Каждый факт — с числом/датой, где оно есть (кол-во BL, м³, кг, дата).
+- Telegram HTML только: <b>, <i>, <code>. НИКАКОГО Markdown (**, ##, | таблицы |) — Telegram его не рисует.
+- Длина: обычно 5–12 строк. Длинные списки сокращай: первые 8–10 позиций + «…и ещё N». Если данных много —
+  предложи PDF (make_pdf_report) вместо простыни.
+- Один ответ = один вопрос. Не дублируй одно и то же в разных формулировках, не добавляй «итоги»,
+  если ответ и так из двух строк.
+- Если предлагаешь действие — в конце одной строкой: что сделаешь и что нужно от человека (✅ в карточке).
+Пример (вопрос «18.08 da qozoq plani borku?»):
+✅ <b>18.08.2026 — qozoq plani bor</b>
+• Plan: <code>HORGOS TO TASHKENT - ZHONGSHAN YARGXOL</code> (AVGUST 2026)
+• Tarkibi: 18 ta BL — DREAM, AKBARNUR, D LIGHTING, EURO LIGHT, LUMINOR, BL-44 …va yana 12
+• Partiya <code>18.08.2026 ZH</code> hozir <code>Xitoy</code> — plan Horgosga yetganda qo'llanadi (Hoji dodam tasdig'i yoki 60 daqiqadan keyin avtomatik)
+Kerak bo'lsa — hozir qo'llayman (apply_kazakh_plan) yoki to'liq ro'yxatni PDF qilib beraman.
 - КТО ЧТО МОЖЕТ: смотреть данные и спрашивать тебя может весь персонал управляющей группы; создавать
   заявки на изменения и подтверждать их — только владелец и ответственный оператор. Остальным на просьбу
   что-то изменить отвечай дружелюбно: «это подтверждает владелец или ответственный». Мини-форму
@@ -430,6 +464,61 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_batch_plan_status",
+            "description": (
+                "Партия и её планы погрузки одним вызовом: к какому КИТАЙСКОМУ блоку она привязана, есть ли для неё "
+                "КАЗАХСКИЙ блок (Horgos→Tashkent) и применён ли он, что изменится при применении (какие BL добавятся/"
+                "переедут/останутся), висит ли вопрос Hoji dodam. Используй на вопросы «есть ли казахский план у партии», "
+                "«что будет при Хоргосе», «почему не применился план». batch — id или часть имени."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"batch": {"type": "string", "description": "id партии или часть имени, например '18.08'"}},
+                "required": ["batch"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_unlinked_bls",
+            "description": (
+                "BL активных партий БЕЗ привязки к Telegram-группе (клиент не получит трекинг): по партиям, с "
+                "подсказкой похожих групп по коду. Используй на «кто не привязан», «почему клиент не получил трекинг»."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_group",
+            "description": (
+                "Поиск Telegram-группы клиента по подстроке названия или коду BL: возвращает chat_id и название. "
+                "Нужен, чтобы привязать BL к группе (propose_action kind='link_bl_group') или написать в группу."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "часть названия группы или код BL/бренд"}},
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_automation_status",
+            "description": (
+                "Состояние автоматики: когда в последний раз прошла утренняя сверка планов и что изменила, открытые/"
+                "недавние вопросы про казахский план (кому, по какой партии, статус), расписание (часы), "
+                "переменные ожидания. Используй на «что сделала автоматика», «почему не открылась партия», «когда сверка»."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_db_schema",
             "description": (
                 "Структура базы данных админ-панели: список всех таблиц с колонками. Вызывай ПЕРЕД "
@@ -491,6 +580,11 @@ TOOLS = [
                 "kind: 'set_batch_status' (params: batch_id, status — точное название из цепочки статусов), "
                 "'send_tracking_batch' (params: batch_id — разослать трекинг по группам партии), "
                 "'send_tracking_bl' (params: bl_id — отправить трекинг ОДНОГО BL в его группу; bl_id ищи через find_bl), "
+                "'apply_kazakh_plan' (params: batch_id — применить к партии её казахский план Horgos→Tashkent с "
+                "дедубликатором: грузы ПЕРЕЕЗЖАЮТ между партиями, ничего не удаляется; что именно изменится — см. "
+                "get_batch_plan_status), "
+                "'link_bl_group' (params: bl_id, chat_id — привязать BL к Telegram-группе клиента; chat_id ищи через find_group), "
+                "'run_plan_sync' (params: {} — запустить утреннюю сверку планов прямо сейчас, не дожидаясь 06:30), "
                 "'send_group_message' (params: chat_id, text; опционально mention_user_id + mention_label — "
                 "кликабельно отметить человека в начале сообщения, например ответственного за packing list), "
                 "'sync_batch_from_plan' (params: batch_id, tab, plan_title, plan_date — привести состав партии "
@@ -501,7 +595,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "send_group_message", "sync_batch_from_plan"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -802,6 +896,182 @@ def _tool_get_loading_plans(args: dict) -> dict:
         "summary": f"планов: {len(plans)} (китайских {kinds['china']}, казахских {kinds['kazakh']})",
         "plans": plans,
         "note": "Построчные цифры (CTN/CBM/KG/дата прихода) по одному блоку — get_plan_marks.",
+    }
+
+
+def _tool_get_batch_plan_status(args: dict) -> dict:
+    """Партия ↔ её планы: привязка, наличие/применённость казахского плана,
+    предпросмотр изменений. Чистые вычисления поверх plan_sync_service."""
+    from services import plan_sync_service as pss
+
+    found = _find_batch(str(args.get("batch") or ""))
+    if not found:
+        return {"error": "Партия не найдена. Уточни имя или id (см. get_overview)."}
+    if "__ambiguous__" in found:
+        return {"error": "Найдено несколько партий, уточни какая", "candidates": found["__ambiguous__"]}
+    batch = db.get_batch(found["id"]) or found
+    try:
+        blocks = pss.all_blocks()
+    except Exception as exc:
+        return {"error": f"Шитс планов недоступен: {exc}"}
+    batches = db.get_batches()
+    bls = db.get_bl_by_batch(batch["id"])
+    codes = {pss.normalize_mark(b.get("code")) for b in bls}
+    stage = pss.stage_for_status(batch.get("status"))
+
+    def block_brief(block):
+        agg = pss.aggregate_block(block)
+        return {
+            "found": True, "title": block["title"], "date": block["date"], "tab": block.get("tab"),
+            "kind": block["kind"], "marks_count": len(agg),
+            "marks": ", ".join(e["code"] for e in agg.values()),
+        }
+
+    # китайский блок
+    china_block = None
+    for b in blocks:
+        if b["kind"] == "china" and pss.batch_has_ref(batch) and (batch.get("plan_kind") or "") == "china" \
+                and pss.block_same_group_as_ref(b, batch.get("plan_title"), batch.get("plan_date")):
+            china_block = b
+            break
+    if china_block is None:
+        probe = dict(batch)
+        probe["status"] = "Xitoy"
+        china_block, _w = pss.find_block_for_batch(probe, blocks, codes, batches=batches)
+    china = block_brief(china_block) if china_block else {"found": False}
+    if china_block:
+        d = pss.diff_against_plan(bls, pss.aggregate_block(china_block))
+        china["diff"] = {
+            "not_in_batch": [e["code"] for e in d["add"]][:20],
+            "figures_changed": [u["bl"]["code"] for u in d["update"]][:20],
+            "not_in_plan": [x["code"] for x in d["extra"]][:20],
+        }
+
+    # казахский блок
+    kz_applied = (batch.get("plan_kind") or "") == "kazakh"
+    kz_block = None
+    if kz_applied:
+        kz_block = pss.resolve_ref_block(batch, blocks, "kazakh", codes)
+    if kz_block is None:
+        probe = dict(batch)
+        probe["status"] = pss.HORGOS_STATUS if stage == "china" else batch.get("status")
+        kz_block, why = pss.find_block_for_batch(probe, blocks, codes, batches=batches)
+        if kz_block is not None and kz_block.get("kind") != "kazakh":
+            kz_block, why = None, "на казахской стадии блок не найден"
+    else:
+        why = "применён"
+    kazakh = block_brief(kz_block) if kz_block else {"found": False, "why": why}
+    kazakh["applied"] = kz_applied
+    preview = None
+    if kz_block:
+        plan = pss.aggregate_block(kz_block)
+        d = pss.diff_against_plan(bls, plan)
+        # откуда приедут недостающие: у кого сейчас лежат эти коды
+        donors = {}
+        others = [b for b in batches if b["id"] != batch["id"] and not (b.get("client_delivery_date") or "").strip()]
+        for other in others:
+            for ob in db.get_bl_by_batch(other["id"]):
+                donors.setdefault(pss.normalize_mark(ob.get("code")), []).append(other["name"])
+        will_move_in = [f"{e['code']} (из {', '.join(donors[k])})" for k, e in plan.items() if k not in codes and k in donors]
+        will_add = [e["code"] for k, e in plan.items() if k not in codes and k not in donors]
+        preview = {
+            "will_move_in": will_move_in[:20],
+            "will_add_new": will_add[:20],
+            "figures_changed": [u["bl"]["code"] for u in d["update"]][:20],
+            "extras_in_batch": [x["code"] for x in d["extra"]][:20],
+            "note": "Лишние BL не удаляются: они переедут в партию, чей казахский план их содержит, иначе останутся («застряли в Хоргосе»).",
+        }
+
+    # вопросы Hoji dodam по этой партии
+    conn = db.get_conn()
+    try:
+        asks = conn.execute(
+            "SELECT id, status, created_at, decided_at, result FROM ai_pending_actions "
+            "WHERE tg_user_id = ? AND kind = 'apply_kazakh_plan' ORDER BY id DESC LIMIT 3",
+            (f"plansync:{batch['id']}",),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "batch": {"id": batch["id"], "name": batch["name"], "status": batch.get("status"),
+                  "stage": "казахская (после Horgos)" if stage == "kazakh" else "китайская (до Horgos)",
+                  "bl_count": len(bls), "plan_kind": batch.get("plan_kind") or "",
+                  "plan_title": batch.get("plan_title") or "", "plan_date": batch.get("plan_date") or ""},
+        "china_plan": china,
+        "kazakh_plan": kazakh,
+        "kazakh_preview": preview,
+        "kazakh_asks": [dict(a) for a in asks],
+        "automation_hint": (
+            "После статуса «Horgos (Qozoq)» бот сам спросит Hoji dodam и применит казахский план "
+            "(через 60 мин, если не ответят). Вручную сейчас — propose_action kind='apply_kazakh_plan'."
+            if stage == "china" else
+            ("Казахский план применён; каждое утро досверяется." if kz_applied else
+             "Партия за Хоргосом, план ещё не применён — смотри kazakh_asks / предложи apply_kazakh_plan.")
+        ),
+    }
+
+
+def _tool_get_unlinked_bls(_args: dict) -> dict:
+    chats = db.get_telegram_chats(include_inactive=False) or []
+    titles = [(str(c.get("chat_id")), c.get("title") or "") for c in chats]
+    out = []
+    for batch in db.get_batches():
+        if (batch.get("client_delivery_date") or "").strip():
+            continue
+        for bl in db.get_bl_by_batch(batch["id"]):
+            if (bl.get("chat_id") or "").strip():
+                continue
+            code = str(bl.get("code") or "")
+            key = re.sub(r"[\s\-_.]+", "", code.upper())
+            hints = [
+                {"chat_id": _mask_chat_id(cid), "title": title}
+                for cid, title in titles
+                if key and key in re.sub(r"[\s\-_.]+", "", title.upper())
+            ][:3]
+            out.append({"batch": batch["name"], "bl_id": bl["id"], "code": code,
+                        "client": bl.get("client_name") or "", "similar_groups": hints})
+    return {"count": len(out), "unlinked": out[:60],
+            "note": "Привязать: propose_action kind='link_bl_group' (bl_id, chat_id). Если подходящей группы нет — бот, возможно, ещё не добавлен в группу клиента."}
+
+
+def _tool_find_group(args: dict) -> dict:
+    query = str(args.get("query") or "").strip()
+    if len(query) < 2:
+        return {"error": "Запрос слишком короткий"}
+    key = re.sub(r"[\s\-_.]+", "", query.upper())
+    out = []
+    for c in db.get_telegram_chats(include_inactive=True) or []:
+        cid = str(c.get("chat_id") or "")
+        if cid in confidential_chat_ids():
+            continue
+        title = c.get("title") or ""
+        if query.upper() in title.upper() or (key and key in re.sub(r"[\s\-_.]+", "", title.upper())):
+            out.append({"chat_id": cid, "title": title, "active": bool(c.get("is_active", 1))})
+    return {"groups": out[:20], "count": len(out)}
+
+
+def _tool_get_automation_status(_args: dict) -> dict:
+    conn = db.get_conn()
+    try:
+        asks = conn.execute(
+            "SELECT id, tg_user_id, status, summary, created_at, decided_at, result FROM ai_pending_actions "
+            "WHERE kind = 'apply_kazakh_plan' ORDER BY id DESC LIMIT 10"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "schedule": {
+            "morning_plan_sync": f"{os.getenv('PLAN_SYNC_HOUR', '6')}:{int(os.getenv('PLAN_SYNC_MINUTE', '30') or 30):02d} Ташкент",
+            "tracking_ask": f"{os.getenv('TRACKING_ASK_HOUR', '7')}:00",
+            "packing_ask": f"{os.getenv('PACKING_REMINDER_HOUR', '9')}:00",
+            "kazakh_auto_apply_after_minutes": int(os.getenv("PLAN_KAZAKH_AUTO_MINUTES", "60") or 60),
+            "fura_statuslari_sync": "каждые 5 минут",
+        },
+        "plan_sync_last_date": db.get_setting("plan_sync_last_date", ""),
+        "plan_sync_last_attempt": db.get_setting("plan_sync_last_attempt", ""),
+        "automation_since": os.getenv("PLAN_ASK_SINCE", "2026-08-22 00:00:00"),
+        "kazakh_asks_recent": [dict(a) for a in asks],
+        "note": "Партии, созданные до automation_since и без привязки к китайскому плану, автоматика не трогает.",
     }
 
 
@@ -1179,7 +1449,10 @@ def _tool_list_groups(_args: dict) -> dict:
     }
 
 
-ALLOWED_ACTION_KINDS = {"set_batch_status", "send_tracking_batch", "send_tracking_bl", "send_group_message", "sync_batch_from_plan"}
+ALLOWED_ACTION_KINDS = {
+    "set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan",
+    "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan",
+}
 
 
 def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> dict:
@@ -1217,6 +1490,42 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
         batch = db.get_batch(bl.get("batch_id"))
         params["bl_code"] = bl.get("code")
         params["batch_name"] = (batch or {}).get("name") or ""
+    elif kind == "apply_kazakh_plan":
+        batch = db.get_batch(int(params.get("batch_id") or 0))
+        if not batch:
+            return {"error": "batch_id не найден"}
+        status = _tool_get_batch_plan_status({"batch": str(batch["id"])})
+        kz = status.get("kazakh_plan") or {}
+        if not kz.get("found"):
+            return {"error": f"Казахского плана для «{batch['name']}» в шитсе нет: {kz.get('why') or ''}"}
+        if kz.get("applied"):
+            return {"error": f"Казахский план к «{batch['name']}» уже применён — повторно он применяется сам каждое утро"}
+        params["batch_name"] = batch["name"]
+        params["plan_title"] = kz.get("title")
+        params["plan_date"] = kz.get("date")
+        params["preview"] = status.get("kazakh_preview")
+    elif kind == "link_bl_group":
+        bl = db.get_bl_by_id(int(params.get("bl_id") or 0))
+        if not bl:
+            return {"error": "bl_id не найден — найди BL через find_bl"}
+        chat_id = str(params.get("chat_id") or "").strip()
+        if not chat_id:
+            return {"error": "Нужен chat_id группы — найди через find_group"}
+        if chat_id in confidential_chat_ids():
+            return {"error": "Эта группа строго конфиденциальна — привязывать к ней нельзя."}
+        title = ""
+        for chat in db.get_telegram_chats(include_inactive=True) or []:
+            if str(chat.get("chat_id") or "").strip() == chat_id:
+                title = chat.get("title") or ""
+                break
+        if not title:
+            return {"error": "Такой группы бот не знает (не добавлен в неё?) — проверь chat_id через find_group"}
+        batch = db.get_batch(bl.get("batch_id"))
+        params["bl_code"] = bl.get("code")
+        params["batch_name"] = (batch or {}).get("name") or ""
+        params["chat_title"] = title
+    elif kind == "run_plan_sync":
+        params = {}
     elif kind == "send_group_message":
         chat_id = str(params.get("chat_id") or "").strip()
         text = str(params.get("text") or "").strip()
@@ -1317,6 +1626,14 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_get_loading_plans(args)
         if name == "get_plan_marks":
             return _tool_get_plan_marks(args)
+        if name == "get_batch_plan_status":
+            return _tool_get_batch_plan_status(args)
+        if name == "get_unlinked_bls":
+            return _tool_get_unlinked_bls(args)
+        if name == "find_group":
+            return _tool_find_group(args)
+        if name == "get_automation_status":
+            return _tool_get_automation_status(args)
         if name == "get_missing_packing_lists":
             return _tool_get_missing_packing_lists(args)
         if name == "get_message_templates":
