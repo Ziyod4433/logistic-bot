@@ -29,6 +29,10 @@ DEEPSEEK_BASE_URL = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com
 FALLBACK_MODEL = "deepseek-chat"
 MAX_TOOL_ROUNDS = 6
 REQUEST_TIMEOUT = 90
+# лимит одного результата инструмента в контексте модели (символов JSON);
+# при превышении вывод обрезается С ПОМЕТКОЙ, чтобы модель не решила,
+# что отрезанного не существует
+TOOL_RESULT_LIMIT = 20000
 
 _history_lock = threading.Lock()
 
@@ -205,6 +209,10 @@ def _system_prompt() -> str:
       и привязкой группы (один груз не может быть в двух партиях); раздельные грузы одного клиента в двух
       фурах — законны и не трогаются. BL, которого нет ни в одном казахском плане, никуда не перекидывается —
       остаётся в партии и помечается «застрял в Хоргосе». Отчёт в группу — только при изменениях.
+    ВОПРОСЫ ПРО ПЛАНЫ: get_loading_plans отдаёт ВСЕ блоки вкладки ОБОИХ видов и summary с числом китайских и
+    казахских — казахский план 18.08 это блок kind='kazakh' с названием «HORGOS TO TASHKENT - …» и датой 18.08.
+    Не утверждай «казахского плана нет», пока не проверил блоки kind='kazakh' этой даты; состав одного блока —
+    get_plan_marks. Если результат инструмента помечен как ОБРЕЗАННЫЙ — ты видишь не всё.
     Ручная синхронизация через propose_action kind='sync_batch_from_plan' (batch_id, tab, plan_title,
     plan_date) осталась для особых случаев: она приводит состав ТОЧНО к плану и УДАЛЯЕТ лишние BL —
     в summary заявки перечисли, какие BL будут удалены, чтобы подтверждающий видел это до ✅.
@@ -385,16 +393,37 @@ TOOLS = [
         "function": {
             "name": "get_loading_plans",
             "description": (
-                "Планы погрузки из шитса партий (месячные вкладки, например 'AVGUST 2026'). "
-                "Каждый блок: дата отправки, название плана, список SHIPPING MARK (BL) с CTN/CBM/KG и датой прихода. "
-                "kind='china' — фура со склада Китая до Хоргоса (по этому плану открывается партия); "
-                "kind='kazakh' — казахская фура Horgos→Tashkent (обычно объединяет BL обеих китайских фур; "
-                "по нему пересинхронизируется состав партии после статуса Horgos (Qozoq))."
+                "Планы погрузки из шитса партий (месячные вкладки, например 'AVGUST 2026'): ВСЕ блоки вкладки, "
+                "ОБОИХ видов, компактно (дата, название, kind, склады, итоги, список марок). "
+                "kind='china' — фура со склада Китая до Хоргоса (названия «YIWU/ZHONGSHAN TO HORGOS…», старые «YIWU MUHAMMAD», "
+                "«ZHONGSHAN YARGXOL»; по этому плану открывается партия); "
+                "kind='kazakh' — казахская фура Horgos→Tashkent (названия начинаются с «HORGOS TO TASHKENT…»; по нему "
+                "партия пересобирается после статуса Horgos (Qozoq)). Вывод содержит summary с числом планов каждого вида — "
+                "опирайся на него, а не на свой подсчёт. Построчные цифры одного блока — get_plan_marks."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {"tab": {"type": "string", "description": "вкладка; пусто = текущий месяц"}},
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_plan_marks",
+            "description": (
+                "Полный состав ОДНОГО блока плана погрузки построчно: SHIPPING MARK, CTN, CBM, KG, дата прихода. "
+                "Укажи tab, часть названия (title, например 'HORGOS TO TASHKENT - ZHONGSHAN') и дату (date dd.mm.yyyy)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tab": {"type": "string", "description": "вкладка, например 'AVGUST 2026'"},
+                    "title": {"type": "string", "description": "часть названия блока"},
+                    "date": {"type": "string", "description": "дата блока dd.mm.yyyy"},
+                },
+                "required": ["title"],
             },
         },
     },
@@ -735,6 +764,9 @@ def _tool_get_missing_packing_lists(_args: dict) -> dict:
 
 
 def _tool_get_loading_plans(args: dict) -> dict:
+    """Компактная сводка планов вкладки: ОБА вида (china/kazakh), без
+    построчных деталей — иначе вывод не влезает в лимит результата и
+    казахские блоки (они идут в конце листа) отрезаются."""
     from services import loading_plan_service
 
     result = loading_plan_service.get_loading_plans(str(args.get("tab") or ""))
@@ -742,20 +774,62 @@ def _tool_get_loading_plans(args: dict) -> dict:
         return {"error": result.get("error"), "tabs": result.get("tabs")}
     plans = []
     for block in result["plans"]:
+        marks = []
+        seen = set()
+        for it in block["items"]:
+            m = str(it.get("mark") or "").strip()
+            if m and m.upper() not in seen:
+                seen.add(m.upper())
+                marks.append(m)
         plans.append({
             "date": block["date"],
             "title": block["title"],
             "kind": block["kind"],
+            "route": "Horgos → Tashkent (казахская фура)" if block["kind"] == "kazakh" else "склад Китая → Horgos (китайская фура)",
             "warehouses": block["warehouses"],
             "total_ctn": block["total_ctn"],
             "total_cbm": block["total_cbm"],
             "total_kg": block["total_kg"],
-            "marks": [
-                {"mark": it["mark"], "cbm": it["cbm"], "arrive": it["arrive"]}
-                for it in block["items"]
-            ],
+            "marks_count": len(marks),
+            "marks": ", ".join(marks),
         })
-    return {"tab": result["tab"], "tabs": result["tabs"], "plans": plans}
+    kinds = {"china": 0, "kazakh": 0}
+    for p in plans:
+        kinds[p["kind"]] = kinds.get(p["kind"], 0) + 1
+    return {
+        "tab": result["tab"],
+        "tabs": result["tabs"],
+        "summary": f"планов: {len(plans)} (китайских {kinds['china']}, казахских {kinds['kazakh']})",
+        "plans": plans,
+        "note": "Построчные цифры (CTN/CBM/KG/дата прихода) по одному блоку — get_plan_marks.",
+    }
+
+
+def _tool_get_plan_marks(args: dict) -> dict:
+    """Полный состав ОДНОГО блока плана с цифрами по строкам."""
+    from services import loading_plan_service
+
+    plan = loading_plan_service.find_plan(
+        str(args.get("tab") or ""), str(args.get("title") or ""), str(args.get("date") or "")
+    )
+    if not plan:
+        return {
+            "error": "План не найден или найдено несколько — уточни tab, часть названия (title) и дату (date dd.mm.yyyy); "
+                     "список — get_loading_plans."
+        }
+    return {
+        "tab": plan.get("tab"),
+        "date": plan["date"],
+        "title": plan["title"],
+        "kind": plan["kind"],
+        "total_ctn": plan["total_ctn"],
+        "total_cbm": plan["total_cbm"],
+        "total_kg": plan["total_kg"],
+        "rows": [
+            {"mark": it["mark"], "ctn": it["ctn"], "cbm": it["cbm"], "kg": it["kg"], "arrive": it["arrive"]}
+            for it in plan["items"]
+        ],
+    }
 
 
 # Runtime-хуки прямого исполнения (устанавливает app.py при импорте —
@@ -1241,6 +1315,8 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_get_send_logs(args)
         if name == "get_loading_plans":
             return _tool_get_loading_plans(args)
+        if name == "get_plan_marks":
+            return _tool_get_plan_marks(args)
         if name == "get_missing_packing_lists":
             return _tool_get_missing_packing_lists(args)
         if name == "get_message_templates":
@@ -1392,10 +1468,19 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
                     args = {}
                 result = _run_tool(name, args, tg_user_id, created_actions,
                                    readonly=readonly or companion, owner_direct=owner_direct)
+                payload = json.dumps(result, ensure_ascii=False, default=str)
+                if len(payload) > TOOL_RESULT_LIMIT:
+                    # обрезка ЯВНАЯ — модель должна знать, что видит не всё,
+                    # а не делать выводы «этого нет» по отрезанному хвосту
+                    payload = (
+                        payload[:TOOL_RESULT_LIMIT]
+                        + f"\n…[ОБРЕЗАНО: показано {TOOL_RESULT_LIMIT} из {len(payload)} символов — "
+                        "вывод неполный, сузь запрос (limit/фильтр/конкретный блок) и НЕ утверждай, что чего-то нет]"
+                    )
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.get("id"),
-                    "content": json.dumps(result, ensure_ascii=False, default=str)[:12000],
+                    "content": payload,
                 })
         else:
             reply_text = "⚠️ Слишком длинная цепочка инструментов — попробуй сформулировать запрос конкретнее."
