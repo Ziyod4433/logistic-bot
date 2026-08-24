@@ -4341,6 +4341,14 @@ def sync_batches_from_fura_statuses():
 
 HOJI_DODAM_TG_ID = os.getenv("HOJI_DODAM_TG_ID", "1514716826").strip()
 HOJI_DODAM_NAME = os.getenv("HOJI_DODAM_NAME", "Hoji dodam").strip() or "Hoji dodam"
+# Кто добавляет бота в группы клиентов: если для BL не нашлось группы,
+# просить нужно именно его (владелец, 24.08.2026). Username хватает —
+# Telegram сам делает @… кликабельным; TG_ID задаётся опционально, тогда
+# упоминание становится «настоящим» (надёжнее уведомляет).
+GROUP_LINK_RESPONSIBLE_USERNAME = (
+    os.getenv("GROUP_LINK_RESPONSIBLE_USERNAME", "JAHONGIR_moderator").strip().lstrip("@")
+)
+GROUP_LINK_RESPONSIBLE_TG_ID = os.getenv("GROUP_LINK_RESPONSIBLE_TG_ID", "").strip()
 PLAN_SYNC_HOUR = int(os.getenv("PLAN_SYNC_HOUR", "6") or 6)
 PLAN_SYNC_MINUTE = int(os.getenv("PLAN_SYNC_MINUTE", "30") or 30)
 PLAN_KAZAKH_AUTO_MINUTES = int(os.getenv("PLAN_KAZAKH_AUTO_MINUTES", "60") or 60)
@@ -4394,6 +4402,26 @@ def _plan_staff_mentions() -> str:
         seen.add(uid)
         parts.append(f'<a href="tg://user?id={uid}">{html.escape(label)}</a>')
     return " ".join(parts)
+
+
+def _group_link_mention() -> str:
+    """Упоминание того, кто добавляет бота в группы клиентов."""
+    if GROUP_LINK_RESPONSIBLE_TG_ID:
+        label = html.escape(f"@{GROUP_LINK_RESPONSIBLE_USERNAME}" if GROUP_LINK_RESPONSIBLE_USERNAME else "moderator")
+        return f'<a href="tg://user?id={GROUP_LINK_RESPONSIBLE_TG_ID}">{label}</a>'
+    if GROUP_LINK_RESPONSIBLE_USERNAME:
+        return f"@{html.escape(GROUP_LINK_RESPONSIBLE_USERNAME)}"
+    return _plan_staff_mentions()
+
+
+def _unlinked_bl_request(codes_text: str) -> str:
+    """Просьба добавить бота в группы тех BL, которым группа не нашлась."""
+    return (
+        f"⚠️ {_group_link_mention()} — bu BL'larga Telegram guruh topilmadi: "
+        f"<b>{codes_text}</b>.\n"
+        "Iltimos, botni shu mijozlar guruhiga qo'shing (yoki panelda qo'lda ulang) — "
+        "aks holda ularga treking bormaydi."
+    )
 
 
 def _plan_batch_codes(batch_id) -> set:
@@ -4689,11 +4717,7 @@ def run_morning_plan_sync(force: bool = False):
     # ── 3. отчёт (только при изменениях) ──
     if unlinked_all:
         codes = ", ".join(html.escape(c) for c in sorted(set(unlinked_all))[:20])
-        report.append(
-            f"⚠️ {_plan_staff_mentions()} — bu BL'larga Telegram guruh topilmadi: "
-            f"<b>{codes}</b>. Bot guruhga qo'shilmagan bo'lishi mumkin — "
-            "guruhga qo'shing yoki panelda qo'lda ulang."
-        )
+        report.append(_unlinked_bl_request(codes))
     if report:
         _send_long_message(
             ai_assistant.control_group_id(),
@@ -4888,7 +4912,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
             + ", ".join(sorted(set(kept_dups))[:8]) + "."
         )
     if unlinked:
-        parts.append("⚠️ Без Telegram-группы: " + ", ".join(html.escape(c) for c in unlinked[:12]) + ".")
+        parts.append(_unlinked_bl_request(", ".join(html.escape(c) for c in unlinked[:12])))
     changed = bool(moved_in or added or updated or moved_away or merged or kept_dups)
     return True, " ".join(parts), changed
 

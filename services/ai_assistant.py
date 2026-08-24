@@ -29,7 +29,10 @@ import database as db
 
 DEEPSEEK_BASE_URL = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
 FALLBACK_MODEL = "deepseek-chat"
-MAX_TOOL_ROUNDS = 6
+# у ассистента много инструментов, и живые вопросы («кто обновил трекинг
+# сегодня?») законно требуют цепочки find_bl → get_batch_detail →
+# get_send_logs; 6 раундов упирались в лимит и ответ терялся
+MAX_TOOL_ROUNDS = 10
 REQUEST_TIMEOUT = 90
 # DeepSeek в часы пик отвечает 503 «Service is busy» (и 429 при лимите) —
 # это перегрузка ИХ сервера, а не ошибка бота. Один такой ответ раньше
@@ -101,6 +104,12 @@ def is_control_chat(chat_id) -> bool:
     return str(chat_id).strip() == control_group_id()
 
 
+def group_link_responsible() -> str:
+    """Username того, кто добавляет бота в группы клиентов (без «@»).
+    К нему обращаемся, когда для BL не нашлось Telegram-группы."""
+    return (os.getenv("GROUP_LINK_RESPONSIBLE_USERNAME", "JAHONGIR_moderator") or "").strip().lstrip("@")
+
+
 def confidential_chat_ids() -> set:
     """Chats the bot must NEVER message or reveal anything about."""
     raw = os.getenv("CONFIDENTIAL_CHAT_IDS", "-1002687342009")
@@ -136,6 +145,7 @@ def _system_prompt() -> str:
     packing_name = (os.getenv("PACKING_RESPONSIBLE_NAME", "Jigar") or "Jigar").strip()
     hoji_id = (os.getenv("HOJI_DODAM_TG_ID", "1514716826") or "").strip()
     hoji_name = (os.getenv("HOJI_DODAM_NAME", "Hoji dodam") or "Hoji dodam").strip()
+    grouper = group_link_responsible()
     return f"""Ты — AI-ассистент логистической компании BURAQ Logistics (карго Китай → Узбекистан).
 Ты работаешь внутри админ-панели (Flask-сайт) и общаешься с ВЛАДЕЛЬЦЕМ компании в личном чате Telegram.
 Сегодня: {datetime.now().strftime('%d.%m.%Y %H:%M')}.
@@ -213,8 +223,9 @@ def _system_prompt() -> str:
     ЖИЗНЕННЫЙ ЦИКЛ ТЕПЕРЬ АВТОМАТИЧЕСКИЙ (с 21.08.2026):
     • Каждое утро в 06:30 бот сверяет партии с планами. Новый китайский план → партия открывается САМА:
       имя = дата + суффикс склада («14.08.2026 YIWU» / «14.08.2026 ZH»), статус Xitoy, состав из плана,
-      Telegram-группы подтягиваются автоматически. BL без группы — бот спрашивает в управляющей группе,
-      отмечая ответственных (возможно, бот ещё не добавлен в группу клиента).
+      Telegram-группы подтягиваются автоматически. BL без группы — бот пишет в управляющую группу и просит
+      @{grouper} добавить бота в эти группы клиентов (чаще всего причина именно в том, что бота туда не
+      добавили; без группы трекинг клиенту не уйдёт). @{grouper} — ответственный за добавление бота в группы.
     • До Хоргоса состав ежедневно сверяется с китайским планом: новые BL добавляются, цифры (места/кубы/кг)
       обновляются. Автоматических удалений НЕТ.
     • Статус «Horgos (Qozoq)» → груз перегружается в казахские фуры (вместимость другая, груз одной китайской
@@ -290,6 +301,10 @@ def _system_prompt() -> str:
   с выводами инструментов: чего в них нет — того НЕТ и в ответе. Лучше честное «в данных этого нет»,
   чем красивый выдуманный список.
 - Данные бери ТОЛЬКО из инструментов. Не выдумывай статусы, цифры, BL коды. Если данных нет — так и скажи.
+- НЕ ОБЪЯВЛЯЙ ЗАЯВКУ СОЗДАННОЙ, пока propose_action реально не вернул "ok": true с pending_action_id.
+  Кнопки ✅/❌ приходят ОТДЕЛЬНЫМ сообщением и только по настоящей заявке. Написать «taklif yaratildi» /
+  «заявка создана», не получив ok:true, — грубая ошибка: человек будет ждать кнопок, которых не будет.
+  Если propose_action вернул error — прямо назови причину и что нужно исправить, без слов «создано».
 - ТЫ ВИДИШЬ ВСЮ АДМИН-ПАНЕЛЬ. На любой вопрос или анализ, под который нет готового инструмента,
   отвечай через get_db_schema (структура) → query_database (любой SELECT, база открыта только на чтение).
   Ключевые таблицы: batches (партии: статус, ETA, даты прибытия/выдачи), bl_codes (BL: клиент, группа,
@@ -318,6 +333,10 @@ def _system_prompt() -> str:
 • «есть ли план (китайский/казахский) на дату» → get_loading_plans (смотри ОБА вида и summary) → при нужде get_plan_marks.
 • «что с казахским планом партии / применился ли / что изменится / почему не перегрузил» → get_batch_plan_status.
 • «кто не привязан к группе / почему клиент не получил трекинг» → get_unlinked_bls, затем find_group и, если просят, propose_action link_bl_group.
+  Если подходящей группы НЕТ ни в find_group, ни в similar_groups — значит бота ещё не добавили в группу клиента.
+  Тогда НЕ пиши «ничего не могу сделать»: попроси @{grouper} добавить бота в эти группы — propose_action
+  send_group_message в управляющую группу, в тексте @{grouper}, список кодов BL и просьба добавить бота
+  (без него трекинг этим клиентам не уйдёт). Это стандартный ответ на «не нашёл группу».
 • «что сделала автоматика / почему не открылась партия / когда сверка» → get_automation_status (+ get_batch_plan_status по партии).
 • «отправь трекинг» → партия: send_tracking_batch; один BL: find_bl → send_tracking_bl.
 • «примени казахский план / перегрузи сейчас» → get_batch_plan_status (покажи предпросмотр) → propose_action apply_kazakh_plan.
@@ -338,7 +357,15 @@ def _system_prompt() -> str:
 
 ════════ СТИЛЬ ОТВЕТОВ ════════
 - Язык: отвечай на языке вопроса (узбекский латиницей / русский). Термины системы (статусы, названия планов,
-  коды BL) — как в данных, без перевода.
+  коды BL) — как в данных, без перевода. Спросили по-узбекски — весь ответ по-узбекски, включая сообщения об
+  ошибках и уточнения; смешивать языки в одном ответе нельзя.
+- УЗБЕКСКИЙ ПОНИМАЙ ПОЛНОСТЬЮ, в том числе разговорный и с опечатками. Частые формы: «kim yangiladi/kim
+  yangilab berdi» — кто обновил; «qachon» — когда; «bugun/kecha» — сегодня/вчера; «yubordi/yuborildi» —
+  отправил/отправлено; «qo'shing» — добавьте; «bog'lash/ulash» — привязать; «guruh» — группа; «partiya» —
+  партия; «yuk» — груз; «treking» — трекинг; «kim ruxsat berdi» — кто разрешил.
+- НЕ ОТФУТБОЛИВАЙ вопрос. «Уточни/переформулируй» — только если без уточнения ответить физически нельзя, и
+  тогда задай ОДИН конкретный вопрос (какая партия? какая дата?), а не общую фразу. Если понял вопрос хотя бы
+  наполовину — сначала вызови инструменты и ответь тем, что нашёл, и лишь потом, если надо, уточняй.
 - Первой строкой — суть: итог с иконкой (✅ есть/готово, ⚠️ внимание, ❌ нет/нельзя, ⏳ ждём). Без вступлений,
   без пересказа вопроса.
 - Дальше — структурно: короткие блоки с <b>жирным</b> заголовком или «ключ: значение», списки через «•»,
@@ -1122,8 +1149,15 @@ def _tool_get_unlinked_bls(_args: dict) -> dict:
             ][:3]
             out.append({"batch": batch["name"], "bl_id": bl["id"], "code": code,
                         "client": bl.get("client_name") or "", "similar_groups": hints})
-    return {"count": len(out), "unlinked": out[:60],
-            "note": "Привязать: propose_action kind='link_bl_group' (bl_id, chat_id). Если подходящей группы нет — бот, возможно, ещё не добавлен в группу клиента."}
+    return {
+        "count": len(out),
+        "unlinked": out[:60],
+        "group_link_responsible": group_link_responsible(),
+        "note": "Привязать: propose_action kind='link_bl_group' (bl_id, chat_id). "
+                "Если подходящей группы НЕТ (similar_groups пуст) — бот ещё не добавлен в группу клиента: "
+                f"попроси @{group_link_responsible()} добавить бота в эти группы "
+                "(propose_action send_group_message в управляющую группу с текстом-просьбой и списком кодов).",
+    }
 
 
 def _tool_find_group(args: dict) -> dict:
@@ -1747,6 +1781,24 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
 # CHAT LOOP
 # ═══════════════════════════════════════════════════════════════
 
+# «заявка создана» на трёх языках — фразы, после которых человек ждёт
+# кнопок ✅/❌ (узб. taklif/so'rov yaratildi, рус. заявка/предложение создано)
+_PROPOSAL_CLAIM_RE = re.compile(
+    r"(taklif|so'rov|so‘rov|sorov)\s+\w*\s*yarat"
+    r"|yaratildi"
+    r"|(заявк|предложени)\w*\s+(созда|сформир)"
+    r"|создал\w*\s+(заявк|предложени)"
+    r"|tasdiqlash\s+uchun\s+(tugma|karta)"
+    r"|кнопк\w*\s+подтвержд",
+    re.IGNORECASE,
+)
+
+
+def _claims_proposal(text: str) -> bool:
+    """Модель утверждает, что создала заявку на подтверждение?"""
+    return bool(_PROPOSAL_CLAIM_RE.search(str(text or "")))
+
+
 class DeepSeekBusy(Exception):
     """DeepSeek перегружен (503 «Service is busy» / 429) — временная
     проблема на ИХ стороне, повторы не помогли."""
@@ -1916,7 +1968,32 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
                     "content": payload,
                 })
         else:
-            reply_text = "⚠️ Слишком длинная цепочка инструментов — попробуй сформулировать запрос конкретнее."
+            # Раунды кончились, но данные уже собраны — не выбрасываем их.
+            # Просим модель ответить ТЕМ, ЧТО ЕСТЬ, без инструментов:
+            # пустой отказ вместо ответа человеку бесполезен.
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Инструменты больше не доступны. Ответь СЕЙЧАС на языке вопроса, "
+                    "используя только уже полученные выше данные. Если чего-то не хватает — "
+                    "скажи, какого именно факта нет и где его посмотреть, но ответь по существу "
+                    "тем, что есть. Не проси переформулировать вопрос."
+                ),
+            })
+            try:
+                data = _chat_completion(messages, tools=[])
+                reply_text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+                reply_text = reply_text.strip()
+            except DeepSeekBusy:
+                raise
+            except Exception:
+                reply_text = ""
+            if not reply_text:
+                reply_text = (
+                    "⚠️ Сходу собрать ответ не получилось — уточни вопрос "
+                    "(конкретная партия, BL или дата), и я отвечу.\n"
+                    "⚠️ Savolni aniqroq yozing (partiya, BL yoki sana) — shunda javob beraman."
+                )
     except DeepSeekBusy:
         reply_text = (
             "⏳ Сервер DeepSeek сейчас перегружен («Service is busy») — это на их стороне, "
@@ -1930,6 +2007,16 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
 
     if not reply_text:
         reply_text = "Готово." if created_actions else "Не смог сформировать ответ, попробуй ещё раз."
+
+    # Карточка с кнопками ✅/❌ отправляется ТОЛЬКО из created_actions.
+    # Если модель написала «заявка создана», а заявки нет — человек будет
+    # ждать кнопок, которых не будет. Честно говорим об этом.
+    if not created_actions and _claims_proposal(reply_text):
+        reply_text += (
+            "\n\n⚠️ <b>Кнопок подтверждения не будет</b> — заявка на самом деле не создалась. "
+            "Повтори просьбу ещё раз (или сделай это в панели).\n"
+            "⚠️ <b>Tasdiqlash tugmalari kelmaydi</b> — so'rov yaratilmadi. Iltimos, qaytadan yozing."
+        )
 
     with _history_lock:
         db.ai_add_message(tg_user_id, "assistant", reply_text)
