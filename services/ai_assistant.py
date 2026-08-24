@@ -338,7 +338,13 @@ def _system_prompt() -> str:
   send_group_message в управляющую группу, в тексте @{grouper}, список кодов BL и просьба добавить бота
   (без него трекинг этим клиентам не уйдёт). Это стандартный ответ на «не нашёл группу».
 • «что сделала автоматика / почему не открылась партия / когда сверка» → get_automation_status (+ get_batch_plan_status по партии).
-• «отправь трекинг» → партия: send_tracking_batch; один BL: find_bl → send_tracking_bl.
+• «отправь трекинг» → СНАЧАЛА get_batch_plan_status/get_batch_detail (tracking_readiness), потом
+  партия: send_tracking_batch; один BL: find_bl → send_tracking_bl.
+  ЖЕЛЕЗНОЕ ПРАВИЛО: если партия в статусе Nurjo'li, Jarkent, Almata, Taraz, Shimkent, Qonusbay, Saryagash,
+  Yallama или Toshkent(Chuqursoy ULS da) — она УЖЕ погружена в казахскую фуру, и казахский план ОБЯЗАН быть
+  применён. Не применён — рассылка блокируется автоматически: скажи об этом прямо и предложи сначала
+  применить план (propose_action apply_kazakh_plan), а не «отправляю». Перед каждой рассылкой состав
+  пересверяется с шитсом — BL могли перенести в другую партию или дописать.
 • «примени казахский план / перегрузи сейчас» → get_batch_plan_status (покажи предпросмотр) → propose_action apply_kazakh_plan.
 • «запусти сверку сейчас» → propose_action run_plan_sync.
 • «где packing list / чего не хватает» → get_missing_packing_lists, файлы — get_batch_detail.
@@ -736,13 +742,29 @@ def _tool_get_batch_detail(args: dict) -> dict:
             "filled_by": last_send.get("filled_by") or "",       # кто обновил данные в форме
             "sent_via": last_send.get("sent_via") or "",
         }
+    # готовность к рассылке: за Хоргосом казахский план обязан быть применён
+    ready = {"checked": False}
+    try:
+        import app as _app
+        v = _app.verify_batch_against_plan(dict(found))
+        ready = {
+            "checked": True,
+            "safe_to_send": not v.get("block_send"),
+            "reason": v.get("reason") or "",
+            "diff_with_sheet": v.get("diff") or {},
+        }
+    except Exception as exc:
+        ready = {"checked": False, "error": str(exc)}
     return {
         "batch": _batch_brief(found),
         "status_changed_at": found.get("status_updated_at") or "",
+        "tracking_readiness": ready,
         "last_tracking": tracking,
         "note": "«когда обновили/отправили трекинг» = last_tracking.sent_at, НЕ status_changed_at "
                 "(то — когда в последний раз менялся СТАТУС). «кто разрешил/обновил» = "
-                "last_tracking.confirmed_by / filled_by.",
+                "last_tracking.confirmed_by / filled_by. "
+                "tracking_readiness.safe_to_send=false — рассылка ЗАБЛОКИРОВАНА: партия уже за Хоргосом "
+                "(Nurjo'li…Toshkent), а казахский план не применён; сначала применить план.",
         "bl_codes": [
             {
                 "id": bl.get("id"),

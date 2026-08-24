@@ -2865,6 +2865,17 @@ def execute_ai_action(action: dict, actor: str = ""):
         batch = db.get_batch(bl.get("batch_id"))
         batch_name = (batch or {}).get("name") or ""
         if batch:
+            # та же защита, что и при массовой рассылке: за Хоргосом без
+            # казахского плана состав не подтверждён — не отправляем
+            batch, verdict = ensure_kazakh_plan_before_send(batch)
+            if verdict.get("block_send"):
+                return False, f"«{batch_name}»: {verdict['reason']} — отправка остановлена"
+            # применение плана могло УВЕЗТИ этот BL в другую партию —
+            # тогда шлём его уже под именем новой партии, а не старой
+            bl = db.get_bl_by_id(bl["id"]) or bl
+            if str(bl.get("batch_id")) != str(batch["id"]):
+                batch = db.get_batch(bl.get("batch_id")) or batch
+                batch_name = batch.get("name") or batch_name
             _refresh_batch_figures_from_plan(batch)
             bl = db.get_bl_by_id(bl["id"]) or bl
         try:
@@ -2941,14 +2952,153 @@ def _refresh_batch_figures_from_plan(batch: dict, blocks: list | None = None) ->
         return []
 
 
+def verify_batch_against_plan(batch: dict, blocks: list | None = None) -> dict:
+    """Сверка партии с шитсом ПЕРЕД отправкой трекинга (правило владельца
+    24.08.2026). Возвращает {ok, block_send, reason, diff, applied}.
+
+    1) Партия уже выехала из Хоргоса (Nurjo'li … Toshkent), а казахский
+       план НЕ применён → отправку НЕ делаем: состав ещё китайский, часть
+       груза могла уехать другой фурой и клиенты получат чужой трекинг.
+    2) План применён → пересверяем состав с шитсом ЗАНОВО (BL могли
+       перенести в другую партию или дописать) и сообщаем, что разошлось.
+    """
+    from services import plan_sync_service as pss
+
+    out = {"ok": True, "block_send": False, "reason": "", "diff": {},
+           "plan_available": False, "applied": False}
+    try:
+        if blocks is None:
+            blocks = pss.all_blocks()
+    except Exception:
+        app.logger.exception("Pre-send verify: sheet unavailable for batch %s", batch.get("id"))
+        # шитс недоступен — это не повод молча отправить неверный трекинг,
+        # но и блокировать по недоступности внешнего сервиса нельзя
+        out["reason"] = "Шитс планов недоступен — сверка не выполнена"
+        out["ok"] = False
+        return out
+
+    kz_applied = (batch.get("plan_kind") or "") == "kazakh"
+    my_codes = _plan_batch_codes(batch["id"])
+
+    # партия уже в Ташкенте/выдана — перегрузка позади, состав устоялся:
+    # блокировать её трекинг незачем (симметрично правилу «из прибывшей
+    # партии груз не уезжает»)
+    if pss.is_after_horgos_loading(batch) and not kz_applied and not pss.is_arrived(batch):
+        probe = dict(batch)
+        probe["status"] = pss.HORGOS_STATUS
+        block, why = pss.find_block_for_batch(probe, blocks, my_codes, batches=db.get_batches())
+        out["ok"] = False
+        out["block_send"] = True
+        if block is not None and block.get("kind") == "kazakh":
+            out["plan_available"] = True
+            out["reason"] = (
+                f"партия в статусе «{batch.get('status')}» (уже за Хоргосом), но КАЗАХСКИЙ ПЛАН НЕ ПРИМЕНЁН. "
+                f"В шитсе он есть: «{block.get('title')}» ({block.get('date')}). Состав сейчас китайский — "
+                "часть груза могла уехать другой фурой, трекинг уйдёт не тем клиентам."
+            )
+        else:
+            out["reason"] = (
+                f"партия в статусе «{batch.get('status')}» (уже за Хоргосом), но казахский план не применён "
+                f"и в шитсе не найден ({why}). Состав не подтверждён — отправка небезопасна."
+            )
+        return out
+
+    if kz_applied:
+        # состав мог измениться в шитсе после применения — сверяем заново
+        block = pss.resolve_ref_block(batch, blocks, "kazakh", my_codes)
+        if block is not None:
+            plan = pss.aggregate_block(block)
+            bls = db.get_bl_by_batch(batch["id"])
+            d = pss.diff_against_plan(bls, plan)
+            extra = [str(x.get("code")) for x in d["extra"]]
+            missing = [e["code"] for e in d["add"]]
+            if extra or missing:
+                out["diff"] = {"not_in_plan": extra[:20], "in_plan_but_absent": missing[:20]}
+                out["ok"] = False
+                bits = []
+                if missing:
+                    bits.append(f"в плане есть, а в партии нет: {', '.join(missing[:10])}")
+                if extra:
+                    bits.append(f"в партии есть, а в плане нет: {', '.join(extra[:10])}")
+                out["reason"] = "состав разошёлся с шитсом — " + "; ".join(bits)
+    return out
+
+
+def ensure_kazakh_plan_before_send(batch: dict):
+    """«Перешла ли партия к казахскому плану» перед отправкой трекинга.
+    Если партия уже за Хоргосом, план не применён, НО в шитсе он есть —
+    переводим её на него (легаси-партиям привязку никогда не проставляли),
+    сообщаем в управляющую группу и пересверяем. Возвращает (batch, verdict)."""
+    from services import ai_assistant
+
+    verdict = verify_batch_against_plan(batch)
+    if not (verdict.get("block_send") and verdict.get("plan_available")):
+        return batch, verdict
+    batch_id = batch["id"]
+    try:
+        ok_apply, msg_apply, _changed = _apply_kazakh_plan_impl({"batch_id": batch_id})
+    except Exception as exc:
+        ok_apply, msg_apply = False, str(exc)
+        app.logger.exception("Pre-send kazakh apply failed for batch %s", batch_id)
+    try:
+        telegram_send_message(
+            ai_assistant.control_group_id(),
+            (f"🔄 <b>Перед отправкой трекинга</b> «{html.escape(batch['name'])}» "
+             f"({html.escape(str(batch.get('status') or ''))}) переведена на казахский план:\n"
+             + (msg_apply if ok_apply else f"⚠️ не удалось: {html.escape(str(msg_apply))}")),
+        )
+    except Exception:
+        app.logger.exception("Pre-send apply notify failed for batch %s", batch_id)
+    if ok_apply:
+        batch = db.get_batch(batch_id) or batch
+        verdict = verify_batch_against_plan(batch)
+    return batch, verdict
+
+
 def _execute_tracking_broadcast(batch_id: int, actor: str = "", filled_by: str = "", sent_via: str = ""):
     """Разослать трекинг одной партии по клиентским группам её BL.
     actor — кто дал ход рассылке (нажал ✅/TASDIQLASH), filled_by — кто
     обновил данные в форме, sent_via — путь отправки; всё пишется в
     send_logs, чтобы бот отвечал «кто обновил/разрешил трекинг»."""
+    from services import ai_assistant
+
     batch = db.get_batch(batch_id)
     if not batch:
         return False, "Партия не найдена"
+
+    # ── СВЕРКА С ШИТСОМ ПЕРЕД ОТПРАВКОЙ (правило владельца 24.08.2026) ──
+    # Партия за Хоргосом без применённого казахского плана — не отправляем:
+    # состав ещё китайский, часть груза могла уехать другой фурой.
+    # Применённый план пересверяем: BL могли перенести или дописать.
+    batch, verdict = ensure_kazakh_plan_before_send(batch)
+    if verdict.get("block_send"):
+        warn = (
+            f"🛑 <b>Трекинг НЕ отправлен</b> — «{html.escape(batch['name'])}»: {html.escape(verdict['reason'])}\n"
+            "Примени казахский план (или поправь статус), затем повтори отправку."
+        )
+        try:
+            telegram_send_message(ai_assistant.control_group_id(), warn)
+        except Exception:
+            app.logger.exception("Pre-send block notify failed for batch %s", batch_id)
+        return False, f"«{batch['name']}»: {verdict['reason']} — отправка остановлена"
+    if verdict.get("diff"):
+        # состав разошёлся с шитсом — приводим партию к плану ТЕМ ЖЕ
+        # механизмом, что и утренняя сверка (переезды, а не дубли)
+        try:
+            ok_apply, msg_apply, changed = _apply_kazakh_plan_impl({"batch_id": batch_id})
+        except Exception as exc:
+            ok_apply, msg_apply, changed = False, str(exc), False
+            app.logger.exception("Pre-send reconcile failed for batch %s", batch_id)
+        try:
+            telegram_send_message(
+                ai_assistant.control_group_id(),
+                (f"🔄 <b>Перед отправкой трекинга</b> «{html.escape(batch['name'])}» состав сверен с шитсом:\n"
+                 + (msg_apply if ok_apply else f"⚠️ не удалось привести к плану: {html.escape(str(msg_apply))}")),
+            )
+        except Exception:
+            app.logger.exception("Pre-send reconcile notify failed for batch %s", batch_id)
+        batch = db.get_batch(batch_id) or batch
+
     # цифры BL — к плану, прямо перед отправкой (иначе уйдут устаревшие)
     _refresh_batch_figures_from_plan(batch)
     bl_rows = [

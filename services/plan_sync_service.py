@@ -94,6 +94,21 @@ def stage_for_status(status: str) -> str:
     return "kazakh" if idx >= horgos_idx else "china"
 
 
+# Локации ПОСЛЕ погрузки в казахскую фуру (владелец, 24.08.2026): с этого
+# момента состав партии обязан жить по КАЗАХСКОМУ плану — груз уже едет
+# другой фурой, и трекинг по китайскому составу уйдёт не тем клиентам.
+# Сам Хоргос сюда не входит: там перегрузка ещё идёт (вопрос Hoji dodam).
+AFTER_HORGOS_STATUSES = (
+    "Nurjo'li", "Jarkent", "Almata", "Taraz", "Shimkent",
+    "Qonusbay", "Saryagash", "Yallama", "Toshkent(Chuqursoy ULS da)",
+)
+
+
+def is_after_horgos_loading(batch: dict) -> bool:
+    """Фура уже выехала из Хоргоса — казахский план обязан быть применён."""
+    return str(batch.get("status") or "").strip() in AFTER_HORGOS_STATUSES
+
+
 def is_arrived(batch: dict) -> bool:
     """Партия уже в Ташкенте/выдана — перегрузка в Хоргосе позади."""
     status = str(batch.get("status") or "")
