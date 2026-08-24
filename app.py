@@ -2704,8 +2704,10 @@ def send_ai_action_approval(chat_id, act: dict):
     )
 
 
-def execute_ai_action(action: dict):
-    """Run one APPROVED assistant action. Returns (ok, human_result)."""
+def execute_ai_action(action: dict, actor: str = ""):
+    """Run one APPROVED assistant action. Returns (ok, human_result).
+    actor — имя того, кто одобрил заявку (нажал ✅/TASDIQLASH); для
+    рассылок трекинга оно и список заполнивших форму пишутся в send_logs."""
     kind = action.get("kind")
     try:
         params = json.loads(action.get("params_json") or "{}")
@@ -2850,7 +2852,9 @@ def execute_ai_action(action: dict):
         return bool(done), ("Сверка планов выполнена: " + str(info)) if done else f"Сверка не выполнена: {info}"
 
     if kind == "send_tracking_batch":
-        return _execute_tracking_broadcast(int(params.get("batch_id") or 0))
+        return _execute_tracking_broadcast(
+            int(params.get("batch_id") or 0), actor=actor, sent_via="assistant"
+        )
 
     if kind == "send_tracking_bl":
         bl = db.get_bl_by_id(int(params.get("bl_id") or 0))
@@ -2860,12 +2864,16 @@ def execute_ai_action(action: dict):
             return False, f"BL {bl.get('code')} не привязан к группе"
         batch = db.get_batch(bl.get("batch_id"))
         batch_name = (batch or {}).get("name") or ""
+        if batch:
+            _refresh_batch_figures_from_plan(batch)
+            bl = db.get_bl_by_id(bl["id"]) or bl
         try:
             success, error_msg = send_bl_package(dict(bl), batch_name, include_related_batches=False)
         except Exception as exc:
             success, error_msg = False, str(exc)
         try:
-            db.add_log(bl["id"], bl["code"], batch_name, bl["chat_id"], bl.get("status"), success, error_msg)
+            db.add_log(bl["id"], bl["code"], batch_name, bl["chat_id"], bl.get("status"), success, error_msg,
+                       confirmed_by=actor, sent_via="assistant")
         except Exception:
             app.logger.exception("send_tracking_bl: log write failed")
         if success:
@@ -2876,11 +2884,16 @@ def execute_ai_action(action: dict):
         batch_ids = params.get("batch_ids") or []
         if not batch_ids:
             return False, "Список партий пуст"
+        filled_by = ", ".join(str(x) for x in (params.get("filled_by") or []) if x)
+        requested_by = str(params.get("requested_by") or "").strip()
+        approver = ", ".join(x for x in (requested_by, actor) if x) or actor
         lines = []
         all_ok = True
         for raw_id in batch_ids:
             try:
-                ok, msg = _execute_tracking_broadcast(int(raw_id))
+                ok, msg = _execute_tracking_broadcast(
+                    int(raw_id), actor=approver, filled_by=filled_by, sent_via="Treking forma"
+                )
             except Exception as exc:
                 ok, msg = False, f"Ошибка: {exc}"
             all_ok = all_ok and ok
@@ -2890,11 +2903,54 @@ def execute_ai_action(action: dict):
     return False, f"Неизвестное действие: {kind}"
 
 
-def _execute_tracking_broadcast(batch_id: int):
-    """Разослать трекинг одной партии по клиентским группам её BL."""
+def _refresh_batch_figures_from_plan(batch: dict, blocks: list | None = None) -> list:
+    """Перед рассылкой привести места/кубы/вес BL к ТЕКУЩЕМУ плану погрузки,
+    чтобы клиент не получил устаревшие цифры (кейс ZAVA: в панели 17100 кг/
+    15 м³, а в шитсе 14960 кг/9.532 м³). Только цифры — ничего не двигает и
+    не добавляет. Best-effort: если шитс недоступен, отправляем как есть."""
+    from services import plan_sync_service as pss
+    try:
+        # ТОЛЬКО по сохранённой привязке партии — тому блоку, который уже
+        # выбрала автоматика. Гадать блок перед отправкой клиенту нельзя:
+        # ошибка сопоставления ушла бы клиенту как «факт».
+        if not (pss.batch_has_ref(batch) and (batch.get("plan_kind") or "")):
+            return []
+        if blocks is None:
+            blocks = pss.all_blocks()
+        block = pss.resolve_ref_block(
+            batch, blocks, batch.get("plan_kind"), _plan_batch_codes(batch["id"])
+        )
+        if block is None:
+            return []
+        plan = pss.aggregate_block(block)
+        corrected = []
+        for bl in db.get_bl_by_batch(batch["id"]):
+            entry = plan.get(pss.normalize_mark(bl.get("code")))
+            if not entry:
+                continue
+            if (abs(float(bl.get("quantity_places") or 0) - entry["ctn"]) > pss.CTN_EPS
+                    or abs(float(bl.get("volume_cbm") or 0) - entry["cbm"]) > pss.CBM_EPS
+                    or abs(float(bl.get("weight_kg") or 0) - entry["kg"]) > pss.KG_EPS):
+                db.update_bl_figures(bl["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+                corrected.append(str(bl.get("code")))
+        if corrected:
+            app.logger.info("Tracking pre-send figure refresh «%s»: %s", batch.get("name"), ", ".join(corrected))
+        return corrected
+    except Exception:
+        app.logger.exception("Tracking pre-send figure refresh failed for batch %s", batch.get("id"))
+        return []
+
+
+def _execute_tracking_broadcast(batch_id: int, actor: str = "", filled_by: str = "", sent_via: str = ""):
+    """Разослать трекинг одной партии по клиентским группам её BL.
+    actor — кто дал ход рассылке (нажал ✅/TASDIQLASH), filled_by — кто
+    обновил данные в форме, sent_via — путь отправки; всё пишется в
+    send_logs, чтобы бот отвечал «кто обновил/разрешил трекинг»."""
     batch = db.get_batch(batch_id)
     if not batch:
         return False, "Партия не найдена"
+    # цифры BL — к плану, прямо перед отправкой (иначе уйдут устаревшие)
+    _refresh_batch_figures_from_plan(batch)
     bl_rows = [
         bl for bl in db.get_bl_by_batch(batch_id)
         if bl.get("chat_id") and not bl.get("send_excluded") and not bl.get("tracking_sent_current")
@@ -2919,7 +2975,8 @@ def _execute_tracking_broadcast(batch_id: int):
                 success, error_msg = False, str(exc)
                 app.logger.exception("AI tracking send failed for bl_id=%s", bl.get("id"))
         try:
-            db.add_log(bl["id"], bl["code"], batch["name"], bl["chat_id"], bl["status"], success, error_msg)
+            db.add_log(bl["id"], bl["code"], batch["name"], bl["chat_id"], bl["status"], success, error_msg,
+                       filled_by=filled_by, confirmed_by=actor, sent_via=sent_via)
         except Exception:
             app.logger.exception("AI tracking send: log write failed")
         if success:
@@ -3008,9 +3065,13 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
         except Exception:
             pass
 
+    voter_name = " ".join(
+        str(voter.get(k) or "").strip() for k in ("first_name", "last_name")
+    ).strip() or str(voter.get("username") or voter.get("id") or "").strip()
+
     def _worker():
         try:
-            ok, result_text = execute_ai_action(action)
+            ok, result_text = execute_ai_action(action, actor=voter_name)
         except Exception as exc:
             ok, result_text = False, f"Ошибка выполнения: {exc}"
             app.logger.exception("AI action execution failed")
@@ -4141,6 +4202,9 @@ def tgform_api_confirm():
     resp = telegram_send_message(group_id, "\n".join(lines), reply_markup=keyboard)
     params["card_message_id"] = ((resp or {}).get("result") or {}).get("message_id")
     params["card_chat_id"] = group_id
+    # кто нажал TASDIQLASH в форме — попадёт в журнал отправок вместе с тем,
+    # кто подтвердит ✅ в группе (вопрос владельца «кто разрешил трекинг»)
+    params["requested_by"] = str(user.get("first_name") or user.get("id") or "").strip()
     db.ai_update_pending_action_params(action_id, json.dumps(params, ensure_ascii=False))
     return jsonify({"ok": True, "batches_in_basket": len(batch_ids)})
 
@@ -7021,6 +7085,7 @@ def api_send_batch(batch_id):
             db.add_log(
                 bl["id"], bl["code"], batch["name"],
                 bl["chat_id"], bl["status"], success, error_msg,
+                sent_via="panel",
             )
         except Exception:
             app.logger.exception("Failed to record send log for bl_id=%s", bl.get("id"))
@@ -7133,7 +7198,7 @@ def api_send_one(bl_id):
         batch_name,
         include_related_batches=False,
     )
-    db.add_log(bl["id"], bl["code"], batch_name, bl["chat_id"], bl["status"], success, error_msg)
+    db.add_log(bl["id"], bl["code"], batch_name, bl["chat_id"], bl["status"], success, error_msg, sent_via="panel")
 
     if not success:
         return jsonify({"error": error_msg}), 500

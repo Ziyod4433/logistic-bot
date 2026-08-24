@@ -164,7 +164,15 @@ def _system_prompt() -> str:
    ответов/цитат/ссылок — владелец явно отверг файлы-ссылки). Фото, PNG и геолокаций НЕТ.
    Язык = язык группы (uz латиница / uz кириллица / ru / en).
    Индикация в панели: зелёная строка = трекинг отправлен сегодня, жёлтая = 1 день, красная = 2+ дней.
-   Логи отправок хранятся (send_logs).
+   Логи отправок хранятся (send_logs) — вместе с ТЕМ, КТО дал ход рассылке: filled_by (кто обновил данные
+   в Treking forma), confirmed_by (кто нажал TASDIQLASH в форме и ✅ в управляющей группе), sent_via (путь:
+   «Treking forma» / assistant / panel) и sent_at (когда реально ушло).
+   КТО ЗАПУСКАЕТ РАССЫЛКУ: только человек. Сотрудник обновляет партию в Treking forma → жмёт TASDIQLASH →
+   в управляющей группе появляется карточка «Hammasi to'g'rimi?» → кто-то жмёт ✅ → бот рассылает. Сам по
+   себе бот трекинг клиентам НИКОГДА не рассылает (по расписанию он только СПРАШИВАЕТ логистов в 7:00).
+   Поэтому ответ «отправлено автоматически, человек не участвовал» — неверный.
+   Перед каждой рассылкой бот подтягивает места/кубы/вес BL из ТЕКУЩЕГО плана погрузки, чтобы клиенту не
+   ушли устаревшие цифры (кейс ZAVA: в панели висели 17100 кг/15 м³, в шитсе — 14960 кг/9.532 м³).
 
 4. КНОПКА «YUK HOLATI» в группах клиентов: клиент сам запрашивает статус. Бот показывает ТОЛЬКО партии
    В ПУТИ. Если груз уже в статусе «Toshkent(Chuqursoy ULS da)» или доставлен — бот отвечает
@@ -309,6 +317,15 @@ def _system_prompt() -> str:
 • «запусти сверку сейчас» → propose_action run_plan_sync.
 • «где packing list / чего не хватает» → get_missing_packing_lists, файлы — get_batch_detail.
 • «почему не ушло / ошибка отправки» → get_send_logs (+ get_batch_detail).
+• «КТО обновил трекинг / кто разрешил отправку / кто дал добро» → get_batch_detail (last_tracking.confirmed_by
+  и filled_by) либо find_bl (last_tracking_by / last_tracking_filled_by); подробности — get_send_logs.
+  Отправку трекинга ВСЕГДА запускает человек: данные в Treking forma обновляет сотрудник (filled_by), он же или
+  другой жмёт TASDIQLASH, и кто-то подтверждает ✅ в управляющей группе (confirmed_by) — только после этого бот
+  рассылает. «Бот отправил автоматически, человека нет» — НЕВЕРНО: автоматически рассылка не запускается никогда.
+  Если в старой записи confirmed_by пуст — говори «в журнале того периода имя не сохранялось», а НЕ «отправил бот сам».
+• «КОГДА обновили/отправили трекинг» → last_tracking.sent_at (get_batch_detail) или last_tracking_at (find_bl).
+  НЕ путай с датой смены статуса (status_changed_at / status_updated_at) и с датой самого статуса в шитсе —
+  это разные вещи, и именно из-за такой путаницы бот называл дату «4 дня назад» вместо сегодняшней отправки.
 • цифры, суммы, динамика, «сколько всего…» → query_database (после get_db_schema), крупное — make_pdf_report.
 • шаблоны сообщений → get_message_templates.
 
@@ -675,8 +692,23 @@ def _tool_get_batch_detail(args: dict) -> dict:
     if "__ambiguous__" in found:
         return {"error": "Найдено несколько партий, уточни какая", "candidates": found["__ambiguous__"]}
     bls = db.get_bl_by_batch(found["id"])
+    last_send = db.get_last_tracking_send(batch_name=found.get("name"))
+    tracking = {"ever_sent": False}
+    if last_send:
+        tracking = {
+            "ever_sent": True,
+            "sent_at": last_send.get("sent_at") or "",          # КОГДА реально ушёл трекинг
+            "confirmed_by": last_send.get("confirmed_by") or "", # кто нажал TASDIQLASH/✅
+            "filled_by": last_send.get("filled_by") or "",       # кто обновил данные в форме
+            "sent_via": last_send.get("sent_via") or "",
+        }
     return {
         "batch": _batch_brief(found),
+        "status_changed_at": found.get("status_updated_at") or "",
+        "last_tracking": tracking,
+        "note": "«когда обновили/отправили трекинг» = last_tracking.sent_at, НЕ status_changed_at "
+                "(то — когда в последний раз менялся СТАТУС). «кто разрешил/обновил» = "
+                "last_tracking.confirmed_by / filled_by.",
         "bl_codes": [
             {
                 "id": bl.get("id"),
@@ -710,7 +742,11 @@ def _tool_find_bl(args: dict) -> dict:
                    b.name AS batch_name, b.status AS batch_status,
                    COALESCE(b.client_delivery_date,'') AS delivered_date,
                    COALESCE(tc.title,'') AS group_title,
-                   (SELECT COUNT(*) FROM files f WHERE f.bl_id = bl.id) AS file_count
+                   (SELECT COUNT(*) FROM files f WHERE f.bl_id = bl.id) AS file_count,
+                   (SELECT sl.sent_at FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_tracking_at,
+                   (SELECT sl.confirmed_by FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_tracking_by,
+                   (SELECT sl.filled_by FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_tracking_filled_by,
+                   (SELECT sl.sent_via FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_tracking_via
             FROM bl_codes bl
             JOIN batches b ON b.id = bl.batch_id
             LEFT JOIN telegram_chats tc ON tc.chat_id = bl.chat_id
@@ -747,9 +783,15 @@ def _tool_find_bl(args: dict) -> dict:
                 "places": r["quantity_places"],
                 "weight_kg": r["weight_kg"],
                 "volume_m3": r["volume_cbm"],
+                "last_tracking_at": r["last_tracking_at"] or "ещё не отправлялся",
+                "last_tracking_by": r["last_tracking_by"] or "",       # кто нажал TASDIQLASH/✅
+                "last_tracking_filled_by": r["last_tracking_filled_by"] or "",  # кто обновил форму
+                "last_tracking_via": r["last_tracking_via"] or "",
             }
             for r in rows
-        ]
+        ],
+        "hint": "last_tracking_at — КОГДА ушёл трекинг (для вопроса «когда обновили трекинг» — это, "
+                "а НЕ дата смены статуса). last_tracking_by/filled_by — кто разрешил/обновил.",
     }
 
 
@@ -809,14 +851,21 @@ def _tool_get_send_logs(args: dict) -> dict:
     try:
         rows = conn.execute(
             """
-            SELECT bl_code, batch_name, status, success, error_msg, sent_at
+            SELECT bl_code, batch_name, status, success, error_msg,
+                   filled_by, confirmed_by, sent_via, sent_at
             FROM send_logs ORDER BY id DESC LIMIT ?
             """,
             (limit,),
         ).fetchall()
     finally:
         conn.close()
-    return {"logs": [dict(r) for r in rows]}
+    return {
+        "logs": [dict(r) for r in rows],
+        "hint": "sent_at — КОГДА реально ушёл трекинг (не status_updated_at). "
+                "filled_by — кто обновил данные в форме, confirmed_by — кто нажал "
+                "TASDIQLASH/✅, sent_via — путь (Treking forma / assistant / panel). "
+                "Пустой confirmed_by у старых записей — до появления учёта, НЕ говори «автоматически».",
+    }
 
 
 def _tool_get_message_templates(_args: dict) -> dict:

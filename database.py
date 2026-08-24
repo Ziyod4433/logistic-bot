@@ -797,6 +797,9 @@ def init_db():
             status TEXT NOT NULL,
             success INTEGER NOT NULL DEFAULT 1,
             error_msg TEXT DEFAULT '',
+            filled_by TEXT NOT NULL DEFAULT '',
+            confirmed_by TEXT NOT NULL DEFAULT '',
+            sent_via TEXT NOT NULL DEFAULT '',
             sent_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
@@ -1357,6 +1360,19 @@ def init_db():
     for column_name, column_def in file_columns:
         if not _table_has_column(conn, "files", column_name):
             conn.execute(f"ALTER TABLE files ADD COLUMN {column_name} {column_def}")
+
+    # кто дал ход трекингу: filled_by — кто обновил данные в форме,
+    # confirmed_by — кто нажал TASDIQLASH/✅, sent_via — каким путём ушло
+    # (форма-группа / ассистент / авто). Нужно, чтобы на вопрос «кто
+    # обновил/разрешил трекинг» бот отвечал фактом, а не «автоматически».
+    send_log_columns = [
+        ("filled_by", "TEXT NOT NULL DEFAULT ''"),
+        ("confirmed_by", "TEXT NOT NULL DEFAULT ''"),
+        ("sent_via", "TEXT NOT NULL DEFAULT ''"),
+    ]
+    for column_name, column_def in send_log_columns:
+        if not _table_has_column(conn, "send_logs", column_name):
+            conn.execute(f"ALTER TABLE send_logs ADD COLUMN {column_name} {column_def}")
 
     communication_rating_columns = [
         ("voter_user_id", "TEXT NOT NULL DEFAULT ''"),
@@ -4027,18 +4043,46 @@ def delete_file(file_id):
     conn.close()
 
 
-def add_log(bl_id, bl_code, batch_name, chat_id, status, success, error_msg=""):
+def add_log(bl_id, bl_code, batch_name, chat_id, status, success, error_msg="",
+            filled_by="", confirmed_by="", sent_via=""):
     conn = get_conn()
     sent_at = current_ts()
     conn.execute(
         """
-        INSERT INTO send_logs(bl_id, bl_code, batch_name, chat_id, status, success, error_msg, sent_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO send_logs(bl_id, bl_code, batch_name, chat_id, status, success,
+                              error_msg, filled_by, confirmed_by, sent_via, sent_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (bl_id, bl_code, batch_name, chat_id, status, 1 if success else 0, error_msg, sent_at),
+        (bl_id, bl_code, batch_name, chat_id, status, 1 if success else 0, error_msg,
+         str(filled_by or ""), str(confirmed_by or ""), str(sent_via or ""), sent_at),
     )
     conn.commit()
     conn.close()
+
+
+def get_last_tracking_send(bl_id=None, batch_name=None):
+    """Последняя УСПЕШНАЯ отправка трекинга: когда и кто дал ей ход
+    (filled_by/confirmed_by/sent_via). Для ответа «когда/кто обновил
+    трекинг» — это НЕ status_updated_at (то — когда менялся статус)."""
+    conn = get_conn()
+    try:
+        if bl_id is not None:
+            row = conn.execute(
+                "SELECT sent_at, filled_by, confirmed_by, sent_via, status "
+                "FROM send_logs WHERE bl_id = ? AND success = 1 ORDER BY id DESC LIMIT 1",
+                (int(bl_id),),
+            ).fetchone()
+        elif batch_name is not None:
+            row = conn.execute(
+                "SELECT sent_at, filled_by, confirmed_by, sent_via, status "
+                "FROM send_logs WHERE batch_name = ? AND success = 1 ORDER BY id DESC LIMIT 1",
+                (str(batch_name),),
+            ).fetchone()
+        else:
+            row = None
+    finally:
+        conn.close()
+    return dict(row) if row else None
 
 
 def get_logs(limit=100):
