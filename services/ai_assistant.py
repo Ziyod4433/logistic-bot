@@ -18,8 +18,10 @@ Only Telegram user ids listed in AI_ASSISTANT_ADMIN_IDS may talk to it
 
 import json
 import os
+import random
 import re
 import threading
+import time
 
 import requests as req
 
@@ -29,6 +31,11 @@ DEEPSEEK_BASE_URL = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com
 FALLBACK_MODEL = "deepseek-chat"
 MAX_TOOL_ROUNDS = 6
 REQUEST_TIMEOUT = 90
+# DeepSeek в часы пик отвечает 503 «Service is busy» (и 429 при лимите) —
+# это перегрузка ИХ сервера, а не ошибка бота. Один такой ответ раньше
+# убивал весь ответ пользователю, поэтому повторяем с нарастающей паузой.
+_RETRY_STATUSES = {429, 500, 502, 503, 504}
+_RETRY_DELAYS = (2, 5, 12)   # + джиттер; суммарно до ~20 с ожидания
 # лимит одного результата инструмента в контексте модели (символов JSON);
 # при превышении вывод обрезается С ПОМЕТКОЙ, чтобы модель не решила,
 # что отрезанного не существует
@@ -1740,6 +1747,11 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
 # CHAT LOOP
 # ═══════════════════════════════════════════════════════════════
 
+class DeepSeekBusy(Exception):
+    """DeepSeek перегружен (503 «Service is busy» / 429) — временная
+    проблема на ИХ стороне, повторы не помогли."""
+
+
 def _chat_completion(messages, use_model=None, tools=None):
     payload = {
         "model": use_model or _model(),
@@ -1749,23 +1761,42 @@ def _chat_completion(messages, use_model=None, tools=None):
         # креативность здесь превращается в выдуманные коды и списки
         "temperature": 0.1,
     }
-    response = req.post(
-        f"{DEEPSEEK_BASE_URL}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {_api_key()}",
-            "Content-Type": "application/json",
-        },
-        data=json.dumps(payload),
-        timeout=REQUEST_TIMEOUT,
-    )
-    if response.status_code == 400 and use_model is None:
-        # Unknown model name (e.g. the configured one isn't available on
-        # this account) — retry once with the standard model.
-        body = response.text or ""
-        if "model" in body.lower():
-            return _chat_completion(messages, use_model=FALLBACK_MODEL, tools=tools)
-    response.raise_for_status()
-    return response.json()
+    body_json = json.dumps(payload)
+    last_status = None
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        try:
+            response = req.post(
+                f"{DEEPSEEK_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {_api_key()}",
+                    "Content-Type": "application/json",
+                },
+                data=body_json,
+                timeout=REQUEST_TIMEOUT,
+            )
+        except (req.Timeout, req.ConnectionError):
+            # сеть/таймаут — та же природа, повторяем
+            if attempt >= len(_RETRY_DELAYS):
+                raise
+            time.sleep(_RETRY_DELAYS[attempt] + random.uniform(0, 1))
+            continue
+        if response.status_code == 400 and use_model is None:
+            # Unknown model name (e.g. the configured one isn't available on
+            # this account) — retry once with the standard model.
+            body = response.text or ""
+            if "model" in body.lower():
+                return _chat_completion(messages, use_model=FALLBACK_MODEL, tools=tools)
+        if response.status_code in _RETRY_STATUSES:
+            # Повтор безопасен: ответ модели не пришёл, значит ни один
+            # инструмент не выполнялся и побочных эффектов не было.
+            last_status = response.status_code
+            if attempt < len(_RETRY_DELAYS):
+                time.sleep(_RETRY_DELAYS[attempt] + random.uniform(0, 1))
+                continue
+            raise DeepSeekBusy(str(last_status))
+        response.raise_for_status()
+        return response.json()
+    raise DeepSeekBusy(str(last_status or "timeout"))
 
 
 COMPANION_PROMPT = """
@@ -1886,6 +1917,12 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
                 })
         else:
             reply_text = "⚠️ Слишком длинная цепочка инструментов — попробуй сформулировать запрос конкретнее."
+    except DeepSeekBusy:
+        reply_text = (
+            "⏳ Сервер DeepSeek сейчас перегружен («Service is busy») — это на их стороне, "
+            "не в нашей базе. Я подождал и повторил запрос несколько раз, не вышло.\n"
+            "Повтори вопрос через минуту — данные никуда не делись."
+        )
     except req.RequestException as exc:
         reply_text = f"⚠️ Ошибка DeepSeek API: {exc}"
     except Exception as exc:
