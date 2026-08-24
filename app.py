@@ -4646,9 +4646,11 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
     тоже в Хоргосе (казахская стадия, или та же дата с отставшим
     статусом), ПЕРЕЕЗЖАЕТ сюда (файлы и привязка группы сохраняются) —
     кроме раздельного груза (код есть и в СОБСТВЕННОМ казахском плане той
-    партии). Уже появившиеся дубли сводятся к одной строке. «Лишние» BL не
-    удаляются: если их казахский план у другой партии уже применён —
-    переезжают туда, иначе остаются (застряли в Хоргосе). Идемпотентно:
+    партии). Уже появившиеся дубли сводятся к одной строке. «Лишние» BL
+    (остатки китайского плана) уезжают СРАЗУ в партию, чей казахский план
+    их содержит — даже если тот ещё не применён (будущий хозяин
+    предсказывается по составу); BL, которых нет НИ В ОДНОМ казахском
+    плане окна, остаются на месте (⚓, правило владельца №5). Идемпотентно:
     повторный запуск без изменений в шитсе ничего не делает."""
     from services import plan_sync_service as pss
 
@@ -4758,22 +4760,22 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
         if _plan_add_bl(batch["id"], entry, chat_lookup, known_chat_ids, unlinked):
             added.append(entry["code"])
 
-    moved_away, stuck = [], []
+    moved_away, stuck, waiting = [], [], []
+    # из партии, которая уже в Ташкенте/выдана, груз не уезжает: перегрузка
+    # позади, он физически здесь (симметрично donor_eligible, который
+    # прибывшие партии донорами не считает)
+    source_arrived = pss.is_arrived(batch)
     for key, bl in list(have.items()):
-        if key in plan:
+        if key in plan or source_arrived:
             continue
-        # «свои» казахские планы — только этой перегрузки (от даты нашего
-        # блока до +3 недель) и только у НЕ прибывших партий: коды клиентов
-        # повторяются из рейса в рейс, прошлый рейс — другой груз
-        target = None
-        for b2 in pss.kazakh_blocks_containing(blocks, key, exclude_block=block, window_from=block):
-            applied = [
-                b for b in pss.block_attached_to(b2, others, kind="kazakh", blocks=blocks, codes_of=codes_of)
-                if not pss.is_arrived(b)
-            ]
-            if applied:
-                target = applied[0]
-                break
+        # «СПЕРВА УБРАТЬ КИТАЙСКИЙ ПЛАН» (правило владельца, 24.08.2026):
+        # остаток китайского плана, числящийся в казахском плане ДРУГОЙ
+        # партии, уезжает туда СРАЗУ — даже если тот план ещё не применён
+        # (иначе клиенту уйдёт трекинг чужой фуры). Хозяин неприменённого
+        # плана предсказывается той же механикой, что выбирает план партии;
+        # планы ищем только в окне этой перегрузки и по НЕ прибывшим
+        # партиям: коды клиентов повторяются из рейса в рейс
+        target, in_block = pss.extra_destination(key, block, blocks, others, codes_of, batches=batches)
         if target:
             target_have = {pss.normalize_mark(x.get("code")): x for x in db.get_bl_by_batch(target["id"])}
             if key in target_have:
@@ -4787,6 +4789,11 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
             elif _safe_move_bl(bl["id"], target["id"]):
                 moved_away.append(f"{html.escape(str(bl.get('code')))} (→ «{html.escape(target['name'])}»)")
                 continue
+        if in_block is not None:
+            # код есть в чужом казахском плане, но его фура ещё не в Хоргосе —
+            # переедет на следующей сверке (или его заберёт применение её плана)
+            waiting.append(f"{html.escape(str(bl.get('code')))} (план «{html.escape(str(in_block.get('date')))}»)")
+            continue
         stuck.append(html.escape(str(bl.get("code"))))
 
     db.set_batch_plan_ref(batch["id"], block["tab"], pss.ref_title(block), block["date"], "kazakh")
@@ -4807,8 +4814,10 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
         parts.append("Раздельный груз (обе партии): " + ", ".join(html.escape(c) for c in sorted(set(kept_split))[:8]) + ".")
     if moved_away:
         parts.append("Уехали в свои партии: " + ", ".join(moved_away[:12]) + ".")
+    if waiting:
+        parts.append("⏳ Ждут свою фуру (их казахский план есть, но она ещё не в Хоргосе): " + ", ".join(waiting[:12]) + ".")
     if stuck:
-        parts.append("⚓ Остались в Хоргосе (нет в применённых казахских планах): " + ", ".join(stuck[:12]) + ".")
+        parts.append("⚓ Остались в Хоргосе (нет ни в одном казахском плане): " + ", ".join(stuck[:12]) + ".")
     if kept_dups:
         parts.append(
             "⚠️ Один груз в двух партиях, у обеих строк есть файлы/история — решите вручную: "

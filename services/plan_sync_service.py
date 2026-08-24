@@ -569,6 +569,98 @@ def kazakh_blocks_containing(blocks: list, key: str, exclude_block: dict | None 
     return hits
 
 
+def predict_kazakh_block_owner(block2: dict, candidates: list, blocks: list,
+                               batches: list, codes_of):
+    """Будущий хозяин ещё НЕ применённого казахского блока: партия, для
+    которой find_block_for_batch выбирает именно его. Претендент должен
+    УЖЕ быть на казахской стадии — его фура реально стоит на перегрузке:
+    это отсекает кыргызскую ветку (казахских планов у неё не бывает,
+    stage=china) и партии, ещё не доехавшие до Хоргоса, — их груз
+    дождётся фуру и переедет при следующей сверке (или его заберёт их
+    собственное применение плана через donor-механику). Прибывшие не в
+    счёт. При нескольких претендентах — максимум пересечения с планом,
+    при равенстве меньший id (тот же тай-брейк, что и в остальной механике)."""
+    best, best_hits = None, -1
+    plan2 = set(aggregate_block(block2).keys())
+    for cand in candidates:
+        if is_arrived(cand) or stage_for_status(cand.get("status")) != "kazakh":
+            continue
+        got, _why = find_block_for_batch(cand, blocks, codes_of(cand), batches=batches)
+        if got is not block2:
+            continue
+        hits = len(plan2 & codes_of(cand))
+        if hits > best_hits or (hits == best_hits and best is not None and cand["id"] < best["id"]):
+            best, best_hits = cand, hits
+    return best
+
+
+KYRGYZ_STATUSES = ("Kashgar (Qirg'iz)", "Irkeshtam", "Osh", "Dostlik", "Andijon")
+
+
+def heading_to_horgos(batch: dict) -> bool:
+    """Фура ещё едет к Хоргосу по КИТАЙСКО-казахскому маршруту: её казахский
+    план впереди. Кыргызская ветка сюда не входит — казахских планов у неё
+    не бывает."""
+    if is_arrived(batch) or stage_for_status(batch.get("status")) != "china":
+        return False
+    return str(batch.get("status") or "").strip() not in KYRGYZ_STATUSES
+
+
+def pending_kazakh_owner(block2: dict, candidates: list, blocks: list,
+                         batches: list, codes_of):
+    """Партия, которой этот казахский блок ДОСТАНЕТСЯ, когда её фура дойдёт
+    до Хоргоса. Только для формулировки отчёта («⏳ ждёт свою фуру») —
+    переезды по этому предсказанию НЕ делаются."""
+    best, best_hits = None, -1
+    plan2 = set(aggregate_block(block2).keys())
+    for cand in candidates:
+        if not heading_to_horgos(cand):
+            continue
+        probe = dict(cand)
+        probe["status"] = HORGOS_STATUS
+        got, _why = find_block_for_batch(probe, blocks, codes_of(cand), batches=batches)
+        if got is not block2:
+            continue
+        hits = len(plan2 & codes_of(cand))
+        if hits > best_hits or (hits == best_hits and best is not None and cand["id"] < best["id"]):
+            best, best_hits = cand, hits
+    return best
+
+
+def extra_destination(key: str, block: dict, blocks: list, others: list,
+                      codes_of, batches: list | None = None) -> tuple:
+    """Куда уедет «лишний» код (остаток китайского плана, отсутствующий в
+    казахском плане block) -> (партия | None, блок | None).
+
+    «Сперва убрать китайский план»: чужой груз уезжает СРАЗУ при
+    применении нашего казахского плана — сначала в партию с УЖЕ
+    применённым планом, содержащим код, иначе к будущему хозяину этого
+    плана (тот уже стоит в Хоргосе, но план ему ещё не применяли — ждать
+    не нужно, иначе клиенту уйдёт трекинг чужой фуры). Планы ищем только
+    в окне этой перегрузки (коды клиентов повторяются из рейса в рейс).
+    Второй элемент кортежа — блок, где код найден: если партии нет, а блок
+    есть, груз ЖДЁТ свою фуру (она ещё не дошла до Хоргоса) и переедет на
+    следующей сверке."""
+    containing = kazakh_blocks_containing(blocks, key, exclude_block=block, window_from=block)
+    for b2 in containing:
+        applied = [
+            b for b in block_attached_to(b2, others, kind="kazakh", blocks=blocks, codes_of=codes_of)
+            if not is_arrived(b)
+        ]
+        if applied:
+            return applied[0], b2
+    all_batches = batches if batches is not None else others
+    for b2 in containing:
+        owner = predict_kazakh_block_owner(b2, others, blocks, all_batches, codes_of)
+        if owner is not None:
+            return owner, b2
+    # хозяина в Хоргосе нет — но, может, его фура ещё в пути: тогда груз ЖДЁТ
+    for b2 in containing:
+        if pending_kazakh_owner(b2, others, blocks, all_batches, codes_of) is not None:
+            return None, b2
+    return None, None
+
+
 def donor_owns_code(donor_batch: dict, key: str, blocks: list, batches: list,
                     current_block: dict, codes_of=None) -> bool:
     """Раздельный груз или переезд? True — у партии-донора есть СВОЙ
