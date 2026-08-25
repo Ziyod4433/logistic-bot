@@ -3917,6 +3917,72 @@ def ask_packing_file_owner(chat_id, base: str, path: str, reason: str = "") -> N
         db.resolve_packing_question(qid, "failed", "savol yuborilmadi")
 
 
+def _token_in_text(text_upper: str, value: str) -> bool:
+    """Назван ли код/имя ЦЕЛЫМ словом в тексте (разделители внутри кода
+    допускаются: «BL-690» ≡ «BL 690»)."""
+    norm = _normalize_bl_code(value)
+    if len(norm) < 3:
+        return False
+    pattern = r"[-_.\s]*".join(re.escape(ch) for ch in norm)
+    return bool(re.search(rf"(?<![A-Z0-9]){pattern}(?![A-Z0-9])", text_upper))
+
+
+_ANSWER_DATE_RE = re.compile(r"\d{1,2}[.\-/]\d{1,2}(?:[.\-/]\d{2,4})?")
+
+
+def _resolve_answer_to_bl(answer: str, filename: str, rows: list, chat_titles: dict) -> tuple:
+    """Понять ЖИВОЙ ответ человека на вопрос «этот packing list к какому BL?».
+
+    Человек пишет фразой («14.08 digi BL-690 ga bog'laysan», «14.08 partiyaga
+    tegishli»), поэтому искать бренд по всей строке бесполезно. Собираем
+    смысл из трёх источников: коды, названные В ТЕКСТЕ; кандидаты по САМОМУ
+    ФАЙЛУ (их бот и показывал, когда спрашивал); дата партии в ответе.
+    Возвращает (кандидаты, почему_не_вышло)."""
+    upper = answer.upper()
+    brand, mesta = _parse_packing_filename(filename)
+    file_cands = _find_bl_candidates_by_brand(brand, rows, chat_titles)
+
+    # 1) какие BL человек назвал прямо в тексте
+    named = [r for r in rows if _token_in_text(upper, str(r.get("code") or ""))]
+    if not named:
+        named = [
+            r for r in rows
+            if len(str(r.get("client_name") or "").strip()) >= 4
+            and _token_in_text(upper, str(r.get("client_name")))
+        ]
+
+    if named and file_cands:
+        # названный код совпал с кандидатами файла — самый надёжный случай
+        inter = [c for c in named if any(c["id"] == f["id"] for f in file_cands)]
+        pool = inter or named
+    else:
+        pool = named or file_cands
+    if not pool:
+        return [], "javobda BL kodi ko'rinmadi"
+
+    # 2) дата партии из ответа сужает выбор
+    if len(pool) > 1:
+        for token in _ANSWER_DATE_RE.findall(answer):
+            norm_token = token.replace("/", ".").replace("-", ".")
+            by_date = [
+                c for c in pool
+                if norm_token in str(c.get("batch_name") or "").replace("/", ".").replace("-", ".")
+            ]
+            if len(by_date) == 1:
+                return by_date, ""
+            if by_date:
+                pool = by_date
+
+    # 3) число мест из ИМЕНИ ФАЙЛА — последний разделитель
+    if len(pool) > 1 and mesta is not None:
+        by_mesta = [c for c in pool if _mesta_matches(c, mesta)]
+        if len(by_mesta) == 1:
+            return by_mesta, ""
+        if by_mesta:
+            pool = by_mesta
+    return pool, "bir nechta variant qoldi"
+
+
 def maybe_handle_packing_answer(message: dict) -> bool:
     """Ответ (reply) на вопрос «какой это BL?» — находим BL и прикрепляем."""
     from services import ai_assistant
@@ -3944,42 +4010,27 @@ def maybe_handle_packing_answer(message: dict) -> bool:
 
     index, rows = _build_active_bl_index()
     chat_titles = _build_chat_title_lookup(rows)
-    # ответ может уточнять партию: «BL-690 14.08» → код + дата партии
-    date_tokens = re.findall(r"\d{1,2}[.\-/]\d{1,2}(?:[.\-/]\d{2,4})?", answer)
-    brand_part = answer
-    for token in date_tokens:
-        brand_part = brand_part.replace(token, " ")
-    brand_part = brand_part.strip(" ,;-") or answer
-
-    candidates = _find_bl_candidates_by_brand(brand_part, rows, chat_titles)
-    if len(candidates) > 1 and date_tokens:
-        def _norm_date(value: str) -> str:
-            return str(value or "").replace("/", ".").replace("-", ".")
-        for token in date_tokens:
-            by_date = [c for c in candidates if _norm_date(token) in _norm_date(c.get("batch_name"))]
-            if len(by_date) == 1:
-                candidates = by_date
-                break
-    if not candidates:
-        # по бренду не нашли вовсе — пробуем общий резолвер. Если же
-        # кандидатов НЕСКОЛЬКО, резолвер выбрал бы произвольного, а файл
-        # уехал бы не в ту партию — лучше переспросить
-        hit = _resolve_filename_to_bl(answer, index, rows, chat_titles)
-        candidates = [hit["row"]] if hit else []
+    candidates, why = _resolve_answer_to_bl(answer, question["filename"], rows, chat_titles)
     if len(candidates) != 1:
-        hint = (
-            " Bir nechta mos keldi: "
-            + ", ".join(
+        # НЕ повторяем фразу человека и не даём абстрактный пример —
+        # показываем кандидатов ИМЕННО этого файла, чтобы было что выбрать
+        if candidates:
+            listed = ", ".join(
                 f"<code>{html_escape(str(c.get('code')))}</code> ({html_escape(str(c.get('batch_name') or ''))})"
                 for c in candidates[:5]
             )
-            if candidates else ""
-        )
-        telegram_send_message(
-            chat_id,
-            f"🤔 <code>{html_escape(answer)}</code> bo'yicha aniq BL topolmadim.{hint}\n"
-            "Partiyani ham yozing, masalan <code>BL-690 14.08</code> — shu xabarga reply qilib.",
-        )
+            text_out = (
+                f"🤔 <code>{html_escape(question['filename'])}</code> uchun hali ham "
+                f"{len(candidates)} ta variant bor: {listed}.\n"
+                "Qaysi partiya ekanini yozing (masalan <code>"
+                + html_escape(str(candidates[0].get("batch_name") or "14.08")) + "</code>)."
+            )
+        else:
+            text_out = (
+                f"🤔 <code>{html_escape(question['filename'])}</code> uchun BL topolmadim ({why}).\n"
+                "BL kodini yozing — masalan <code>BL-690</code>, kerak bo'lsa partiya bilan."
+            )
+        telegram_send_message(chat_id, text_out)
         return True
 
     bl = candidates[0]
