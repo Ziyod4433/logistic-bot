@@ -2189,6 +2189,39 @@ def extract_bot_mention_question(message: dict) -> str | None:
     return " ".join(stripped.split()).strip()
 
 
+def _is_reply_to_bot(message: dict) -> bool:
+    """Сообщение — ОТВЕТ на реплику самого бота? Тогда упоминать его не
+    нужно: человек уточняет уже сказанное (владелец 24.08.2026)."""
+    reply_to = message.get("reply_to_message") or {}
+    if not reply_to:
+        return False
+    author = reply_to.get("from") or {}
+    if not author.get("is_bot"):
+        return False
+    username = (get_bot_username() or "").lower()
+    author_name = str(author.get("username") or "").lower()
+    # если имя бота известно — сверяем, иначе доверяем флагу is_bot
+    return not username or not author_name or author_name == username
+
+
+_REPLY_CONTEXT_LIMIT = 1200
+
+
+def _reply_context_prefix(message: dict) -> str:
+    """Текст сообщения, на которое отвечают, — как контекст для модели."""
+    reply_to = message.get("reply_to_message") or {}
+    quoted = (reply_to.get("text") or reply_to.get("caption") or "").strip()
+    if not quoted:
+        return ""
+    if len(quoted) > _REPLY_CONTEXT_LIMIT:
+        quoted = quoted[:_REPLY_CONTEXT_LIMIT] + " …[обрезано]"
+    return (
+        "[Человек отвечает на ТВОЁ предыдущее сообщение — он уточняет именно его, "
+        "а не начинает новую тему. Вот это сообщение:]\n"
+        f"{quoted}\n[Конец твоего сообщения. Ниже — его уточнение:]\n"
+    )
+
+
 def maybe_handle_group_ai_message(message: dict) -> bool:
     chat = message.get("chat") or {}
     chat_type = chat.get("type")
@@ -2214,8 +2247,16 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
         return False
 
     question = extract_bot_mention_question(message)
+    replying_to_bot = _is_reply_to_bot(message)
     if question is None:
-        return False
+        # без @упоминания отвечаем, только если это ОТВЕТ на реплику бота —
+        # человек уточняет уже сказанное, тегать бота второй раз незачем
+        if not replying_to_bot:
+            return False
+        question = text
+    # реплай на сообщение бота (с тегом или без) — даём модели тот текст,
+    # который уточняют, иначе она отвечает «в пустоту»
+    context_prefix = _reply_context_prefix(message) if replying_to_bot else ""
     if not question:
         # Bare @mention with no actual question — stay silent.
         return True
@@ -2227,6 +2268,8 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
     # assistant sees who is asking. History/pending actions are keyed by
     # the group id.
     assistant_input = f"{sender_name}: {question}" if sender_name else question
+    if context_prefix:
+        assistant_input = context_prefix + assistant_input
 
     # Права на изменения — только владелец и операторы; остальным бот
     # отвечает как собеседник (данные показывает, менять не может).
@@ -3570,8 +3613,8 @@ def _new_packing_results() -> dict:
     return {
         "attached": [], "skipped_dup": [], "unmatched": [],
         "rejected": [], "ambiguous": [], "mesta_warns": [], "unsupported": [],
-        # сверка содержимого файла с данными BL
-        "verified": 0, "resolved_by_content": [], "content_conflict": [],
+        # сверка по имени файла / местам / истории прикреплений
+        "resolved_by_history": [],
         # файлы без BL — по ним бот задаст вопрос в группе
         "ask_queue": [],
     }
@@ -3582,101 +3625,6 @@ _PACKING_TEXT_MAX = 200_000
 # list, ругаться на них «формат не принят» незачем
 _PACKING_JUNK_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}
 _PACKING_JUNK_EXTS = {"ini", "db", "lnk", "url", "tmp"}
-
-
-def _extract_packing_text(base: str, data: bytes) -> str:
-    """Текст из packing list: xlsx/xlsm через openpyxl, pdf через pypdf,
-    csv/txt как есть. Картинки и .doc не читаем — вернём ''."""
-    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
-    try:
-        if ext in ("xlsx", "xlsm"):
-            from openpyxl import load_workbook
-            import warnings as _w
-            with _w.catch_warnings():
-                _w.simplefilter("ignore")
-                wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-            parts = []
-            for ws in wb.worksheets:
-                for row in ws.iter_rows(max_row=400, max_col=40, values_only=True):
-                    for cell in row:
-                        if cell is not None:
-                            parts.append(str(cell))
-                    if sum(len(p) for p in parts) > _PACKING_TEXT_MAX:
-                        break
-            return " ".join(parts)[:_PACKING_TEXT_MAX]
-        if ext == "pdf":
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(data))
-            parts = []
-            for page in reader.pages[:20]:
-                parts.append(page.extract_text() or "")
-            return " ".join(parts)[:_PACKING_TEXT_MAX]
-        if ext in ("csv", "txt"):
-            return data[:_PACKING_TEXT_MAX].decode("utf-8", "ignore")
-    except Exception:
-        app.logger.info("Packing text extraction failed for %s", base, exc_info=True)
-    return ""
-
-
-def _mentions_token(text_upper: str, value: str) -> bool:
-    """Назван ли ИМЕННО этот код/клиент в тексте — целым словом.
-
-    Packing list — это таблица, забитая числами и артикулами, поэтому
-    поиск подстрокой даёт ложные срабатывания: код «555» находился в
-    любом размере или количестве, и файл уезжал не тому клиенту. Ищем с
-    границами слова, разрешая разделители внутри («BL-682», «BL 682»)."""
-    norm = _normalize_bl_code(value)
-    # чисто числовые и слишком короткие коды в таблице цифр неотличимы
-    if len(norm) < 5 or norm.isdigit():
-        return False
-    pattern = r"[-_.\s]*".join(re.escape(ch) for ch in norm)
-    return bool(re.search(rf"(?<![A-Z0-9]){pattern}(?![A-Z0-9])", text_upper))
-
-
-def _codes_mentioned_in_text(text: str, rows: list) -> list:
-    """Какие BL активных партий реально названы ВНУТРИ файла."""
-    if not text:
-        return []
-    upper = text.upper()
-    hits = []
-    for row in rows:
-        if _mentions_token(upper, str(row.get("code") or "")):
-            hits.append(row)
-            continue
-        if _mentions_token(upper, str(row.get("client_name") or "")):
-            hits.append(row)
-    return hits
-
-
-def _verify_packing_content(base: str, data: bytes, bl: dict, rows: list) -> tuple:
-    """Сверка СОДЕРЖИМОГО файла с данными BL перед прикреплением
-    (правило владельца 24.08.2026). → (verdict, note)
-
-    verdict: 'confirmed'  — в файле назван именно этот BL;
-             'mismatch'   — в файле назван ДРУГОЙ BL, а этого нет;
-             'unreadable' — текст не извлекается (скан/картинка) — не мешаем;
-             'no_code'    — текст есть, но знакомых кодов нет.
-
-    ВАЖНО: при 'mismatch' файл НЕ перевешивается автоматически на другой
-    BL — содержимое бывает неоднозначным (в «EURO …» законно упоминается
-    «EURO LIGHT»), а packing list уходит клиенту. Решает человек."""
-    text = _extract_packing_text(base, data)
-    if not text.strip():
-        return "unreadable", ""
-    hits = _codes_mentioned_in_text(text, rows)
-    if any(h["id"] == bl["id"] for h in hits):
-        return "confirmed", ""
-    if hits:
-        names = []
-        for h in hits:
-            code = str(h.get("code") or "")
-            if code and code not in names:
-                names.append(code)
-        return "mismatch", (
-            f"fayl nomida <code>{html.escape(str(bl.get('code') or ''))}</code>, "
-            f"ichida esa: " + ", ".join(f"<code>{html.escape(n)}</code>" for n in names[:4])
-        )
-    return "no_code", ""
 
 
 def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, results: dict):
@@ -3706,15 +3654,14 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
         if len(filtered) == 1:
             bl = filtered[0]
         else:
-            # имя файла не различает кандидатов — спросим САМ ФАЙЛ: если
-            # внутри назван ровно один из них, это и есть ответ (выбор
-            # ТОЛЬКО среди кандидатов, чужие BL сюда попасть не могут)
+            # имя файла не различает кандидатов — смотрим ИСТОРИЮ
+            # ПРИКРЕПЛЕНИЙ: если такие файлы этого бренда уже уходили в
+            # одну из партий-кандидатов, продолжаем туда же
             pool = filtered or candidates
-            named = _codes_mentioned_in_text(_extract_packing_text(base, data), pool)
-            uniq = {c["id"]: c for c in named}
-            if len(uniq) == 1:
-                bl = next(iter(uniq.values()))
-                results["resolved_by_content"].append((base, str(bl.get("code") or "")))
+            by_history = _pick_by_attach_history(base, pool)
+            if by_history is not None:
+                bl = by_history
+                results["resolved_by_history"].append((base, str(bl.get("code") or ""), str(bl.get("batch_name") or "")))
             else:
                 listed = ", ".join(
                     f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4]
@@ -3733,20 +3680,48 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
         _park_for_question(base, data, results, "")
         return
 
-    # ── СВЕРКА СОДЕРЖИМОГО с данными BL перед прикреплением ──
-    # имя файла может врать; если внутри назван ДРУГОЙ BL — не вешаем
-    # клиенту чужой packing list, а отдаём человеку (сами не переносим:
-    # содержимое бывает неоднозначным, а документ уходит клиенту)
-    verdict, note = _verify_packing_content(base, data, bl, rows)
-    if verdict == "mismatch":
-        # note уже содержит наши <code>-теги, имя файла экранируем
-        results["content_conflict"].append(f"{html.escape(base)}: {note}")
-        _park_for_question(base, data, results, note)
-        return
-    if verdict == "confirmed":
-        results["verified"] += 1
-
     _store_packing_file(bl, base, data, results)
+
+
+def _pick_by_attach_history(base: str, candidates: list):
+    """История прикреплений: к какому из кандидатов уже уходили файлы с
+    таким же именем (или таким же брендом). Владелец 24.08.2026: сверять
+    по имени файла, числу мест и истории — содержимое файла не читаем."""
+    if not candidates:
+        return None
+    ids = [int(c["id"]) for c in candidates]
+    marks = ", ".join("?" for _ in ids)
+    brand, _mesta = _parse_packing_filename(base)
+    brand_like = f"{_normalize_bl_code(brand)}%" if brand else ""
+    conn = db.get_conn()
+    try:
+        # 1) тот же файл уже прикрепляли к одному из кандидатов
+        rows = conn.execute(
+            f"SELECT bl_id, COUNT(*) AS n FROM files WHERE bl_id IN ({marks}) "
+            "AND LOWER(filename) = LOWER(?) GROUP BY bl_id",
+            (*ids, base),
+        ).fetchall()
+        if len(rows) == 1:
+            hit = int(rows[0]["bl_id"])
+            return next((c for c in candidates if int(c["id"]) == hit), None)
+        if rows:
+            return None  # один и тот же файл у нескольких — решать человеку
+        # 2) файлы того же бренда уже уходили ровно к одному кандидату
+        if brand_like:
+            rows = conn.execute(
+                f"SELECT bl_id, COUNT(*) AS n FROM files WHERE bl_id IN ({marks}) "
+                "AND REPLACE(REPLACE(REPLACE(UPPER(filename),'-',''),'_',''),' ','') LIKE ? "
+                "GROUP BY bl_id",
+                (*ids, brand_like),
+            ).fetchall()
+            if len(rows) == 1:
+                hit = int(rows[0]["bl_id"])
+                return next((c for c in candidates if int(c["id"]) == hit), None)
+    except Exception:
+        app.logger.exception("attach history lookup failed for %s", base)
+    finally:
+        conn.close()
+    return None
 
 
 def _park_for_question(base: str, data: bytes, results: dict, reason: str) -> None:
@@ -3870,19 +3845,12 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
             lines.append(f"  • <code>{html_escape(code)}</code> ← {html_escape(base)} ({html_escape(batch_name)})")
         if len(attached) > 30:
             lines.append(f"  …va yana {len(attached) - 30} ta")
-    if results.get("verified"):
-        lines.append(f"🔎 Fayl ichidagi ma'lumot BL bilan tekshirildi: {results['verified']} ta mos.")
-    if results.get("resolved_by_content"):
-        lines.append("🧩 Nomi bo'yicha bir nechta BL mos kelgandi — fayl ichidagi ma'lumot aniqlik kiritdi:")
-        for base, code in results["resolved_by_content"][:10]:
-            lines.append(f"  • {html_escape(base)} → <code>{html_escape(code)}</code>")
-    if results.get("content_conflict"):
-        lines.append(
-            f"🚧 Fayl ichidagi BL fayl nomiga mos kelmadi — biriktirmadim ({len(results['content_conflict'])} ta):"
-        )
-        for c in results["content_conflict"][:10]:
-            lines.append(f"  • {c}")
-        lines.append("Tekshirib ko'ring: fayl nomi to'g'rimi? To'g'rilab qayta yuboring yoki paneldan qo'lda biriktiring.")
+    if results.get("resolved_by_history"):
+        lines.append("🧩 Bir nechta BL mos kelgandi — avvalgi biriktirishlar tarixi bo'yicha aniqladim:")
+        for base, code, batch_name in results["resolved_by_history"][:10]:
+            lines.append(
+                f"  • {html_escape(base)} → <code>{html_escape(code)}</code> ({html_escape(batch_name)})"
+            )
     if results["mesta_warns"]:
         lines.append("⚠️ Mesta (karobka soni) mos kelmadi, lekin nomi aniq bo'lgani uchun biriktirdim:")
         for w in results["mesta_warns"][:10]:
@@ -4348,7 +4316,7 @@ def scan_packing_drive(force: bool = False, only_folder: str = "") -> tuple:
             db.mark_drive_file_seen(file_id, base, folder_name)
 
     interesting = (
-        results["attached"] or results["unmatched"] or results["content_conflict"]
+        results["attached"] or results["unmatched"] or results["resolved_by_history"]
         or results["ambiguous"] or results["rejected"] or results["unsupported"]
     )
     if interesting:
