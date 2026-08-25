@@ -3559,11 +3559,15 @@ def _new_packing_results() -> dict:
         "attached": [], "skipped_dup": [], "unmatched": [],
         "rejected": [], "ambiguous": [], "mesta_warns": [], "unsupported": [],
         # сверка содержимого файла с данными BL
-        "verified": 0, "rerouted": [], "content_conflict": [],
+        "verified": 0, "resolved_by_content": [], "content_conflict": [],
     }
 
 
 _PACKING_TEXT_MAX = 200_000
+# системные файлы, которые Windows/macOS кладут в папки — это не packing
+# list, ругаться на них «формат не принят» незачем
+_PACKING_JUNK_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}
+_PACKING_JUNK_EXTS = {"ini", "db", "lnk", "url", "tmp"}
 
 
 def _extract_packing_text(base: str, data: bytes) -> str:
@@ -3600,61 +3604,72 @@ def _extract_packing_text(base: str, data: bytes) -> str:
     return ""
 
 
+def _mentions_token(text_upper: str, value: str) -> bool:
+    """Назван ли ИМЕННО этот код/клиент в тексте — целым словом.
+
+    Packing list — это таблица, забитая числами и артикулами, поэтому
+    поиск подстрокой даёт ложные срабатывания: код «555» находился в
+    любом размере или количестве, и файл уезжал не тому клиенту. Ищем с
+    границами слова, разрешая разделители внутри («BL-682», «BL 682»)."""
+    norm = _normalize_bl_code(value)
+    # чисто числовые и слишком короткие коды в таблице цифр неотличимы
+    if len(norm) < 5 or norm.isdigit():
+        return False
+    pattern = r"[-_.\s]*".join(re.escape(ch) for ch in norm)
+    return bool(re.search(rf"(?<![A-Z0-9]){pattern}(?![A-Z0-9])", text_upper))
+
+
 def _codes_mentioned_in_text(text: str, rows: list) -> list:
     """Какие BL активных партий реально названы ВНУТРИ файла."""
     if not text:
         return []
-    norm = _normalize_bl_code(text)
     upper = text.upper()
     hits = []
     for row in rows:
-        code = str(row.get("code") or "").strip()
-        if len(code) < 3:
-            continue
-        code_norm = _normalize_bl_code(code)
-        if code_norm and code_norm in norm:
+        if _mentions_token(upper, str(row.get("code") or "")):
             hits.append(row)
             continue
-        client = str(row.get("client_name") or "").strip().upper()
-        if len(client) >= 4 and client in upper:
+        if _mentions_token(upper, str(row.get("client_name") or "")):
             hits.append(row)
     return hits
 
 
 def _verify_packing_content(base: str, data: bytes, bl: dict, rows: list) -> tuple:
     """Сверка СОДЕРЖИМОГО файла с данными BL перед прикреплением
-    (правило владельца 24.08.2026). → (verdict, note, better_bl)
+    (правило владельца 24.08.2026). → (verdict, note)
 
     verdict: 'confirmed'  — в файле назван именно этот BL;
-             'mismatch'   — в файле назван ДРУГОЙ BL (better_bl), имя файла обмануло;
-             'unreadable' — текст не извлекается (картинка/скан) — не блокируем;
-             'no_code'    — текст есть, но кодов не нашли — сверяем цифры."""
+             'mismatch'   — в файле назван ДРУГОЙ BL, а этого нет;
+             'unreadable' — текст не извлекается (скан/картинка) — не мешаем;
+             'no_code'    — текст есть, но знакомых кодов нет.
+
+    ВАЖНО: при 'mismatch' файл НЕ перевешивается автоматически на другой
+    BL — содержимое бывает неоднозначным (в «EURO …» законно упоминается
+    «EURO LIGHT»), а packing list уходит клиенту. Решает человек."""
     text = _extract_packing_text(base, data)
     if not text.strip():
-        return "unreadable", "", None
+        return "unreadable", ""
     hits = _codes_mentioned_in_text(text, rows)
-    hit_ids = {h["id"] for h in hits}
-    if bl["id"] in hit_ids:
-        return "confirmed", "", None
+    if any(h["id"] == bl["id"] for h in hits):
+        return "confirmed", ""
     if hits:
-        others = [h for h in hits if h["id"] != bl["id"]]
-        uniq = {h["id"]: h for h in others}
-        if len(uniq) == 1:
-            other = next(iter(uniq.values()))
-            return "mismatch", (
-                f"faylda <code>{other.get('code')}</code> yozilgan "
-                f"({other.get('batch_name')}), fayl nomida esa <code>{bl.get('code')}</code>"
-            ), other
+        names = []
+        for h in hits:
+            code = str(h.get("code") or "")
+            if code and code not in names:
+                names.append(code)
         return "mismatch", (
-            "fayl ichida boshqa BL'lar: "
-            + ", ".join(str(h.get("code")) for h in list(uniq.values())[:4])
-        ), None
-    return "no_code", "", None
+            f"fayl nomida <code>{html.escape(str(bl.get('code') or ''))}</code>, "
+            f"ichida esa: " + ", ".join(f"<code>{html.escape(n)}</code>" for n in names[:4])
+        )
+    return "no_code", ""
 
 
 def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, results: dict):
     """Match ONE packing-list file (brand → MESTA) and attach it."""
     ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+    if base.lower() in _PACKING_JUNK_NAMES or ext in _PACKING_JUNK_EXTS:
+        return  # системный мусор Windows/macOS — молча пропускаем
     if ext not in ALLOWED_EXT:
         results["rejected"].append(base)
         return
@@ -3677,12 +3692,22 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
         if len(filtered) == 1:
             bl = filtered[0]
         else:
-            results["ambiguous"].append(
-                base + " → " + ", ".join(
-                    f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4]
+            # имя файла не различает кандидатов — спросим САМ ФАЙЛ: если
+            # внутри назван ровно один из них, это и есть ответ (выбор
+            # ТОЛЬКО среди кандидатов, чужие BL сюда попасть не могут)
+            pool = filtered or candidates
+            named = _codes_mentioned_in_text(_extract_packing_text(base, data), pool)
+            uniq = {c["id"]: c for c in named}
+            if len(uniq) == 1:
+                bl = next(iter(uniq.values()))
+                results["resolved_by_content"].append((base, str(bl.get("code") or "")))
+            else:
+                results["ambiguous"].append(
+                    base + " → " + ", ".join(
+                        f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4]
+                    )
                 )
-            )
-            return
+                return
     else:
         # запасной путь — общий резолвер (нестандартные имена)
         hit = _resolve_filename_to_bl(base, index, rows, chat_titles)
@@ -3693,20 +3718,15 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
         return
 
     # ── СВЕРКА СОДЕРЖИМОГО с данными BL перед прикреплением ──
-    # имя файла может врать; если внутри назван другой BL — не вешаем
-    # клиенту чужой packing list, а перецепляем или откладываем
-    verdict, note, better = _verify_packing_content(base, data, bl, rows)
+    # имя файла может врать; если внутри назван ДРУГОЙ BL — не вешаем
+    # клиенту чужой packing list, а отдаём человеку (сами не переносим:
+    # содержимое бывает неоднозначным, а документ уходит клиенту)
+    verdict, note = _verify_packing_content(base, data, bl, rows)
     if verdict == "mismatch":
-        if better is not None:
-            results["rerouted"].append(
-                (base, str(bl.get("code") or ""), str(better.get("code") or ""), str(better.get("batch_name") or ""))
-            )
-            bl = better
-        else:
-            # note уже содержит наши <code>-теги, имя файла экранируем
-            results["content_conflict"].append(f"{html.escape(base)}: {note}")
-            return
-    elif verdict == "confirmed":
+        # note уже содержит наши <code>-теги, имя файла экранируем
+        results["content_conflict"].append(f"{html.escape(base)}: {note}")
+        return
+    if verdict == "confirmed":
         results["verified"] += 1
 
     existing = {
@@ -3812,18 +3832,17 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
             lines.append(f"  …va yana {len(attached) - 30} ta")
     if results.get("verified"):
         lines.append(f"🔎 Fayl ichidagi ma'lumot BL bilan tekshirildi: {results['verified']} ta mos.")
-    if results.get("rerouted"):
-        lines.append("🔁 Fayl nomi boshqa BL'ni ko'rsatgan, ichidagi ma'lumot bo'yicha to'g'riladim:")
-        for base, wrong, right, batch_name in results["rerouted"][:10]:
-            lines.append(
-                f"  • {html_escape(base)}: <code>{html_escape(wrong)}</code> emas, "
-                f"<code>{html_escape(right)}</code> ({html_escape(batch_name)})"
-            )
+    if results.get("resolved_by_content"):
+        lines.append("🧩 Nomi bo'yicha bir nechta BL mos kelgandi — fayl ichidagi ma'lumot aniqlik kiritdi:")
+        for base, code in results["resolved_by_content"][:10]:
+            lines.append(f"  • {html_escape(base)} → <code>{html_escape(code)}</code>")
     if results.get("content_conflict"):
-        lines.append(f"🚧 Fayl ichidagi BL nomiga mos kelmadi — biriktirmadim ({len(results['content_conflict'])} ta):")
+        lines.append(
+            f"🚧 Fayl ichidagi BL fayl nomiga mos kelmadi — biriktirmadim ({len(results['content_conflict'])} ta):"
+        )
         for c in results["content_conflict"][:10]:
             lines.append(f"  • {c}")
-        lines.append("Tekshirib, fayl nomiga to'g'ri BL kodini yozib qayta yuboring.")
+        lines.append("Tekshirib ko'ring: fayl nomi to'g'rimi? To'g'rilab qayta yuboring yoki paneldan qo'lda biriktiring.")
     if results["mesta_warns"]:
         lines.append("⚠️ Mesta (karobka soni) mos kelmadi, lekin nomi aniq bo'lgani uchun biriktirdim:")
         for w in results["mesta_warns"][:10]:
@@ -3932,6 +3951,21 @@ _DRIVE_MAX_DEPTH = 4
 _DRIVE_ENTRY_RE = re.compile(
     r'id="entry-([A-Za-z0-9_-]{15,})"(.*?)flip-entry-title">([^<]+)<', re.S
 )
+# Признаки ПАПКИ в embeddedfolderview. Разметка у Google разная в разных
+# вариантах страницы, поэтому проверяем все известные маркеры:
+# ссылка вида /drive/folders/…, aria-label="Folder", CSS-спрайт папки и
+# старый вариант с иконкой vnd.google-apps.folder.
+_DRIVE_FOLDER_MARKERS = (
+    "/drive/folders/",
+    'aria-label="folder"',
+    "drive-sprite-folder",
+    "vnd.google-apps.folder",
+)
+
+
+def _entry_is_folder(entry_html: str) -> bool:
+    low = str(entry_html or "").lower()
+    return any(marker in low for marker in _DRIVE_FOLDER_MARKERS)
 
 
 def _list_drive_folder(folder_id: str) -> list:
@@ -3945,8 +3979,7 @@ def _list_drive_folder(folder_id: str) -> list:
     html_text = req.get(url, timeout=60).text
     out = []
     for entry_id, middle, name in _DRIVE_ENTRY_RE.findall(html_text):
-        is_folder = "vnd.google-apps.folder" in middle
-        out.append((entry_id, html.unescape(name).strip(), is_folder))
+        out.append((entry_id, html.unescape(name).strip(), _entry_is_folder(middle)))
     return out
 
 
