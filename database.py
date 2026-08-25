@@ -803,6 +803,19 @@ def init_db():
             sent_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
+        CREATE TABLE IF NOT EXISTS packing_file_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            chat_id TEXT NOT NULL DEFAULT '',
+            message_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            answer TEXT NOT NULL DEFAULT '',
+            bl_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            resolved_at TEXT NOT NULL DEFAULT ''
+        );
+
         CREATE TABLE IF NOT EXISTS tracking_delivery_coverage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
@@ -4058,6 +4071,73 @@ def add_log(bl_id, bl_code, batch_name, chat_id, status, success, error_msg="",
     )
     conn.commit()
     conn.close()
+
+
+def add_packing_question(filename: str, file_path: str, chat_id: str) -> int:
+    """Файл, для которого бот не нашёл BL: откладываем и спрашиваем людей."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO packing_file_questions(filename, file_path, chat_id) VALUES (?, ?, ?)",
+            (str(filename), str(file_path), str(chat_id)),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def set_packing_question_message(question_id: int, message_id) -> None:
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE packing_file_questions SET message_id = ? WHERE id = ?",
+            (str(message_id), int(question_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def find_packing_question_by_message(chat_id, message_id):
+    """Ожидающий ответа вопрос по сообщению, на которое ответили reply."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM packing_file_questions "
+            "WHERE chat_id = ? AND message_id = ? AND status = 'pending' LIMIT 1",
+            (str(chat_id), str(message_id)),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def list_packing_questions(status: str = "pending", limit: int = 50) -> list:
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM packing_file_questions WHERE status = ? ORDER BY id DESC LIMIT ?",
+            (str(status), int(limit)),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def resolve_packing_question(question_id: int, status: str, answer: str = "", bl_id=None) -> bool:
+    """CAS: закрыть вопрос может только тот, кто успел первым."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE packing_file_questions SET status = ?, answer = ?, bl_id = ?, "
+            "resolved_at = datetime('now','localtime') WHERE id = ? AND status = 'pending'",
+            (str(status), str(answer or ""), bl_id, int(question_id)),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
 
 
 def get_last_tracking_send(bl_id=None, batch_name=None):

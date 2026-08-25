@@ -2618,6 +2618,11 @@ def handle_telegram_message(message: dict):
     if maybe_handle_control_group_zip_link(message):
         return
 
+    # ответ на вопрос «этот packing list к какому BL?» — до ассистента,
+    # иначе reply уйдёт в общий диалог и файл так и не прикрепится
+    if maybe_handle_packing_answer(message):
+        return
+
     if maybe_handle_group_ai_message(message):
         return
 
@@ -3560,6 +3565,8 @@ def _new_packing_results() -> dict:
         "rejected": [], "ambiguous": [], "mesta_warns": [], "unsupported": [],
         # сверка содержимого файла с данными BL
         "verified": 0, "resolved_by_content": [], "content_conflict": [],
+        # файлы без BL — по ним бот задаст вопрос в группе
+        "ask_queue": [],
     }
 
 
@@ -3714,7 +3721,18 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
         if hit:
             bl = hit["row"]
     if not bl:
+        # Спросим людей вместо того, чтобы просто отчитаться «не нашёл»:
+        # файл откладываем, вопрос уйдёт в группу, ответ — прикрепит.
         results["unmatched"].append(base)
+        try:
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+            stored = secure_filename(base) or f"file_{secrets.token_hex(4)}.{ext}"
+            path = os.path.join(UPLOAD_FOLDER, f"ask_{secrets.token_hex(4)}_{stored}")
+            with open(path, "wb") as fh:
+                fh.write(data)
+            results["ask_queue"].append((base, path))
+        except Exception:
+            app.logger.exception("packing ask: failed to park %s", base)
         return
 
     # ── СВЕРКА СОДЕРЖИМОГО с данными BL перед прикреплением ──
@@ -3729,13 +3747,20 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
     if verdict == "confirmed":
         results["verified"] += 1
 
+    _store_packing_file(bl, base, data, results)
+
+
+def _store_packing_file(bl: dict, base: str, data: bytes, results: dict) -> bool:
+    """Положить файл на диск и привязать к BL (без подбора — BL уже выбран)."""
+    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
     existing = {
         str(f.get("filename") or "").strip().lower()
         for f in (db.get_files(bl["id"]) or [])
     }
     if base.lower() in existing:
         results["skipped_dup"].append(base)
-        return
+        return False
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     ext_storage = secure_filename(base) or f"file_{secrets.token_hex(4)}.{ext}"
     unique = f"bl{bl['id']}_{secrets.token_hex(4)}_{ext_storage}"
     path = os.path.join(UPLOAD_FOLDER, unique)
@@ -3743,6 +3768,7 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
         fh.write(data)
     db.add_file(bl["id"], base, path)
     results["attached"].append((base, bl.get("code") or "", bl.get("batch_name") or ""))
+    return True
 
 
 ARCHIVE_EXTS = (".zip", ".rar", ".7z")
@@ -3859,7 +3885,10 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
             f"❓ Mos BL topilmadi ({len(results['unmatched'])} ta): "
             + ", ".join(html_escape(u) for u in results["unmatched"][:15])
         )
-        lines.append("Bu fayllar nomiga BL kodini yozib qayta yuboring yoki paneldan qo'lda biriktiring.")
+        if results.get("ask_queue"):
+            lines.append("Har biri bo'yicha alohida so'rayman — javob bering, o'zim biriktiraman.")
+        else:
+            lines.append("Bu fayllar nomiga BL kodini yozib qayta yuboring yoki paneldan qo'lda biriktiring.")
     if results["rejected"]:
         lines.append(f"🚫 Format qabul qilinmadi ({len(results['rejected'])} ta): " + ", ".join(html_escape(x) for x in results["rejected"][:10]))
     if results["unsupported"]:
@@ -3871,6 +3900,114 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
     if not lines:
         lines = [empty_note]
     telegram_send_message(chat_id, "\n".join(lines))
+    for base, path in (results.get("ask_queue") or [])[:15]:
+        try:
+            ask_packing_file_owner(chat_id, base, path)
+        except Exception:
+            app.logger.exception("packing ask failed for %s", base)
+
+
+_PACKING_ASK_MAX_AGE_DAYS = 14
+
+
+def ask_packing_file_owner(chat_id, base: str, path: str) -> None:
+    """Спросить в группе, к какому BL относится файл (правило владельца
+    24.08.2026: не нашёл — спроси, получил ответ — прикрепи)."""
+    from html import escape as html_escape
+
+    qid = db.add_packing_question(base, path, str(chat_id))
+    mention = ""
+    if PACKING_RESPONSIBLE_TG_ID:
+        mention = f'<a href="tg://user?id={PACKING_RESPONSIBLE_TG_ID}">{html_escape(PACKING_RESPONSIBLE_NAME)}</a>, '
+    text = (
+        f"❓ {mention}bu packing list qaysi BL uchun?\n"
+        f"📎 <code>{html_escape(base)}</code>\n\n"
+        f"<i>Shu xabarga REPLY qilib BL kodini yozing (masalan: <code>BL-690</code>) — "
+        f"o'zim biriktiraman. Kerak bo'lmasa: <code>yo'q</code>.</i>"
+    )
+    resp = telegram_send_message(chat_id, text)
+    message_id = ((resp or {}).get("result") or {}).get("message_id")
+    if message_id:
+        db.set_packing_question_message(qid, message_id)
+    else:
+        db.resolve_packing_question(qid, "failed", "savol yuborilmadi")
+
+
+def maybe_handle_packing_answer(message: dict) -> bool:
+    """Ответ (reply) на вопрос «какой это BL?» — находим BL и прикрепляем."""
+    from services import ai_assistant
+    from html import escape as html_escape
+
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    if not chat_id or not ai_assistant.is_control_chat(chat_id):
+        return False
+    reply_to = message.get("reply_to_message") or {}
+    src_id = reply_to.get("message_id")
+    if not src_id:
+        return False
+    question = db.find_packing_question_by_message(chat_id, src_id)
+    if not question:
+        return False
+    answer = (message.get("text") or "").strip()
+    if not answer:
+        return False
+    low = answer.lower()
+    if low in {"yo'q", "yoq", "нет", "no", "-", "kerak emas"}:
+        db.resolve_packing_question(question["id"], "cancelled", answer)
+        telegram_send_message(chat_id, "✅ Tushunarli, bu faylni biriktirmayman.")
+        return True
+
+    index, rows = _build_active_bl_index()
+    chat_titles = _build_chat_title_lookup(rows)
+    candidates = _find_bl_candidates_by_brand(answer, rows, chat_titles)
+    if len(candidates) != 1:
+        hit = _resolve_filename_to_bl(answer, index, rows, chat_titles)
+        candidates = [hit["row"]] if hit else candidates
+    if len(candidates) != 1:
+        hint = (
+            " Bir nechta mos keldi: "
+            + ", ".join(f"<code>{html_escape(str(c.get('code')))}</code>" for c in candidates[:5])
+            if candidates else ""
+        )
+        telegram_send_message(
+            chat_id,
+            f"🤔 <code>{html_escape(answer)}</code> bo'yicha aniq BL topolmadim.{hint}\n"
+            "Aniq BL kodini shu xabarga reply qilib yozing.",
+        )
+        return True
+
+    bl = candidates[0]
+    if not db.resolve_packing_question(question["id"], "attached", answer, bl_id=bl["id"]):
+        return True  # кто-то уже ответил раньше
+    path = question["file_path"]
+    base = question["filename"]
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        telegram_send_message(chat_id, f"⚠️ Fayl <code>{html_escape(base)}</code> topilmadi — qaytadan yuboring.")
+        return True
+    # BL назвал человек — прикрепляем НАПРЯМУЮ, без подбора по имени файла
+    # (он уже не сработал, иначе вопроса бы не было)
+    results = _new_packing_results()
+    if _store_packing_file(bl, base, data, results):
+        telegram_send_message(
+            chat_id,
+            f"✅ <code>{html_escape(base)}</code> → <code>{html_escape(str(bl.get('code')))}</code> "
+            f"({html_escape(str(bl.get('batch_name') or ''))}) biriktirildi. Rahmat!",
+        )
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    else:
+        telegram_send_message(
+            chat_id,
+            f"↩️ <code>{html_escape(base)}</code> allaqachon "
+            f"<code>{html_escape(str(bl.get('code')))}</code> ga biriktirilgan edi.",
+        )
+    return True
 
 
 def _ingest_packing_zip(chat_id, zip_source, kind: str = "zip"):
@@ -4844,6 +4981,35 @@ def _unlinked_bl_request(codes_text: str) -> str:
     )
 
 
+def _sheet_confirms_same_cargo(key: str, cand_batch: dict, entry: dict, blocks: list, codes_of) -> bool:
+    """Тот ли это самый BL? Сверяем по шитсу SKLAD (правило владельца
+    24.08.2026): код должен быть в КИТАЙСКОМ плане партии-кандидата, и
+    цифры там должны совпадать с цифрами в казахском плане — тогда это
+    один и тот же физический груз, просто перегруженный в другую фуру.
+
+    Нужно, чтобы не пересоздавать строку с нуля: у неё уже могут быть
+    packing list'ы, и повторная заливка файлов — потерянное время."""
+    from services import plan_sync_service as pss
+
+    if not pss.batch_has_ref(cand_batch) or (cand_batch.get("plan_kind") or "") != "china":
+        return False
+    try:
+        block = pss.resolve_ref_block(cand_batch, blocks, "china", codes_of(cand_batch))
+        if block is None:
+            return False
+        china_entry = pss.aggregate_block(block).get(key)
+    except Exception:
+        app.logger.exception("sheet identity check failed for %s", key)
+        return False
+    if not china_entry:
+        return False
+    return (
+        abs(float(china_entry["ctn"]) - float(entry["ctn"])) <= pss.CTN_EPS
+        and abs(float(china_entry["cbm"]) - float(entry["cbm"])) <= pss.CBM_EPS
+        and abs(float(china_entry["kg"]) - float(entry["kg"])) <= pss.KG_EPS
+    )
+
+
 def _plan_batch_codes(batch_id) -> set:
     from services import plan_sync_service as pss
     return {pss.normalize_mark(bl.get("code")) for bl in db.get_bl_by_batch(batch_id)}
@@ -5229,6 +5395,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
 
     have = {pss.normalize_mark(bl.get("code")): bl for bl in db.get_bl_by_batch(batch["id"])}
     added, moved_in, updated, unlinked, kept_split, merged, kept_dups = [], [], [], [], [], [], []
+    reused_files: list = []
 
     for key, entry in plan.items():
         bl = have.get(key)
@@ -5264,6 +5431,33 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
                 moved = True
                 break
         if moved:
+            continue
+        # ЭКОНОМИЯ ВРЕМЕНИ: строка с уже прикреплёнными packing list'ами
+        # могла остаться в партии, которая не проходит по donor-правилам
+        # (например, её статус ещё «в Китае»). Не создаём пустой дубль, а
+        # ПЕРЕВОЗИМ ту строку — но только если шитс подтверждает, что это
+        # тот же груз (код в китайском плане + совпадение цифр).
+        reused = False
+        for other in others:
+            if other["id"] == batch["id"]:
+                continue
+            for cand in db.get_bl_by_batch(other["id"]):
+                if pss.normalize_mark(cand.get("code")) != key:
+                    continue
+                if not db.get_files(cand["id"]):
+                    continue  # пустую строку проще создать заново
+                if not _sheet_confirms_same_cargo(key, other, entry, blocks, codes_of):
+                    continue
+                if _safe_move_bl(cand["id"], batch["id"]):
+                    db.update_bl_figures(cand["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+                    reused_files.append(
+                        f"{html.escape(entry['code'])} (из «{html.escape(other['name'])}», файлы сохранены)"
+                    )
+                    reused = True
+                break
+            if reused:
+                break
+        if reused:
             continue
         if _plan_add_bl(batch["id"], entry, chat_lookup, known_chat_ids, unlinked):
             added.append(entry["code"])
@@ -5312,6 +5506,11 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
     ]
     if moved_in:
         parts.append("Переехали сюда: " + ", ".join(moved_in[:12]) + ".")
+    if reused_files:
+        parts.append(
+            "📎 Сверено с шитсом, строка перевезена вместе с файлами (перезаливать не нужно): "
+            + ", ".join(reused_files[:12]) + "."
+        )
     if added:
         parts.append("Добавлены: " + ", ".join(html.escape(c) for c in added[:12]) + ".")
     if updated:
@@ -5333,7 +5532,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
         )
     if unlinked:
         parts.append(_unlinked_bl_request(", ".join(html.escape(c) for c in unlinked[:12])))
-    changed = bool(moved_in or added or updated or moved_away or merged or kept_dups)
+    changed = bool(moved_in or added or updated or moved_away or merged or kept_dups or reused_files)
     return True, " ".join(parts), changed
 
 
