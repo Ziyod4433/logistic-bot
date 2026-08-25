@@ -3310,10 +3310,11 @@ def send_packing_list_reminder(force: bool = False):
     if rest > 0:
         lines.append(f"\n…va yana {rest} ta BL.")
     lines.append(
-        f"\n📎 Iltimos, packing listlarni bitta ZIP arxiv qilib shu guruhga tashlang — "
+        f"\n📎 Iltimos, packing listlarni arxiv qilib shu guruhga tashlang (ZIP, RAR yoki 7z) — "
         f"o'zim ochib, tahlil qilib, tegishli BL larga biriktiraman. "
-        f"Katta arxiv bo'lsa (20 MB+), Google Drive papkaga yuklab, havolasini tashlang "
-        f"(ZIP formatida — RAR ochilmaydi). Rahmat, {html_escape(PACKING_RESPONSIBLE_NAME)}! 🙏"
+        f"Katta arxiv bo'lsa (20 MB+), Google Drive papkaga yuklab, havolasini tashlang — "
+        f"ichki papkalarni ham o'zim aylanib chiqaman. "
+        f"Rahmat, {html_escape(PACKING_RESPONSIBLE_NAME)}! 🙏"
     )
     telegram_send_message(chat_id, "\n".join(lines))
     db.set_setting(_PACKING_REMINDER_SETTING, today)
@@ -3513,7 +3514,7 @@ def maybe_handle_control_group_document(message: dict) -> bool:
         return False
     doc = message.get("document") or {}
     filename = str(doc.get("file_name") or "").lower()
-    if not filename.endswith(".zip"):
+    if not _archive_kind(filename):
         return False
     threading.Thread(target=process_packing_zip, args=(chat_id, doc), daemon=True).start()
     return True
@@ -3535,7 +3536,10 @@ def process_packing_zip(chat_id, doc: dict):
                 return
             url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{tg_path}"
             content = req.get(url, timeout=180).content
-            _ingest_packing_zip(chat_id, io.BytesIO(content))
+            _ingest_packing_zip(
+                chat_id, io.BytesIO(content),
+                kind=_archive_kind(str(doc.get("file_name") or "")) or "zip",
+            )
     except Exception as exc:
         app.logger.exception("Packing zip (telegram) failed")
         try:
@@ -3548,7 +3552,98 @@ def _new_packing_results() -> dict:
     return {
         "attached": [], "skipped_dup": [], "unmatched": [],
         "rejected": [], "ambiguous": [], "mesta_warns": [], "unsupported": [],
+        # сверка содержимого файла с данными BL
+        "verified": 0, "rerouted": [], "content_conflict": [],
     }
+
+
+_PACKING_TEXT_MAX = 200_000
+
+
+def _extract_packing_text(base: str, data: bytes) -> str:
+    """Текст из packing list: xlsx/xlsm через openpyxl, pdf через pypdf,
+    csv/txt как есть. Картинки и .doc не читаем — вернём ''."""
+    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+    try:
+        if ext in ("xlsx", "xlsm"):
+            from openpyxl import load_workbook
+            import warnings as _w
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")
+                wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            parts = []
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(max_row=400, max_col=40, values_only=True):
+                    for cell in row:
+                        if cell is not None:
+                            parts.append(str(cell))
+                    if sum(len(p) for p in parts) > _PACKING_TEXT_MAX:
+                        break
+            return " ".join(parts)[:_PACKING_TEXT_MAX]
+        if ext == "pdf":
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(data))
+            parts = []
+            for page in reader.pages[:20]:
+                parts.append(page.extract_text() or "")
+            return " ".join(parts)[:_PACKING_TEXT_MAX]
+        if ext in ("csv", "txt"):
+            return data[:_PACKING_TEXT_MAX].decode("utf-8", "ignore")
+    except Exception:
+        app.logger.info("Packing text extraction failed for %s", base, exc_info=True)
+    return ""
+
+
+def _codes_mentioned_in_text(text: str, rows: list) -> list:
+    """Какие BL активных партий реально названы ВНУТРИ файла."""
+    if not text:
+        return []
+    norm = _normalize_bl_code(text)
+    upper = text.upper()
+    hits = []
+    for row in rows:
+        code = str(row.get("code") or "").strip()
+        if len(code) < 3:
+            continue
+        code_norm = _normalize_bl_code(code)
+        if code_norm and code_norm in norm:
+            hits.append(row)
+            continue
+        client = str(row.get("client_name") or "").strip().upper()
+        if len(client) >= 4 and client in upper:
+            hits.append(row)
+    return hits
+
+
+def _verify_packing_content(base: str, data: bytes, bl: dict, rows: list) -> tuple:
+    """Сверка СОДЕРЖИМОГО файла с данными BL перед прикреплением
+    (правило владельца 24.08.2026). → (verdict, note, better_bl)
+
+    verdict: 'confirmed'  — в файле назван именно этот BL;
+             'mismatch'   — в файле назван ДРУГОЙ BL (better_bl), имя файла обмануло;
+             'unreadable' — текст не извлекается (картинка/скан) — не блокируем;
+             'no_code'    — текст есть, но кодов не нашли — сверяем цифры."""
+    text = _extract_packing_text(base, data)
+    if not text.strip():
+        return "unreadable", "", None
+    hits = _codes_mentioned_in_text(text, rows)
+    hit_ids = {h["id"] for h in hits}
+    if bl["id"] in hit_ids:
+        return "confirmed", "", None
+    if hits:
+        others = [h for h in hits if h["id"] != bl["id"]]
+        uniq = {h["id"]: h for h in others}
+        if len(uniq) == 1:
+            other = next(iter(uniq.values()))
+            return "mismatch", (
+                f"faylda <code>{other.get('code')}</code> yozilgan "
+                f"({other.get('batch_name')}), fayl nomida esa <code>{bl.get('code')}</code>"
+            ), other
+        return "mismatch", (
+            "fayl ichida boshqa BL'lar: "
+            + ", ".join(str(h.get("code")) for h in list(uniq.values())[:4])
+        ), None
+    return "no_code", "", None
 
 
 def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, results: dict):
@@ -3590,6 +3685,24 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
     if not bl:
         results["unmatched"].append(base)
         return
+
+    # ── СВЕРКА СОДЕРЖИМОГО с данными BL перед прикреплением ──
+    # имя файла может врать; если внутри назван другой BL — не вешаем
+    # клиенту чужой packing list, а перецепляем или откладываем
+    verdict, note, better = _verify_packing_content(base, data, bl, rows)
+    if verdict == "mismatch":
+        if better is not None:
+            results["rerouted"].append(
+                (base, str(bl.get("code") or ""), str(better.get("code") or ""), str(better.get("batch_name") or ""))
+            )
+            bl = better
+        else:
+            # note уже содержит наши <code>-теги, имя файла экранируем
+            results["content_conflict"].append(f"{html.escape(base)}: {note}")
+            return
+    elif verdict == "confirmed":
+        results["verified"] += 1
+
     existing = {
         str(f.get("filename") or "").strip().lower()
         for f in (db.get_files(bl["id"]) or [])
@@ -3606,17 +3719,69 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
     results["attached"].append((base, bl.get("code") or "", bl.get("batch_name") or ""))
 
 
-def _ingest_zip_source(zip_source, index, rows, chat_titles, results: dict):
-    """Iterate one ZIP (path or file-like) into shared results."""
-    import zipfile
+ARCHIVE_EXTS = (".zip", ".rar", ".7z")
 
-    with zipfile.ZipFile(zip_source) as zf:
-        names = [n for n in zf.namelist() if not n.endswith("/")]
+
+def _open_archive(source, kind: str):
+    """Открыть архив ZIP / RAR / 7z единообразно → (namelist, read(name)).
+
+    RAR требует внешнюю утилиту (unar/unrar/bsdtar) — если её нет,
+    поднимаем RuntimeError, и файл честно уходит в «не смог открыть»."""
+    if kind == "zip":
+        import zipfile
+        zf = zipfile.ZipFile(source)
+        return zf, [n for n in zf.namelist() if not n.endswith("/")], zf.read
+    if kind == "7z":
+        import py7zr
+        af = py7zr.SevenZipFile(source)
+        contents = af.readall() or {}
+        names = [n for n, fh in contents.items() if fh is not None]
+        return af, names, (lambda n: contents[n].read())
+    if kind == "rar":
+        import rarfile
+        rf = rarfile.RarFile(source)
+        return rf, [n for n in rf.namelist() if not rf.getinfo(n).is_dir()], rf.read
+    raise RuntimeError(f"unknown archive kind: {kind}")
+
+
+def _archive_kind(name: str) -> str:
+    low = str(name or "").lower()
+    for ext in ARCHIVE_EXTS:
+        if low.endswith(ext):
+            return ext.lstrip(".")
+    return ""
+
+
+def _archive_kind_from_magic(head: bytes) -> str:
+    """Тип архива по сигнатуре — имя в ссылке может врать/отсутствовать."""
+    if head.startswith(b"PK"):
+        return "zip"
+    if head.startswith(b"Rar!"):
+        return "rar"
+    if head.startswith(b"7z\xbc\xaf\x27\x1c"):
+        return "7z"
+    return ""
+
+
+def _ingest_zip_source(zip_source, index, rows, chat_titles, results: dict, kind: str = "zip"):
+    """Iterate one archive (path or file-like) into shared results."""
+    handle, names, read = _open_archive(zip_source, kind)
+    try:
         for name in names[:_PACKING_ZIP_MAX_FILES]:
             base = os.path.basename(name.replace("\\", "/")).strip()
             if not base or base.startswith("._") or "__MACOSX" in name:
                 continue
-            _attach_packing_bytes(base, zf.read(name), index, rows, chat_titles, results)
+            try:
+                payload = read(name)
+            except Exception as exc:
+                results["rejected"].append(f"{base} ({exc})")
+                continue
+            _attach_packing_bytes(base, payload, index, rows, chat_titles, results)
+    finally:
+        try:
+            handle.close()
+        except Exception:
+            pass
 
 
 def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Biriktiradigan fayl topilmadi."):
@@ -3630,6 +3795,20 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
             lines.append(f"  • <code>{html_escape(code)}</code> ← {html_escape(base)} ({html_escape(batch_name)})")
         if len(attached) > 30:
             lines.append(f"  …va yana {len(attached) - 30} ta")
+    if results.get("verified"):
+        lines.append(f"🔎 Fayl ichidagi ma'lumot BL bilan tekshirildi: {results['verified']} ta mos.")
+    if results.get("rerouted"):
+        lines.append("🔁 Fayl nomi boshqa BL'ni ko'rsatgan, ichidagi ma'lumot bo'yicha to'g'riladim:")
+        for base, wrong, right, batch_name in results["rerouted"][:10]:
+            lines.append(
+                f"  • {html_escape(base)}: <code>{html_escape(wrong)}</code> emas, "
+                f"<code>{html_escape(right)}</code> ({html_escape(batch_name)})"
+            )
+    if results.get("content_conflict"):
+        lines.append(f"🚧 Fayl ichidagi BL nomiga mos kelmadi — biriktirmadim ({len(results['content_conflict'])} ta):")
+        for c in results["content_conflict"][:10]:
+            lines.append(f"  • {c}")
+        lines.append("Tekshirib, fayl nomiga to'g'ri BL kodini yozib qayta yuboring.")
     if results["mesta_warns"]:
         lines.append("⚠️ Mesta (karobka soni) mos kelmadi, lekin nomi aniq bo'lgani uchun biriktirdim:")
         for w in results["mesta_warns"][:10]:
@@ -3660,7 +3839,7 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
     telegram_send_message(chat_id, "\n".join(lines))
 
 
-def _ingest_packing_zip(chat_id, zip_source):
+def _ingest_packing_zip(chat_id, zip_source, kind: str = "zip"):
     """Shared pipeline: open the archive (path or file-like), match every
     file (brand → MESTA), attach and report in Uzbek."""
     import zipfile
@@ -3670,9 +3849,16 @@ def _ingest_packing_zip(chat_id, zip_source):
         index, rows = _build_active_bl_index()
         chat_titles = _build_chat_title_lookup(rows)
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        _ingest_zip_source(zip_source, index, rows, chat_titles, results)
+        _ingest_zip_source(zip_source, index, rows, chat_titles, results, kind=kind)
     except zipfile.BadZipFile:
         telegram_send_message(chat_id, "⚠️ Arxiv ochilmadi — ZIP fayl buzilgan ko'rinadi. Qayta yuborib ko'ring.")
+        return
+    except ImportError:
+        telegram_send_message(
+            chat_id,
+            f"⚠️ {kind.upper()} arxivni ochish uchun kutubxona o'rnatilmagan. "
+            "Iltimos, ZIP formatida yuboring yoki fayllarni papkaga alohida yuklang.",
+        )
         return
     except Exception as exc:
         app.logger.exception("Packing zip processing failed")
@@ -3726,16 +3912,26 @@ def maybe_handle_control_group_zip_link(message: dict) -> bool:
     return False
 
 
+_DRIVE_MAX_DEPTH = 4
+_DRIVE_ENTRY_RE = re.compile(
+    r'id="entry-([A-Za-z0-9_-]{15,})"(.*?)flip-entry-title">([^<]+)<', re.S
+)
+
+
 def _list_drive_folder(folder_id: str) -> list:
-    """[(file_id, name)] of a PUBLIC Drive folder via the legacy
-    embeddedfolderview endpoint (the modern folder page is JS-only)."""
+    """[(id, name, is_folder)] of a PUBLIC Drive folder via the legacy
+    embeddedfolderview endpoint (the modern folder page is JS-only).
+
+    ВАЖНО: подпапки тоже перечисляются этим endpoint'ом, и раньше бот
+    пытался скачать их как файлы — папка «14.08.2026» падала с «yuklab
+    bo'lmadi». Тип берём из иконки записи."""
     url = f"https://drive.google.com/embeddedfolderview?id={folder_id}#list"
     html_text = req.get(url, timeout=60).text
-    return re.findall(
-        r'id="entry-(1[A-Za-z0-9_-]{15,})".*?flip-entry-title">([^<]+)<',
-        html_text,
-        re.S,
-    )
+    out = []
+    for entry_id, middle, name in _DRIVE_ENTRY_RE.findall(html_text):
+        is_folder = "vnd.google-apps.folder" in middle
+        out.append((entry_id, html.unescape(name).strip(), is_folder))
+    return out
 
 
 def _download_drive_bytes(file_id: str, max_bytes: int) -> bytes | None:
@@ -3763,9 +3959,9 @@ def _download_drive_bytes(file_id: str, max_bytes: int) -> bytes | None:
 
 
 def process_drive_folder(chat_id, folder_id: str):
-    """Drive FOLDER link in the control group: enumerate the folder and
-    run every file (and every ZIP inside it) through the packing
-    pipeline. RAR/7z are reported as unsupported."""
+    """Drive FOLDER link in the control group: walk the folder AND its
+    subfolders, run every file and every archive (ZIP/RAR/7z) through the
+    packing pipeline."""
     import zipfile
 
     try:
@@ -3782,27 +3978,48 @@ def process_drive_folder(chat_id, folder_id: str):
             chat_titles = _build_chat_title_lookup(rows)
             os.makedirs(UPLOAD_FOLDER, exist_ok=True)
             results = _new_packing_results()
-            for file_id, name in entries[:_PACKING_ZIP_MAX_FILES]:
-                base = str(name or "").strip()
-                low = base.lower()
-                if low.endswith((".rar", ".7z")):
-                    results["unsupported"].append(base)
-                    continue
-                if low.endswith(".zip"):
-                    data = _download_drive_bytes(file_id, _PACKING_URL_MAX_BYTES)
+            seen_folders = {folder_id}
+            budget = [_PACKING_ZIP_MAX_FILES]
+
+            def walk(items, depth: int):
+                for entry_id, name, is_folder in items:
+                    if budget[0] <= 0:
+                        return
+                    base = str(name or "").strip()
+                    if is_folder:
+                        # подпапки обходим рекурсивно — раньше бот пытался
+                        # скачать папку как файл и падал с «yuklab bo'lmadi»
+                        if depth >= _DRIVE_MAX_DEPTH or entry_id in seen_folders:
+                            continue
+                        seen_folders.add(entry_id)
+                        try:
+                            walk(_list_drive_folder(entry_id), depth + 1)
+                        except Exception:
+                            app.logger.exception("Drive subfolder listing failed: %s", entry_id)
+                            results["rejected"].append(base + " (papkani ocholmadim)")
+                        continue
+                    budget[0] -= 1
+                    kind = _archive_kind(base)
+                    if kind:
+                        data = _download_drive_bytes(file_id=entry_id, max_bytes=_PACKING_URL_MAX_BYTES)
+                        if data is None:
+                            results["rejected"].append(base + " (yuklab bo'lmadi)")
+                            continue
+                        try:
+                            _ingest_zip_source(io.BytesIO(data), index, rows, chat_titles, results, kind=kind)
+                        except zipfile.BadZipFile:
+                            results["rejected"].append(base + " (buzilgan arxiv)")
+                        except Exception as exc:
+                            app.logger.exception("Archive %s failed", base)
+                            results["unsupported"].append(f"{base} ({exc.__class__.__name__})")
+                        continue
+                    data = _download_drive_bytes(entry_id, _PACKING_FILE_MAX_BYTES)
                     if data is None:
                         results["rejected"].append(base + " (yuklab bo'lmadi)")
                         continue
-                    try:
-                        _ingest_zip_source(io.BytesIO(data), index, rows, chat_titles, results)
-                    except zipfile.BadZipFile:
-                        results["rejected"].append(base + " (buzilgan arxiv)")
-                    continue
-                data = _download_drive_bytes(file_id, _PACKING_FILE_MAX_BYTES)
-                if data is None:
-                    results["rejected"].append(base + " (yuklab bo'lmadi)")
-                    continue
-                _attach_packing_bytes(base, data, index, rows, chat_titles, results)
+                    _attach_packing_bytes(base, data, index, rows, chat_titles, results)
+
+            walk(entries, 0)
             _send_packing_report(chat_id, results, empty_note="ℹ️ Papkada biriktiradigan fayl topilmadi.")
     except Exception as exc:
         app.logger.exception("Drive folder processing failed")
@@ -3826,17 +4043,19 @@ def process_packing_zip_url(chat_id, kind: str, ref: str):
                 candidates = [ref]
             tmp_path = None
             last_err = ""
+            arch_kind = "zip"
             for url in candidates:
                 try:
                     with req.get(url, stream=True, timeout=600) as resp:
                         resp.raise_for_status()
                         chunks = resp.iter_content(chunk_size=512 * 1024)
                         first = next(chunks, b"")
-                        if not first.startswith(b"PK"):
-                            # HTML-заглушка Google (нет доступа) или не ZIP
-                            last_err = "havola ZIP faylga olib bormaydi (ruxsat yo'q bo'lishi mumkin)"
+                        arch_kind = _archive_kind_from_magic(first)
+                        if not arch_kind:
+                            # HTML-заглушка Google (нет доступа) или не архив
+                            last_err = "havola arxivga olib bormaydi (ruxsat yo'q bo'lishi mumkin)"
                             continue
-                        fd, tmp_path = tempfile.mkstemp(suffix=".zip")
+                        fd, tmp_path = tempfile.mkstemp(suffix=f".{arch_kind}")
                         total = 0
                         with os.fdopen(fd, "wb") as out:
                             out.write(first)
@@ -3866,7 +4085,7 @@ def process_packing_zip_url(chat_id, kind: str, ref: str):
                 )
                 return
             try:
-                _ingest_packing_zip(chat_id, tmp_path)
+                _ingest_packing_zip(chat_id, tmp_path, kind=arch_kind)
             finally:
                 try:
                     os.remove(tmp_path)

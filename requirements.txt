@@ -7,3 +7,6 @@ openpyxl==3.1.5
 google-auth==2.40.0
 google-api-python-client==2.175.0
 fpdf2==2.8.3
+pypdf==5.1.0
+py7zr==0.22.0
+rarfile==4.2

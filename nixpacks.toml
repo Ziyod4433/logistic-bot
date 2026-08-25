@@ -1,0 +1,6 @@
+# RAR-архивы с packing list'ами: rarfile требует внешнюю утилиту.
+# "..." сохраняет пакеты, которые nixpacks определил сам (Python и пр.),
+# и добавляет к ним unar (свободный, в отличие от unrar) и bsdtar —
+# rarfile сам выберет доступную.
+[phases.setup]
+aptPkgs = ["...", "unar", "libarchive-tools"]
