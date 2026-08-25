@@ -803,6 +803,13 @@ def init_db():
             sent_at TEXT DEFAULT (datetime('now','localtime'))
         );
 
+        CREATE TABLE IF NOT EXISTS drive_seen_files (
+            file_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            folder_name TEXT NOT NULL DEFAULT '',
+            seen_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
         CREATE TABLE IF NOT EXISTS packing_file_questions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             filename TEXT NOT NULL,
@@ -4071,6 +4078,39 @@ def add_log(bl_id, bl_code, batch_name, chat_id, status, success, error_msg="",
     )
     conn.commit()
     conn.close()
+
+
+def drive_files_seen(file_ids) -> set:
+    """Какие файлы Drive бот уже обрабатывал (чтобы не качать и не
+    переспрашивать по кругу при каждом автосканировании)."""
+    ids = [str(x) for x in file_ids if x]
+    if not ids:
+        return set()
+    conn = get_conn()
+    try:
+        out = set()
+        for i in range(0, len(ids), 400):
+            chunk = ids[i:i + 400]
+            marks = ", ".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT file_id FROM drive_seen_files WHERE file_id IN ({marks})", chunk
+            ).fetchall()
+            out.update(str(r["file_id"]) for r in rows)
+        return out
+    finally:
+        conn.close()
+
+
+def mark_drive_file_seen(file_id: str, name: str = "", folder_name: str = "") -> None:
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO drive_seen_files(file_id, name, folder_name) VALUES (?, ?, ?)",
+            (str(file_id), str(name or ""), str(folder_name or "")),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def add_packing_question(filename: str, file_path: str, chat_id: str) -> int:

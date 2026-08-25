@@ -252,6 +252,13 @@ def _system_prompt() -> str:
     plan_date) осталась для особых случаев: она приводит состав ТОЧНО к плану и УДАЛЯЕТ лишние BL —
     в summary заявки перечисли, какие BL будут удалены, чтобы подтверждающий видел это до ✅.
 
+10б. PACKING LIST'Ы ИЗ GOOGLE DRIVE (автоматика). Есть общая Drive-папка, куда сотрудники кладут подпапки
+    с названием партии («14.08.2026») и файлы. Бот САМ проверяет её каждые ~15 минут: заходит в подпапки,
+    скачивает НОВЫЕ файлы (в т.ч. ZIP/RAR/7z), сверяет содержимое с данными BL, прикрепляет и отчитывается
+    в управляющей группе. Файл, для которого BL не нашёлся, бот выкладывает вопросом в группу — ответ
+    REPLY'ем с кодом BL прикрепляет его. По просьбе человека запусти проверку немедленно инструментом
+    import_packing_from_drive. Ссылку в группу кидать НЕ обязательно — это лишь запасной путь.
+
 11. УТРЕННИЙ СБОР PACKING LIST. Каждое утро (по Ташкенту) бот сам пишет в управляющую группу,
     отмечает ответственного ({packing_name}, tg id {packing_id} — этот id используй как mention_user_id,
     когда просят отметить ответственного за packing list) и перечисляет BL активных партий без packing list.
@@ -348,6 +355,11 @@ def _system_prompt() -> str:
 • «примени казахский план / перегрузи сейчас» → get_batch_plan_status (покажи предпросмотр) → propose_action apply_kazakh_plan.
 • «запусти сверку сейчас» → propose_action run_plan_sync.
 • «где packing list / чего не хватает» → get_missing_packing_lists, файлы — get_batch_detail.
+• «загрузи/забери packing list'ы с Drive», «drive'ga yuklangan 14.08 ni yukla», «прикрепи файлы из папки» →
+  import_packing_from_drive (folder='14.08'). ТЫ ЭТО УМЕЕШЬ — никогда не отвечай «у меня нет инструмента»
+  и не отправляй человека кидать ссылку в группу. Бот и сам проверяет папку каждые ~15 минут, но по просьбе
+  запускай проверку сразу. Уже разобранные файлы повторно не качаются; по файлам без BL бот спросит в группе,
+  и ответ REPLY'ем с кодом BL прикрепит их.
 • «почему не ушло / ошибка отправки» → get_send_logs (+ get_batch_detail).
 • «КТО обновил трекинг / кто разрешил отправку / кто дал добро» → get_batch_detail (last_tracking.confirmed_by
   и filled_by) либо find_bl (last_tracking_by / last_tracking_filled_by); подробности — get_send_logs.
@@ -440,6 +452,29 @@ TOOLS = [
                 "type": "object",
                 "properties": {"query": {"type": "string", "description": "часть кода BL / merged-кода / клиента / названия группы"}},
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "import_packing_from_drive",
+            "description": (
+                "ЗАБРАТЬ packing list'ы из общей Google-Drive папки и прикрепить к BL. "
+                "Ты УМЕЕШЬ это делать сам — не отвечай «у меня нет инструмента». "
+                "Бот и так проверяет папку каждые ~15 минут, но по просьбе («drive'ga yuklangan 14.08 ni yukla») "
+                "запусти проверку СРАЗУ этим инструментом. Обрабатываются только НОВЫЕ файлы: то, что уже "
+                "разобрано раньше, повторно не качается. Файл, для которого BL не нашёлся, бот сам спросит в группе."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "название подпапки/партии («14.08», «14.08.2026»); пусто — вся папка",
+                    }
+                },
+                "required": [],
             },
         },
     },
@@ -1182,6 +1217,29 @@ def _tool_get_unlinked_bls(_args: dict) -> dict:
     }
 
 
+def _tool_import_packing_from_drive(args: dict) -> dict:
+    """Запустить разбор общей Drive-папки с packing list'ами прямо сейчас."""
+    import app as _app
+
+    folder = str(args.get("folder") or "").strip()
+    try:
+        processed, info = _app.scan_packing_drive(force=True, only_folder=folder)
+    except Exception as exc:
+        return {"error": f"Не смог разобрать папку: {exc}"}
+    pending = db.list_packing_questions("pending", limit=20)
+    return {
+        "ok": True,
+        "processed_files": processed,
+        "info": info,
+        "open_questions": [
+            {"file": q["filename"], "asked_at": q["created_at"]} for q in pending
+        ],
+        "note": "Отчёт (что прикреплено / что не совпало / по чему спросил) уже отправлен "
+                "в управляющую группу отдельным сообщением — не выдумывай его содержимое, "
+                "просто скажи, что проверил папку и сколько файлов обработал.",
+    }
+
+
 def _tool_find_group(args: dict) -> dict:
     query = str(args.get("query") or "").strip()
     if len(query) < 2:
@@ -1784,6 +1842,10 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_get_automation_status(args)
         if name == "get_missing_packing_lists":
             return _tool_get_missing_packing_lists(args)
+        if name == "import_packing_from_drive":
+            if readonly:
+                return {"error": "Только просмотр: прикреплять файлы может владелец или оператор"}
+            return _tool_import_packing_from_drive(args)
         if name == "get_message_templates":
             return _tool_get_message_templates(args)
         if name == "get_db_schema":

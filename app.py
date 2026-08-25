@@ -3414,6 +3414,13 @@ def _packing_reminder_scheduler():
                     app.logger.info("Morning plan sync: %s", info)
             # Хоргос: вопросы о переносе казахского плана + автоприменение
             check_kazakh_plan_asks()
+            # новые packing list'ы в общей Drive-папке — забрать и прикрепить
+            try:
+                got, info = scan_packing_drive()
+                if got:
+                    app.logger.info("Packing drive scan: %s", info)
+            except Exception:
+                app.logger.exception("Packing drive scan tick failed")
             # авто-жизненный цикл партий из «Fura statuslari»
             synced = sync_batches_from_fura_statuses()
             if synced:
@@ -3709,11 +3716,12 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
                 bl = next(iter(uniq.values()))
                 results["resolved_by_content"].append((base, str(bl.get("code") or "")))
             else:
-                results["ambiguous"].append(
-                    base + " → " + ", ".join(
-                        f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4]
-                    )
+                listed = ", ".join(
+                    f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4]
                 )
+                results["ambiguous"].append(base + " → " + listed)
+                # «не понял, куда прикрепить» — тоже повод спросить людей
+                _park_for_question(base, data, results, f"bir nechta mos keldi: {listed}")
                 return
     else:
         # запасной путь — общий резолвер (нестандартные имена)
@@ -3721,18 +3729,8 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
         if hit:
             bl = hit["row"]
     if not bl:
-        # Спросим людей вместо того, чтобы просто отчитаться «не нашёл»:
-        # файл откладываем, вопрос уйдёт в группу, ответ — прикрепит.
         results["unmatched"].append(base)
-        try:
-            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-            stored = secure_filename(base) or f"file_{secrets.token_hex(4)}.{ext}"
-            path = os.path.join(UPLOAD_FOLDER, f"ask_{secrets.token_hex(4)}_{stored}")
-            with open(path, "wb") as fh:
-                fh.write(data)
-            results["ask_queue"].append((base, path))
-        except Exception:
-            app.logger.exception("packing ask: failed to park %s", base)
+        _park_for_question(base, data, results, "")
         return
 
     # ── СВЕРКА СОДЕРЖИМОГО с данными BL перед прикреплением ──
@@ -3743,11 +3741,27 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
     if verdict == "mismatch":
         # note уже содержит наши <code>-теги, имя файла экранируем
         results["content_conflict"].append(f"{html.escape(base)}: {note}")
+        _park_for_question(base, data, results, note)
         return
     if verdict == "confirmed":
         results["verified"] += 1
 
     _store_packing_file(bl, base, data, results)
+
+
+def _park_for_question(base: str, data: bytes, results: dict, reason: str) -> None:
+    """Отложить файл на диск и поставить в очередь вопроса в группу —
+    вместо сухого «не нашёл» бот спросит, куда его прикрепить."""
+    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+    try:
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        stored = secure_filename(base) or f"file_{secrets.token_hex(4)}.{ext}"
+        path = os.path.join(UPLOAD_FOLDER, f"ask_{secrets.token_hex(4)}_{stored}")
+        with open(path, "wb") as fh:
+            fh.write(data)
+        results["ask_queue"].append((base, path, reason))
+    except Exception:
+        app.logger.exception("packing ask: failed to park %s", base)
 
 
 def _store_packing_file(bl: dict, base: str, data: bytes, results: dict) -> bool:
@@ -3900,9 +3914,9 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
     if not lines:
         lines = [empty_note]
     telegram_send_message(chat_id, "\n".join(lines))
-    for base, path in (results.get("ask_queue") or [])[:15]:
+    for base, path, reason in (results.get("ask_queue") or [])[:15]:
         try:
-            ask_packing_file_owner(chat_id, base, path)
+            ask_packing_file_owner(chat_id, base, path, reason)
         except Exception:
             app.logger.exception("packing ask failed for %s", base)
 
@@ -3910,7 +3924,7 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
 _PACKING_ASK_MAX_AGE_DAYS = 14
 
 
-def ask_packing_file_owner(chat_id, base: str, path: str) -> None:
+def ask_packing_file_owner(chat_id, base: str, path: str, reason: str = "") -> None:
     """Спросить в группе, к какому BL относится файл (правило владельца
     24.08.2026: не нашёл — спроси, получил ответ — прикрепи)."""
     from html import escape as html_escape
@@ -3921,9 +3935,11 @@ def ask_packing_file_owner(chat_id, base: str, path: str) -> None:
         mention = f'<a href="tg://user?id={PACKING_RESPONSIBLE_TG_ID}">{html_escape(PACKING_RESPONSIBLE_NAME)}</a>, '
     text = (
         f"❓ {mention}bu packing list qaysi BL uchun?\n"
-        f"📎 <code>{html_escape(base)}</code>\n\n"
-        f"<i>Shu xabarga REPLY qilib BL kodini yozing (masalan: <code>BL-690</code>) — "
-        f"o'zim biriktiraman. Kerak bo'lmasa: <code>yo'q</code>.</i>"
+        f"📎 <code>{html_escape(base)}</code>\n"
+        + (f"ℹ️ {reason}\n" if reason else "")
+        + "\n<i>Shu xabarga REPLY qilib BL kodini yozing (masalan: <code>BL-690</code>, "
+        "kerak bo'lsa partiya bilan: <code>BL-690 14.08</code>) — o'zim biriktiraman. "
+        "Kerak bo'lmasa: <code>yo'q</code>.</i>"
     )
     resp = telegram_send_message(chat_id, text)
     message_id = ((resp or {}).get("result") or {}).get("message_id")
@@ -3960,20 +3976,41 @@ def maybe_handle_packing_answer(message: dict) -> bool:
 
     index, rows = _build_active_bl_index()
     chat_titles = _build_chat_title_lookup(rows)
-    candidates = _find_bl_candidates_by_brand(answer, rows, chat_titles)
-    if len(candidates) != 1:
+    # ответ может уточнять партию: «BL-690 14.08» → код + дата партии
+    date_tokens = re.findall(r"\d{1,2}[.\-/]\d{1,2}(?:[.\-/]\d{2,4})?", answer)
+    brand_part = answer
+    for token in date_tokens:
+        brand_part = brand_part.replace(token, " ")
+    brand_part = brand_part.strip(" ,;-") or answer
+
+    candidates = _find_bl_candidates_by_brand(brand_part, rows, chat_titles)
+    if len(candidates) > 1 and date_tokens:
+        def _norm_date(value: str) -> str:
+            return str(value or "").replace("/", ".").replace("-", ".")
+        for token in date_tokens:
+            by_date = [c for c in candidates if _norm_date(token) in _norm_date(c.get("batch_name"))]
+            if len(by_date) == 1:
+                candidates = by_date
+                break
+    if not candidates:
+        # по бренду не нашли вовсе — пробуем общий резолвер. Если же
+        # кандидатов НЕСКОЛЬКО, резолвер выбрал бы произвольного, а файл
+        # уехал бы не в ту партию — лучше переспросить
         hit = _resolve_filename_to_bl(answer, index, rows, chat_titles)
-        candidates = [hit["row"]] if hit else candidates
+        candidates = [hit["row"]] if hit else []
     if len(candidates) != 1:
         hint = (
             " Bir nechta mos keldi: "
-            + ", ".join(f"<code>{html_escape(str(c.get('code')))}</code>" for c in candidates[:5])
+            + ", ".join(
+                f"<code>{html_escape(str(c.get('code')))}</code> ({html_escape(str(c.get('batch_name') or ''))})"
+                for c in candidates[:5]
+            )
             if candidates else ""
         )
         telegram_send_message(
             chat_id,
             f"🤔 <code>{html_escape(answer)}</code> bo'yicha aniq BL topolmadim.{hint}\n"
-            "Aniq BL kodini shu xabarga reply qilib yozing.",
+            "Partiyani ham yozing, masalan <code>BL-690 14.08</code> — shu xabarga reply qilib.",
         )
         return True
 
@@ -4215,6 +4252,117 @@ def process_drive_folder(chat_id, folder_id: str):
             telegram_send_message(chat_id, f"⚠️ Papka tahlilida xato: {exc}", parse_mode=None)
         except Exception:
             pass
+
+
+# ── АВТО-СКАНИРОВАНИЕ ПАПКИ PACKING LIST'ОВ ─────────────────────────
+# Сотрудник кладёт в общую Drive-папку подпапку с названием партии
+# («14.08.2026») и файлы — бот сам их забирает, прикрепляет к BL и
+# отчитывается в управляющей группе (правило владельца 24.08.2026).
+PACKING_DRIVE_FOLDER_ID = (
+    os.getenv("PACKING_DRIVE_FOLDER_ID", "").strip()
+    or "1wF9JL9Gln2rBEMfzuwfwCfo35wgEVAVX"
+)
+PACKING_DRIVE_SCAN_MINUTES = int(os.getenv("PACKING_DRIVE_SCAN_MINUTES", "15") or 15)
+_packing_drive_last_scan = 0.0
+
+
+def _iter_drive_files(folder_id: str, depth: int = 0, seen_folders=None, folder_name: str = ""):
+    """(file_id, name, folder_name) по всему дереву папки."""
+    seen_folders = seen_folders if seen_folders is not None else set()
+    if depth > _DRIVE_MAX_DEPTH or folder_id in seen_folders:
+        return
+    seen_folders.add(folder_id)
+    for entry_id, name, is_folder in _list_drive_folder(folder_id):
+        if is_folder:
+            yield from _iter_drive_files(entry_id, depth + 1, seen_folders, name)
+        else:
+            yield entry_id, name, folder_name
+
+
+def scan_packing_drive(force: bool = False, only_folder: str = "") -> tuple:
+    """Забрать НОВЫЕ файлы из общей Drive-папки packing list'ов.
+    only_folder — обработать лишь подпапку с таким названием («14.08»).
+    Возвращает (обработано_файлов, текст_отчёта)."""
+    import zipfile
+    from services import ai_assistant
+
+    global _packing_drive_last_scan
+    if not force:
+        now_mono = time.monotonic()
+        if now_mono - _packing_drive_last_scan < PACKING_DRIVE_SCAN_MINUTES * 60:
+            return 0, "throttled"
+        _packing_drive_last_scan = now_mono
+
+    if not PACKING_DRIVE_FOLDER_ID:
+        return 0, "PACKING_DRIVE_FOLDER_ID не задан"
+    try:
+        entries = list(_iter_drive_files(PACKING_DRIVE_FOLDER_ID))
+    except Exception as exc:
+        app.logger.exception("Packing drive scan: listing failed")
+        return 0, f"папка недоступна: {exc}"
+    if only_folder:
+        wanted = str(only_folder).strip().lower()
+        entries = [e for e in entries if wanted in str(e[2] or "").lower()]
+        if not entries:
+            return 0, f"подпапка «{only_folder}» не найдена или пуста"
+
+    # уже обработанные файлы не трогаем: иначе при каждом скане бот заново
+    # качал бы их и повторно задавал те же вопросы в группе
+    known = db.drive_files_seen([fid for fid, _n, _f in entries])
+    fresh = [e for e in entries if e[0] not in known]
+    if not fresh:
+        return 0, f"новых файлов нет (в папке {len(entries)}, все уже обработаны)"
+
+    index, rows = _build_active_bl_index()
+    chat_titles = _build_chat_title_lookup(rows)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    results = _new_packing_results()
+    processed = 0
+    for file_id, name, folder_name in fresh[:_PACKING_ZIP_MAX_FILES]:
+        base = str(name or "").strip()
+        kind = _archive_kind(base)
+        try:
+            if kind:
+                data = _download_drive_bytes(file_id, _PACKING_URL_MAX_BYTES)
+                if data is None:
+                    results["rejected"].append(base + " (yuklab bo'lmadi)")
+                    continue
+                try:
+                    _ingest_zip_source(io.BytesIO(data), index, rows, chat_titles, results, kind=kind)
+                except zipfile.BadZipFile:
+                    results["rejected"].append(base + " (buzilgan arxiv)")
+                except (ImportError, ArchiveToolMissing):
+                    results["unsupported"].append(base)
+            else:
+                data = _download_drive_bytes(file_id, _PACKING_FILE_MAX_BYTES)
+                if data is None:
+                    results["rejected"].append(base + " (yuklab bo'lmadi)")
+                    continue
+                _attach_packing_bytes(base, data, index, rows, chat_titles, results)
+            processed += 1
+        except Exception:
+            app.logger.exception("Packing drive scan: %s failed", base)
+            results["rejected"].append(base)
+        finally:
+            # помечаем ДАЖЕ при неудаче: иначе каждые 15 минут повтор
+            db.mark_drive_file_seen(file_id, base, folder_name)
+
+    interesting = (
+        results["attached"] or results["unmatched"] or results["content_conflict"]
+        or results["ambiguous"] or results["rejected"] or results["unsupported"]
+    )
+    if interesting:
+        chat_id = ai_assistant.control_group_id()
+        folders = sorted({str(f) for _i, _n, f in fresh if f})
+        head = "📂 <b>Drive'dan yangi packing listlar</b>"
+        if folders:
+            head += " — " + ", ".join(html.escape(f) for f in folders[:5])
+        try:
+            telegram_send_message(chat_id, head)
+            _send_packing_report(chat_id, results)
+        except Exception:
+            app.logger.exception("Packing drive scan: report failed")
+    return processed, f"обработано {processed}, прикреплено {len(results['attached'])}"
 
 
 def process_packing_zip_url(chat_id, kind: str, ref: str):
