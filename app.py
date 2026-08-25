@@ -5545,9 +5545,17 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
     added, moved_in, updated, unlinked, kept_split, merged, kept_dups = [], [], [], [], [], [], []
     reused_files: list = []
 
+    restored: list = []
     for key, entry in plan.items():
         bl = have.get(key)
         if bl is not None:
+            # груз снова в плане — снимаем НАШЕ прежнее исключение из
+            # рассылки (ручные, поставленные человеком, не трогаем)
+            try:
+                if bl.get("send_excluded") and db.clear_plan_send_exclusion(bl["id"]):
+                    restored.append(str(entry["code"]))
+            except Exception:
+                app.logger.exception("plan apply: clear exclusion bl_id=%s failed", bl.get("id"))
             changes_needed = (
                 abs(float(bl.get("quantity_places") or 0) - entry["ctn"]) > pss.CTN_EPS
                 or abs(float(bl.get("volume_cbm") or 0) - entry["cbm"]) > pss.CBM_EPS
@@ -5640,10 +5648,25 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
                 moved_away.append(f"{html.escape(str(bl.get('code')))} (→ «{html.escape(target['name'])}»)")
                 continue
         if in_block is not None:
-            # код есть в чужом казахском плане, но его фура ещё не в Хоргосе —
-            # переедет на следующей сверке (или его заберёт применение её плана)
+            # Код есть в ЧУЖОМ казахском плане, но его фура ещё не в Хоргосе.
+            # Вперёд неё груз не двигаем (иначе ломается donor-окно и плодятся
+            # дубли), но и трекинг НАШЕЙ фуры ему слать нельзя — исключаем из
+            # рассылки до переезда (владелец 24.08.2026: иначе дезинформация).
+            try:
+                if not bl.get("send_excluded"):
+                    db.set_batch_send_exclusion(bl["id"], True, source="plan")
+            except Exception:
+                app.logger.exception("plan apply: exclude waiting bl_id=%s failed", bl.get("id"))
             waiting.append(f"{html.escape(str(bl.get('code')))} (план «{html.escape(str(in_block.get('date')))}»)")
             continue
+        # Груза нет НИ В ОДНОМ казахском плане окна: куда он уехал —
+        # неизвестно. Строку и файлы сохраняем (владелец 24.08.2026), но
+        # ИСКЛЮЧАЕМ из рассылки, чтобы клиент не получил трекинг чужой фуры.
+        try:
+            if not bl.get("send_excluded"):
+                db.set_batch_send_exclusion(bl["id"], True, source="plan")
+        except Exception:
+            app.logger.exception("plan apply: exclude bl_id=%s failed", bl.get("id"))
         stuck.append(html.escape(str(bl.get("code"))))
 
     db.set_batch_plan_ref(batch["id"], block["tab"], pss.ref_title(block), block["date"], "kazakh")
@@ -5654,6 +5677,11 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
     ]
     if moved_in:
         parts.append("Переехали сюда: " + ", ".join(moved_in[:12]) + ".")
+    if restored:
+        parts.append(
+            "🔔 Снова в плане — вернул в рассылку: "
+            + ", ".join(html.escape(c) for c in restored[:12]) + "."
+        )
     if reused_files:
         parts.append(
             "📎 Сверено с шитсом, строка перевезена вместе с файлами (перезаливать не нужно): "
@@ -5670,9 +5698,15 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
     if moved_away:
         parts.append("Уехали в свои партии: " + ", ".join(moved_away[:12]) + ".")
     if waiting:
-        parts.append("⏳ Ждут свою фуру (их казахский план есть, но она ещё не в Хоргосе): " + ", ".join(waiting[:12]) + ".")
+        parts.append(
+            "⏳ Ждут свою фуру (их казахский план есть, но она ещё не в Хоргосе) — "
+            "пока исключены из рассылки, чтобы не ушёл чужой трекинг: " + ", ".join(waiting[:12]) + "."
+        )
     if stuck:
-        parts.append("⚓ Остались в Хоргосе (нет ни в одном казахском плане): " + ", ".join(stuck[:12]) + ".")
+        parts.append(
+            "🚫 Нет ни в одном казахском плане — оставил в партии, но ИСКЛЮЧИЛ из рассылки "
+            "(файлы и группа сохранены; появится в плане — уедет сам): " + ", ".join(stuck[:12]) + "."
+        )
     if kept_dups:
         parts.append(
             "⚠️ Один груз в двух партиях, у обеих строк есть файлы/история — решите вручную: "
@@ -5680,7 +5714,8 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
         )
     if unlinked:
         parts.append(_unlinked_bl_request(", ".join(html.escape(c) for c in unlinked[:12])))
-    changed = bool(moved_in or added or updated or moved_away or merged or kept_dups or reused_files)
+    changed = bool(moved_in or added or updated or moved_away or merged or kept_dups
+                   or reused_files or restored or stuck or waiting)
     return True, " ".join(parts), changed
 
 

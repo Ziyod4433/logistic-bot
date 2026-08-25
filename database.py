@@ -839,6 +839,7 @@ def init_db():
             batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
             bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
             is_excluded INTEGER NOT NULL DEFAULT 1,
+            source TEXT NOT NULL DEFAULT 'manual',
             updated_at TEXT DEFAULT (datetime('now','localtime')),
             PRIMARY KEY(batch_id, bl_id)
         );
@@ -1385,6 +1386,14 @@ def init_db():
     # confirmed_by — кто нажал TASDIQLASH/✅, sent_via — каким путём ушло
     # (форма-группа / ассистент / авто). Нужно, чтобы на вопрос «кто
     # обновил/разрешил трекинг» бот отвечал фактом, а не «автоматически».
+    # источник исключения из рассылки: 'manual' — человек, 'plan' — бот
+    # (груза нет ни в одном казахском плане). Автоматически снимать можно
+    # ТОЛЬКО свои, чтобы не отменить решение человека.
+    exclusion_columns = [("source", "TEXT NOT NULL DEFAULT 'manual'")]
+    for column_name, column_def in exclusion_columns:
+        if not _table_has_column(conn, "batch_send_exclusions", column_name):
+            conn.execute(f"ALTER TABLE batch_send_exclusions ADD COLUMN {column_name} {column_def}")
+
     send_log_columns = [
         ("filled_by", "TEXT NOT NULL DEFAULT ''"),
         ("confirmed_by", "TEXT NOT NULL DEFAULT ''"),
@@ -3338,7 +3347,7 @@ def get_batch_send_exclusion_map(batch_id: int) -> dict[int, bool]:
         conn.close()
 
 
-def set_batch_send_exclusion(bl_id: int, excluded: bool) -> dict:
+def set_batch_send_exclusion(bl_id: int, excluded: bool, source: str = "manual") -> dict:
     conn = get_conn()
     try:
         row = conn.execute(
@@ -3351,13 +3360,14 @@ def set_batch_send_exclusion(bl_id: int, excluded: bool) -> dict:
         if excluded:
             conn.execute(
                 """
-                INSERT INTO batch_send_exclusions(batch_id, bl_id, is_excluded, updated_at)
-                VALUES (?, ?, 1, ?)
+                INSERT INTO batch_send_exclusions(batch_id, bl_id, is_excluded, source, updated_at)
+                VALUES (?, ?, 1, ?, ?)
                 ON CONFLICT(batch_id, bl_id) DO UPDATE SET
                     is_excluded = 1,
+                    source = excluded.source,
                     updated_at = excluded.updated_at
                 """,
-                (batch_id, bl_id, current_ts()),
+                (batch_id, bl_id, str(source or "manual"), current_ts()),
             )
         else:
             conn.execute(
@@ -4173,6 +4183,21 @@ def resolve_packing_question(question_id: int, status: str, answer: str = "", bl
             "UPDATE packing_file_questions SET status = ?, answer = ?, bl_id = ?, "
             "resolved_at = datetime('now','localtime') WHERE id = ? AND status = 'pending'",
             (str(status), str(answer or ""), bl_id, int(question_id)),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def clear_plan_send_exclusion(bl_id: int) -> bool:
+    """Снять исключение, поставленное БОТОМ (source='plan'), когда груз
+    снова появился в казахском плане. Ручные исключения не трогаем."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "DELETE FROM batch_send_exclusions WHERE bl_id = ? AND source = 'plan'",
+            (int(bl_id),),
         )
         conn.commit()
         return cur.rowcount > 0

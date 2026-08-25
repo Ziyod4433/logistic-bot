@@ -669,7 +669,11 @@ def extra_destination(key: str, block: dict, blocks: list, others: list,
         owner = predict_kazakh_block_owner(b2, others, blocks, all_batches, codes_of)
         if owner is not None:
             return owner, b2
-    # хозяина в Хоргосе нет — но, может, его фура ещё в пути: тогда груз ЖДЁТ
+    # Хозяина в Хоргосе нет — но его фура может быть ещё в пути: тогда груз
+    # ЖДЁТ её и НЕ переезжает вперёд неё (переезд в партию, которая ещё в
+    # Китае, ломает donor-окно и плодит тихие дубли при правке плана).
+    # Пока ждёт — он всё равно не должен получать трекинг чужой фуры:
+    # этим занимается вызывающий код, исключая его из рассылки.
     for b2 in containing:
         if pending_kazakh_owner(b2, others, blocks, all_batches, codes_of) is not None:
             return None, b2
