@@ -355,6 +355,10 @@ def _system_prompt() -> str:
 • «примени казахский план / перегрузи сейчас» → get_batch_plan_status (покажи предпросмотр) → propose_action apply_kazakh_plan.
 • «запусти сверку сейчас» → propose_action run_plan_sync.
 • «где packing list / чего не хватает» → get_missing_packing_lists, файлы — get_batch_detail.
+• «файл прикрепился НЕ К ТОМУ BL / перепривяжи / убери файл» → get_bl_files (по коду BL — покажет ВСЕ
+  одноимённые BL из разных партий с file_id) → propose_action kind='move_file' (file_id, bl_id) или
+  kind='delete_file' (file_id). ТЫ ЭТО УМЕЕШЬ. Никогда не отвечай «инструмента для перепривязки нет» и не
+  отправляй человека делать это руками в панели — исправь сам заявкой.
 • «загрузи/забери packing list'ы с Drive», «drive'ga yuklangan 14.08 ni yukla», «прикрепи файлы из папки» →
   import_packing_from_drive (folder='14.08'). ТЫ ЭТО УМЕЕШЬ — никогда не отвечай «у меня нет инструмента»
   и не отправляй человека кидать ссылку в группу. Бот и сам проверяет папку каждые ~15 минут, но по просьбе
@@ -473,6 +477,25 @@ TOOLS = [
                         "type": "string",
                         "description": "название подпапки/партии («14.08», «14.08.2026»); пусто — вся папка",
                     }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_bl_files",
+            "description": (
+                "Файлы (packing list) одного BL со СПИСКОМ ID. Нужен, когда просят проверить, "
+                "перепривязать или удалить файл: file_id берётся отсюда. Можно искать по коду BL — "
+                "тогда вернутся все одноимённые BL из разных партий с их файлами."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "bl_id": {"type": "integer", "description": "id BL (из find_bl / get_batch_detail)"},
+                    "code": {"type": "string", "description": "или код BL — вернёт все партии с ним"},
                 },
                 "required": [],
             },
@@ -697,13 +720,16 @@ TOOLS = [
                 "кликабельно отметить человека в начале сообщения, например ответственного за packing list), "
                 "'sync_batch_from_plan' (params: batch_id, tab, plan_title, plan_date — привести состав партии "
                 "ТОЧНО к плану погрузки: недостающие BL добавляются с авто-привязкой Telegram-групп, а BL, "
-                "которых в плане нет, УДАЛЯЮТСЯ из партии — иначе их группы получат чужой трекинг). "
+                "которых в плане нет, УДАЛЯЮТСЯ из партии — иначе их группы получат чужой трекинг); "
+                "'move_file' (params: file_id, bl_id — ПЕРЕПРИВЯЗАТЬ packing list к другому BL, когда файл "
+                "прикрепился не туда: file_id и нужный bl_id бери из get_bl_files); "
+                "'delete_file' (params: file_id — удалить ошибочно прикреплённый файл). "
                 "summary: короткое человекочитаемое описание действия по-русски."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -1240,6 +1266,53 @@ def _tool_import_packing_from_drive(args: dict) -> dict:
     }
 
 
+def _tool_get_bl_files(args: dict) -> dict:
+    """Файлы BL с их id — чтобы можно было перепривязать или удалить."""
+    bl_id = args.get("bl_id")
+    code = str(args.get("code") or "").strip()
+    targets = []
+    if bl_id:
+        row = db.get_bl_by_id(int(bl_id))
+        if not row:
+            return {"error": "bl_id не найден"}
+        targets = [dict(row)]
+    elif code:
+        conn = db.get_conn()
+        try:
+            key = re.sub(r"[\s\-_.]+", "", code.upper())
+            rows = conn.execute(
+                "SELECT bl.*, b.name AS batch_name FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id "
+                "WHERE REPLACE(REPLACE(REPLACE(UPPER(bl.code),'-',''),'_',''),' ','') = ? "
+                "ORDER BY b.id DESC LIMIT 10",
+                (key,),
+            ).fetchall()
+        finally:
+            conn.close()
+        targets = [dict(r) for r in rows]
+    if not targets:
+        return {"error": "Укажи bl_id или code — ничего не нашлось"}
+    out = []
+    for row in targets:
+        batch = db.get_batch(row.get("batch_id")) or {}
+        out.append({
+            "bl_id": row.get("id"),
+            "code": row.get("code"),
+            "batch": row.get("batch_name") or batch.get("name") or "",
+            "batch_id": row.get("batch_id"),
+            "places": row.get("quantity_places"),
+            "places_breakdown": row.get("quantity_places_breakdown") or "",
+            "files": [
+                {"file_id": f.get("id"), "filename": f.get("filename")}
+                for f in (db.get_files(row["id"]) or [])
+            ],
+        })
+    return {
+        "bls": out,
+        "note": "Перепривязать файл: propose_action kind='move_file' (file_id, bl_id). "
+                "Удалить: kind='delete_file' (file_id). Это ты УМЕЕШЬ — не отвечай «нет инструмента».",
+    }
+
+
 def _tool_find_group(args: dict) -> dict:
     query = str(args.get("query") or "").strip()
     if len(query) < 2:
@@ -1658,6 +1731,7 @@ def _tool_list_groups(_args: dict) -> dict:
 ALLOWED_ACTION_KINDS = {
     "set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan",
     "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan",
+    "move_file", "delete_file",
 }
 
 
@@ -1730,6 +1804,31 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
         params["bl_code"] = bl.get("code")
         params["batch_name"] = (batch or {}).get("name") or ""
         params["chat_title"] = title
+    elif kind == "move_file":
+        file_row = db.get_file_by_id(int(params.get("file_id") or 0))
+        if not file_row:
+            return {"error": "file_id не найден — возьми его из get_bl_files"}
+        target = db.get_bl_by_id(int(params.get("bl_id") or 0))
+        if not target:
+            return {"error": "bl_id не найден — возьми нужный BL из get_bl_files/find_bl"}
+        if int(file_row.get("bl_id") or 0) == int(target["id"]):
+            return {"error": f"Файл «{file_row.get('filename')}» уже прикреплён к этому BL"}
+        src = db.get_bl_by_id(file_row.get("bl_id")) or {}
+        src_batch = db.get_batch(src.get("batch_id")) or {}
+        dst_batch = db.get_batch(target.get("batch_id")) or {}
+        params["filename"] = file_row.get("filename")
+        params["from_code"] = src.get("code") or ""
+        params["from_batch"] = src_batch.get("name") or ""
+        params["to_code"] = target.get("code") or ""
+        params["to_batch"] = dst_batch.get("name") or ""
+    elif kind == "delete_file":
+        file_row = db.get_file_by_id(int(params.get("file_id") or 0))
+        if not file_row:
+            return {"error": "file_id не найден — возьми его из get_bl_files"}
+        owner = db.get_bl_by_id(file_row.get("bl_id")) or {}
+        params["filename"] = file_row.get("filename")
+        params["from_code"] = owner.get("code") or ""
+        params["from_batch"] = (db.get_batch(owner.get("batch_id")) or {}).get("name") or ""
     elif kind == "run_plan_sync":
         params = {}
     elif kind == "send_group_message":
@@ -1842,6 +1941,8 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_get_automation_status(args)
         if name == "get_missing_packing_lists":
             return _tool_get_missing_packing_lists(args)
+        if name == "get_bl_files":
+            return _tool_get_bl_files(args)
         if name == "import_packing_from_drive":
             if readonly:
                 return {"error": "Только просмотр: прикреплять файлы может владелец или оператор"}

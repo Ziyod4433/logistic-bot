@@ -3978,6 +3978,42 @@ def get_files(bl_id):
     return [dict(row) for row in rows]
 
 
+def move_file_to_bl(file_id, target_bl_id) -> dict:
+    """Перепривязать файл к другому BL (ошиблись при авто-прикреплении).
+    Сам файл на диске остаётся тем же — меняется только владелец."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, bl_id, filename FROM files WHERE id = ?", (int(file_id),)
+        ).fetchone()
+        if not row:
+            raise ValueError("Файл не найден")
+        target = conn.execute(
+            "SELECT id, code, batch_id FROM bl_codes WHERE id = ?", (int(target_bl_id),)
+        ).fetchone()
+        if not target:
+            raise ValueError("Целевой BL не найден")
+        if int(row["bl_id"] or 0) == int(target_bl_id):
+            return {"moved": False, "reason": "already", "filename": row["filename"]}
+        dup = conn.execute(
+            "SELECT 1 FROM files WHERE bl_id = ? AND LOWER(filename) = LOWER(?) LIMIT 1",
+            (int(target_bl_id), row["filename"]),
+        ).fetchone()
+        if dup:
+            raise ValueError("У целевого BL уже есть файл с таким именем")
+        conn.execute(
+            "UPDATE files SET bl_id = ? WHERE id = ?", (int(target_bl_id), int(file_id))
+        )
+        conn.commit()
+        return {
+            "moved": True, "filename": row["filename"],
+            "from_bl_id": int(row["bl_id"] or 0), "to_bl_id": int(target_bl_id),
+            "to_code": target["code"],
+        }
+    finally:
+        conn.close()
+
+
 def get_file_by_public_token(public_token):
     conn = get_conn()
     row = conn.execute(

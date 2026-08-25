@@ -2892,6 +2892,32 @@ def execute_ai_action(action: dict, actor: str = ""):
         title = params.get("chat_title") or chat_id
         return True, f"BL {bl.get('code')} привязан к группе «{title}» (партия «{params.get('batch_name') or ''}»)"
 
+    if kind == "move_file":
+        try:
+            res = db.move_file_to_bl(int(params.get("file_id") or 0), int(params.get("bl_id") or 0))
+        except Exception as exc:
+            return False, f"Не удалось перепривязать файл: {exc}"
+        if not res.get("moved"):
+            return True, f"Файл «{res.get('filename')}» уже был у этого BL — ничего не менял"
+        return True, (
+            f"📎 «{res.get('filename')}» перепривязан: "
+            f"{params.get('from_code') or '?'} («{params.get('from_batch') or '?'}») → "
+            f"{res.get('to_code')} («{params.get('to_batch') or '?'}»)"
+        )
+
+    if kind == "delete_file":
+        file_id = int(params.get("file_id") or 0)
+        if not db.get_file_by_id(file_id):
+            return False, "Файл не найден (возможно, уже удалён)"
+        try:
+            db.delete_file(file_id)
+        except Exception as exc:
+            return False, f"Не удалось удалить файл: {exc}"
+        return True, (
+            f"🗑 Файл «{params.get('filename') or file_id}» удалён "
+            f"у {params.get('from_code') or '?'} («{params.get('from_batch') or '?'}»)"
+        )
+
     if kind == "run_plan_sync":
         try:
             done, info = run_morning_plan_sync(force=True)
