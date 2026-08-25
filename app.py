@@ -2897,7 +2897,13 @@ def execute_ai_action(action: dict, actor: str = ""):
             return False, "Список партий пуст"
         filled_by = ", ".join(str(x) for x in (params.get("filled_by") or []) if x)
         requested_by = str(params.get("requested_by") or "").strip()
-        approver = ", ".join(x for x in (requested_by, actor) if x) or actor
+        # чаще всего TASDIQLASH в форме и ✅ в группе жмёт ОДИН человек —
+        # не дублируем его имя в журнале
+        approver_names = []
+        for name in (requested_by, actor):
+            if name and name not in approver_names:
+                approver_names.append(name)
+        approver = ", ".join(approver_names)
         lines = []
         all_ok = True
         for raw_id in batch_ids:
@@ -3722,6 +3728,10 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
 ARCHIVE_EXTS = (".zip", ".rar", ".7z")
 
 
+class ArchiveToolMissing(Exception):
+    """RAR требует внешнюю утилиту (unar/unrar/bsdtar), её нет на сервере."""
+
+
 def _open_archive(source, kind: str):
     """Открыть архив ZIP / RAR / 7z единообразно → (namelist, read(name)).
 
@@ -3739,8 +3749,13 @@ def _open_archive(source, kind: str):
         return af, names, (lambda n: contents[n].read())
     if kind == "rar":
         import rarfile
-        rf = rarfile.RarFile(source)
-        return rf, [n for n in rf.namelist() if not rf.getinfo(n).is_dir()], rf.read
+        try:
+            rf = rarfile.RarFile(source)
+            names = [n for n in rf.namelist() if not rf.getinfo(n).is_dir()]
+        except rarfile.RarCannotExec as exc:
+            # на сервере нет unar/unrar/bsdtar — честно говорим, а не молчим
+            raise ArchiveToolMissing(str(exc)) from exc
+        return rf, names, rf.read
     raise RuntimeError(f"unknown archive kind: {kind}")
 
 
@@ -3830,7 +3845,7 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
         lines.append(f"🚫 Format qabul qilinmadi ({len(results['rejected'])} ta): " + ", ".join(html_escape(x) for x in results["rejected"][:10]))
     if results["unsupported"]:
         lines.append(
-            f"📦 RAR/7z arxivlarni ocholmayman ({len(results['unsupported'])} ta): "
+            f"📦 Bu arxivlarni serverda ocholmadim ({len(results['unsupported'])} ta): "
             + ", ".join(html_escape(x) for x in results["unsupported"][:5])
         )
         lines.append("Iltimos, ZIP formatida yuboring yoki fayllarni papkaga alohida-alohida yuklang.")
@@ -3853,11 +3868,12 @@ def _ingest_packing_zip(chat_id, zip_source, kind: str = "zip"):
     except zipfile.BadZipFile:
         telegram_send_message(chat_id, "⚠️ Arxiv ochilmadi — ZIP fayl buzilgan ko'rinadi. Qayta yuborib ko'ring.")
         return
-    except ImportError:
+    except (ImportError, ArchiveToolMissing):
         telegram_send_message(
             chat_id,
-            f"⚠️ {kind.upper()} arxivni ochish uchun kutubxona o'rnatilmagan. "
-            "Iltimos, ZIP formatida yuboring yoki fayllarni papkaga alohida yuklang.",
+            f"⚠️ {kind.upper()} arxivni serverda ocholmadim (kerakli dastur yo'q).\n"
+            "Iltimos, ZIP formatida yuboring yoki fayllarni Drive papkasiga alohida yuklang — "
+            "papkani o'zim aylanib chiqaman.",
         )
         return
     except Exception as exc:
@@ -4009,9 +4025,11 @@ def process_drive_folder(chat_id, folder_id: str):
                             _ingest_zip_source(io.BytesIO(data), index, rows, chat_titles, results, kind=kind)
                         except zipfile.BadZipFile:
                             results["rejected"].append(base + " (buzilgan arxiv)")
+                        except (ImportError, ArchiveToolMissing):
+                            results["unsupported"].append(base)
                         except Exception as exc:
                             app.logger.exception("Archive %s failed", base)
-                            results["unsupported"].append(f"{base} ({exc.__class__.__name__})")
+                            results["rejected"].append(f"{base} ({exc.__class__.__name__})")
                         continue
                     data = _download_drive_bytes(entry_id, _PACKING_FILE_MAX_BYTES)
                     if data is None:
