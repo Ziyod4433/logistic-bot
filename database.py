@@ -28,7 +28,7 @@ STATUSES = [
     "Xitoy",
     "Yiwu",
     "Zhongshan",
-    "Horgos (Qozoq)",
+    "Horgos",
     "Nurjo'li",
     "Jarkent",
     "Almata",
@@ -53,7 +53,7 @@ STATUSES = [
     "Xitoy",
     "Yiwu",
     "Zhongshan",
-    "Horgos (Qozoq)",
+    "Horgos",
     "Nurjo'li",
     "Jarkent",
     "Almata",
@@ -177,7 +177,7 @@ DEFAULT_STATUS_DETAILS = {
     "Xitoy": "🇨🇳 Yuk Xitoydagi jo'nash nuqtasida tayyorlanmoqda va marshrutga chiqarilmoqda.",
     "Yiwu": "🏭 Yuk Yiwu omboridan jo'natishga tayyorlanmoqda.",
     "Zhongshan": "🏭 Yuk Zhongshan omboridan jo'natishga tayyorlanmoqda.",
-    "Horgos (Qozoq)": "🛃 Yuk Horgos orqali Qozoq yo'nalishiga kirdi. Chegara va bojxona jarayoni ketmoqda.",
+    "Horgos": "🛃 Yuk Horgos orqali Qozoq yo'nalishiga kirdi. Chegara va bojxona jarayoni ketmoqda.",
     "Nurjo'li": "🚛 Yuk Nurjo'li hududidan o'tmoqda.",
     "Jarkent": "🚛 Yuk Jarkent hududidan o'tmoqda.",
     "Almata": "🏙 Yuk Almata shahriga yetib keldi yoki shu yo'nalishda harakatlanmoqda.",
@@ -200,7 +200,7 @@ DEFAULT_STATUS_DETAILS[LEGACY_DELIVERED_STATUS] = DEFAULT_STATUS_DETAILS[DELIVER
 
 ETA_DESTINATION_LABELS = {
     "Toshkent": "Toshkentga yetib kelish vaqti",
-    "Horgos (Qozoq)": "Horgosga yetib kelish vaqti",
+    "Horgos": "Horgosga yetib kelish vaqti",
     "Qozog'istonga o'tish": "Qozog'istonga o'tish vaqti",
     "Qozoq furaga ortilish": "Qozoq furaga ortilish vaqti",
     "Mijozga yetib borish": "Mijozga yetib borish vaqti",
@@ -210,21 +210,21 @@ ETA_DESTINATION_LABELS_LOCALIZED = {
     "uz_latn": ETA_DESTINATION_LABELS,
     "uz_cyrl": {
         "Toshkent": "Тошкентга етиб келиш вақти",
-        "Horgos (Qozoq)": "Хоргосга етиб келиш вақти",
+        "Horgos": "Хоргосга етиб келиш вақти",
         "Qozog'istonga o'tish": "Қозоғистонга ўтиш вақти",
         "Qozoq furaga ortilish": "Қозоқ фурага ортилиш вақти",
         "Mijozga yetib borish": "Мижозга етиб бориш вақти",
     },
     "ru": {
         "Toshkent": "Срок прибытия в Ташкент",
-        "Horgos (Qozoq)": "Срок прибытия в Хоргос",
+        "Horgos": "Срок прибытия в Хоргос",
         "Qozog'istonga o'tish": "Срок перехода в Казахстан",
         "Qozoq furaga ortilish": "Срок погрузки на казахскую фуру",
         "Mijozga yetib borish": "Срок доставки клиенту",
     },
     "en": {
         "Toshkent": "Arrival time to Tashkent",
-        "Horgos (Qozoq)": "Arrival time to Horgos",
+        "Horgos": "Arrival time to Horgos",
         "Qozog'istonga o'tish": "Kazakhstan border crossing time",
         "Qozoq furaga ortilish": "Loading time onto Kazakh truck",
         "Mijozga yetib borish": "Delivery time to client",
@@ -234,7 +234,7 @@ ETA_DESTINATION_LABELS_LOCALIZED = {
 STATUS_MESSAGE_LABELS = {
     "uz_cyrl": {
         "Xitoy": "Хитой",
-        "Horgos (Qozoq)": "Хоргос (Қозоқ)",
+        "Horgos": "Хоргос",
         "Nurjo'li": "Нуржўли",
         "Jarkent": "Жаркент",
         "Almata": "Алмата",
@@ -254,7 +254,7 @@ STATUS_MESSAGE_LABELS = {
     },
     "ru": {
         "Xitoy": "Китай",
-        "Horgos (Qozoq)": "Хоргос (Казахстан)",
+        "Horgos": "Хоргос",
         "Nurjo'li": "Нуржоли",
         "Jarkent": "Жаркент",
         "Almata": "Алматы",
@@ -276,7 +276,7 @@ STATUS_MESSAGE_LABELS = {
         "Xitoy": "China",
         "Yiwu": "Yiwu",
         "Zhongshan": "Zhongshan",
-        "Horgos (Qozoq)": "Horgos (Kazakhstan)",
+        "Horgos": "Horgos",
         "Nurjo'li": "Nurjo'li",
         "Jarkent": "Jarkent",
         "Almata": "Almaty",
@@ -587,8 +587,20 @@ def _stuck_sql(alias: str = "bl") -> str:
     """
 
 
+# «Horgos (Qozoq)» переименован в «Horgos» (владелец, 24.08.2026) — старое
+# значение может прийти из сохранённой формы или из строки, ещё не
+# затронутой миграцией, поэтому принимаем оба написания.
+LEGACY_HORGOS_STATUS = "Horgos (Qozoq)"
+HORGOS_STATUS = "Horgos"
+
+
+def normalize_status_value(value: str) -> str:
+    text = (value or "").strip()
+    return HORGOS_STATUS if text == LEGACY_HORGOS_STATUS else text
+
+
 def _normalize_eta_destination(value: str) -> str:
-    normalized = (value or "").strip()
+    normalized = normalize_status_value(value)
     if normalized in ETA_DESTINATION_LABELS:
         return normalized
     return DEFAULT_ETA_DESTINATION
@@ -636,6 +648,9 @@ def _is_delivered_status(value: str) -> bool:
 
 def _normalize_status(value: str) -> str:
     normalized = (value or "Xitoy").strip() or "Xitoy"
+    # старое написание «Horgos (Qozoq)» ещё может прийти из открытой формы
+    # или внешнего вызова — приводим к новому, чтобы в базу не попадало
+    normalized = normalize_status_value(normalized)
     if normalized == DELIVERED_STATUS:
         return LEGACY_DELIVERED_STATUS
     return normalized
@@ -1386,6 +1401,19 @@ def init_db():
     # confirmed_by — кто нажал TASDIQLASH/✅, sent_via — каким путём ушло
     # (форма-группа / ассистент / авто). Нужно, чтобы на вопрос «кто
     # обновил/разрешил трекинг» бот отвечал фактом, а не «автоматически».
+    # «Horgos (Qozoq)» → «Horgos» (владелец 24.08.2026): переименование
+    # статуса и точки ETA. Значение хранится строкой в нескольких местах,
+    # поэтому переводим все разом — иначе старые партии выпадут из
+    # сравнений вида status == HORGOS_STATUS.
+    for table, column in (
+        ("batches", "status"), ("bl_codes", "status"), ("batches", "eta_destination"),
+    ):
+        if _table_has_column(conn, table, column):
+            conn.execute(
+                f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
+                (HORGOS_STATUS, LEGACY_HORGOS_STATUS),
+            )
+
     # источник исключения из рассылки: 'manual' — человек, 'plan' — бот
     # (груза нет ни в одном казахском плане). Автоматически снимать можно
     # ТОЛЬКО свои, чтобы не отменить решение человека.
@@ -1678,7 +1706,7 @@ def init_db():
 
     legacy_status_map = {
         "Принят": "Xitoy",
-        "Хоргос": "Horgos (Qozoq)",
+        "Хоргос": "Horgos",
         "Алматы": "Almata",
         "В пути до Ташкента": "Yallama",
         "Ташкент": "Toshkent(Chuqursoy ULS da)",
@@ -6625,7 +6653,7 @@ def ai_update_pending_action_params(action_id, params_json):
 # всегда (is_customer_delivery и данные для цитаты-альбома).
 
 _V7_ROUTE_KAZAKH = [
-    "Xitoy", "Horgos (Qozoq)", "Nurjo'li", "Jarkent", "Almata", "Taraz",
+    "Xitoy", "Horgos", "Nurjo'li", "Jarkent", "Almata", "Taraz",
     "Shimkent", "Qonusbay", "Saryagash", "Yallama", "Toshkent(Chuqursoy ULS da)",
 ]
 _V7_ROUTE_KYRGYZ = [
@@ -6636,7 +6664,7 @@ _V7_CHINA_ALIASES = {"Xitoy", "Yiwu", "Zhongshan"}
 
 _V7_STATUS_COUNTRY = {
     "Xitoy": "cn", "Yiwu": "cn", "Zhongshan": "cn",
-    "Horgos (Qozoq)": "border_kz", "Nurjo'li": "kz", "Jarkent": "kz",
+    "Horgos": "border_kz", "Nurjo'li": "kz", "Jarkent": "kz",
     "Almata": "kz", "Taraz": "kz", "Shimkent": "kz", "Qonusbay": "kz",
     "Saryagash": "kz", "Yallama": "border_uz",
     "Kashgar (Qirg'iz)": "cn", "Irkeshtam": "border_kg", "Osh": "kg",
@@ -6746,7 +6774,8 @@ def _v7_place_label(status: str, language: str) -> str:
         return label
     return f"{label} ({country})"
 
-def tracking_view_data(bl: dict, batch_name: str) -> dict:
+
+def tracking_view_data(bl: dict, batch_name: str) -> dict:
     """Структурированные данные трекинга для текста v7 и карточки-PNG."""
     language = _normalize_message_language(bl.get("message_language"))
     strings = _V7_STRINGS.get(language, _V7_STRINGS["uz_latn"])

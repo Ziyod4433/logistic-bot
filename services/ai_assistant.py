@@ -228,7 +228,7 @@ def _system_prompt() -> str:
       добавили; без группы трекинг клиенту не уйдёт). @{grouper} — ответственный за добавление бота в группы.
     • До Хоргоса состав ежедневно сверяется с китайским планом: новые BL добавляются, цифры (места/кубы/кг)
       обновляются. Автоматических удалений НЕТ.
-    • Статус «Horgos (Qozoq)» → груз перегружается в казахские фуры (вместимость другая, груз одной китайской
+    • Статус «Horgos» → груз перегружается в казахские фуры (вместимость другая, груз одной китайской
       фуры может разъехаться по казахским планам разных партий). Бот спрашивает разрешения в управляющей
       группе, отмечая {hoji_name} (tg id {hoji_id}); если ответа нет ~час — применяет сам. При применении
       СНАЧАЛА УБИРАЮТСЯ ОСТАТКИ КИТАЙСКОГО ПЛАНА: BL, которого нет в казахском плане этой партии, но который
@@ -337,6 +337,12 @@ def _system_prompt() -> str:
 ════════ РЕЦЕПТЫ: ВОПРОС → ИНСТРУМЕНТЫ ════════
 Сначала инструмент, потом ответ. Не отвечай «из головы» там, где есть инструмент.
 • «где партия / статус / сколько BL / когда приедет» → get_overview или get_batch_detail.
+  СРОК (ETA) ВСЕГДА ЧИТАЙ ВМЕСТЕ С ТОЧКОЙ. Колонка называется eta_to_toshkent по историческим причинам, но
+  срок в ней — до той точки, которую логист выбрал в Treking forma (eta_point/eta_destination): Toshkent,
+  Horgos, «Qozog'istonga o'tish», «Qozoq furaga ortilish» или «Mijozga yetib borish». Готовая формулировка
+  лежит в eta_human/eta_label — бери её. Если выбрано «Qozoq furaga ortilish», то «3-4 kun» означает
+  «до погрузки на казахскую фуру 3-4 дня», а НЕ «до Ташкента». Шаблон клиенту подставляет заголовок ПО ЭТОЙ
+  ЖЕ ТОЧКЕ автоматически — не утверждай, будто он всегда пишет «Toshkentga yetib kelish vaqti».
 • «есть ли план (китайский/казахский) на дату» → get_loading_plans (смотри ОБА вида и summary) → при нужде get_plan_marks.
 • «что с казахским планом партии / применился ли / что изменится / почему не перегрузил» → get_batch_plan_status.
 • «кто не привязан к группе / почему клиент не получил трекинг» → get_unlinked_bls, затем find_group и, если просят, propose_action link_bl_group.
@@ -397,7 +403,7 @@ def _system_prompt() -> str:
   Вместо таблицы — ОТДЕЛЬНЫЙ мини-блок на каждый элемент сравнения:
   📦 <b>14.08.2026 YIWU</b> (id 46)
   ├ 🇰🇿 план: ✅ <code>…-2</code> · 4 BL совпало
-  └ статус: <code>Horgos (Qozoq)</code>
+  └ статус: <code>Horgos</code>
   Эмодзи-словарь (используй умеренно, 1 на строку): 📦 партия/BL · 🚚 фура · 🇨🇳 китайский план · 🇰🇿 казахский
   план · 📅 дата · ⚖️ вес/объём · 📁 файлы · 👥 группа · 📊 отчёт · 🔗 привязка.
 - Длина: обычно 5–12 строк. Длинные списки сокращай: первые 8–10 позиций + «…и ещё N». Если данных много —
@@ -563,7 +569,7 @@ TOOLS = [
                 "kind='china' — фура со склада Китая до Хоргоса (названия «YIWU/ZHONGSHAN TO HORGOS…», старые «YIWU MUHAMMAD», "
                 "«ZHONGSHAN YARGXOL»; по этому плану открывается партия); "
                 "kind='kazakh' — казахская фура Horgos→Tashkent (названия начинаются с «HORGOS TO TASHKENT…»; по нему "
-                "партия пересобирается после статуса Horgos (Qozoq)). Вывод содержит summary с числом планов каждого вида — "
+                "партия пересобирается после статуса Horgos). Вывод содержит summary с числом планов каждого вида — "
                 "опирайся на него, а не на свой подсчёт. Построчные цифры одного блока — get_plan_marks."
             ),
             "parameters": {
@@ -760,12 +766,21 @@ def _find_batch(batch_ref: str):
 
 
 def _batch_brief(b: dict) -> dict:
+    # ВАЖНО: колонка исторически называется eta_to_toshkent, но срок в ней —
+    # до ВЫБРАННОЙ логистом точки (eta_destination), а не обязательно до
+    # Ташкента. Отдаём готовую подпись, чтобы модель не «додумывала».
+    eta_point = (b.get("eta_destination") or db.DEFAULT_ETA_DESTINATION).strip()
+    eta_value = (b.get("eta_to_toshkent") or "").strip()
     return {
         "id": b.get("id"),
         "name": b.get("name"),
         "status": b.get("status"),
-        "eta_to_toshkent": b.get("eta_to_toshkent") or "",
-        "eta_destination": b.get("eta_destination") or "",
+        "eta_value": eta_value,
+        "eta_point": eta_point,
+        "eta_label": db._eta_destination_label(eta_point),
+        "eta_human": (f"{db._eta_destination_label(eta_point)}: {eta_value}" if eta_value else ""),
+        "eta_to_toshkent": eta_value,   # legacy-ключ, тот же срок
+        "eta_destination": eta_point,
         "active": not (b.get("client_delivery_date") or ""),
         "bl_count": b.get("bl_count"),
         "linked_groups": b.get("linked_count"),
@@ -1204,7 +1219,7 @@ def _tool_get_batch_plan_status(args: dict) -> dict:
         "kazakh_preview": preview,
         "kazakh_asks": [dict(a) for a in asks],
         "automation_hint": (
-            "После статуса «Horgos (Qozoq)» бот сам спросит Hoji dodam и применит казахский план "
+            "После статуса «Horgos» бот сам спросит Hoji dodam и применит казахский план "
             "(через 60 мин, если не ответят). Вручную сейчас — propose_action kind='apply_kazakh_plan'."
             if stage == "china" else
             ("Казахский план применён; каждое утро досверяется." if kz_applied else

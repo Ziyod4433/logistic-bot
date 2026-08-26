@@ -14,7 +14,7 @@
    ежедневно: новые BL добавляются, цифры обновляются. Ничего не
    удаляется автоматически.
 
-3. Фура прибыла в Хоргос (логист ставит статус «Horgos (Qozoq)») —
+3. Фура прибыла в Хоргос (логист ставит статус «Horgos») —
    груз ПЕРЕГРУЖАЕТСЯ в казахские фуры по ВТОРОМУ плану (HORGOS TO
    TASHKENT…). Вместимость фур разная, поэтому груз одной китайской
    фуры может разъехаться по казахским планам РАЗНЫХ партий. Бот
@@ -39,7 +39,7 @@ from services import loading_plan_service as lps
 from services.fura_status_service import warehouse_suffix
 
 # статус, с которого источником истины становится казахский план
-HORGOS_STATUS = "Horgos (Qozoq)"
+HORGOS_STATUS = "Horgos"
 
 # насколько должны разойтись цифры, чтобы считать это изменением
 CTN_EPS = 0.5
@@ -75,7 +75,9 @@ def date_key(value) -> str:
 
 def stage_for_status(status: str) -> str:
     """china (до Хоргоса) | kazakh (Хоргос и дальше)."""
-    normalized = str(status or "").strip()
+    # «Horgos (Qozoq)» переименован в «Horgos»; строки из внешних
+    # источников и не мигрированных БД могут прийти со старым написанием
+    normalized = db.normalize_status_value(status)
     if normalized in (db.DELIVERED_STATUS, getattr(db, "LEGACY_DELIVERED_STATUS", "")):
         return "kazakh"
     try:
@@ -106,7 +108,7 @@ AFTER_HORGOS_STATUSES = (
 
 def is_after_horgos_loading(batch: dict) -> bool:
     """Фура уже выехала из Хоргоса — казахский план обязан быть применён."""
-    return str(batch.get("status") or "").strip() in AFTER_HORGOS_STATUSES
+    return db.normalize_status_value(batch.get("status")) in AFTER_HORGOS_STATUSES
 
 
 def is_arrived(batch: dict) -> bool:

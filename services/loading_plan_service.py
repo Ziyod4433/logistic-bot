@@ -18,7 +18,7 @@ Plan kinds (by title):
     warehouse toward Horgos. A batch is opened from this plan.
   - KAZAKH truck ("HORGOS TO TASHKENT YIWU + ZH …"): loading at Horgos
     toward Tashkent; usually merges the BLs of the YIWU and ZHONGSHAN
-    China trucks. When a batch reaches "Horgos (Qozoq)" its BL list is
+    China trucks. When a batch reaches "Horgos" its BL list is
     re-synced from this plan. The kazakh block sometimes lacks the
     SHIPPING MARK header row, so parsing anchors on date+title instead.
 """

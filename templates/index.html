@@ -3048,7 +3048,7 @@ svg.oi {
           <option value="Xitoy">🇨🇳 Xitoy</option>
           <option value="Yiwu">🏭 Yiwu</option>
           <option value="Zhongshan">🏭 Zhongshan</option>
-          <option value="Horgos (Qozoq)">🛃 Horgos (Qozoq)</option>
+          <option value="Horgos">🛃 Horgos</option>
           <option value="Nurjo'li">🚛 Nurjo'li</option>
           <option value="Jarkent">🚛 Jarkent</option>
           <option value="Almata">🏙 Almata</option>
@@ -3076,7 +3076,7 @@ svg.oi {
       <input type="hidden" id="new-batch-arrival-target" value="Toshkent">
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <button type="button" class="btn btn-amber btn-sm" id="new-batch-target-toshkent" onclick="setArrivalTarget('new-batch','Toshkent')">Toshkentga taxminiy yetib kelish vaqti</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-horgos" onclick="setArrivalTarget('new-batch','Horgos (Qozoq)')">Horgosga taxminiy yetib kelish vaqti</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-horgos" onclick="setArrivalTarget('new-batch','Horgos')">Horgosga taxminiy yetib kelish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-qozogiston" onclick="setArrivalTarget('new-batch','Qozog\'istonga o\'tish')">Qozog'istonga o'tish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-qozoq-fura" onclick="setArrivalTarget('new-batch','Qozoq furaga ortilish')">Qozoq furaga ortilish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="new-batch-target-mijoz" onclick="setArrivalTarget('new-batch','Mijozga yetib borish')">Mijozga yetib borish vaqti</button>
@@ -3103,7 +3103,7 @@ svg.oi {
         <option value="Xitoy">🇨🇳 Xitoy</option>
         <option value="Yiwu">🏭 Yiwu</option>
         <option value="Zhongshan">🏭 Zhongshan</option>
-        <option value="Horgos (Qozoq)">🛃 Horgos (Qozoq)</option>
+        <option value="Horgos">🛃 Horgos</option>
         <option value="Nurjo'li">🚛 Nurjo'li</option>
         <option value="Jarkent">🚛 Jarkent</option>
         <option value="Almata">🏙 Almata</option>
@@ -3130,7 +3130,7 @@ svg.oi {
       <input type="hidden" id="edit-batch-arrival-target" value="Toshkent">
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <button type="button" class="btn btn-amber btn-sm" id="edit-batch-target-toshkent" onclick="setArrivalTarget('edit-batch','Toshkent')">Toshkentga taxminiy yetib kelish vaqti</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-horgos" onclick="setArrivalTarget('edit-batch','Horgos (Qozoq)')">Horgosga taxminiy yetib kelish vaqti</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-horgos" onclick="setArrivalTarget('edit-batch','Horgos')">Horgosga taxminiy yetib kelish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-qozogiston" onclick="setArrivalTarget('edit-batch','Qozog\'istonga o\'tish')">Qozog'istonga o'tish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-qozoq-fura" onclick="setArrivalTarget('edit-batch','Qozoq furaga ortilish')">Qozoq furaga ortilish vaqti</button>
         <button type="button" class="btn btn-ghost btn-sm" id="edit-batch-target-mijoz" onclick="setArrivalTarget('edit-batch','Mijozga yetib borish')">Mijozga yetib borish vaqti</button>
@@ -3596,7 +3596,7 @@ const STATUSES = [
   "Xitoy",
   "Yiwu",
   "Zhongshan",
-  "Horgos (Qozoq)",
+  "Horgos",
   "Nurjo'li",
   "Jarkent",
   "Almata",
@@ -3624,7 +3624,7 @@ const STATUS_BADGE = {
   "Xitoy":              "badge s-accepted",
   "Yiwu":               "badge s-accepted",
   "Zhongshan":          "badge s-accepted",
-  "Horgos (Qozoq)":     "badge s-khorgos",
+  "Horgos":     "badge s-khorgos",
   "Nurjo'li":           "badge s-road",
   "Jarkent":            "badge s-road",
   "Almata":             "badge s-almaty",
@@ -3646,7 +3646,7 @@ const STATUS_ICO = {
   "Xitoy":"🇨🇳",
   "Yiwu":"🏭",
   "Zhongshan":"🏭",
-  "Horgos (Qozoq)":"🛃",
+  "Horgos":"🛃",
   "Nurjo'li":"🚛",
   "Jarkent":"🚛",
   "Almata":"🏙",
@@ -4177,7 +4177,7 @@ function renderInactiveBatchRows(list) {
 }
 
 function getArrivalTargetLabel(value) {
-  if (value === "Horgos (Qozoq)") return "Horgosga taxminiy yetib kelish vaqti";
+  if (value === "Horgos") return "Horgosga taxminiy yetib kelish vaqti";
   if (value === "Qozog'istonga o'tish") return "Qozog'istonga o'tish vaqti";
   if (value === "Qozoq furaga ortilish") return "Qozoq furaga ortilish vaqti";
   if (value === "Mijozga yetib borish") return "Mijozga yetib borish vaqti";
@@ -4186,7 +4186,7 @@ function getArrivalTargetLabel(value) {
 
 function setArrivalTarget(prefix, value) {
   const normalized =
-    value === "Horgos (Qozoq)" ? "Horgos (Qozoq)"
+    value === "Horgos" ? "Horgos"
     : value === "Qozog'istonga o'tish" ? "Qozog'istonga o'tish"
     : value === "Qozoq furaga ortilish" ? "Qozoq furaga ortilish"
     : value === "Mijozga yetib borish" ? "Mijozga yetib borish"
@@ -4195,7 +4195,7 @@ function setArrivalTarget(prefix, value) {
   if (hidden) hidden.value = normalized;
   const options = [
     { key: "Toshkent", buttonId: `${prefix}-target-toshkent` },
-    { key: "Horgos (Qozoq)", buttonId: `${prefix}-target-horgos` },
+    { key: "Horgos", buttonId: `${prefix}-target-horgos` },
     { key: "Qozog'istonga o'tish", buttonId: `${prefix}-target-qozogiston` },
     { key: "Qozoq furaga ortilish", buttonId: `${prefix}-target-qozoq-fura` },
     { key: "Mijozga yetib borish", buttonId: `${prefix}-target-mijoz` },
@@ -7271,7 +7271,7 @@ function updatePreview() {
     "{batch_date}": "07.02.2026",
     "{bl_code}": "BL171",
     "{client_name}": "Buraq Client Group",
-    "{status}": "Horgos (Qozoq)",
+    "{status}": "Horgos",
     "{cargo_type}": "Elektronika",
     "{weight_kg}": "1200",
     "{volume_cbm}": "8.5",
