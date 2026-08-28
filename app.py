@@ -5561,7 +5561,8 @@ def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
 # Поэтому состав пересверяется регулярно, а о переездах бот сообщает
 # отдельно и с отметкой ответственных (владелец, 27.08.2026).
 PLAN_WATCH_HOURS = float(os.getenv("PLAN_WATCH_HOURS", "3") or 3)
-_plan_watch_last = 0.0
+_PLAN_WATCH_SETTING = "plan_watch_last"
+_PLAN_WATCH_REPORT_SETTING = "plan_watch_last_report"
 
 
 def _batch_composition_snapshot() -> dict:
@@ -5600,12 +5601,15 @@ def watch_plan_changes(force: bool = False):
     from html import escape as html_escape
     from services import ai_assistant
 
-    global _plan_watch_last
+    # Отсчёт держим в БАЗЕ, а не в памяти: каждый перезапуск (деплой) сбрасывал
+    # счётчик, и сверка срабатывала заново — в группу летели одинаковые отчёты
+    # подряд (владелец 28.08.2026).
+    now_ts = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
     if not force:
-        now_mono = time.monotonic()
-        if now_mono - _plan_watch_last < PLAN_WATCH_HOURS * 3600:
+        last = _parse_local_ts(db.get_setting(_PLAN_WATCH_SETTING))
+        if last and (now_ts - last) < timedelta(hours=PLAN_WATCH_HOURS):
             return False, "throttled"
-        _plan_watch_last = now_mono
+    db.set_setting(_PLAN_WATCH_SETTING, now_ts.strftime("%Y-%m-%d %H:%M:%S"))
 
     before = _batch_composition_snapshot()
     batches_before = {b["id"] for b in db.get_batches()}
@@ -5671,9 +5675,18 @@ def watch_plan_changes(force: bool = False):
             )
         )
     parts.append(_plan_staff_mentions() + " — проверьте, пожалуйста.")
+    report_text = "\n\n".join(parts)
+
+    # Один и тот же отчёт дважды подряд — шум: значит с прошлого раза ничего
+    # не поменялось. Сравниваем по содержанию, без отметок сотрудников.
+    body = "\n\n".join(parts[:-1])
+    fingerprint = hashlib.sha1(body.encode("utf-8")).hexdigest()
+    if db.get_setting(_PLAN_WATCH_REPORT_SETTING) == fingerprint:
+        return bool(ok), f"тот же отчёт, что и в прошлый раз — не повторяю ({info})"
+    db.set_setting(_PLAN_WATCH_REPORT_SETTING, fingerprint)
 
     try:
-        _send_long_message(ai_assistant.control_group_id(), "\n\n".join(parts))
+        _send_long_message(ai_assistant.control_group_id(), report_text)
     except Exception:
         app.logger.exception("Plan watch: report failed")
     return True, (f"переездов {len(moved) + len(alerted)}, новых партий {len(new_batches)}, "
@@ -5865,6 +5878,11 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
             added.append(entry["code"])
 
     moved_away, stuck, waiting = [], [], []
+    # ИМЕННО НОВЫЕ исключения — повод сообщить. Сами списки stuck/waiting
+    # это устойчивое состояние: они повторяются на каждой сверке, и если
+    # считать их «изменением», один и тот же отчёт уходит в группу снова
+    # и снова (владелец 28.08.2026: «присылает одинаковые данные»).
+    newly_excluded: list = []
     # из партии, которая уже в Ташкенте/выдана, груз не уезжает: перегрузка
     # позади, он физически здесь (симметрично donor_eligible, который
     # прибывшие партии донорами не считает)
@@ -5901,6 +5919,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
             try:
                 if not bl.get("send_excluded"):
                     db.set_batch_send_exclusion(bl["id"], True, source="plan")
+                    newly_excluded.append(str(bl.get("code")))
             except Exception:
                 app.logger.exception("plan apply: exclude waiting bl_id=%s failed", bl.get("id"))
             waiting.append(f"{html.escape(str(bl.get('code')))} (план «{html.escape(str(in_block.get('date')))}»)")
@@ -5911,6 +5930,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
         try:
             if not bl.get("send_excluded"):
                 db.set_batch_send_exclusion(bl["id"], True, source="plan")
+                newly_excluded.append(str(bl.get("code")))
         except Exception:
             app.logger.exception("plan apply: exclude bl_id=%s failed", bl.get("id"))
         stuck.append(html.escape(str(bl.get("code"))))
@@ -5960,8 +5980,11 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
         )
     if unlinked:
         parts.append(_unlinked_bl_request(", ".join(html.escape(c) for c in unlinked[:12])))
+    # stuck/waiting сюда НЕ входят: это устойчивое состояние, которое иначе
+    # повторялось бы отчётом на каждой сверке. Считаем изменением только
+    # ФАКТ нового исключения.
     changed = bool(moved_in or added or updated or moved_away or merged or kept_dups
-                   or reused_files or restored or stuck or waiting)
+                   or reused_files or restored or newly_excluded)
     return True, " ".join(parts), changed
 
 
