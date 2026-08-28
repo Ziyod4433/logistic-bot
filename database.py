@@ -2804,6 +2804,15 @@ def _normalize_link_code(value) -> str:
     return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
 
 
+# Латинские буквы-двойники кириллицы → их звучание: одно и то же имя
+# пишут и по начертанию (CBETKO), и по звучанию (SVETKO).
+_LOOKALIKE_TO_SOUND = str.maketrans({"C": "S", "B": "V", "H": "N", "P": "R", "X": "H", "Y": "U"})
+
+
+def _link_sound_key(value) -> str:
+    return _normalize_link_code(value).translate(_LOOKALIKE_TO_SOUND)
+
+
 def record_bl_link(code, chat_id, batch_id=0):
     """Remember that this BL code was linked to this Telegram group.
 
@@ -2879,6 +2888,18 @@ def lookup_bl_link_history(code) -> dict | None:
             ).fetchone()
             if row:
                 return dict(row)
+        # Написание могло смениться: «SVETKO» ↔ «CBETKO» — это один клиент.
+        # Ищем по звучанию и принимаем ТОЛЬКО однозначное совпадение,
+        # иначе рискуем связать разных клиентов.
+        key = _link_sound_key(code_norm)
+        if key and not key.isdigit() and len(key) >= 4:
+            rows = conn.execute(
+                "SELECT code_norm, code_raw, chat_id, chat_title, batch_name, linked_at "
+                "FROM bl_link_history ORDER BY linked_at DESC, id DESC"
+            ).fetchall()
+            hits = [r for r in rows if _link_sound_key(r["code_norm"]) == key]
+            if hits and len({r["chat_id"] for r in hits}) == 1:
+                return dict(hits[0])
         return None
     finally:
         conn.close()

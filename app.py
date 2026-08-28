@@ -7012,6 +7012,20 @@ def _known_chat_id_set() -> set[str]:
     }
 
 
+# Один и тот же клиент пишется по-разному: кириллическое «СВЕТКО» читают
+# то по НАЧЕРТАНИЮ (CBETKO), то по ЗВУЧАНИЮ (SVETKO) — в шитсе встречались
+# оба, и группа не находилась. Приводим латинские буквы-двойники кириллицы
+# к их звучанию: C→S, B→V, H→N, P→R, X→H, Y→U (владелец, 28.08.2026).
+_LOOKALIKE_TO_SOUND = str.maketrans({"C": "S", "B": "V", "H": "N", "P": "R", "X": "H", "Y": "U"})
+
+
+def _translit_key(value: str) -> str:
+    """Ключ для СРАВНЕНИЯ написаний одного имени. Только для поиска группы
+    и истории — НЕ для тождества груза между планами (там ошибка увезёт
+    чужой товар)."""
+    return _normalize_bl_code(value).translate(_LOOKALIKE_TO_SOUND)
+
+
 def _find_chat_for_bl_code(code: str, lookup: dict[str, str]) -> str:
     """Return best-match chat_id for a BL code, or '' if nothing fits."""
     if not code or not lookup:
@@ -7031,6 +7045,13 @@ def _find_chat_for_bl_code(code: str, lookup: dict[str, str]) -> str:
     if norm.isdigit():
         if f"BL{norm}" in lookup:
             return lookup[f"BL{norm}"]
+    # Последняя попытка: разные написания одного имени (CBETKO ↔ SVETKO).
+    # Только когда совпадение ОДНО — иначе есть риск склеить разных клиентов.
+    key = _translit_key(norm)
+    if key and not key.isdigit() and len(key) >= 4:
+        hits = {cid for name, cid in lookup.items() if _translit_key(name) == key}
+        if len(hits) == 1:
+            return next(iter(hits))
     return ""
 
 
