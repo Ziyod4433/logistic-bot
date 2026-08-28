@@ -24,6 +24,7 @@ Plan kinds (by title):
 """
 
 import io
+import logging
 import os
 import re
 import threading
@@ -41,6 +42,9 @@ LOADING_PLAN_SHEET_ID = (
 CACHE_TTL_SECONDS = 120
 _lock = threading.Lock()
 _cache: dict = {}
+log = logging.getLogger(__name__)
+# с какой ширины листа писать в лог — чтобы рост вкладки был заметен
+_WIDTH_WARN_COLUMNS = 80
 
 _TITLE_KEYWORDS = ("YARGXOL", "YARGOL", "MUHAMMAD", "YIWU", "ZHONGSHAN", "HORGOS", "FURA")
 
@@ -217,13 +221,22 @@ def _get_parsed(force: bool = False) -> dict:
     wb = _download_workbook()
     data = {}
     for ws in wb.worksheets:
-        grid = [list(r) for r in ws.iter_rows(max_col=80, values_only=True)]
+        # Читаем ВСЮ ширину листа. Раньше стоял потолок max_col=80 (до
+        # колонки CB), и планы, дописанные правее, были невидимы: план
+        # 25.08.2026 лежал в CH:CM (86-91) — бот честно отвечал «такого
+        # плана нет», хотя в шитсе он был. Любой фиксированный предел
+        # рано или поздно упирается в то же самое: логисты дописывают
+        # блоки вправо.
+        grid = [list(r) for r in ws.iter_rows(values_only=True)]
         try:
             blocks = _parse_tab(grid)
         except Exception:
             blocks = []
         if blocks:
             data[ws.title] = blocks
+            width = max((len(r) for r in grid), default=0)
+            if width >= _WIDTH_WARN_COLUMNS:
+                log.info("Лист «%s»: ширина %s колонок, блоков %s", ws.title, width, len(blocks))
     with _lock:
         _cache["parsed"] = {"data": data, "expires_at": time.monotonic() + CACHE_TTL_SECONDS}
     return data
