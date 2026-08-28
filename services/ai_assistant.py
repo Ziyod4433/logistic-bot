@@ -239,6 +239,11 @@ def _system_prompt() -> str:
       не может быть в двух партиях); раздельные грузы одного клиента в двух фурах — законны и не трогаются.
       BL, которого нет НИ В ОДНОМ казахском плане окна, остаётся в партии — «⚓ застрял в Хоргосе».
       Отчёт в группу — только при изменениях.
+    • СВЕРКА КАЖДЫЕ ~3 ЧАСА (не только утром). Логисты правят план прямо во время погрузки: груз не
+      поместился — перенесли в другую фуру, и часто не предупреждают. Бот регулярно сверяет сайт с шитсом,
+      применяет изменения и ОТДЕЛЬНО сообщает в группе о переездах, отмечая ответственных. Если по грузу
+      трекинг УЖЕ уходил, а он потом переехал, бот помечает это отдельно: клиент получил неверные данные,
+      ему нужно сообщить. Запустить сверку немедленно — propose_action watch_plans.
     ВОПРОСЫ ПРО ПЛАНЫ: get_loading_plans отдаёт ВСЕ блоки вкладки ОБОИХ видов и summary с числом китайских и
     казахских — казахский план 18.08 это блок kind='kazakh' с названием «HORGOS TO TASHKENT - …» и датой 18.08.
     Не утверждай «казахского плана нет», пока не проверил блоки kind='kazakh' этой даты; состав одного блока —
@@ -359,7 +364,11 @@ def _system_prompt() -> str:
   применить план (propose_action apply_kazakh_plan), а не «отправляю». Перед каждой рассылкой состав
   пересверяется с шитсом — BL могли перенести в другую партию или дописать.
 • «примени казахский план / перегрузи сейчас» → get_batch_plan_status (покажи предпросмотр) → propose_action apply_kazakh_plan.
-• «запусти сверку сейчас» → propose_action run_plan_sync.
+• «запусти сверку сейчас» → propose_action run_plan_sync (или watch_plans — он ещё и доложит о переездах).
+• «поменяй дату партии / переименуй партию / поправь срок» → propose_action update_batch
+  (batch_id + name / eta / eta_destination). ТЫ ЭТО УМЕЕШЬ — не отвечай «не могу изменить партию».
+• «в шитсе появилась новая партия, а на сайте её нет» → propose_action watch_plans: бот подтянет её сразу,
+  не дожидаясь утра. Новые планы и правки подхватываются автоматически каждые ~3 часа.
 • «где packing list / чего не хватает» → get_missing_packing_lists, файлы — get_batch_detail.
 • «файл прикрепился НЕ К ТОМУ BL / перепривяжи / убери файл» → get_bl_files (по коду BL — покажет ВСЕ
   одноимённые BL из разных партий с file_id) → propose_action kind='move_file' (file_id, bl_id) или
@@ -729,13 +738,18 @@ TOOLS = [
                 "которых в плане нет, УДАЛЯЮТСЯ из партии — иначе их группы получат чужой трекинг); "
                 "'move_file' (params: file_id, bl_id — ПЕРЕПРИВЯЗАТЬ packing list к другому BL, когда файл "
                 "прикрепился не туда: file_id и нужный bl_id бери из get_bl_files); "
-                "'delete_file' (params: file_id — удалить ошибочно прикреплённый файл). "
+                "'delete_file' (params: file_id — удалить ошибочно прикреплённый файл); "
+                "'update_batch' (params: batch_id + любое из name / eta / eta_destination — ИЗМЕНИТЬ саму "
+                "партию: переименовать, поменять ДАТУ в названии, срок или точку маршрута. Просят «поменяй "
+                "дату партии» — это сюда, ты это умеешь); "
+                "'watch_plans' (сверить сайт с шитсом ПРЯМО СЕЙЧАС: подтянуть новые партии, применить "
+                "изменения плана, доложить о переездах грузов). "
                 "summary: короткое человекочитаемое описание действия по-русски."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -1746,7 +1760,7 @@ def _tool_list_groups(_args: dict) -> dict:
 ALLOWED_ACTION_KINDS = {
     "set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan",
     "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan",
-    "move_file", "delete_file",
+    "move_file", "delete_file", "update_batch", "watch_plans",
 }
 
 
@@ -1819,6 +1833,23 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
         params["bl_code"] = bl.get("code")
         params["batch_name"] = (batch or {}).get("name") or ""
         params["chat_title"] = title
+    elif kind == "update_batch":
+        batch = db.get_batch(int(params.get("batch_id") or 0))
+        if not batch:
+            return {"error": "batch_id не найден — возьми его из get_overview/get_batch_detail"}
+        new_name = str(params.get("name") or "").strip()
+        new_eta = params.get("eta")
+        new_dest = str(params.get("eta_destination") or "").strip()
+        if not (new_name or new_eta is not None or new_dest):
+            return {"error": "Нечего менять: укажи name, eta или eta_destination"}
+        if new_dest and new_dest not in db.ETA_DESTINATION_LABELS:
+            return {"error": f"Точка должна быть одной из: {sorted(db.ETA_DESTINATION_LABELS)}"}
+        params["old_name"] = batch["name"]
+        params["new_name"] = new_name or batch["name"]
+        params["old_eta"] = batch.get("eta_to_toshkent") or ""
+        params["old_destination"] = batch.get("eta_destination") or ""
+    elif kind == "watch_plans":
+        params = {}
     elif kind == "move_file":
         file_row = db.get_file_by_id(int(params.get("file_id") or 0))
         if not file_row:

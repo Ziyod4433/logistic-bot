@@ -299,13 +299,25 @@ def resolve_ref_block(batch: dict, blocks: list, kind: str, batch_codes: set):
         if block_same_group_as_ref(block, batch.get("plan_title"), batch.get("plan_date")):
             group.append(block)
     if len(group) <= 1:
-        return exact or (group[0] if group else None)
-    best, best_hits = exact, -1
-    for block in group:
-        hits = len(set(aggregate_block(block).keys()) & batch_codes)
-        if hits > best_hits or (hits == best_hits and block is exact):
-            best, best_hits = block, hits
-    return best
+        chosen, hits = (exact or (group[0] if group else None)), None
+    else:
+        best, best_hits = exact, -1
+        for block in group:
+            hits = len(set(aggregate_block(block).keys()) & batch_codes)
+            if hits > best_hits or (hits == best_hits and block is exact):
+                best, best_hits = block, hits
+        chosen, hits = best, best_hits
+    # Привязка могла ПРОТУХНУТЬ: логисты меняют дату плана прямо в шитсе
+    # («14.08.2026-2» стал «15.08.2026-2»), и тогда по старой дате находится
+    # ОДНОИМЁННЫЙ СОСЕДНИЙ блок — чужой партии. Если у него нет ни одного
+    # общего груза с нашим составом, это не наш план: пусть вызывающий код
+    # подберёт блок по составу (find_block_for_batch).
+    if chosen is not None and batch_codes and exact is None:
+        if hits is None:
+            hits = len(set(aggregate_block(chosen).keys()) & batch_codes)
+        if hits == 0:
+            return None
+    return chosen
 
 
 def batch_has_ref(batch: dict) -> bool:

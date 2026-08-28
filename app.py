@@ -2892,6 +2892,35 @@ def execute_ai_action(action: dict, actor: str = ""):
         title = params.get("chat_title") or chat_id
         return True, f"BL {bl.get('code')} привязан к группе «{title}» (партия «{params.get('batch_name') or ''}»)"
 
+    if kind == "update_batch":
+        batch = db.get_batch(int(params.get("batch_id") or 0))
+        if not batch:
+            return False, "Партия не найдена"
+        name = str(params.get("name") or "").strip() or batch["name"]
+        eta = params.get("eta")
+        eta = batch.get("eta_to_toshkent") or "" if eta is None else str(eta).strip()
+        dest = str(params.get("eta_destination") or "").strip() or (batch.get("eta_destination") or "Toshkent")
+        try:
+            db.update_batch(batch["id"], name, batch.get("status") or "Xitoy", eta, dest,
+                            batch.get("client_delivery_date") or "")
+        except Exception as exc:
+            return False, f"Не удалось изменить партию: {exc}"
+        changes = []
+        if name != batch["name"]:
+            changes.append(f"название: «{batch['name']}» → «{name}»")
+        if eta != (batch.get("eta_to_toshkent") or ""):
+            changes.append(f"срок: «{batch.get('eta_to_toshkent') or '—'}» → «{eta or '—'}»")
+        if dest != (batch.get("eta_destination") or ""):
+            changes.append(f"точка: «{batch.get('eta_destination') or '—'}» → «{dest}»")
+        return True, f"📦 Партия обновлена — " + ("; ".join(changes) if changes else "изменений не было")
+
+    if kind == "watch_plans":
+        try:
+            changed, info = watch_plan_changes(force=True)
+        except Exception as exc:
+            return False, f"Сверка упала: {exc}"
+        return True, f"Сверка с шитсом выполнена: {info}"
+
     if kind == "move_file":
         try:
             res = db.move_file_to_bl(int(params.get("file_id") or 0), int(params.get("bl_id") or 0))
@@ -3483,6 +3512,14 @@ def _packing_reminder_scheduler():
                     app.logger.info("Morning plan sync: %s", info)
             # Хоргос: вопросы о переносе казахского плана + автоприменение
             check_kazakh_plan_asks()
+            # сверка с шитсом раз в PLAN_WATCH_HOURS: логисты правят план
+            # во время погрузки, и груз может переехать уже после рассылки
+            try:
+                changed, winfo = watch_plan_changes()
+                if changed:
+                    app.logger.info("Plan watch: %s", winfo)
+            except Exception:
+                app.logger.exception("Plan watch tick failed")
             # новые packing list'ы в общей Drive-папке — забрать и прикрепить
             try:
                 got, info = scan_packing_drive()
@@ -5357,8 +5394,11 @@ def _merge_duplicate_into(target_bl: dict, donor_bl: dict, target_batch_id) -> s
     return "kept"  # у обеих строк есть файлы/история — пусть решит человек
 
 
-def run_morning_plan_sync(force: bool = False):
-    """Утренняя сверка партий с планами погрузки (06:30, раз в день)."""
+def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
+    """Сверка партий с планами погрузки.
+
+    mark_day=False — прогон в течение дня (watch_plan_changes каждые 3 часа):
+    не «сжигает» дневной guard, чтобы утренняя сверка всё равно состоялась."""
     from services import ai_assistant, plan_sync_service as pss
 
     now = datetime.now(db.TASHKENT_TZ)
@@ -5381,7 +5421,8 @@ def run_morning_plan_sync(force: bool = False):
         return False, f"sheet error: {exc}"
     if not blocks:
         return False, "no plan blocks"
-    db.set_setting(_PLAN_SYNC_SETTING, today)
+    if mark_day:
+        db.set_setting(_PLAN_SYNC_SETTING, today)
 
     report: list[str] = []
     unlinked_all: list[str] = []
@@ -5503,6 +5544,112 @@ def run_morning_plan_sync(force: bool = False):
             "🗂 <b>Планы погрузки — утренняя сверка</b>\n\n" + "\n".join(report),
         )
     return True, f"{len(report)} changes"
+
+
+# ── СТОРОЖ ПЛАНОВ: сверка каждые N часов ────────────────────────────
+# Логисты правят план прямо во время погрузки (груз не поместился —
+# перенесли в другую фуру) и не всегда предупреждают. Проверки перед
+# отправкой мало: изменение приходит ПОСЛЕ того, как трекинг уже ушёл.
+# Поэтому состав пересверяется регулярно, а о переездах бот сообщает
+# отдельно и с отметкой ответственных (владелец, 27.08.2026).
+PLAN_WATCH_HOURS = float(os.getenv("PLAN_WATCH_HOURS", "3") or 3)
+_plan_watch_last = 0.0
+
+
+def _batch_composition_snapshot() -> dict:
+    """{bl_id: (batch_id, batch_name, code)} по всем незакрытым партиям."""
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl.id AS bl_id, bl.code, b.id AS batch_id, b.name AS batch_name
+            FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id
+            WHERE COALESCE(b.client_delivery_date, '') = ''
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return {int(r["bl_id"]): (int(r["batch_id"]), r["batch_name"], r["code"]) for r in rows}
+
+
+def _tracking_already_sent(bl_id: int, batch_name: str) -> bool:
+    """Уходил ли клиенту трекинг ЭТОЙ партии по этому грузу — то есть
+    получил ли он уже неверную информацию."""
+    conn = db.get_conn()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM send_logs WHERE bl_id = ? AND batch_name = ? AND success = 1 LIMIT 1",
+            (int(bl_id), str(batch_name)),
+        ).fetchone()
+    finally:
+        conn.close()
+    return bool(row)
+
+
+def watch_plan_changes(force: bool = False):
+    """Регулярная сверка сайта с шитсом: применяет изменения и отдельно
+    сообщает о переездах грузов между партиями."""
+    from html import escape as html_escape
+    from services import ai_assistant
+
+    global _plan_watch_last
+    if not force:
+        now_mono = time.monotonic()
+        if now_mono - _plan_watch_last < PLAN_WATCH_HOURS * 3600:
+            return False, "throttled"
+        _plan_watch_last = now_mono
+
+    before = _batch_composition_snapshot()
+    batches_before = {b["id"] for b in db.get_batches()}
+    try:
+        ok, info = run_morning_plan_sync(force=True, mark_day=False)
+    except Exception as exc:
+        app.logger.exception("Plan watch: sync failed")
+        return False, f"sync error: {exc}"
+    after = _batch_composition_snapshot()
+
+    moved, alerted = [], []
+    for bl_id, (batch_id, batch_name, code) in before.items():
+        now_at = after.get(bl_id)
+        if not now_at or now_at[0] == batch_id:
+            continue
+        line = (
+            f"<code>{html_escape(str(code))}</code>: "
+            f"«{html_escape(str(batch_name))}» → «{html_escape(str(now_at[1]))}»"
+        )
+        if _tracking_already_sent(bl_id, batch_name):
+            alerted.append(line)
+        else:
+            moved.append(line)
+
+    new_batches = [b for b in db.get_batches() if b["id"] not in batches_before]
+
+    if not (moved or alerted or new_batches):
+        return bool(ok), f"без изменений ({info})"
+
+    parts = ["🔄 <b>Сверка с шитсом: план изменился</b>"]
+    if alerted:
+        parts.append(
+            "🚨 <b>Клиентам уже уходил трекинг СТАРОЙ партии</b> — груз с тех пор переехал, "
+            "им нужно сообщить об изменении:\n" + "\n".join(f"  • {x}" for x in alerted[:15])
+        )
+    if moved:
+        parts.append(
+            "📦 Переехали между партиями (трекинг по ним ещё не уходил):\n"
+            + "\n".join(f"  • {x}" for x in moved[:15])
+        )
+    if new_batches:
+        parts.append(
+            "🆕 Новые партии из шитса: "
+            + ", ".join(f"«{html_escape(str(b['name']))}»" for b in new_batches[:10])
+        )
+    parts.append(_plan_staff_mentions() + " — проверьте, пожалуйста.")
+
+    try:
+        _send_long_message(ai_assistant.control_group_id(), "\n\n".join(parts))
+    except Exception:
+        app.logger.exception("Plan watch: report failed")
+    return True, f"переездов {len(moved) + len(alerted)}, новых партий {len(new_batches)}"
 
 
 def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
@@ -5657,6 +5804,32 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
                     reused = True
                 break
             if reused:
+                break
+        if reused:
+            continue
+        # Груз мог переехать и «назад» — в более раннюю фуру: логисты
+        # правят план в обе стороны. Донорские окна смотрят только вперёд
+        # по датам, из-за чего вместо переезда возникал ВЕЧНЫЙ ДУБЛЬ
+        # (груз в двух партиях, клиент получает трекинг обеих фур).
+        # Забираем код у партии, чей ПРИМЕНЁННЫЙ казахский план его больше
+        # не содержит: прав на этот груз у неё нет.
+        for other in others:
+            if other["id"] == batch["id"] or (other.get("plan_kind") or "") != "kazakh":
+                continue
+            other_block = pss.resolve_ref_block(other, blocks, "kazakh", codes_of(other))
+            if other_block is None or key in pss.aggregate_block(other_block):
+                continue                       # у неё законное право на груз
+            cand = next(
+                (x for x in db.get_bl_by_batch(other["id"])
+                 if pss.normalize_mark(x.get("code")) == key),
+                None,
+            )
+            if cand and _safe_move_bl(cand["id"], batch["id"]):
+                db.update_bl_figures(cand["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+                moved_in.append(
+                    f"{html.escape(entry['code'])} (из «{html.escape(other['name'])}», плана там больше нет)"
+                )
+                reused = True
                 break
         if reused:
             continue
