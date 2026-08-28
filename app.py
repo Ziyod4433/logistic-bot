@@ -5624,7 +5624,16 @@ def watch_plan_changes(force: bool = False):
 
     new_batches = [b for b in db.get_batches() if b["id"] not in batches_before]
 
-    if not (moved or alerted or new_batches):
+    # Бота часто добавляют в группу ПОЗЖЕ, чем груз попал в план: при
+    # создании партии группы ещё не было, и BL остался без связи навсегда.
+    # Повторяем привязку на каждом проходе.
+    try:
+        relinked = relink_unlinked_bls()
+    except Exception:
+        app.logger.exception("Plan watch: relink failed")
+        relinked = []
+
+    if not (moved or alerted or new_batches or relinked):
         return bool(ok), f"без изменений ({info})"
 
     parts = ["🔄 <b>Сверка с шитсом: план изменился</b>"]
@@ -5643,13 +5652,23 @@ def watch_plan_changes(force: bool = False):
             "🆕 Новые партии из шитса: "
             + ", ".join(f"«{html_escape(str(b['name']))}»" for b in new_batches[:10])
         )
+    if relinked:
+        parts.append(
+            f"🔗 Появились группы — привязал грузы, которые ждали ({len(relinked)}):\n"
+            + "\n".join(
+                f"  • <code>{html_escape(str(x['code']))}</code> → "
+                f"«{html_escape(str(x['chat_title'] or x['chat_id']))}» ({html_escape(str(x['batch']))})"
+                for x in relinked[:15]
+            )
+        )
     parts.append(_plan_staff_mentions() + " — проверьте, пожалуйста.")
 
     try:
         _send_long_message(ai_assistant.control_group_id(), "\n\n".join(parts))
     except Exception:
         app.logger.exception("Plan watch: report failed")
-    return True, f"переездов {len(moved) + len(alerted)}, новых партий {len(new_batches)}"
+    return True, (f"переездов {len(moved) + len(alerted)}, новых партий {len(new_batches)}, "
+                  f"привязано {len(relinked)}")
 
 
 def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
@@ -7125,15 +7144,14 @@ def api_import_google_sheet_rows(batch_id):
     )
 
 
-@app.route("/api/batches/<int:batch_id>/relink-from-history", methods=["POST"])
-@editor_required
-def api_relink_bls_from_history(batch_id):
-    """Attach groups to the batch's unlinked BLs: first by chat-title
-    match, then by the permanent BL↔group link memory built from all
-    past batches."""
-    batch = db.get_batch(batch_id)
-    if not batch:
-        abort(404)
+def relink_unlinked_bls(batch_ids=None) -> list[dict]:
+    """Привязать группы к BL, оставшимся без неё: сначала по названию чата,
+    потом по постоянной памяти связок BL↔группа.
+
+    Нужно повторять регулярно, а не только при создании партии: бота часто
+    добавляют в группу ПОЗЖЕ, чем груз попал в план (BL-684 создан в 11:27,
+    группа появилась в 12:24) — без повтора груз так и оставался без связи.
+    """
     chat_lookup = _build_chat_code_lookup()
     known_chat_ids = _known_chat_id_set()
     try:
@@ -7144,47 +7162,54 @@ def api_relink_bls_from_history(batch_id):
     except Exception:
         chats_by_id = {}
 
-    linked = []
-    unlinked_left = 0
-    title_count = 0
-    history_count = 0
-    for bl in db.get_bl_by_batch(batch_id):
-        if str(bl.get("chat_id") or "").strip():
-            continue
-        code = str(bl.get("code") or "").strip()
-        chat_id = _find_chat_for_bl_code(code, chat_lookup)
-        via = "title" if chat_id else ""
-        if not chat_id:
-            hist = db.lookup_bl_link_history(code)
-            if hist and (not known_chat_ids or hist["chat_id"] in known_chat_ids):
-                chat_id = hist["chat_id"]
-                via = "history"
-        if chat_id and db.set_bl_chat_id(bl["id"], chat_id):
-            if via == "title":
-                title_count += 1
-            else:
-                history_count += 1
-            linked.append(
-                {
-                    "code": code,
-                    "chat_id": chat_id,
-                    "chat_title": chats_by_id.get(chat_id, ""),
-                    "via": via,
-                }
-            )
-        else:
-            unlinked_left += 1
+    if batch_ids is None:
+        targets = [b["id"] for b in db.get_batches()
+                   if not (b.get("client_delivery_date") or "").strip()]
+    else:
+        targets = list(batch_ids)
 
-    return jsonify(
-        {
-            "ok": True,
-            "linked_count": len(linked),
-            "title_count": title_count,
-            "history_count": history_count,
-            "unlinked_left": unlinked_left,
-            "linked": linked,
-        }
+    linked = []
+    for batch_id in targets:
+        batch = db.get_batch(batch_id)
+        if not batch:
+            continue
+        for bl in db.get_bl_by_batch(batch_id):
+            if str(bl.get("chat_id") or "").strip():
+                continue
+            code = str(bl.get("code") or "").strip()
+            chat_id = _find_chat_for_bl_code(code, chat_lookup)
+            via = "title" if chat_id else ""
+            if not chat_id:
+                hist = db.lookup_bl_link_history(code)
+                if hist and (not known_chat_ids or hist["chat_id"] in known_chat_ids):
+                    chat_id, via = hist["chat_id"], "history"
+            if chat_id and db.set_bl_chat_id(bl["id"], chat_id):
+                linked.append({
+                    "code": code, "chat_id": chat_id, "via": via,
+                    "chat_title": chats_by_id.get(chat_id, ""),
+                    "batch": batch.get("name") or "",
+                })
+    return linked
+
+
+@app.route("/api/batches/<int:batch_id>/relink-from-history", methods=["POST"])
+@editor_required
+def api_relink_bls_from_history(batch_id):
+    """Кнопка «Привязать по истории» для одной партии."""
+    if not db.get_batch(batch_id):
+        abort(404)
+    linked = relink_unlinked_bls([batch_id])
+    unlinked_left = sum(
+        1 for bl in db.get_bl_by_batch(batch_id)
+        if not str(bl.get("chat_id") or "").strip()
     )
+    return jsonify({
+        "ok": True,
+        "title_count": sum(1 for x in linked if x["via"] == "title"),
+        "history_count": sum(1 for x in linked if x["via"] == "history"),
+        "unlinked_left": unlinked_left,
+        "linked": linked,
+    })
 
 
 @app.route("/api/bl", methods=["POST"])
