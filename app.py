@@ -5254,6 +5254,14 @@ def _plan_add_bl(batch_id, entry, chat_lookup, known_chat_ids, unlinked: list) -
         hist = db.lookup_bl_link_history(code)
         if hist and (not known_chat_ids or hist["chat_id"] in known_chat_ids):
             target_chat = hist["chat_id"]
+    # Язык берём у самой группы: среди клиентов есть русско- и
+    # англоговорящие, и новый груз должен получать сообщения на том же
+    # языке, что и прежние грузы этой группы (владелец, 28.08.2026).
+    language = getattr(db, "DEFAULT_MESSAGE_LANGUAGE", "uz_latn")
+    if target_chat:
+        known = db.language_for_chat(target_chat)
+        if known:
+            language = known
     created = db.add_bl(
         batch_id=batch_id,
         code=code,
@@ -5265,7 +5273,7 @@ def _plan_add_bl(batch_id, entry, chat_lookup, known_chat_ids, unlinked: list) -
         quantity_places=entry.get("ctn", 0),
         quantity_places_breakdown=entry.get("breakdown", ""),
         cargo_description="",
-        message_language=getattr(db, "DEFAULT_MESSAGE_LANGUAGE", "uz_latn"),
+        message_language=language,
     )
     if created and not target_chat:
         unlinked.append(code)
@@ -5658,6 +5666,7 @@ def watch_plan_changes(force: bool = False):
             + "\n".join(
                 f"  • <code>{html_escape(str(x['code']))}</code> → "
                 f"«{html_escape(str(x['chat_title'] or x['chat_id']))}» ({html_escape(str(x['batch']))})"
+                + (f" · язык {html_escape(str(x['language']))}" if x.get("language") else "")
                 for x in relinked[:15]
             )
         )
@@ -7184,10 +7193,21 @@ def relink_unlinked_bls(batch_ids=None) -> list[dict]:
                 if hist and (not known_chat_ids or hist["chat_id"] in known_chat_ids):
                     chat_id, via = hist["chat_id"], "history"
             if chat_id and db.set_bl_chat_id(bl["id"], chat_id):
+                # группа могла быть русско- или англоговорящей — берём её язык
+                lang = ""
+                try:
+                    known = db.language_for_chat(chat_id)
+                    current = str(bl.get("message_language") or "").strip()
+                    if known and current in ("", db.DEFAULT_MESSAGE_LANGUAGE):
+                        if db.set_bl_language(bl["id"], known):
+                            lang = known
+                except Exception:
+                    app.logger.exception("relink: language for bl_id=%s failed", bl.get("id"))
                 linked.append({
                     "code": code, "chat_id": chat_id, "via": via,
                     "chat_title": chats_by_id.get(chat_id, ""),
                     "batch": batch.get("name") or "",
+                    "language": lang,
                 })
     return linked
 

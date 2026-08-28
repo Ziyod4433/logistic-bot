@@ -2905,6 +2905,57 @@ def lookup_bl_link_history(code) -> dict | None:
         conn.close()
 
 
+def language_for_chat(chat_id) -> str:
+    """На каком языке эта группа уже получает сообщения — «» если неизвестно.
+
+    Учитываются только ЯВНО выбранные языки: uz_latn стоит по умолчанию у
+    каждого нового груза и неотличим от «не выбирали», поэтому голосом не
+    считается — иначе автоматика вечно перебивала бы решение человека.
+    Берём самый частый, при равенстве — самый свежий.
+    """
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        return ""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT message_language AS lang FROM bl_codes
+            WHERE chat_id = ? AND COALESCE(message_language, '') NOT IN ('', ?)
+            ORDER BY id DESC
+            """,
+            (chat_id, DEFAULT_MESSAGE_LANGUAGE),
+        ).fetchall()
+    finally:
+        conn.close()
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for row in rows:
+        lang = _normalize_message_language(row["lang"])
+        if lang == DEFAULT_MESSAGE_LANGUAGE:
+            continue
+        if lang not in counts:
+            order.append(lang)
+        counts[lang] = counts.get(lang, 0) + 1
+    if not counts:
+        return ""
+    # самый частый; при равенстве — тот, что встретился первым (свежий)
+    return max(order, key=lambda l: (counts[l], -order.index(l)))
+
+
+def set_bl_language(bl_id, language: str) -> bool:
+    lang = _normalize_message_language(language)
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE bl_codes SET message_language = ? WHERE id = ?", (lang, int(bl_id))
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def set_bl_chat_id(bl_id, chat_id) -> bool:
     """Set chat_id on a single BL and record the link in the memory."""
     chat_id = str(chat_id or "").strip()
