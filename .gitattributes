@@ -1,0 +1,2 @@
+# Шелл-скрипты обязаны уходить на Linux с LF — CRLF ломает bash
+*.sh text eol=lf

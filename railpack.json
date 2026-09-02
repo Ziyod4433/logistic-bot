@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.railpack.com",
   "deploy": {
-    "aptPackages": ["unar", "libarchive-tools"]
+    "aptPackages": ["unar", "libarchive-tools", "curl", "ca-certificates"]
   }
 }

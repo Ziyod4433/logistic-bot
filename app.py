@@ -10,7 +10,11 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
+import gzip
 import io
+import shutil
+import sqlite3
+import tempfile
 from datetime import datetime, timedelta
 from functools import wraps
 from urllib.parse import parse_qs, urlparse
@@ -3533,6 +3537,101 @@ def _run_due_ai_tasks():
                 pass
 
 
+# ── РЕЗЕРВНАЯ КОПИЯ БАЗЫ ────────────────────────────────────────────
+# Слой 1: ночной снапшот → gzip → документ владельцу в Telegram (архив
+# копий хранится в самом чате). Слой 2 — непрерывная репликация
+# Litestream, включается переменными LITESTREAM_* (см. start.sh).
+DB_BACKUP_HOUR = int(os.getenv("DB_BACKUP_HOUR", "3") or 3)
+_DB_BACKUP_SETTING = "db_backup_last"
+# Telegram sendDocument принимает до 50 МБ — предупреждаем заранее
+_DB_BACKUP_WARN_BYTES = 45 * 1024 * 1024
+
+
+def _db_backup_chat_ids() -> list:
+    from services import ai_assistant
+    raw = (os.getenv("DB_BACKUP_CHAT_IDS") or "").strip()
+    if raw:
+        return [p.strip() for p in raw.split(",") if p.strip()]
+    return sorted(ai_assistant.admin_ids())
+
+
+def run_db_backup(force: bool = False):
+    """Снять консистентный снапшот SQLite (backup API дружит с живым WAL),
+    сжать и отправить документом владельцу. Возвращает (получилось, инфо)."""
+    from services import ai_assistant
+
+    now = datetime.now(db.TASHKENT_TZ)
+    if not force:
+        if now.hour < DB_BACKUP_HOUR:
+            return False, "ещё рано"
+        if db.get_setting(_DB_BACKUP_SETTING) == now.strftime("%Y-%m-%d"):
+            return False, "сегодня уже отправлена"
+
+    tmp_dir = tempfile.mkdtemp(prefix="dbbak_")
+    try:
+        snap = os.path.join(tmp_dir, f"logistic-{now:%Y-%m-%d_%H%M}.db")
+        src = sqlite3.connect(db.DB_PATH, timeout=30)
+        try:
+            dst = sqlite3.connect(snap)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+
+        gz_path = snap + ".gz"
+        with open(snap, "rb") as fin, gzip.open(gz_path, "wb", compresslevel=9) as fout:
+            shutil.copyfileobj(fin, fout)
+        os.remove(snap)
+        size = os.path.getsize(gz_path)
+        size_note = f"{size / 1_048_576:.1f} МБ"
+        if size > _DB_BACKUP_WARN_BYTES:
+            try:
+                telegram_send_message(
+                    ai_assistant.control_group_id(),
+                    f"⚠️ Резервная копия базы выросла до {size_note} — близко к лимиту "
+                    "Telegram (50 МБ). Пора включать Litestream-репликацию.",
+                )
+            except Exception:
+                app.logger.exception("DB backup size warning failed")
+
+        sent_to, errors = [], []
+        for cid in _db_backup_chat_ids():
+            try:
+                telegram_send_document(
+                    cid, gz_path, os.path.basename(gz_path),
+                    caption=(f"🗄 Резервная копия базы · {now:%d.%m.%Y %H:%M} · {size_note}\n"
+                             "Восстановление: разархивировать .gz и положить файл как logistic.db"),
+                )
+                sent_to.append(str(cid))
+            except Exception as exc:
+                errors.append(f"{cid}: {exc}")
+                app.logger.exception("DB backup send failed for chat %s", cid)
+
+        if sent_to:
+            db.set_setting(_DB_BACKUP_SETTING, now.strftime("%Y-%m-%d"))
+            return True, f"копия ({size_note}) отправлена: {', '.join(sent_to)}"
+        # никому не ушла — это тревога, молчать нельзя
+        try:
+            telegram_send_message(
+                ai_assistant.control_group_id(),
+                "🛑 Ночная резервная копия базы НЕ отправилась.\n" + "\n".join(errors)[:600],
+            )
+        except Exception:
+            app.logger.exception("DB backup failure notify failed")
+        return False, "; ".join(errors) or "нет получателей"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.route("/api/backup/run", methods=["POST"])
+@editor_required
+def api_backup_run():
+    ok, info = run_db_backup(force=True)
+    return jsonify({"ok": ok, "info": info})
+
+
 def _packing_reminder_scheduler():
     """Morning tick (every 5 min): packing-list ask + tracking digest.
     Both are self-guarded by per-day settings keys."""
@@ -3577,6 +3676,13 @@ def _packing_reminder_scheduler():
             synced = sync_batches_from_fura_statuses()
             if synced:
                 app.logger.info("Fura-status sync: %s batch updates", synced)
+            # ночная резервная копия базы (день-guard внутри)
+            try:
+                done_b, binfo = run_db_backup()
+                if done_b:
+                    app.logger.info("DB backup: %s", binfo)
+            except Exception:
+                app.logger.exception("DB backup tick failed")
             # запланированные задачи ассистента (сообщения/опросы)
             _run_due_ai_tasks()
         except Exception:
