@@ -2925,6 +2925,64 @@ def execute_ai_action(action: dict, actor: str = ""):
             return False, f"Сверка упала: {exc}"
         return True, f"Сверка с шитсом выполнена: {info}"
 
+    if kind == "merge_batches":
+        # слияние дубликата: грузы переезжают ТЕМ ЖЕ _safe_move_bl, что и
+        # план-синк (файлы, группы, исключения, coverage сохраняются;
+        # одинаковые коды сливаются в одну строку), пустой дубль удаляется
+        from services import plan_sync_service as pss
+        src = db.get_batch(int(params.get("from_batch_id") or 0))
+        dst = db.get_batch(int(params.get("to_batch_id") or 0))
+        if not src or not dst:
+            return False, "Партия не найдена (уже удалена?)"
+        dst_by_code = {pss.normalize_mark(b.get("code")): b for b in db.get_bl_by_batch(dst["id"])}
+        moved, merged_cnt, failed = 0, 0, []
+        for bl in db.get_bl_by_batch(src["id"]):
+            try:
+                twin = dst_by_code.get(pss.normalize_mark(bl.get("code")))
+                if twin is not None:
+                    # код уже есть в целевой — сводим к одной строке,
+                    # выживает та, где файлы (та же логика, что в план-синке)
+                    res = _merge_duplicate_into(twin, bl, dst["id"])
+                    if res == "kept":
+                        failed.append(f"{bl.get('code')}: не сведён (файлы у обеих строк — реши вручную)")
+                    else:
+                        merged_cnt += 1
+                elif _safe_move_bl(bl["id"], dst["id"]):
+                    moved += 1
+                else:
+                    failed.append(f"{bl.get('code')}: переезд отказан")
+            except Exception as exc:
+                failed.append(f"{bl.get('code')}: {exc}")
+                app.logger.exception("merge_batches: move failed for bl %s", bl.get("id"))
+        left = db.get_bl_by_batch(src["id"])
+        note = ""
+        if not left:
+            try:
+                db.delete_batch(src["id"])
+                note = f", пустая «{html.escape(src['name'])}» удалена"
+            except Exception as exc:
+                note = f", удалить пустую не вышло: {exc}"
+        parts = [f"🧩 Слито в «{html.escape(dst['name'])}»: переехали {moved}, слились с дублями {merged_cnt}{note}"]
+        if failed:
+            parts.append("⚠️ Не переехали: " + "; ".join(failed[:5]))
+        return not failed, "\n".join(parts)
+
+    if kind == "delete_batch":
+        batch = db.get_batch(int(params.get("batch_id") or 0))
+        if not batch:
+            return False, "Партия не найдена (уже удалена?)"
+        # защита сохраняется и на исполнении: между заявкой и ✅ в партию
+        # могли добавить груз
+        bls = db.get_bl_by_batch(batch["id"])
+        if bls:
+            return False, (f"В партии «{batch['name']}» появились BL ({len(bls)}) — "
+                           "не удаляю. Сначала merge_batches.")
+        try:
+            db.delete_batch(batch["id"])
+        except Exception as exc:
+            return False, f"Не удалось удалить: {exc}"
+        return True, f"🗑 Пустая партия «{html.escape(batch['name'])}» удалена"
+
     if kind == "move_file":
         try:
             res = db.move_file_to_bl(int(params.get("file_id") or 0), int(params.get("bl_id") or 0))
@@ -5607,9 +5665,37 @@ def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
             if owner is not None:
                 is_active = not (owner.get("client_delivery_date") or "").strip()
                 if is_active and pss.stage_for_status(owner.get("status")) == "china":
+                    old_ref_date = str(owner.get("plan_date") or "")
                     db.set_batch_plan_ref(owner["id"], block["tab"], pss.ref_title(block), block["date"], "china")
                     owner["plan_tab"], owner["plan_title"] = block["tab"], pss.ref_title(block)
-                    owner["plan_date"], owner["plan_kind"] = block["date"], "china"
+                    owner["plan_kind"] = "china"
+                    owner["plan_date"] = block["date"]
+                    # логисты подвинули дату фуры в шитсе → та же партия,
+                    # НЕ дубль (кейс 02.09.2026: 30.08→31.08 открыл копию
+                    # на 19 BL). Переименовываем и говорим об этом.
+                    if (old_ref_date and pss.date_key(old_ref_date)
+                            and pss.date_key(old_ref_date) != pss.date_key(block["date"])):
+                        old_name = str(owner.get("name") or "")
+                        new_name = pss.batch_name_for_block(block)
+                        taken = {str(b.get("name") or "").strip().upper()
+                                 for b in batches_all if b.get("id") != owner.get("id")}
+                        renamed = ""
+                        if (pss.date_key(old_name) == pss.date_key(old_ref_date)
+                                and new_name.upper() not in taken):
+                            # имя было авто-видом со старой датой — двигаем дату в имени
+                            db.update_batch(
+                                owner["id"], new_name, owner.get("status"),
+                                owner.get("eta_to_toshkent") or "",
+                                owner.get("eta_destination") or "",
+                                owner.get("client_delivery_date") or "",
+                            )
+                            owner["name"] = new_name
+                            renamed = f", партия переименована «{html.escape(old_name)}» → «{html.escape(new_name)}»"
+                        report.append(
+                            f"📅 <b>Дата фуры изменилась в шитсе</b>: "
+                            f"{html.escape(old_ref_date)} → {html.escape(str(block['date']))}"
+                            f" («{html.escape(str(block['title']))[:60]}»){renamed}. Дубль не открыт."
+                        )
                 continue
             name = pss.batch_name_for_block(block)
             # второй перевозчик с того же склада в тот же день → «… YIWU 2»

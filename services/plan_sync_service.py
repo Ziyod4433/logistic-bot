@@ -464,6 +464,37 @@ def find_batch_for_china_block(block: dict, batches: list, codes_of, blocks: lis
         best = resolve_ref_block(batch, blocks, "china", codes_of(batch))
         return best is None or best is block
 
+    plan_keys_early = set(aggregate_block(block).keys())
+    n_plan_early = len(plan_keys_early) or 1
+
+    def _date_change_candidate():
+        """Смена даты фуры в шитсе (кейс 02.09.2026: 30.08 → 31.08 открыл
+        дубль на 19 одинаковых BL). Та же фура, а не новый рейс, если:
+        партия привязана к плану ТОЙ ЖЕ группы названий (kind=china), ещё
+        в Китае и не закрыта, её блок со старой датой ИСЧЕЗ из листа, а
+        состав нового блока минимум наполовину уже лежит в партии."""
+        if blocks is None:
+            return None
+        cand, cand_hits = None, 0
+        for b in batches:
+            if not batch_has_ref(b) or (b.get("plan_kind") or "") != "china":
+                continue
+            if (b.get("client_delivery_date") or "").strip() or is_arrived(b):
+                continue
+            if stage_for_status(b.get("status")) != "china":
+                continue                      # за Хоргосом дату уже не двигают
+            if date_key(b.get("plan_date")) == key:
+                continue                      # та же дата — не «переезд»
+            if ref_base(str(block.get("title") or "")) != ref_base(str(b.get("plan_title") or "")):
+                continue                      # другой план
+            old_block = resolve_ref_block(b, blocks, "china", codes_of(b))
+            if old_block is not None and old_block is not block:
+                continue                      # старый блок жив — это ДВЕ фуры
+            hits = len(codes_of(b) & plan_keys_early)
+            if hits >= 2 and hits * 2 >= n_plan_early and hits > cand_hits:
+                cand, cand_hits = b, hits
+        return cand
+
     same_date = []
     for batch in batches:
         if batch_has_ref(batch) and block_matches_ref(
@@ -473,7 +504,7 @@ def find_batch_for_china_block(block: dict, batches: list, codes_of, blocks: lis
         if date_key(batch.get("name")) == key:
             same_date.append(batch)
     if not same_date:
-        return None
+        return _date_change_candidate()
 
     def bound_elsewhere(batch) -> bool:
         """Партия уже ведётся ДРУГИМ китайским планом (не копией этого)."""
@@ -537,7 +568,9 @@ def find_batch_for_china_block(block: dict, batches: list, codes_of, blocks: lis
             only_codes = codes_of(only)
             if not only_codes or (only_codes & plan_keys):
                 return only
-    return None
+    # последний шанс: фура с подвинутой датой (одноимённые партии другой
+    # даты в same_date не попадают — сюда доходим и при непустом same_date)
+    return _date_change_candidate()
 
 
 def diff_against_plan(batch_bls: list, plan: dict) -> dict:

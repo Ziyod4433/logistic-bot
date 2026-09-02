@@ -448,6 +448,12 @@ def _system_prompt() -> str:
   одноимённые BL из разных партий с file_id) → propose_action kind='move_file' (file_id, bl_id) или
   kind='delete_file' (file_id). ТЫ ЭТО УМЕЕШЬ. Никогда не отвечай «инструмента для перепривязки нет» и не
   отправляй человека делать это руками в панели — исправь сам заявкой.
+• «открылась партия-ДУБЛИКАТ / это одна и та же партия / удали лишнюю» → сначала пойми, какая настоящая
+  (обычно та, что старше, с привязанными группами и файлами). Затем: propose_action kind='merge_batches'
+  (from_batch_id=дубликат, to_batch_id=настоящая) — грузы, файлы и группы переедут, одинаковые коды
+  сведутся, опустевший дубликат удалится сам. Пустую партию можно убрать напрямую: kind='delete_batch'
+  (batch_id) — непустую он сам откажется трогать. ТЫ ЭТО УМЕЕШЬ — никогда не отвечай «удалить партию не могу».
+  Смена ДАТЫ фуры в шитсе дубль больше не открывает — бот сам переименует партию и скажет об этом.
 • «загрузи/забери packing list'ы с Drive», «drive'ga yuklangan 14.08 ni yukla», «прикрепи файлы из папки» →
   import_packing_from_drive (folder='14.08'). ТЫ ЭТО УМЕЕШЬ — никогда не отвечай «у меня нет инструмента»
   и не отправляй человека кидать ссылку в группу. Бот и сам проверяет папку каждые ~15 минут, но по просьбе
@@ -897,7 +903,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -1909,6 +1915,7 @@ ALLOWED_ACTION_KINDS = {
     "set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan",
     "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan",
     "move_file", "delete_file", "update_batch", "watch_plans",
+    "merge_batches", "delete_batch",
 }
 
 
@@ -1998,6 +2005,30 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
         params["old_destination"] = batch.get("eta_destination") or ""
     elif kind == "watch_plans":
         params = {}
+    elif kind == "merge_batches":
+        src = db.get_batch(int(params.get("from_batch_id") or 0))
+        dst = db.get_batch(int(params.get("to_batch_id") or 0))
+        if not src or not dst:
+            return {"error": "from_batch_id/to_batch_id не найдены — возьми id из get_overview"}
+        if int(src["id"]) == int(dst["id"]):
+            return {"error": "Партии совпадают — сливать нечего"}
+        src_bls = db.get_bl_by_batch(src["id"])
+        params["from_name"] = src["name"]
+        params["to_name"] = dst["name"]
+        params["bl_count"] = len(src_bls)
+    elif kind == "delete_batch":
+        batch = db.get_batch(int(params.get("batch_id") or 0))
+        if not batch:
+            return {"error": "batch_id не найден — возьми его из get_overview"}
+        bls = db.get_bl_by_batch(batch["id"])
+        if bls:
+            return {"error": (
+                f"В партии «{batch['name']}» ещё {len(bls)} BL — удалять можно только ПУСТУЮ. "
+                "Если это дубликат, сначала слей грузы: propose_action kind='merge_batches' "
+                "(from_batch_id=дубликат, to_batch_id=настоящая) — файлы и группы переедут, "
+                "потом пустышку удалим."
+            )}
+        params["batch_name"] = batch["name"]
     elif kind == "move_file":
         file_row = db.get_file_by_id(int(params.get("file_id") or 0))
         if not file_row:
