@@ -27,8 +27,59 @@ import requests as req
 
 import database as db
 
-DEEPSEEK_BASE_URL = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
-FALLBACK_MODEL = "deepseek-chat"
+# ── ПРОВАЙДЕР МОЗГА АГЕНТА ──────────────────────────────────────────
+# Протокол один (OpenAI-compatible chat completions + tools), поэтому
+# смена модели — это только адрес/ключ/имя. AI_PROVIDER выбирает пресет:
+#   deepseek   — по умолчанию, как раньше (DEEPSEEK_API_KEY)
+#   hermes     — Hermes 4 напрямую у Nous Research (NOUS_API_KEY)
+#   openrouter — Hermes 4 через OpenRouter (OPENROUTER_API_KEY)
+# AI_API_BASE_URL / AI_API_KEY / AI_MODEL перекрывают любой пресет —
+# откат на DeepSeek = убрать AI_PROVIDER, ничего не передеплоивая руками.
+_PROVIDER_PRESETS = {
+    "deepseek": {
+        "base": "https://api.deepseek.com",
+        "base_env": "DEEPSEEK_BASE_URL",       # исторические переменные
+        "model": "deepseek-v4-pro",
+        "model_env": "DEEPSEEK_MODEL",
+        "fallback_model": "deepseek-chat",
+        "key_envs": ("DEEPSEEK_API_KEY",),
+        "key_hint": "DEEPSEEK_API_KEY (platform.deepseek.com → API Keys)",
+    },
+    "hermes": {
+        "base": "https://inference-api.nousresearch.com/v1",
+        "model": "Hermes-4-405B",
+        "fallback_model": "Hermes-4-70B",
+        "key_envs": ("NOUS_API_KEY", "AI_API_KEY"),
+        "key_hint": "NOUS_API_KEY (portal.nousresearch.com)",
+    },
+    "openrouter": {
+        "base": "https://openrouter.ai/api/v1",
+        "model": "nousresearch/hermes-4-405b",
+        "fallback_model": "nousresearch/hermes-4-70b",
+        "key_envs": ("OPENROUTER_API_KEY", "AI_API_KEY"),
+        "key_hint": "OPENROUTER_API_KEY (openrouter.ai → Keys)",
+    },
+}
+
+
+def _provider() -> dict:
+    name = (os.getenv("AI_PROVIDER") or "deepseek").strip().lower()
+    return _PROVIDER_PRESETS.get(name, _PROVIDER_PRESETS["deepseek"])
+
+
+def provider_name() -> str:
+    name = (os.getenv("AI_PROVIDER") or "deepseek").strip().lower()
+    return name if name in _PROVIDER_PRESETS else "deepseek"
+
+
+def _base_url() -> str:
+    p = _provider()
+    legacy = os.getenv(p.get("base_env") or "") if p.get("base_env") else ""
+    return (os.getenv("AI_API_BASE_URL") or legacy or p["base"]).rstrip("/")
+
+
+def _fallback_model() -> str:
+    return _provider()["fallback_model"]
 # у ассистента много инструментов, и живые вопросы («кто обновил трекинг
 # сегодня?») законно требуют цепочки find_bl → get_batch_detail →
 # get_send_logs; 6 раундов упирались в лимит и ответ терялся
@@ -48,11 +99,20 @@ _history_lock = threading.Lock()
 
 
 def _api_key() -> str:
-    return (os.getenv("DEEPSEEK_API_KEY") or "").strip()
+    override = (os.getenv("AI_API_KEY") or "").strip()
+    if override:
+        return override
+    for env in _provider()["key_envs"]:
+        val = (os.getenv(env) or "").strip()
+        if val:
+            return val
+    return ""
 
 
 def _model() -> str:
-    return (os.getenv("DEEPSEEK_MODEL") or "deepseek-v4-pro").strip()
+    p = _provider()
+    legacy = os.getenv(p.get("model_env") or "") if p.get("model_env") else ""
+    return (os.getenv("AI_MODEL") or legacy or p["model"]).strip()
 
 
 def admin_ids() -> set:
@@ -123,6 +183,10 @@ def _mask_chat_id(chat_id) -> str:
 
 def get_runtime_status() -> dict:
     return {
+        "ai_provider": provider_name(),
+        "ai_model": _model(),
+        "ai_base_url": _base_url(),
+        # старые ключи оставлены — их читает панель/мониторинг
         "deepseek_api_key_present": bool(_api_key()),
         "deepseek_model": _model(),
         "admin_ids": sorted(admin_ids()),
@@ -2057,7 +2121,7 @@ def _chat_completion(messages, use_model=None, tools=None):
     for attempt in range(len(_RETRY_DELAYS) + 1):
         try:
             response = req.post(
-                f"{DEEPSEEK_BASE_URL}/chat/completions",
+                f"{_base_url()}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {_api_key()}",
                     "Content-Type": "application/json",
@@ -2073,10 +2137,10 @@ def _chat_completion(messages, use_model=None, tools=None):
             continue
         if response.status_code == 400 and use_model is None:
             # Unknown model name (e.g. the configured one isn't available on
-            # this account) — retry once with the standard model.
+            # this account) — retry once with the provider's standard model.
             body = response.text or ""
             if "model" in body.lower():
-                return _chat_completion(messages, use_model=FALLBACK_MODEL, tools=tools)
+                return _chat_completion(messages, use_model=_fallback_model(), tools=tools)
         if response.status_code in _RETRY_STATUSES:
             # Повтор безопасен: ответ модели не пришёл, значит ни один
             # инструмент не выполнялся и побочных эффектов не было.
@@ -2121,9 +2185,8 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
     if not _api_key():
         return {
             "reply": (
-                "🤖 AI-ассистент ещё не подключён: не задан <b>DEEPSEEK_API_KEY</b>.\n"
-                "Создай API ключ на platform.deepseek.com → API Keys и добавь его в переменные окружения "
-                "(.env локально и Railway), затем перезапусти сервис."
+                f"🤖 AI-ассистент ещё не подключён: не задан <b>{_provider()['key_hint']}</b>.\n"
+                "Добавь ключ в переменные окружения (.env локально и Railway), затем перезапусти сервис."
             ),
             "pending": [],
         }
@@ -2275,7 +2338,11 @@ def reset_history(tg_user_id) -> None:
 # pre-bound to that chat_id — the model can't ask about другие группы).
 
 def _group_model() -> str:
-    return (os.getenv("DEEPSEEK_GROUP_MODEL") or "").strip() or _model()
+    # AI_GROUP_MODEL — общий override; DEEPSEEK_GROUP_MODEL оставлен для
+    # обратной совместимости с уже настроенными переменными Railway
+    return ((os.getenv("AI_GROUP_MODEL") or "").strip()
+            or (os.getenv("DEEPSEEK_GROUP_MODEL") or "").strip()
+            or _model())
 
 
 GROUP_TOOLS = [
