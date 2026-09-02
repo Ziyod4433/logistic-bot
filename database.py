@@ -838,6 +838,20 @@ def init_db():
             resolved_at TEXT NOT NULL DEFAULT ''
         );
 
+        -- Долговременная память агента: решения и факты, которые владелец
+        -- велел помнить между диалогами («SHOXSET исключён вручную — не
+        -- спрашивай»). Подмешивается в системный промпт.
+        CREATE TABLE IF NOT EXISTS agent_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fact TEXT NOT NULL,
+            why TEXT NOT NULL DEFAULT '',
+            scope TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            expires_at TEXT NOT NULL DEFAULT '',
+            active INTEGER NOT NULL DEFAULT 1
+        );
+
         CREATE TABLE IF NOT EXISTS tracking_delivery_coverage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
@@ -4460,6 +4474,69 @@ def set_setting(key: str, value: str) -> None:
             (str(key or "").strip(), str(value or "").strip()),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── ПАМЯТЬ АГЕНТА ───────────────────────────────────────────────────
+
+def agent_memory_add(fact: str, why: str = "", scope: str = "",
+                     created_by: str = "", expires_days: int = 0) -> int:
+    fact = str(fact or "").strip()
+    if not fact:
+        raise ValueError("Пустой факт запоминать нельзя")
+    expires_at = ""
+    if expires_days and int(expires_days) > 0:
+        expires_at = (
+            datetime.now(TASHKENT_TZ) + timedelta(days=int(expires_days))
+        ).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO agent_memory(fact, why, scope, created_by, expires_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (fact, str(why or "").strip(), str(scope or "").strip(),
+             str(created_by or "").strip(), expires_at),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def agent_memory_forget(memory_id: int) -> bool:
+    """Мягкое удаление: запись гаснет, но остаётся в истории."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE agent_memory SET active = 0 WHERE id = ? AND active = 1",
+            (int(memory_id),),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def agent_memory_list(limit: int = 50, include_inactive: bool = False) -> list:
+    """Действующие записи, свежие первыми; просроченные не показываются."""
+    now = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    where = "" if include_inactive else (
+        "WHERE active = 1 AND (expires_at = '' OR expires_at > ?)"
+    )
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT id, fact, why, scope, created_by, created_at, expires_at, active
+            FROM agent_memory {where}
+            ORDER BY id DESC LIMIT ?
+            """,
+            ((now, int(limit)) if where else (int(limit),)),
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

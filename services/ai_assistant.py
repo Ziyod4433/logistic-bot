@@ -501,7 +501,40 @@ Kerak bo'lsa — hozir qo'llayman (apply_kazakh_plan) yoki to'liq ro'yxatni PDF 
 - КТО ЧТО МОЖЕТ: смотреть данные и спрашивать тебя может весь персонал управляющей группы; создавать
   заявки на изменения и подтверждать их — только владелец и ответственный оператор. Остальным на просьбу
   что-то изменить отвечай дружелюбно: «это подтверждает владелец или ответственный». Мини-форму
-  «Treking forma» это правило НЕ касается — её заполняют и подтверждают логисты как обычно."""
+  «Treking forma» это правило НЕ касается — её заполняют и подтверждают логисты как обычно.""" + _memory_prompt_block()
+
+
+def _memory_prompt_block() -> str:
+    """Раздел «ПАМЯТЬ» системного промпта: действующие решения и факты,
+    которые владелец велел помнить между диалогами. Пустая память — пустой
+    раздел (без лишних токенов)."""
+    try:
+        rows = db.agent_memory_list(limit=30)
+    except Exception:
+        return ""
+    rules = (
+        "\n\n════════ ПАМЯТЬ ════════\n"
+        "Правила работы с памятью:\n"
+        "- «запомни …», «больше не спрашивай про …», «на будущее: …» → вызови remember_fact "
+        "(факт формулируй коротко и точно, добавь why, если причина названа);\n"
+        "- «забудь про …» → найди запись через list_memories и вызови forget_fact;\n"
+        "- записи ниже УЧИТЫВАЙ в ответах и решениях, сам ссылайся на них, когда уместно;\n"
+        "- если память противоречит живым данным инструментов — ГЛАВНЕЕ живые данные, "
+        "скажи о расхождении и предложи обновить память;\n"
+        "- не запоминай секреты (токены, пароли) и конфиденциальные chat_id."
+    )
+    if not rows:
+        return rules + "\nСейчас память пуста."
+    lines = []
+    for r in rows:
+        line = f"• #{r['id']} {r['fact']}"
+        if r.get("why"):
+            line += f" (почему: {r['why']})"
+        meta = ", ".join(x for x in (r.get("scope") or "", str(r.get("created_at") or "")[:10]) if x)
+        if meta:
+            line += f" [{meta}]"
+        lines.append(line)
+    return rules + "\nДействующие записи:\n" + "\n".join(lines)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -720,6 +753,47 @@ TOOLS = [
                 "properties": {"query": {"type": "string", "description": "часть названия группы или код BL/бренд"}},
                 "required": ["query"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember_fact",
+            "description": (
+                "ПАМЯТЬ: сохранить решение/факт владельца НАВСЕГДА (между диалогами). Вызывай на "
+                "«запомни», «больше не спрашивай», «на будущее». Не для секретов и не для того, "
+                "что уже хранится в базе (статусы, составы партий)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string", "description": "короткая точная формулировка"},
+                    "why": {"type": "string", "description": "причина, если названа"},
+                    "scope": {"type": "string", "description": "к чему относится: код BL, партия, группа; пусто = общее"},
+                    "expires_days": {"type": "integer", "description": "через сколько дней забыть; 0/пусто = бессрочно"},
+                },
+                "required": ["fact"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "forget_fact",
+            "description": "ПАМЯТЬ: погасить запись по id (см. list_memories). Вызывай на «забудь …».",
+            "parameters": {
+                "type": "object",
+                "properties": {"memory_id": {"type": "integer", "description": "id записи"}},
+                "required": ["memory_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_memories",
+            "description": "ПАМЯТЬ: действующие записи (id, факт, причина, срок). Для «что ты помнишь» и перед forget_fact.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     {
@@ -2033,6 +2107,27 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
                 return _tool_cancel_scheduled_task(args)
             if name == "list_groups":
                 return _tool_list_groups(args)
+        if name in ("remember_fact", "forget_fact"):
+            # память меняют только владелец/оператор — остальным она видна,
+            # но не переписывается (companion приходит сюда с readonly=True)
+            if readonly or not can_change(tg_user_id):
+                return {"error": "Память меняют владелец или ответственный оператор."}
+            if name == "remember_fact":
+                mem_id = db.agent_memory_add(
+                    args.get("fact") or "",
+                    why=args.get("why") or "",
+                    scope=args.get("scope") or "",
+                    created_by=str(tg_user_id),
+                    expires_days=int(args.get("expires_days") or 0),
+                )
+                return {"ok": True, "memory_id": mem_id,
+                        "note": "Запомнил. Запись действует с этого момента во всех диалогах."}
+            removed = db.agent_memory_forget(int(args.get("memory_id") or 0))
+            return {"ok": removed,
+                    "note": "Забыл." if removed else "Такой активной записи нет — сверься с list_memories."}
+        if name == "list_memories":
+            rows = db.agent_memory_list(limit=50)
+            return {"count": len(rows), "memories": rows}
         if name == "get_overview":
             return _tool_get_overview(args)
         if name == "get_batch_detail":
@@ -2197,12 +2292,13 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
 
     system_prompt = _system_prompt()
     tools = TOOLS
+    _mutating = {"propose_action", "remember_fact", "forget_fact"}
     if companion:
         # участник управляющей группы без прав на изменения
-        tools = [t for t in TOOLS if t["function"]["name"] != "propose_action"]
+        tools = [t for t in TOOLS if t["function"]["name"] not in _mutating]
         system_prompt += COMPANION_PROMPT
     elif readonly:
-        tools = [t for t in TOOLS if t["function"]["name"] != "propose_action"]
+        tools = [t for t in TOOLS if t["function"]["name"] not in _mutating]
         system_prompt += (
             "\n\nРЕЖИМ ТОЛЬКО ЧТЕНИЕ: этот пользователь может смотреть любую информацию, но НЕ может "
             "ничего менять или рассылать — инструмента propose_action у тебя сейчас нет. На просьбы "
