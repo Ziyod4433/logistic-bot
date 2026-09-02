@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
 # Запуск с непрерывной репликацией SQLite (Litestream) — если настроена.
 #
-# Включение (переменные Railway):
-#   LITESTREAM_BUCKET            имя бакета (R2/B2/S3)
-#   LITESTREAM_ENDPOINT          endpoint S3-совместимого хранилища
-#                                (R2: https://<ACCOUNT_ID>.r2.cloudflarestorage.com)
+# Вариант A — S3-совместимое хранилище (R2/B2/S3):
+#   LITESTREAM_BUCKET            имя бакета
+#   LITESTREAM_ENDPOINT          endpoint (R2: https://<ACCOUNT_ID>.r2.cloudflarestorage.com)
 #   LITESTREAM_ACCESS_KEY_ID     ключ
 #   LITESTREAM_SECRET_ACCESS_KEY секрет
+#   LITESTREAM_REGION            (default: auto)
+# Вариант B — Google Cloud Storage:
+#   LITESTREAM_GCS_BUCKET        имя бакета GCS
+#   GCS_CREDENTIALS_JSON         содержимое JSON-ключа сервис-аккаунта
+# Общие:
 #   LITESTREAM_PATH              путь в бакете (default: logistic)
-#   LITESTREAM_REGION            (default: auto — так надо для R2)
 #   LITESTREAM_VERSION           (default: 0.5.17)
 #
-# Без LITESTREAM_BUCKET приложение стартует как раньше — обвязка спит.
+# Без этих переменных приложение стартует как раньше — обвязка спит.
 # Бинарь скачивается ОДИН раз на волюм (/app/data/bin) и переживает деплои.
 set -u
 
 APP_CMD="python app.py"
 
-if [ -z "${LITESTREAM_BUCKET:-}" ]; then
+if [ -z "${LITESTREAM_BUCKET:-}" ] && [ -z "${LITESTREAM_GCS_BUCKET:-}" ]; then
     exec $APP_CMD
 fi
 
@@ -43,7 +46,20 @@ if [ ! -x "$LS_BIN" ]; then
 fi
 
 CFG=/tmp/litestream.yml
-cat > "$CFG" <<EOF
+if [ -n "${LITESTREAM_GCS_BUCKET:-}" ]; then
+    # Google Cloud Storage: ключ сервис-аккаунта кладём из переменной в файл
+    printf '%s' "${GCS_CREDENTIALS_JSON:-}" > /tmp/gcs-key.json
+    export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcs-key.json
+    cat > "$CFG" <<EOF
+dbs:
+  - path: $DB
+    replicas:
+      - type: gcs
+        bucket: ${LITESTREAM_GCS_BUCKET}
+        path: ${LITESTREAM_PATH:-logistic}
+EOF
+else
+    cat > "$CFG" <<EOF
 dbs:
   - path: $DB
     replicas:
@@ -55,6 +71,7 @@ dbs:
         access-key-id: ${LITESTREAM_ACCESS_KEY_ID:-}
         secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY:-}
 EOF
+fi
 
 # Диск пуст (новый волюм / катастрофа) — поднять базу из реплики
 if [ ! -f "$DB" ]; then
@@ -62,5 +79,5 @@ if [ ! -f "$DB" ]; then
     "$LS_BIN" restore -if-replica-exists -config "$CFG" "$DB" || true
 fi
 
-echo "[litestream] replication ON → bucket=$LITESTREAM_BUCKET path=${LITESTREAM_PATH:-logistic}"
+echo "[litestream] replication ON → bucket=${LITESTREAM_GCS_BUCKET:-${LITESTREAM_BUCKET:-}} path=${LITESTREAM_PATH:-logistic}"
 exec "$LS_BIN" replicate -config "$CFG" -exec "$APP_CMD"
