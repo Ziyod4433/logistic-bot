@@ -3210,20 +3210,57 @@ def _execute_tracking_broadcast(batch_id: int, actor: str = "", filled_by: str =
 
     # цифры BL — к плану, прямо перед отправкой (иначе уйдут устаревшие)
     _refresh_batch_figures_from_plan(batch)
-    bl_rows = [
-        bl for bl in db.get_bl_by_batch(batch_id)
-        if bl.get("chat_id") and not bl.get("send_excluded") and not bl.get("tracking_sent_current")
-    ]
-    sent_chats: set = set()
+
+    # ── разбираем ВСЕХ BL партии: кто едет, кто и ПОЧЕМУ пропущен ──
+    # Молчаливый пропуск скрывал ошибки: 02.09 BL-547 (группа привязана,
+    # в плане есть) не получил утренний трекинг, а отчёт «✅ 16 ❌ 0»
+    # выглядел как «всем отправлено». Пропущенных называем поимённо.
+    all_rows = db.get_bl_by_batch(batch_id)
+    try:
+        excl_sources = db.get_batch_send_exclusion_sources(batch_id)
+    except Exception:
+        excl_sources = {}
+    warn_skips: list[str] = []   # устранимые пропуски: исключён / без группы
+    info_skips: list[str] = []   # штатные: несколько BL в одной группе
+    already_count = 0
     dispatch = []
-    for bl in bl_rows:
+    sent_chats: set = set()
+    chat_owner: dict = {}        # chat_id → код BL, который уедет этим сообщением
+    for bl in all_rows:
+        code = html.escape(str(bl.get("code") or ""))
         cid = str(bl.get("chat_id") or "").strip()
-        if not cid or cid in sent_chats:
+        if bl.get("send_excluded"):
+            why = ("исключён вручную"
+                   if excl_sources.get(bl.get("id")) == "manual"
+                   else "исключён: нет в плане этой фуры")
+            warn_skips.append(f"{code} — {why}")
+            continue
+        if not cid:
+            warn_skips.append(f"{code} — нет Telegram-группы")
+            continue
+        if bl.get("tracking_sent_current"):
+            already_count += 1
+            continue
+        if cid in sent_chats:
+            # одна группа на несколько BL — сообщение уходит одно, это не пропуск
+            info_skips.append(f"{code} — одна группа с {chat_owner.get(cid, '?')}, уйдёт тем же сообщением")
             continue
         sent_chats.add(cid)
+        chat_owner[cid] = code
         dispatch.append(bl)
+
     if not dispatch:
-        return False, f"«{batch['name']}»: нет BL для отправки (все уже отправлены, исключены или без групп)"
+        # ничего не ушло — говорим ПОЧЕМУ. «Все уже получили» — это не
+        # ошибка (кейс 29.08: оба BL получили трекинг 31.08), ⚠️ не нужен.
+        details = []
+        if already_count:
+            details.append(f"все {already_count} уже получили актуальный трекинг" if not warn_skips
+                           else f"{already_count} уже получили актуальный трекинг")
+        details += warn_skips
+        reason = "; ".join(details) or "в партии нет BL"
+        benign = already_count > 0 and not warn_skips
+        return benign, f"«{batch['name']}»: новых отправок нет — {reason}"
+
     ok_count = 0
     fail_count = 0
     for bl in dispatch:
@@ -3242,7 +3279,16 @@ def _execute_tracking_broadcast(batch_id: int, actor: str = "", filled_by: str =
             ok_count += 1
         else:
             fail_count += 1
-    return fail_count == 0, f"Трекинг «{batch['name']}»: ✅ {ok_count} · ❌ {fail_count}"
+    summary = f"Трекинг «{batch['name']}»: ✅ {ok_count} · ❌ {fail_count}"
+    if already_count:
+        summary += f" · 📨 {already_count} уже получили"
+    if warn_skips:
+        summary += "\n" + "\n".join(f"   ⚠️ {line}" for line in warn_skips[:10])
+        if len(warn_skips) > 10:
+            summary += f"\n   ⚠️ …и ещё {len(warn_skips) - 10}"
+    if info_skips:
+        summary += "\n" + "\n".join(f"   ⏭ {line}" for line in info_skips[:5])
+    return fail_count == 0, summary
 
 
 def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
@@ -5499,7 +5545,8 @@ def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
                     continue  # казахский план ещё не применён — этим занимается ask-флоу
                 # применённый казахский план: ТОЛЬКО через дедубликатор (переезды,
                 # а не новые дубли одного груза в двух партиях)
-                ok, msg, changed = _apply_kazakh_plan_impl({"batch_id": batch["id"]}, blocks=blocks)
+                ok, msg, changed = _apply_kazakh_plan_impl(
+                    {"batch_id": batch["id"]}, blocks=blocks, standalone=False)
                 if ok and changed:
                     report.append(msg)
                 elif not ok:
@@ -5543,13 +5590,18 @@ def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
             app.logger.exception("Plan sync: batch %s sync failed", batch.get("name"))
 
     # ── 3. отчёт (только при изменениях) ──
-    if unlinked_all:
-        codes = ", ".join(html.escape(c) for c in sorted(set(unlinked_all))[:20])
-        report.append(_unlinked_bl_request(codes))
-    if report:
+    if report or unlinked_all:
+        stamp = now.strftime("%d.%m, %H:%M")
+        body = "\n\n".join(report)
+        # пояснения — ОДИН раз внизу письма, а не в каждом блоке партии
+        if "🚫" in body or "⏳" in body:
+            body += "\n\n" + _PLAN_REPORT_FOOTNOTE
+        if unlinked_all:
+            codes = ", ".join(html.escape(c) for c in sorted(set(unlinked_all))[:20])
+            body = (body + "\n\n" if body else "") + _unlinked_bl_request(codes)
         _send_long_message(
             ai_assistant.control_group_id(),
-            "🗂 <b>Планы погрузки — утренняя сверка</b>\n\n" + "\n".join(report),
+            f"🗂 <b>Сверка с планами погрузки</b> · {stamp}\n\n" + body,
         )
     return True, f"{len(report)} changes"
 
@@ -5563,6 +5615,11 @@ def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
 PLAN_WATCH_HOURS = float(os.getenv("PLAN_WATCH_HOURS", "3") or 3)
 _PLAN_WATCH_SETTING = "plan_watch_last"
 _PLAN_WATCH_REPORT_SETTING = "plan_watch_last_report"
+# длинные пояснения печатаем ОДИН раз внизу отчёта, а не в каждой строке
+_PLAN_REPORT_FOOTNOTE = (
+    "<i>🚫 и ⏳ — груз остаётся в партии со всеми файлами и группой, "
+    "но трекинг этой фуры ему не уходит. Появится в плане — вернётся сам.</i>"
+)
 
 
 def _batch_composition_snapshot() -> dict:
@@ -5648,33 +5705,36 @@ def watch_plan_changes(force: bool = False):
     if not (moved or alerted or new_batches or relinked):
         return bool(ok), f"без изменений ({info})"
 
-    parts = ["🔄 <b>Сверка с шитсом: план изменился</b>"]
+    stamp = now_ts.strftime("%d.%m, %H:%M")
+    parts = [f"🔄 <b>План изменился</b> · {stamp}"]
     if alerted:
         parts.append(
-            "🚨 <b>Клиентам уже уходил трекинг СТАРОЙ партии</b> — груз с тех пор переехал, "
-            "им нужно сообщить об изменении:\n" + "\n".join(f"  • {x}" for x in alerted[:15])
+            f"🚨 <b>Клиент уже получил трекинг старой партии</b> ({len(alerted)})\n"
+            "   груз с тех пор переехал — нужно сообщить об изменении\n"
+            + "\n".join(f"   • {x}" for x in alerted[:12])
         )
     if moved:
         parts.append(
-            "📦 Переехали между партиями (трекинг по ним ещё не уходил):\n"
-            + "\n".join(f"  • {x}" for x in moved[:15])
+            f"📤 <b>Переехали между партиями</b> ({len(moved)})\n"
+            "   трекинг по ним ещё не уходил\n"
+            + "\n".join(f"   • {x}" for x in moved[:12])
         )
     if new_batches:
         parts.append(
-            "🆕 Новые партии из шитса: "
-            + ", ".join(f"«{html_escape(str(b['name']))}»" for b in new_batches[:10])
+            f"🆕 <b>Новые партии из шитса</b> ({len(new_batches)})\n"
+            + "\n".join(f"   • {html_escape(str(b['name']))}" for b in new_batches[:10])
         )
     if relinked:
         parts.append(
-            f"🔗 Появились группы — привязал грузы, которые ждали ({len(relinked)}):\n"
+            f"🔗 <b>Появились группы — привязал ждавшие грузы</b> ({len(relinked)})\n"
             + "\n".join(
-                f"  • <code>{html_escape(str(x['code']))}</code> → "
-                f"«{html_escape(str(x['chat_title'] or x['chat_id']))}» ({html_escape(str(x['batch']))})"
+                f"   • <code>{html_escape(str(x['code']))}</code> → "
+                f"{html_escape(str(x['chat_title'] or x['chat_id']))}"
                 + (f" · язык {html_escape(str(x['language']))}" if x.get("language") else "")
-                for x in relinked[:15]
+                for x in relinked[:12]
             )
         )
-    parts.append(_plan_staff_mentions() + " — проверьте, пожалуйста.")
+    parts.append(f"👤 {_plan_staff_mentions()}")
     report_text = "\n\n".join(parts)
 
     # Один и тот же отчёт дважды подряд — шум: значит с прошлого раза ничего
@@ -5693,9 +5753,14 @@ def watch_plan_changes(force: bool = False):
                   f"привязано {len(relinked)}")
 
 
-def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
+def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
+                            standalone: bool = True):
     """Привести партию к казахскому плану (перегрузка в Хоргосе).
     Возвращает (ok, сообщение, были_ли_изменения).
+
+    standalone=False — отчёт пойдёт в общую сверку: пояснения и просьбу
+    добавить бота в группы печатает вызывающий, один раз на всё письмо,
+    иначе одно и то же повторяется в каждом блоке (жалоба 28.08.2026).
 
     Дедубликатор: груз из плана, числящийся в ДРУГОЙ партии, чья фура
     тоже в Хоргосе (казахская стадия, или та же дата с отставшим
@@ -5937,55 +6002,60 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None):
 
     db.set_batch_plan_ref(batch["id"], block["tab"], pss.ref_title(block), block["date"], "kazakh")
 
+    # ── отчёт: БЛОК на партию, по строке на факт ──
+    # Раньше всё склеивалось в один абзац через пробелы и читалось как каша
+    # (владелец 28.08.2026). Длинные пояснения вынесены в сноску, которую
+    # вызывающий печатает ОДИН раз внизу.
+    def _line(icon: str, label: str, items: list, limit: int = 8) -> str:
+        shown = list(items)[:limit]
+        rest = len(items) - len(shown)
+        tail = f" …и ещё {rest}" if rest > 0 else ""
+        return f"   {icon} {label} ({len(items)}): " + ", ".join(shown) + tail
+
     parts = [
-        f"🇰🇿 «{html.escape(batch['name'])}»: применён казахский план "
-        f"«{html.escape(block['title'])}» ({html.escape(block['date'])})."
+        f"📦 <b>{html.escape(batch['name'])}</b>",
+        f"   🇰🇿 план {html.escape(str(block['date']))} применён",
     ]
     if moved_in:
-        parts.append("Переехали сюда: " + ", ".join(moved_in[:12]) + ".")
+        parts.append(_line("🔁", "переехали сюда", moved_in))
     if restored:
-        parts.append(
-            "🔔 Снова в плане — вернул в рассылку: "
-            + ", ".join(html.escape(c) for c in restored[:12]) + "."
-        )
+        parts.append(_line("🔔", "снова в плане, вернул в рассылку",
+                           [html.escape(c) for c in restored]))
     if reused_files:
-        parts.append(
-            "📎 Сверено с шитсом, строка перевезена вместе с файлами (перезаливать не нужно): "
-            + ", ".join(reused_files[:12]) + "."
-        )
+        parts.append(_line("📎", "перевезены вместе с файлами", reused_files))
     if added:
-        parts.append("Добавлены: " + ", ".join(html.escape(c) for c in added[:12]) + ".")
+        parts.append(_line("➕", "добавлены", [html.escape(c) for c in added]))
     if updated:
-        parts.append(f"Обновлены цифры: {len(updated)} BL.")
+        parts.append(f"   📐 обновлены цифры: {len(updated)}")
     if merged:
-        parts.append("Сведены дубли: " + ", ".join(merged[:12]) + ".")
+        parts.append(_line("🧩", "сведены дубли", merged))
     if kept_split:
-        parts.append("Раздельный груз (обе партии): " + ", ".join(html.escape(c) for c in sorted(set(kept_split))[:8]) + ".")
+        parts.append(_line("✂️", "раздельный груз, в обеих партиях",
+                           [html.escape(c) for c in sorted(set(kept_split))]))
     if moved_away:
-        parts.append("Уехали в свои партии: " + ", ".join(moved_away[:12]) + ".")
+        parts.append(_line("📤", "уехали в свои партии", moved_away))
     if waiting:
-        parts.append(
-            "⏳ Ждут свою фуру (их казахский план есть, но она ещё не в Хоргосе) — "
-            "пока исключены из рассылки, чтобы не ушёл чужой трекинг: " + ", ".join(waiting[:12]) + "."
-        )
+        parts.append(_line("⏳", "ждут свою фуру, пока без рассылки", waiting))
     if stuck:
-        parts.append(
-            "🚫 Нет ни в одном казахском плане — оставил в партии, но ИСКЛЮЧИЛ из рассылки "
-            "(файлы и группа сохранены; появится в плане — уедет сам): " + ", ".join(stuck[:12]) + "."
-        )
+        parts.append(_line("🚫", "нет в планах, убраны из рассылки", stuck))
     if kept_dups:
-        parts.append(
-            "⚠️ Один груз в двух партиях, у обеих строк есть файлы/история — решите вручную: "
-            + ", ".join(sorted(set(kept_dups))[:8]) + "."
-        )
+        parts.append(_line("⚠️", "один груз в двух партиях — решите вручную",
+                           sorted(set(kept_dups))))
     if unlinked:
-        parts.append(_unlinked_bl_request(", ".join(html.escape(c) for c in unlinked[:12])))
-    # stuck/waiting сюда НЕ входят: это устойчивое состояние, которое иначе
-    # повторялось бы отчётом на каждой сверке. Считаем изменением только
-    # ФАКТ нового исключения.
+        parts.append(_line("👥", "без Telegram-группы", [html.escape(c) for c in unlinked]))
+    if standalone:
+        if stuck or waiting:
+            parts.append("")
+            parts.append(_PLAN_REPORT_FOOTNOTE)
+        if unlinked:
+            parts.append("")
+            parts.append(_unlinked_bl_request(", ".join(html.escape(c) for c in unlinked[:20])))
+
+    # stuck/waiting в «изменения» НЕ входят: это устойчивое состояние,
+    # иначе один и тот же отчёт уходил бы на каждой сверке.
     changed = bool(moved_in or added or updated or moved_away or merged or kept_dups
                    or reused_files or restored or newly_excluded)
-    return True, " ".join(parts), changed
+    return True, "\n".join(parts), changed
 
 
 def _apply_kazakh_plan(params: dict):

@@ -3447,6 +3447,24 @@ def get_batch_send_exclusion_map(batch_id: int) -> dict[int, bool]:
         conn.close()
 
 
+def get_batch_send_exclusion_sources(batch_id: int) -> dict[int, str]:
+    """bl_id → 'manual' | 'plan' для действующих исключений партии —
+    отчёту рассылки нужно объяснять, ПОЧЕМУ BL пропущен."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl_id, source
+            FROM batch_send_exclusions
+            WHERE batch_id = ? AND is_excluded = 1
+            """,
+            (batch_id,),
+        ).fetchall()
+        return {int(row["bl_id"]): str(row["source"] or "manual") for row in rows}
+    finally:
+        conn.close()
+
+
 def set_batch_send_exclusion(bl_id: int, excluded: bool, source: str = "manual") -> dict:
     conn = get_conn()
     try:
