@@ -2553,6 +2553,17 @@ def handle_telegram_message(message: dict):
     if maybe_handle_control_group_document(message):
         return
 
+    # Голосовые в личке (владелец/оператор/readonly/продавцы) — распознаём
+    # и ведём как обычный вопрос. У voice текста нет, поэтому ДО text-чека.
+    voice = message.get("voice") or message.get("audio")
+    if voice and chat_id and chat_type == "private":
+        from services import ai_assistant
+        if (ai_assistant.can_change(sender_id)
+                or ai_assistant.is_readonly_user(sender_id)
+                or ai_assistant.is_sales_user(sender_id)):
+            handle_private_voice_message(chat_id, sender_id, voice)
+        return
+
     if not chat_id or not text:
         return
 
@@ -2697,6 +2708,63 @@ def handle_telegram_message(message: dict):
 # ═══════════════════════════════════════════════════════════════
 # AI ASSISTANT (DeepSeek) — owner private chat + approval flow
 # ═══════════════════════════════════════════════════════════════
+
+ASR_MAX_SECONDS = int(os.getenv("ASR_MAX_SECONDS", "120") or 120)
+
+
+def handle_private_voice_message(chat_id, sender_id, voice: dict):
+    """Голосовое в личке: скачать → распознать (услышанное показываем) →
+    дальше обычный текстовый путь ассистента. Работа в воркере — скачивание
+    и ASR занимают секунды, webhook держать нельзя."""
+    from services import asr_service
+
+    duration = int(voice.get("duration") or 0)
+    if duration > ASR_MAX_SECONDS:
+        telegram_send_message(
+            chat_id,
+            f"🎙 Ovozli xabar juda uzun ({duration}s) — {ASR_MAX_SECONDS} soniyagacha yuboring "
+            "yoki matn bilan yozing.",
+        )
+        return
+    if not asr_service.available():
+        telegram_send_message(
+            chat_id,
+            "🎙 Ovozli xabarlarni tanish hozircha o'chirilgan — matn bilan yozing, iltimos.",
+        )
+        return
+
+    def _worker():
+        try:
+            with TypingIndicator(chat_id):
+                info = telegram_api("getFile", json={"file_id": voice.get("file_id")}) or {}
+                tg_path = ((info.get("result") or {}).get("file_path")) or ""
+                if not tg_path:
+                    telegram_send_message(chat_id, "🎙 Faylni yuklab bo'lmadi — qayta yuboring.")
+                    return
+                audio = req.get(
+                    f"https://api.telegram.org/file/bot{BOT_TOKEN}/{tg_path}", timeout=60
+                ).content
+                ok, text_or_err = asr_service.transcribe(audio, os.path.basename(tg_path) or "voice.ogg")
+            if not ok:
+                app.logger.warning("ASR failed for chat %s: %s", chat_id, text_or_err)
+                telegram_send_message(
+                    chat_id,
+                    "🎙 Ovozli xabarni tushunolmadim — matn bilan yozing, iltimos.",
+                )
+                return
+            # показываем, что услышали: если распознание кривое, человек
+            # сразу видит причину странного ответа
+            telegram_send_message(chat_id, f"🎙 <i>{html.escape(text_or_err)}</i>")
+            handle_ai_assistant_private_message(chat_id, sender_id, text_or_err)
+        except Exception:
+            app.logger.exception("Voice message handling failed")
+            try:
+                telegram_send_message(chat_id, "🎙 Xatolik yuz berdi — matn bilan yozing, iltimos.")
+            except Exception:
+                pass
+
+    threading.Thread(target=_worker, daemon=True).start()
+
 
 def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
     """Route one owner message to the assistant on a worker thread."""
