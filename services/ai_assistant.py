@@ -154,6 +154,46 @@ def is_readonly_user(tg_user_id) -> bool:
     return str(tg_user_id) in readonly_ids() and not can_change(tg_user_id)
 
 
+# ── ПРОДАВЦЫ: личка «только вопрос-ответ» (владелец, 02.09.2026) ────
+# Доступ к данным трекинга в личке бота БЕЗ Treking forma и без права
+# что-либо менять. Обращение — по имени, которое задал владелец.
+# Переопределение: AI_SALES_USERS="id:Имя,id:Имя,…"
+_DEFAULT_SALES_USERS = {
+    "8612993110": "BRO",          # Pulatov Sirojiddin
+    "7519237501": "O'rtoq ROP",   # Umar Rizayev
+    "6918148130": "Radnoooy",     # Olimov Sirojiddin
+    "496608984": "Komol",         # Komoliddin Qayumov
+    "7957282652": "Hojim",        # Rizayev Umar
+    "8380364372": "Hojaka",       # Bobur
+    "8713960550": "Brat",         # Sarvar Yunusov
+}
+
+
+def sales_users() -> dict:
+    raw = (os.getenv("AI_SALES_USERS") or "").strip()
+    if not raw:
+        return dict(_DEFAULT_SALES_USERS)
+    out = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        uid, _, nick = part.partition(":")
+        if uid.strip():
+            out[uid.strip()] = nick.strip() or uid.strip()
+    return out or dict(_DEFAULT_SALES_USERS)
+
+
+def sales_nick(tg_user_id) -> str:
+    return sales_users().get(str(tg_user_id), "")
+
+
+def is_sales_user(tg_user_id) -> bool:
+    """Продавец из списка владельца — если у него нет более высокой роли."""
+    uid = str(tg_user_id)
+    return uid in sales_users() and not can_change(uid) and not is_readonly_user(uid)
+
+
 def control_group_id() -> str:
     """The ONE staff group that has full rights over the bot. All other
     groups are client groups where the bot stays silent (for now)."""
@@ -2466,7 +2506,7 @@ COMPANION_PROMPT = """
 
 
 def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_direct: bool = False,
-                         companion: bool = False) -> dict:
+                         companion: bool = False, sales_name: str = "") -> dict:
     """Process one owner/staff message. Returns {"reply", "pending": [...]}.
 
     readonly=True (просмотровый доступ): все READ-инструменты доступны,
@@ -2490,10 +2530,31 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
         history = db.ai_get_history(tg_user_id)
         db.ai_add_message(tg_user_id, "user", text)
 
+    if sales_name:
+        readonly = True          # продавец = только чтение, без вариантов
+
     system_prompt = _system_prompt()
     tools = TOOLS
     _mutating = {"propose_action", "remember_fact", "forget_fact"}
-    if companion:
+    if sales_name:
+        tools = [t for t in TOOLS if t["function"]["name"] not in _mutating]
+        system_prompt += (
+            f"\n\nРЕЖИМ ПРОДАВЦА: с тобой говорит продавец, обращайся к нему строго «{sales_name}» "
+            "(это имя задал владелец).\n"
+            "• Формат работы — ТОЛЬКО вопрос-ответ по грузам и партиям: статус, сроки, состав, "
+            "packing list, история отправок. Отвечай полно, вежливо и на языке вопроса (узбекский/русский).\n"
+            "• Ты НИЧЕГО не меняешь и не рассылаешь. Treking forma ему НЕ доступна: на просьбы открыть "
+            "форму, изменить статус или разослать трекинг отвечай, что форму заполняют логисты в группе, "
+            "изменения подтверждает владелец. Инструментов изменений у тебя в этом диалоге нет.\n"
+            "• В КАЖДОМ ответе про груз/партию ОБЯЗАТЕЛЬНО укажи три строки, даже если о них не спрашивали:\n"
+            "  – 🕒 когда обновлена информация: last_tracking.sent_at из get_batch_detail; если рассылки "
+            "ещё не было — status_changed_at с пометкой, что это дата смены статуса;\n"
+            "  – ⏳ срок поставки ВМЕСТЕ с точкой, к которой он относится (eta_human, например "
+            "«Qozoq furaga ortilish vaqti: 3-4 kun» — НЕ выдавай его за срок до Ташкента);\n"
+            "  – 📍 текущий статус партии.\n"
+            "• Не выдумывай: каждая цифра и дата — из инструментов этого диалога."
+        )
+    elif companion:
         # участник управляющей группы без прав на изменения
         tools = [t for t in TOOLS if t["function"]["name"] not in _mutating]
         system_prompt += COMPANION_PROMPT

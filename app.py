@@ -2611,8 +2611,21 @@ def handle_telegram_message(message: dict):
         # web_app-кнопки не разрешает).
         db.clear_chat_state(chat_id)
         payload = text[7:].strip().lower() if text.startswith("/start ") else ""
-        if payload == "form" and chat_type == "private":
-            send_tracking_form_button(chat_id)
+        if chat_type == "private":
+            from services import ai_assistant as _ai
+            if _ai.is_sales_user(sender_id):
+                nick = _ai.sales_nick(sender_id)
+                # продавцам — только вопрос-ответ; форму не даём даже
+                # по deep-link'у из группы
+                telegram_send_message(
+                    chat_id,
+                    f"Salom, {nick}! 👋 Men BURAQ yuklari bo'yicha savollarga javob beraman: "
+                    "partiya holati, muddat, yuk qayerda — yozing.\n"
+                    "Masalan: «21.08 partiya qayerda?»",
+                )
+                return
+            if payload == "form":
+                send_tracking_form_button(chat_id)
         return
 
     if text == "/chatid":
@@ -2631,7 +2644,8 @@ def handle_telegram_message(message: dict):
         from services import ai_assistant
 
         if (ai_assistant.can_change(sender_id)
-                or ai_assistant.is_readonly_user(sender_id)):
+                or ai_assistant.is_readonly_user(sender_id)
+                or ai_assistant.is_sales_user(sender_id)):
             handle_ai_assistant_private_message(chat_id, sender_id, text)
             return
 
@@ -2688,16 +2702,26 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
     """Route one owner message to the assistant on a worker thread."""
     from services import ai_assistant
 
+    sales_name = ai_assistant.sales_nick(sender_id) if ai_assistant.is_sales_user(sender_id) else ""
     lowered = (text or "").strip().lower()
     if lowered in {"/reset", "/aireset"}:
         ai_assistant.reset_history(sender_id)
         telegram_send_message(chat_id, "🧹 История диалога с ассистентом очищена.")
         return
     if lowered in {"/form", "/trekform", "/tracking"}:
+        if sales_name:
+            # продавцам форма НЕ доступна (правило владельца 02.09.2026) —
+            # только вопрос-ответ; кнопку не показываем вовсе
+            telegram_send_message(
+                chat_id,
+                f"📝 {sales_name}, Treking forma faqat logistlar uchun — men esa savollarga "
+                "javob beraman: partiya holati, muddat, yuk qayerda. So'rang!",
+            )
+            return
         send_tracking_form_button(chat_id)
         return
 
-    readonly = ai_assistant.is_readonly_user(sender_id)
+    readonly = ai_assistant.is_readonly_user(sender_id) or bool(sales_name)
     # Владельческий режим (прямые инструменты) — только личка владельца;
     # оператор может создавать заявки, но не исполнять напрямую.
     owner_direct = ai_assistant.is_admin(sender_id)
@@ -2708,7 +2732,9 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
             # agent loop with tools can take a while and the chat looked
             # dead in the meantime.
             with TypingIndicator(chat_id):
-                result = ai_assistant.handle_owner_message(sender_id, text, readonly=readonly, owner_direct=owner_direct)
+                result = ai_assistant.handle_owner_message(
+                    sender_id, text, readonly=readonly, owner_direct=owner_direct,
+                    sales_name=sales_name)
         except Exception as exc:
             app.logger.exception("AI assistant failure")
             try:
@@ -4978,6 +5004,10 @@ def _webapp_user_allowed(user_id) -> bool:
     uid = str(user_id)
     if ai_assistant.is_admin(uid) or ai_assistant.is_readonly_user(uid):
         return True
+    if ai_assistant.is_sales_user(uid):
+        # продавцы: только вопрос-ответ в личке, форма закрыта ЖЁСТКО —
+        # даже если человек состоит в группе с включённой формой
+        return False
     now = time.time()
     cached = _FORM_MEMBER_CACHE.get(uid)
     if cached and cached[1] > now:
