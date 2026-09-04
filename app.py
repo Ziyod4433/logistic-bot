@@ -3922,13 +3922,13 @@ def api_backup_run():
 # ── КОНСОЛЬ РАЗРАБОТЧИКА (/dev) ─────────────────────────────────────
 
 @app.route("/dev")
-@login_required
+@editor_required
 def dev_console():
     return render_template("dev.html")
 
 
 @app.route("/api/dev/overview")
-@login_required
+@editor_required
 def api_dev_overview():
     from services import ai_assistant, asr_service
     status = ai_assistant.get_runtime_status()
@@ -3941,14 +3941,14 @@ def api_dev_overview():
 
 
 @app.route("/api/dev/ai-log")
-@login_required
+@editor_required
 def api_dev_ai_log():
     limit = min(int(request.args.get("limit", 100) or 100), 500)
     return jsonify({"rows": db.get_ai_request_log(limit)})
 
 
 @app.route("/api/dev/roles", methods=["GET"])
-@login_required
+@editor_required
 def api_dev_roles_get():
     from services import ai_assistant as ai
     return jsonify({
