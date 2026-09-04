@@ -838,6 +838,16 @@ def init_db():
             resolved_at TEXT NOT NULL DEFAULT ''
         );
 
+        -- «Наш груз — трекинг не нужен»: коды внутренних грузов компании.
+        -- Такие BL не считаются проблемой в напоминаниях о непривязанных
+        -- и не получают рассылку. Помечает ответственный сотрудник.
+        CREATE TABLE IF NOT EXISTS no_tracking_codes (
+            code TEXT PRIMARY KEY,
+            note TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
         -- Долговременная память агента: решения и факты, которые владелец
         -- велел помнить между диалогами («SHOXSET исключён вручную — не
         -- спрашивай»). Подмешивается в системный промпт.
@@ -4474,6 +4484,63 @@ def set_setting(key: str, value: str) -> None:
             (str(key or "").strip(), str(value or "").strip()),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── «НАШ ГРУЗ» — коды без трекинга ──────────────────────────────────
+
+def _norm_code(code: str) -> str:
+    return str(code or "").strip().upper()
+
+
+def set_no_tracking(code: str, note: str = "", created_by: str = "") -> bool:
+    code = _norm_code(code)
+    if not code:
+        raise ValueError("Пустой код")
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO no_tracking_codes(code, note, created_by)
+            VALUES (?, ?, ?)
+            ON CONFLICT(code) DO UPDATE SET note = excluded.note
+            """,
+            (code, str(note or "").strip(), str(created_by or "").strip()),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def clear_no_tracking(code: str) -> bool:
+    conn = get_conn()
+    try:
+        cur = conn.execute("DELETE FROM no_tracking_codes WHERE code = ?", (_norm_code(code),))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def no_tracking_codes() -> dict:
+    """code → note для всех помеченных «наш груз»."""
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT code, note FROM no_tracking_codes").fetchall()
+        return {str(r["code"]): str(r["note"] or "") for r in rows}
+    finally:
+        conn.close()
+
+
+def is_no_tracking(code: str) -> bool:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM no_tracking_codes WHERE code = ?", (_norm_code(code),)
+        ).fetchone()
+        return row is not None
     finally:
         conn.close()
 

@@ -2711,6 +2711,73 @@ def handle_telegram_message(message: dict):
 
 ASR_MAX_SECONDS = int(os.getenv("ASR_MAX_SECONDS", "120") or 120)
 
+# ── НАПОМИНАНИЕ О НЕПРИВЯЗАННЫХ BL (правило владельца 04.09.2026) ──
+# Приоритет уровня packing list: без группы трекинг клиенту НЕ уйдёт.
+# Пока такие BL есть — напоминаем каждые N часов с отметкой ответственного;
+# «наши грузы» (no_tracking_codes) в напоминание не попадают.
+UNLINKED_REMIND_HOURS = float(os.getenv("UNLINKED_REMIND_HOURS", "3") or 3)
+_UNLINKED_REMIND_SETTING = "unlinked_remind_last"
+
+
+def _collect_unlinked_bls():
+    """[(batch_name, [codes])] по активным партиям, без «наших грузов»."""
+    skip = set(db.no_tracking_codes())
+    out = []
+    for batch in db.get_batches():
+        if (batch.get("client_delivery_date") or "").strip():
+            continue
+        codes = [
+            str(bl.get("code") or "")
+            for bl in db.get_bl_by_batch(batch["id"])
+            if not str(bl.get("chat_id") or "").strip()
+            and str(bl.get("code") or "").strip().upper() not in skip
+        ]
+        if codes:
+            out.append((str(batch.get("name") or ""), codes))
+    return out
+
+
+def remind_unlinked_bls(force: bool = False):
+    """Каждые UNLINKED_REMIND_HOURS часов: список BL без группы в
+    Tracking gruppa + как решить (добавить бота / отметить «наш груз»).
+    Намеренно БЕЗ дедупа по содержанию — владелец просил напоминать,
+    пока проблема не решена."""
+    from services import ai_assistant
+
+    now_ts = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
+    if not force:
+        last = _parse_local_ts(db.get_setting(_UNLINKED_REMIND_SETTING))
+        if last and (now_ts - last) < timedelta(hours=UNLINKED_REMIND_HOURS):
+            return False, "рано"
+    unlinked = _collect_unlinked_bls()
+    db.set_setting(_UNLINKED_REMIND_SETTING, now_ts.strftime("%Y-%m-%d %H:%M:%S"))
+    if not unlinked:
+        return False, "все привязаны"
+    total = sum(len(codes) for _, codes in unlinked)
+    lines = [
+        f"👥 <b>BL без Telegram-группы: {total}</b> — трекинг этим клиентам НЕ уходит!",
+    ]
+    for bname, codes in unlinked:
+        shown = ", ".join(html.escape(c) for c in codes[:12])
+        tail = f" …и ещё {len(codes) - 12}" if len(codes) > 12 else ""
+        lines.append(f"   📦 «{html.escape(bname)}»: {shown}{tail}")
+    lines.append("")
+    lines.append(
+        f"{_group_link_mention()} — добавьте бота в группы этих клиентов "
+        "(привяжется сам при следующей сверке) или назовите группу ответом: "
+        "«<код> bu <группа>»."
+    )
+    lines.append(
+        "Если это НАШ груз и трекинг ему не нужен — ответьте «<код> bizniki» "
+        "(или «наш груз»), и я перестану о нём напоминать."
+    )
+    try:
+        telegram_send_message(ai_assistant.control_group_id(), "\n".join(lines))
+    except Exception:
+        app.logger.exception("Unlinked reminder send failed")
+        return False, "не отправилось"
+    return True, f"{total} BL в напоминании"
+
 
 def handle_private_voice_message(chat_id, sender_id, voice: dict):
     """Голосовое в личке: скачать → распознать (услышанное показываем) →
@@ -3061,6 +3128,16 @@ def execute_ai_action(action: dict, actor: str = ""):
             parts.append("⚠️ Не переехали: " + "; ".join(failed[:5]))
         return not failed, "\n".join(parts)
 
+    if kind == "mark_no_tracking":
+        code = str(params.get("code") or "").strip()
+        if params.get("enable", True):
+            db.set_no_tracking(code, note=str(params.get("note") or ""), created_by=actor)
+            return True, (f"🏷 «{html.escape(code)}» помечен как НАШ груз: трекинг не шлём, "
+                          "в напоминаниях о непривязанных больше не участвует")
+        removed = db.clear_no_tracking(code)
+        return removed, (f"🏷 Метка снята — «{html.escape(code)}» снова обычный груз"
+                         if removed else f"«{html.escape(code)}» не был помечен")
+
     if kind == "delete_batch":
         batch = db.get_batch(int(params.get("batch_id") or 0))
         if not batch:
@@ -3377,14 +3454,19 @@ def _execute_tracking_broadcast(batch_id: int, actor: str = "", filled_by: str =
     except Exception:
         excl_sources = {}
     warn_skips: list[str] = []   # устранимые пропуски: исключён / без группы
-    info_skips: list[str] = []   # штатные: несколько BL в одной группе
+    info_skips: list[str] = []   # штатные: несколько BL в одной группе, наш груз
     already_count = 0
     dispatch = []
     sent_chats: set = set()
     chat_owner: dict = {}        # chat_id → код BL, который уедет этим сообщением
+    no_trk = set(db.no_tracking_codes())
     for bl in all_rows:
         code = html.escape(str(bl.get("code") or ""))
         cid = str(bl.get("chat_id") or "").strip()
+        if str(bl.get("code") or "").strip().upper() in no_trk:
+            # наш внутренний груз — трекинг не положен, это не проблема
+            info_skips.append(f"{code} — наш груз, трекинг не нужен")
+            continue
         if bl.get("send_excluded"):
             why = ("исключён вручную"
                    if excl_sources.get(bl.get("id")) == "manual"
@@ -3413,8 +3495,9 @@ def _execute_tracking_broadcast(batch_id: int, actor: str = "", filled_by: str =
             details.append(f"все {already_count} уже получили актуальный трекинг" if not warn_skips
                            else f"{already_count} уже получили актуальный трекинг")
         details += warn_skips
+        details += info_skips           # «наш груз» и пр. — контекст, не тревога
         reason = "; ".join(details) or "в партии нет BL"
-        benign = already_count > 0 and not warn_skips
+        benign = not warn_skips and (already_count > 0 or bool(info_skips))
         return benign, f"«{batch['name']}»: новых отправок нет — {reason}"
 
     ok_count = 0
@@ -3485,9 +3568,10 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
         if (action.get("kind") == "apply_kazakh_plan"
                 and str(voter.get("id") or "") == HOJI_DODAM_TG_ID):
             allowed = True
-        # привязки групп подтверждает и ответственный за них (Jahongir):
-        # он сам называет, чей код, — его ✅ и есть подтверждение
-        if (action.get("kind") == "link_bl_group"
+        # привязки групп и метки «наш груз» подтверждает и ответственный
+        # за них (Jahongir): он сам называет, чей код, — его ✅ и есть
+        # подтверждение
+        if (action.get("kind") in ("link_bl_group", "mark_no_tracking")
                 and ai_assistant.is_group_link_responsible(voter)):
             allowed = True
         if not allowed:
@@ -3829,6 +3913,13 @@ def _packing_reminder_scheduler():
                     app.logger.info("Packing drive scan: %s", info)
             except Exception:
                 app.logger.exception("Packing drive scan tick failed")
+            # непривязанные BL — напоминание каждые 3 часа (guard внутри)
+            try:
+                done_u, uinfo = remind_unlinked_bls()
+                if done_u:
+                    app.logger.info("Unlinked reminder: %s", uinfo)
+            except Exception:
+                app.logger.exception("Unlinked reminder tick failed")
             # авто-жизненный цикл партий из «Fura statuslari»
             synced = sync_batches_from_fura_statuses()
             if synced:

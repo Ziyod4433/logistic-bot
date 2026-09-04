@@ -483,6 +483,11 @@ def _system_prompt() -> str:
   подходящего неприкреплённого bl_id (код может жить в двух партиях — тогда ДВЕ заявки подряд). НИКОГДА не
   отвечай «у меня нет права привязать» и не отправляй человека в панель: заявка с кнопками — это и есть твой
   способ, а подтвердить её может владелец, оператор ИЛИ сам @{grouper} (у него есть право ✅ на привязки).
+• Когда отвечают «<код> bizniki», «наш груз», «trek kerak emas», «это не клиент» → это ВНУТРЕННИЙ груз
+  компании: создай propose_action kind='mark_no_tracking' (params: code, note=почему). После подтверждения
+  (может и @{grouper}) код исчезает из напоминаний о непривязанных и не получает трекинг. Снять метку —
+  тот же kind с enable=false. Бот сам напоминает о непривязанных BL каждые ~3 часа — это нормально,
+  не извиняйся за повторы: без группы клиент не получает трекинг.
   Если подходящей группы НЕТ ни в find_group, ни в similar_groups — значит бота ещё не добавили в группу клиента.
   Тогда НЕ пиши «ничего не могу сделать»: попроси @{grouper} добавить бота в эти группы — propose_action
   send_group_message в управляющую группу, в тексте @{grouper}, список кодов BL и просьба добавить бота
@@ -982,7 +987,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch", "mark_no_tracking"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -1478,6 +1483,8 @@ def _tool_get_batch_plan_status(args: dict) -> dict:
 def _tool_get_unlinked_bls(_args: dict) -> dict:
     chats = db.get_telegram_chats(include_inactive=False) or []
     titles = [(str(c.get("chat_id")), c.get("title") or "") for c in chats]
+    no_trk = set(db.no_tracking_codes())
+    skipped_ours = []
     out = []
     for batch in db.get_batches():
         if (batch.get("client_delivery_date") or "").strip():
@@ -1486,6 +1493,9 @@ def _tool_get_unlinked_bls(_args: dict) -> dict:
             if (bl.get("chat_id") or "").strip():
                 continue
             code = str(bl.get("code") or "")
+            if code.strip().upper() in no_trk:
+                skipped_ours.append(code)      # наш груз — не проблема
+                continue
             key = re.sub(r"[\s\-_.]+", "", code.upper())
             hints = [
                 {"chat_id": _mask_chat_id(cid), "title": title}
@@ -1497,6 +1507,7 @@ def _tool_get_unlinked_bls(_args: dict) -> dict:
     return {
         "count": len(out),
         "unlinked": out[:60],
+        "our_cargo_no_tracking": skipped_ours[:20],
         "group_link_responsible": group_link_responsible(),
         "note": "Привязать: propose_action kind='link_bl_group' (bl_id, chat_id). "
                 "Если подходящей группы НЕТ (similar_groups пуст) — бот ещё не добавлен в группу клиента: "
@@ -1996,7 +2007,7 @@ ALLOWED_ACTION_KINDS = {
     "set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan",
     "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan",
     "move_file", "delete_file", "update_batch", "watch_plans",
-    "merge_batches", "delete_batch",
+    "merge_batches", "delete_batch", "mark_no_tracking",
 }
 
 
@@ -2086,6 +2097,18 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
         params["old_destination"] = batch.get("eta_destination") or ""
     elif kind == "watch_plans":
         params = {}
+    elif kind == "mark_no_tracking":
+        code = str(params.get("code") or "").strip()
+        if not code:
+            return {"error": "Нужен code — код BL/бренда"}
+        enable = params.get("enable")
+        params["enable"] = True if enable is None else bool(enable)
+        params["code"] = code
+        params["already"] = db.is_no_tracking(code)
+        if params["enable"] and params["already"]:
+            return {"error": f"«{code}» уже помечен как наш груз — повторно не нужно"}
+        if not params["enable"] and not params["already"]:
+            return {"error": f"«{code}» и так не помечен"}
     elif kind == "merge_batches":
         src = db.get_batch(int(params.get("from_batch_id") or 0))
         dst = db.get_batch(int(params.get("to_batch_id") or 0))
