@@ -10319,10 +10319,76 @@ def configure_telegram_menu_button():
         app.logger.warning("setMyCommands failed: %s", exc)
 
 
+ETA_ASK_COOLDOWN_MINUTES = int(os.getenv("ETA_ASK_COOLDOWN_MINUTES", "60") or 60)
+
+
+def _ai_eta_update_request(tg_user_id: str, batch_id: int, bl_code: str, reason: str) -> dict:
+    """Продавец просит обновить срок → сообщение в Tracking gruppa с
+    отметкой Hoji dodam. Антиспам: не чаще раза в ETA_ASK_COOLDOWN_MINUTES
+    по одной партии — повторным просителям возвращаем «уже отправлено»."""
+    from services import ai_assistant
+
+    batch = db.get_batch(batch_id)
+    if not batch:
+        return {"error": "Партия не найдена"}
+
+    ask_key = f"eta_ask_last:{batch_id}"
+    prev = _parse_local_ts(db.get_setting(ask_key))
+    now_local = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
+    if prev and (now_local - prev) < timedelta(minutes=ETA_ASK_COOLDOWN_MINUTES):
+        return {
+            "ok": True, "already": True,
+            "note": (f"Запрос по «{batch['name']}» уже отправлен в Tracking gruppa в "
+                     f"{prev:%H:%M} — Hoji dodam отмечен. Повторно не пингуем, "
+                     "скажи человеку, что логисты уже в курсе."),
+        }
+
+    who = ai_assistant.sales_nick(tg_user_id) or (
+        "владелец" if ai_assistant.is_admin(tg_user_id) else f"сотрудник {tg_user_id}")
+    eta = str(batch.get("eta_to_toshkent") or "").strip()
+    dest = str(batch.get("eta_destination") or "").strip()
+    eta_line = f"{dest}: {eta}" if eta and dest else (eta or "ko'rsatilmagan")
+    last = None
+    try:
+        last = db.get_last_tracking_send(batch_name=batch.get("name"))
+    except Exception:
+        app.logger.exception("eta request: last send lookup failed")
+    updated_line = (
+        str(last.get("sent_at") or "")[:16] if last and last.get("sent_at")
+        else f"trekingi hali yuborilmagan (holat o'zgargan: {str(batch.get('status_updated_at') or '—')[:16]})"
+    )
+    hoji_id = (os.getenv("HOJI_DODAM_TG_ID", "1514716826") or "").strip()
+    hoji_name = (os.getenv("HOJI_DODAM_NAME", "Hoji dodam") or "Hoji dodam").strip()
+    mention = (f'<a href="tg://user?id={hoji_id}">{html.escape(hoji_name)}</a>'
+               if hoji_id.isdigit() else html.escape(hoji_name))
+    lines = [
+        "⏰ <b>Treking YANGILASH so'raldi</b>",
+        f"👤 So'radi: {html.escape(who)}" + (f" · BL {html.escape(bl_code)}" if bl_code else ""),
+        f"📦 Partiya: «{html.escape(str(batch['name']))}» — holati: {html.escape(str(batch.get('status') or ''))}",
+        f"⏳ Hozirgi muddat: {html.escape(eta_line)}",
+        f"🕒 Oxirgi yangilanish: {html.escape(updated_line)}",
+    ]
+    if reason.strip():
+        lines.append(f"💬 {html.escape(reason.strip()[:200])}")
+    lines.append(f"{mention}, iltimos, Treking forma orqali TEZDA yangilab bering. 🙏")
+    try:
+        telegram_send_message(ai_assistant.control_group_id(), "\n".join(lines))
+    except Exception as exc:
+        app.logger.exception("eta request: send to control group failed")
+        return {"error": f"Не удалось отправить в Tracking gruppa: {exc}"}
+    db.set_setting(ask_key, now_local.strftime("%Y-%m-%d %H:%M:%S"))
+    return {
+        "ok": True,
+        "note": (f"Запрос отправлен в Tracking gruppa, {hoji_name} отмечен. "
+                 "Подтверди человеку и предупреди: время обновления зависит от логистов."),
+    }
+
+
 def _wire_ai_assistant_hooks():
     from services import ai_assistant as _ai
 
     _ai.direct_send_message = lambda chat_id, text: telegram_send_message(chat_id, text)
+    _ai.eta_update_request_hook = _ai_eta_update_request
     _ai.direct_send_document = lambda chat_id, data, filename, caption="": telegram_api(
         "sendDocument",
         timeout=120,

@@ -806,6 +806,27 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "request_eta_update",
+            "description": (
+                "СРОЧНЫЙ запрос логистам обновить срок/трекинг партии: бот пишет в Tracking gruppa "
+                "с отметкой Hoji dodam. Вызывай, когда продавец/сотрудник просит обновить срок или "
+                "говорит, что данные трекинга старые/устарели. Сначала найди партию (find_bl/get_overview). "
+                "Повторные запросы по той же партии бот сам глушит на время — передай человеку ответ инструмента."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "batch_id": {"type": "integer", "description": "id партии"},
+                    "bl_code": {"type": "string", "description": "код BL, о котором спросили (если был)"},
+                    "reason": {"type": "string", "description": "что именно просят/почему срочно, своими словами кратко"},
+                },
+                "required": ["batch_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "remember_fact",
             "description": (
                 "ПАМЯТЬ: сохранить решение/факт владельца НАВСЕГДА (между диалогами). Вызывай на "
@@ -1609,6 +1630,8 @@ def _tool_get_plan_marks(args: dict) -> dict:
 direct_send_message = None   # fn(chat_id, text) -> None
 direct_send_poll = None      # fn(chat_id, question, options, is_anonymous) -> None
 direct_send_document = None  # fn(chat_id, data_bytes, filename, caption) -> None
+# запрос «обновите срок» в Tracking gruppa с отметкой Hoji dodam
+eta_update_request_hook = None  # fn(tg_user_id, batch_id, bl_code, reason) -> dict
 
 
 def _reply_chat_for(tg_user_id: str) -> str:
@@ -2180,6 +2203,20 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
                 return _tool_cancel_scheduled_task(args)
             if name == "list_groups":
                 return _tool_list_groups(args)
+        if name == "request_eta_update":
+            # доступно и продавцам (readonly): это не изменение данных,
+            # а просьба к логистам; антиспам — в исполнителе (app)
+            if eta_update_request_hook is None:
+                return {"error": "Запрос логистам сейчас недоступен (hook не подключён)"}
+            batch = db.get_batch(int(args.get("batch_id") or 0))
+            if not batch:
+                return {"error": "batch_id не найден — найди партию через find_bl/get_overview"}
+            return eta_update_request_hook(
+                str(tg_user_id),
+                int(batch["id"]),
+                str(args.get("bl_code") or ""),
+                str(args.get("reason") or ""),
+            )
         if name in ("remember_fact", "forget_fact"):
             # память меняют только владелец/оператор — остальным она видна,
             # но не переписывается (companion приходит сюда с readonly=True)
@@ -2552,6 +2589,10 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
             "  – ⏳ срок поставки ВМЕСТЕ с точкой, к которой он относится (eta_human, например "
             "«Qozoq furaga ortilish vaqti: 3-4 kun» — НЕ выдавай его за срок до Ташкента);\n"
             "  – 📍 текущий статус партии.\n"
+            "• Если он просит ОБНОВИТЬ срок или говорит, что данные старые/устарели → найди партию и вызови "
+            "request_eta_update(batch_id): бот сам напишет в Tracking gruppa и отметит Hoji dodam. Подтверди "
+            "ему, что запрос ушёл логистам, но НЕ обещай конкретное время обновления. Если инструмент ответил, "
+            "что запрос уже отправлялся недавно — так и скажи, повторно не проси.\n"
             "• Не выдумывай: каждая цифра и дата — из инструментов этого диалога."
         )
     elif companion:
