@@ -120,8 +120,60 @@ def admin_ids() -> set:
     return {part.strip() for part in str(raw).split(",") if part.strip()}
 
 
+# ── АДМИН ПО НИКУ (@kozimjohn, владелец 04.09.2026) ─────────────────
+# Чистый ник — опасен: ники меняются и ОСВОБОЖДАЮТСЯ, чужой аккаунт мог
+# бы занять его и получить админку. Поэтому гибрид: ник открывает дверь,
+# но при ПЕРВОМ сообщении доступ закрепляется за user id (pin в БД);
+# дальше ник с ДРУГИМ id — отказ и тревога в управляющую группу.
+_ADMIN_PINS_SETTING = "admin_username_pins"
+_admin_pins_cache: dict = {"ids": frozenset(), "ts": 0.0}
+
+
+def admin_usernames() -> set:
+    raw = os.getenv("AI_ASSISTANT_ADMIN_USERNAMES", "")
+    return {p.strip().lstrip("@").lower() for p in str(raw).split(",") if p.strip()}
+
+
+def _pinned_admin_ids() -> frozenset:
+    now = time.time()
+    if now - _admin_pins_cache["ts"] < 30:
+        return _admin_pins_cache["ids"]
+    try:
+        pins = json.loads(db.get_setting(_ADMIN_PINS_SETTING) or "{}")
+        ids = frozenset(str(v) for k, v in pins.items() if k in admin_usernames())
+    except Exception:
+        ids = frozenset()
+    _admin_pins_cache.update(ids=ids, ts=now)
+    return ids
+
+
+def register_admin_username(user: dict):
+    """Вызывается на каждом входящем сообщении/кнопке. Возвращает
+    ('pinned', ник) при первом закреплении, ('mismatch', ник) если ник
+    из админ-списка пришёл с ЧУЖИМ id, иначе (None, '')."""
+    user = user or {}
+    uname = str(user.get("username") or "").strip().lstrip("@").lower()
+    uid = str(user.get("id") or "").strip()
+    if not uname or not uid or uname not in admin_usernames():
+        return None, ""
+    try:
+        pins = json.loads(db.get_setting(_ADMIN_PINS_SETTING) or "{}")
+    except Exception:
+        pins = {}
+    pinned = str(pins.get(uname) or "")
+    if pinned == uid:
+        return None, ""
+    if pinned and pinned != uid:
+        return "mismatch", uname
+    pins[uname] = uid
+    db.set_setting(_ADMIN_PINS_SETTING, json.dumps(pins, ensure_ascii=False))
+    _admin_pins_cache["ts"] = 0.0          # сбросить кэш немедленно
+    return "pinned", uname
+
+
 def is_admin(tg_user_id) -> bool:
-    return str(tg_user_id) in admin_ids()
+    uid = str(tg_user_id)
+    return uid in admin_ids() or uid in _pinned_admin_ids()
 
 
 def operator_ids() -> set:

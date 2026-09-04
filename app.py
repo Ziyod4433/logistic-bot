@@ -2538,6 +2538,35 @@ def handle_bl_lookup(chat_id, raw_code: str):
     ).start()
 
 
+def _register_admin_by_username(user: dict):
+    """Закрепление админ-доступа по нику за user id + тревога при чужом id.
+    Дёшево: без ника или при пустом AI_ASSISTANT_ADMIN_USERNAMES — no-op."""
+    from services import ai_assistant
+    try:
+        event, uname = ai_assistant.register_admin_username(user)
+    except Exception:
+        app.logger.exception("admin username registration failed")
+        return
+    if not event:
+        return
+    try:
+        if event == "pinned":
+            telegram_send_message(
+                ai_assistant.control_group_id(),
+                f"🔑 Админ-доступ по нику: @{uname} закреплён за id "
+                f"<code>{user.get('id')}</code> ({html.escape(str(user.get('first_name') or ''))}). "
+                "Если это не тот человек — срочно уберите ник из AI_ASSISTANT_ADMIN_USERNAMES.",
+            )
+        else:
+            telegram_send_message(
+                ai_assistant.control_group_id(),
+                f"🛑 <b>Тревога</b>: ник @{uname} пришёл с ЧУЖИМ id <code>{user.get('id')}</code> — "
+                "доступ НЕ дан. Возможно, ник сменил владельца.",
+            )
+    except Exception:
+        app.logger.exception("admin username notify failed")
+
+
 def handle_telegram_message(message: dict):
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
@@ -2547,6 +2576,10 @@ def handle_telegram_message(message: dict):
     text = (message.get("text") or "").strip()
 
     remember_group_chat(chat, is_active=True)
+
+    # админ по нику (@kozimjohn): первое сообщение закрепляет доступ за id,
+    # чужой id под тем же ником — тревога
+    _register_admin_by_username(sender)
 
     # ZIP with packing lists in the control group — handled before the
     # text check (documents have no text).
@@ -3534,6 +3567,7 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
     from services import ai_assistant
 
     voter = callback_query.get("from") or {}
+    _register_admin_by_username(voter)
     origin_chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
 
     parts = data.split(":")
