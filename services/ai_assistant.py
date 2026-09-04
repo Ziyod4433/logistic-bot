@@ -210,6 +210,19 @@ def group_link_responsible() -> str:
     return (os.getenv("GROUP_LINK_RESPONSIBLE_USERNAME", "JAHONGIR_moderator") or "").strip().lstrip("@")
 
 
+def is_group_link_responsible(voter: dict) -> bool:
+    """Это ответственный за привязку групп (Jahongir)? Узнаём по id
+    (GROUP_LINK_RESPONSIBLE_TG_ID, если задан) или по username из
+    callback'а — id может быть не настроен, а username в кнопке есть."""
+    voter = voter or {}
+    rid = (os.getenv("GROUP_LINK_RESPONSIBLE_TG_ID") or "").strip()
+    if rid and str(voter.get("id") or "") == rid:
+        return True
+    uname = str(voter.get("username") or "").strip().lstrip("@").lower()
+    responsible = group_link_responsible().lower()
+    return bool(uname and responsible and uname == responsible)
+
+
 def confidential_chat_ids() -> set:
     """Chats the bot must NEVER message or reveal anything about."""
     raw = os.getenv("CONFIDENTIAL_CHAT_IDS", "-1002687342009")
@@ -465,6 +478,11 @@ def _system_prompt() -> str:
 • «есть ли план (китайский/казахский) на дату» → get_loading_plans (смотри ОБА вида и summary) → при нужде get_plan_marks.
 • «что с казахским планом партии / применился ли / что изменится / почему не перегрузил» → get_batch_plan_status.
 • «кто не привязан к группе / почему клиент не получил трекинг» → get_unlinked_bls, затем find_group и, если просят, propose_action link_bl_group.
+• Когда человек НАЗЫВАЕТ принадлежность кода («8304 bu RM (BL-253)», «этот код — группа X») — особенно
+  ответственный за привязки @{grouper} — НЕМЕДЛЕННО создай propose_action kind='link_bl_group' для КАЖДОГО
+  подходящего неприкреплённого bl_id (код может жить в двух партиях — тогда ДВЕ заявки подряд). НИКОГДА не
+  отвечай «у меня нет права привязать» и не отправляй человека в панель: заявка с кнопками — это и есть твой
+  способ, а подтвердить её может владелец, оператор ИЛИ сам @{grouper} (у него есть право ✅ на привязки).
   Если подходящей группы НЕТ ни в find_group, ни в similar_groups — значит бота ещё не добавили в группу клиента.
   Тогда НЕ пиши «ничего не могу сделать»: попроси @{grouper} добавить бота в эти группы — propose_action
   send_group_message в управляющую группу, в тексте @{grouper}, список кодов BL и просьба добавить бота

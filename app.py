@@ -3485,6 +3485,11 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
         if (action.get("kind") == "apply_kazakh_plan"
                 and str(voter.get("id") or "") == HOJI_DODAM_TG_ID):
             allowed = True
+        # привязки групп подтверждает и ответственный за них (Jahongir):
+        # он сам называет, чей код, — его ✅ и есть подтверждение
+        if (action.get("kind") == "link_bl_group"
+                and ai_assistant.is_group_link_responsible(voter)):
+            allowed = True
         if not allowed:
             telegram_answer_callback_query(
                 callback_id, "Bu amalni faqat mas'ul xodim tasdiqlaydi"
