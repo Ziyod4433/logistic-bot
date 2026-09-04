@@ -838,6 +838,25 @@ def init_db():
             resolved_at TEXT NOT NULL DEFAULT ''
         );
 
+        -- Журнал AI-запросов для консоли разработчика (/dev): какой
+        -- вопрос ушёл в какую модель, сколько занял, какие инструменты.
+        CREATE TABLE IF NOT EXISTS ai_request_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT DEFAULT (datetime('now','localtime')),
+            channel TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL DEFAULT '',
+            user_label TEXT NOT NULL DEFAULT '',
+            question TEXT NOT NULL DEFAULT '',
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            smart INTEGER NOT NULL DEFAULT 0,
+            rounds INTEGER NOT NULL DEFAULT 0,
+            tools_used TEXT NOT NULL DEFAULT '',
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            ok INTEGER NOT NULL DEFAULT 1,
+            error TEXT NOT NULL DEFAULT ''
+        );
+
         -- «Наш груз — трекинг не нужен»: коды внутренних грузов компании.
         -- Такие BL не считаются проблемой в напоминаниях о непривязанных
         -- и не получают рассылку. Помечает ответственный сотрудник.
@@ -4484,6 +4503,61 @@ def set_setting(key: str, value: str) -> None:
             (str(key or "").strip(), str(value or "").strip()),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ── ЖУРНАЛ AI-ЗАПРОСОВ (консоль /dev) ──────────────────────────────
+
+def add_ai_request_log(channel: str, user_id, user_label: str, question: str,
+                       provider: str, model: str, smart: bool = False,
+                       rounds: int = 0, tools_used: str = "", duration_ms: int = 0,
+                       ok: bool = True, error: str = "") -> None:
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO ai_request_log(channel, user_id, user_label, question,
+                provider, model, smart, rounds, tools_used, duration_ms, ok, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (str(channel or ""), str(user_id or ""), str(user_label or "")[:60],
+             str(question or "")[:400], str(provider or ""), str(model or "")[:80],
+             1 if smart else 0, int(rounds or 0), str(tools_used or "")[:400],
+             int(duration_ms or 0), 1 if ok else 0, str(error or "")[:300]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_ai_request_log(limit: int = 100) -> list:
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM ai_request_log ORDER BY id DESC LIMIT ?", (int(limit),)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def ai_request_summary(days: int = 1) -> list:
+    """[{provider, model, cnt, avg_ms, fails}] за последние N дней."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT provider, model, COUNT(*) AS cnt,
+                   CAST(AVG(duration_ms) AS INTEGER) AS avg_ms,
+                   SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) AS fails
+            FROM ai_request_log
+            WHERE ts >= datetime('now', 'localtime', ?)
+            GROUP BY provider, model ORDER BY cnt DESC
+            """,
+            (f"-{int(days)} days",),
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 

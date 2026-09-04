@@ -2844,7 +2844,19 @@ def handle_private_voice_message(chat_id, sender_id, voice: dict):
                 audio = req.get(
                     f"https://api.telegram.org/file/bot{BOT_TOKEN}/{tg_path}", timeout=60
                 ).content
+                _asr_t0 = time.time()
                 ok, text_or_err = asr_service.transcribe(audio, os.path.basename(tg_path) or "voice.ogg")
+                try:
+                    base, _k, asr_model = asr_service._cfg() if asr_service.provider() != "gemini" else ("", "", asr_service._gemini_model())
+                    db.add_ai_request_log(
+                        channel="asr", user_id=sender_id, user_label="голосовое",
+                        question=(text_or_err if ok else "")[:200],
+                        provider=asr_service.provider(), model=asr_model,
+                        duration_ms=int((time.time() - _asr_t0) * 1000),
+                        ok=ok, error="" if ok else text_or_err[:200],
+                    )
+                except Exception:
+                    app.logger.exception("asr log write failed")
             if not ok:
                 app.logger.warning("ASR failed for chat %s: %s", chat_id, text_or_err)
                 telegram_send_message(
@@ -3905,6 +3917,80 @@ def run_db_backup(force: bool = False):
 def api_backup_run():
     ok, info = run_db_backup(force=True)
     return jsonify({"ok": ok, "info": info})
+
+
+# ── КОНСОЛЬ РАЗРАБОТЧИКА (/dev) ─────────────────────────────────────
+
+@app.route("/dev")
+@login_required
+def dev_console():
+    return render_template("dev.html")
+
+
+@app.route("/api/dev/overview")
+@login_required
+def api_dev_overview():
+    from services import ai_assistant, asr_service
+    status = ai_assistant.get_runtime_status()
+    return jsonify({
+        "status": status,
+        "asr": {"provider": asr_service.provider(), "available": asr_service.available()},
+        "summary_today": db.ai_request_summary(days=1),
+        "summary_week": db.ai_request_summary(days=7),
+    })
+
+
+@app.route("/api/dev/ai-log")
+@login_required
+def api_dev_ai_log():
+    limit = min(int(request.args.get("limit", 100) or 100), 500)
+    return jsonify({"rows": db.get_ai_request_log(limit)})
+
+
+@app.route("/api/dev/roles", methods=["GET"])
+@login_required
+def api_dev_roles_get():
+    from services import ai_assistant as ai
+    return jsonify({
+        "owner_id": ai.owner_id(),
+        "admins": sorted(ai.admin_ids()),
+        "operators": sorted(ai.operator_ids()),
+        "readonly": sorted(ai.readonly_ids()),
+        "sales": ai.sales_users(),
+        "admin_usernames": sorted(ai.admin_usernames()),
+        "group_link_responsible": ai.group_link_responsible(),
+    })
+
+
+@app.route("/api/dev/roles", methods=["POST"])
+@editor_required
+def api_dev_roles_save():
+    from services import ai_assistant as ai
+    data = request.json or {}
+
+    def _clean_ids(values):
+        return sorted({str(v).strip() for v in (values or []) if str(v).strip().isdigit()})
+
+    admins = _clean_ids(data.get("admins"))
+    # владельца разжаловать из консоли нельзя
+    if ai.owner_id() and ai.owner_id() not in admins:
+        admins.append(ai.owner_id())
+    db.set_setting("roles_admin_ids", json.dumps(sorted(admins)))
+    db.set_setting("roles_operator_ids", json.dumps(_clean_ids(data.get("operators"))))
+    db.set_setting("roles_readonly_ids", json.dumps(_clean_ids(data.get("readonly"))))
+    sales_in = data.get("sales") or {}
+    sales = {str(k).strip(): str(v).strip() or str(k).strip()
+             for k, v in sales_in.items() if str(k).strip().isdigit()}
+    db.set_setting("roles_sales_users", json.dumps(sales, ensure_ascii=False))
+    usernames = sorted({str(v).strip().lstrip("@").lower()
+                        for v in (data.get("admin_usernames") or []) if str(v).strip()})
+    db.set_setting("roles_admin_usernames", json.dumps(usernames))
+    ai._admin_pins_cache["ts"] = 0.0
+    return jsonify({"ok": True, "admins": sorted(ai.admin_ids()),
+                    "operators": sorted(ai.operator_ids()),
+                    "readonly": sorted(ai.readonly_ids()),
+                    "sales": ai.sales_users(),
+                    "admin_usernames": sorted(ai.admin_usernames())})
 
 
 def _packing_reminder_scheduler():

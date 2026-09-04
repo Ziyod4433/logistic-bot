@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BURAQ · Консоль разработчика</title>
+<style>
+  :root{--bg:#14181d;--card:#1b2129;--ink:#e8ecef;--mut:#95a0ab;--line:#2a313a;
+        --acc:#3fa98f;--warn:#d9885b;--bad:#e06c6c;--chip:#232a33;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.5 "Segoe UI",system-ui,sans-serif;padding:0 16px 60px}
+  main{max-width:1100px;margin:0 auto}
+  h1{font-size:20px;margin:22px 0 4px}
+  .sub{color:var(--mut);margin:0 0 18px}
+  .tabs{display:flex;gap:8px;margin-bottom:16px}
+  .tabs button{background:var(--chip);color:var(--ink);border:1px solid var(--line);
+       border-radius:8px;padding:8px 18px;cursor:pointer;font-size:14px}
+  .tabs button.on{border-color:var(--acc);color:var(--acc)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .card b{font-size:18px}
+  .card .lbl{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);
+        border-radius:10px;overflow:hidden;font-size:13px}
+  th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.07em}
+  tr:last-child td{border-bottom:none}
+  .wrap{overflow-x:auto}
+  .pill{display:inline-block;border-radius:99px;padding:1px 9px;font-size:12px;background:var(--chip)}
+  .pill.deepseek{color:#7fb8ff}.pill.anthropic{color:#f0b46a}
+  .pill.gemini{color:#8fd48f}.pill.openai{color:#c5a3ff}.pill.custom{color:#a0a0a0}
+  .ok{color:var(--acc)}.fail{color:var(--bad)}
+  .q{max-width:380px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .q:hover{white-space:normal}
+  section.role{background:var(--card);border:1px solid var(--line);border-radius:10px;
+       padding:14px 16px;margin-bottom:12px}
+  section.role h3{margin:0 0 4px;font-size:15px}
+  section.role .hint{color:var(--mut);font-size:12px;margin:0 0 10px}
+  .items{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .item{background:var(--chip);border:1px solid var(--line);border-radius:8px;
+        padding:4px 8px;display:flex;gap:8px;align-items:center;font-size:13px}
+  .item .x{cursor:pointer;color:var(--bad);font-weight:700}
+  .item.lock .x{display:none}
+  .item.lock{border-color:var(--acc)}
+  .add{display:flex;gap:8px;flex-wrap:wrap}
+  input{background:var(--bg);border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:6px 10px;font-size:13px}
+  button.act{background:var(--acc);border:none;color:#0c1512;border-radius:8px;
+        padding:7px 16px;font-weight:600;cursor:pointer}
+  button.mini{background:var(--chip);border:1px solid var(--line);color:var(--ink);
+        border-radius:8px;padding:6px 12px;cursor:pointer}
+  #saveBar{position:sticky;bottom:12px;display:flex;gap:10px;align-items:center;margin-top:8px}
+  #saveMsg{color:var(--mut)}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1>🛠 Консоль разработчика</h1>
+  <p class="sub">Маршруты AI-запросов и управление доступами. Данные живые, лог обновляется сам.</p>
+
+  <div class="tabs">
+    <button id="tabLog" class="on" onclick="showTab('log')">Маршруты AI</button>
+    <button id="tabRoles" onclick="showTab('roles')">Права доступа</button>
+  </div>
+
+  <div id="paneLog">
+    <div class="cards" id="cards"></div>
+    <div class="wrap">
+      <table>
+        <thead><tr>
+          <th>Когда</th><th>Кто</th><th>Канал</th><th>Вопрос</th>
+          <th>Модель</th><th>Инструменты</th><th>мс</th><th></th>
+        </tr></thead>
+        <tbody id="logBody"><tr><td colspan="8">Загрузка…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="paneRoles" hidden>
+    <div id="rolesRoot"></div>
+    <div id="saveBar">
+      <button class="act" onclick="saveRoles()">💾 Сохранить права</button>
+      <span id="saveMsg"></span>
+    </div>
+  </div>
+</main>
+
+<script>
+let ROLES = null;
+
+function showTab(t){
+  document.getElementById('paneLog').hidden = t !== 'log';
+  document.getElementById('paneRoles').hidden = t !== 'roles';
+  document.getElementById('tabLog').classList.toggle('on', t === 'log');
+  document.getElementById('tabRoles').classList.toggle('on', t === 'roles');
+}
+
+function esc(s){const d=document.createElement('div');d.textContent=s??'';return d.innerHTML;}
+function pill(p){return `<span class="pill ${esc(p)}">${esc(p)}</span>`;}
+
+async function loadOverview(){
+  try{
+    const r = await fetch('/api/dev/overview'); const d = await r.json();
+    const s = d.status || {};
+    const today = (d.summary_today||[]).reduce((a,x)=>a+x.cnt,0);
+    const cards = [
+      {lbl:'запросов сегодня', val: today},
+      {lbl:'основная модель', val: esc(s.ai_model||'—')},
+      {lbl:'умный маршрут', val: s.smart_router ? esc(s.smart_model) : 'выкл'},
+      {lbl:'распознавание речи', val: esc((d.asr||{}).provider||'—') + ((d.asr||{}).available?'':' (нет ключа)')},
+    ];
+    for(const row of (d.summary_today||[]).slice(0,3)){
+      cards.push({lbl:`${row.provider} сегодня`, val:`${row.cnt} · ~${row.avg_ms||0}мс` + (row.fails?` · ❌${row.fails}`:'')});
+    }
+    document.getElementById('cards').innerHTML =
+      cards.map(c=>`<div class="card"><div class="lbl">${c.lbl}</div><b>${c.val}</b></div>`).join('');
+  }catch(e){}
+}
+
+async function loadLog(){
+  try{
+    const r = await fetch('/api/dev/ai-log?limit=120'); const d = await r.json();
+    const rows = d.rows||[];
+    document.getElementById('logBody').innerHTML = rows.length ? rows.map(x=>`
+      <tr>
+        <td style="white-space:nowrap">${esc((x.ts||'').slice(5,16))}</td>
+        <td>${esc(x.user_label||x.user_id)}</td>
+        <td>${esc(x.channel)}</td>
+        <td class="q" title="${esc(x.question)}">${esc(x.question)}</td>
+        <td>${pill(x.provider)} ${esc(x.model)}${x.smart?' 🧠':''}</td>
+        <td class="q">${esc(x.tools_used||'—')}</td>
+        <td>${x.duration_ms||0}</td>
+        <td>${x.ok?'<span class="ok">✓</span>':`<span class="fail" title="${esc(x.error)}">✗</span>`}</td>
+      </tr>`).join('') : '<tr><td colspan="8">Запросов пока нет — задайте боту вопрос.</td></tr>';
+  }catch(e){}
+}
+
+function roleSection(key, title, hint, items, lockedId){
+  const chips = items.map(v=>{
+    const locked = lockedId && v.id === lockedId;
+    return `<span class="item ${locked?'lock':''}" data-id="${esc(v.id)}">
+      <span>${esc(v.id)}${v.name?` — ${esc(v.name)}`:''}${locked?' 👑':''}</span>
+      <span class="x" onclick="removeItem('${key}','${esc(v.id)}')">✕</span></span>`;
+  }).join('') || '<span class="hint">пусто</span>';
+  const nameInput = key==='sales' ? `<input id="add_${key}_name" placeholder="имя (как обращаться)">` : '';
+  const ph = key==='admin_usernames' ? 'ник без @' : 'user id';
+  return `<section class="role"><h3>${title}</h3><p class="hint">${hint}</p>
+    <div class="items" id="items_${key}">${chips}</div>
+    <div class="add"><input id="add_${key}" placeholder="${ph}">${nameInput}
+      <button class="mini" onclick="addItem('${key}')">+ добавить</button></div>
+  </section>`;
+}
+
+function renderRoles(){
+  const r = ROLES;
+  const mk = ids => ids.map(id=>({id}));
+  const sales = Object.entries(r.sales||{}).map(([id,name])=>({id,name}));
+  document.getElementById('rolesRoot').innerHTML =
+    roleSection('admins','👑 Администраторы','Полный доступ: прямые команды, все подтверждения, форма. Владельца (👑) убрать нельзя.', mk(r.admins), r.owner_id)
+  + roleSection('operators','🔧 Операторы','Создают и подтверждают заявки, без прямых команд.', mk(r.operators))
+  + roleSection('readonly','👁 Только чтение','Личка с ассистентом и форма — без права менять.', mk(r.readonly))
+  + roleSection('sales','💼 Продавцы','Личка «вопрос-ответ», без формы. Имя — как бот обращается.', sales)
+  + roleSection('admin_usernames','🔑 Админ по нику','Резерв: доступ закрепится за id при первом сообщении; чужой id под ником получит отказ.', mk(r.admin_usernames));
+}
+
+async function loadRoles(){
+  const r = await fetch('/api/dev/roles'); ROLES = await r.json(); renderRoles();
+}
+
+function addItem(key){
+  const v = (document.getElementById('add_'+key).value||'').trim();
+  if(!v) return;
+  if(key==='sales'){
+    const name = (document.getElementById('add_sales_name').value||'').trim() || v;
+    ROLES.sales[v] = name;
+  } else if(key==='admin_usernames'){
+    if(!ROLES.admin_usernames.includes(v)) ROLES.admin_usernames.push(v.replace(/^@/,'').toLowerCase());
+  } else {
+    if(!ROLES[key].includes(v)) ROLES[key].push(v);
+  }
+  renderRoles();
+}
+
+function removeItem(key, id){
+  if(key==='sales'){ delete ROLES.sales[id]; }
+  else { ROLES[key] = ROLES[key].filter(x=>x!==id); }
+  renderRoles();
+}
+
+async function saveRoles(){
+  const msg = document.getElementById('saveMsg');
+  msg.textContent = 'Сохраняю…';
+  const r = await fetch('/api/dev/roles', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({admins:ROLES.admins, operators:ROLES.operators,
+      readonly:ROLES.readonly, sales:ROLES.sales, admin_usernames:ROLES.admin_usernames})});
+  const d = await r.json();
+  if(d.ok){ msg.textContent = '✅ Сохранено — действует сразу, без перезапуска.'; loadRoles(); }
+  else { msg.textContent = '❌ Ошибка сохранения'; }
+}
+
+loadOverview(); loadLog(); loadRoles();
+setInterval(()=>{loadOverview(); loadLog();}, 10000);
+</script>
+</body>
+</html>

@@ -115,9 +115,28 @@ def _model() -> str:
     return (os.getenv("AI_MODEL") or legacy or p["model"]).strip()
 
 
-def admin_ids() -> set:
-    raw = os.getenv("AI_ASSISTANT_ADMIN_IDS", "303114354")
+# ── РОЛИ: env — стартовое значение, БД (консоль /dev) — переопределение ──
+def _role_ids(setting_key: str, env_name: str, env_default: str) -> set:
+    stored = db.get_setting(setting_key, None)
+    if stored is not None:
+        try:
+            return {str(v).strip() for v in json.loads(stored) if str(v).strip()}
+        except Exception:
+            pass
+    raw = os.getenv(env_name, env_default)
     return {part.strip() for part in str(raw).split(",") if part.strip()}
+
+
+def owner_id() -> str:
+    """Первый id из env — владелец; его нельзя разжаловать из консоли."""
+    return (os.getenv("AI_ASSISTANT_ADMIN_IDS", "303114354").split(",")[0] or "").strip()
+
+
+def admin_ids() -> set:
+    ids = _role_ids("roles_admin_ids", "AI_ASSISTANT_ADMIN_IDS", "303114354")
+    if owner_id():
+        ids |= {owner_id()}
+    return ids
 
 
 # ── АДМИН ПО НИКУ (@kozimjohn, владелец 04.09.2026) ─────────────────
@@ -130,6 +149,12 @@ _admin_pins_cache: dict = {"ids": frozenset(), "ts": 0.0}
 
 
 def admin_usernames() -> set:
+    stored = db.get_setting("roles_admin_usernames", None)
+    if stored is not None:
+        try:
+            return {str(v).strip().lstrip("@").lower() for v in json.loads(stored) if str(v).strip()}
+        except Exception:
+            pass
     raw = os.getenv("AI_ASSISTANT_ADMIN_USERNAMES", "")
     return {p.strip().lstrip("@").lower() for p in str(raw).split(",") if p.strip()}
 
@@ -180,8 +205,7 @@ def operator_ids() -> set:
     """Staff allowed to CHANGE things: create action proposals and press
     the ✅/❌ approval buttons. No owner-direct tools (those stay in the
     owner's private chat only)."""
-    raw = os.getenv("AI_ASSISTANT_OPERATOR_IDS", "7827297533")
-    return {part.strip() for part in str(raw).split(",") if part.strip()}
+    return _role_ids("roles_operator_ids", "AI_ASSISTANT_OPERATOR_IDS", "7827297533")
 
 
 def is_operator(tg_user_id) -> bool:
@@ -198,8 +222,7 @@ def can_change(tg_user_id) -> bool:
 def readonly_ids() -> set:
     """Users allowed to TALK to the assistant in private, but with READ
     tools only — no propose_action, nothing can be changed or sent."""
-    raw = os.getenv("AI_ASSISTANT_READONLY_IDS", "7713376668")
-    return {part.strip() for part in str(raw).split(",") if part.strip()}
+    return _role_ids("roles_readonly_ids", "AI_ASSISTANT_READONLY_IDS", "7713376668")
 
 
 def is_readonly_user(tg_user_id) -> bool:
@@ -222,6 +245,14 @@ _DEFAULT_SALES_USERS = {
 
 
 def sales_users() -> dict:
+    stored = db.get_setting("roles_sales_users", None)
+    if stored is not None:
+        try:
+            data = json.loads(stored)
+            return {str(k).strip(): str(v).strip() or str(k).strip()
+                    for k, v in data.items() if str(k).strip()}
+        except Exception:
+            pass
     raw = (os.getenv("AI_SALES_USERS") or "").strip()
     if not raw:
         return dict(_DEFAULT_SALES_USERS)
@@ -2718,6 +2749,10 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
 
     # ── роутер моделей: сложные разборы — Claude, массовое — DeepSeek ──
     smart = smart_available() and _wants_smart(text)
+    _t0 = time.time()
+    _used_tools: list = []
+    _rounds_done = 0
+    _escalated = False
     if smart:
         system_prompt += (
             "\n\nРЕЖИМ ГЛУБОКОГО РАЗБОРА: вопрос сложный. Сначала мысленно составь план "
@@ -2734,6 +2769,7 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
     reply_text = ""
     try:
         for _round in range(MAX_TOOL_ROUNDS):
+            _rounds_done = _round + 1
             data = _chat_completion(messages, tools=tools, smart=smart)
             choice = (data.get("choices") or [{}])[0]
             msg = choice.get("message") or {}
@@ -2754,6 +2790,7 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
                     args = json.loads(fn.get("arguments") or "{}")
                 except Exception:
                     args = {}
+                _used_tools.append(name)
                 result = _run_tool(name, args, tg_user_id, created_actions,
                                    readonly=readonly or companion, owner_direct=owner_direct)
                 payload = json.dumps(result, ensure_ascii=False, default=str)
@@ -2786,6 +2823,7 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
             try:
                 # добор ответа по собранным данным — умной моделью, если есть:
                 # у неё это получается заметно лучше, а инструментов уже нет
+                _escalated = (not smart) and smart_available()
                 data = _chat_completion(messages, tools=[], smart=smart_available())
                 reply_text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
                 reply_text = reply_text.strip()
@@ -2825,6 +2863,31 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
 
     with _history_lock:
         db.ai_add_message(tg_user_id, "assistant", reply_text)
+
+    # журнал для консоли /dev: какой вопрос → какая модель (best-effort)
+    try:
+        if smart:
+            prov, mdl = "anthropic", _smart_model()
+        else:
+            prov, mdl = provider_name(), _model()
+        if _escalated:
+            mdl += f"→{_smart_model()}"
+        label = (f"продавец {sales_name}" if sales_name
+                 else "владелец" if is_admin(tg_user_id)
+                 else "оператор" if is_operator(tg_user_id)
+                 else "companion" if companion
+                 else "readonly" if readonly else "staff")
+        ok_flag = not reply_text.startswith(("⚠️", "⏳"))
+        db.add_ai_request_log(
+            channel="control-group" if companion else "dm",
+            user_id=tg_user_id, user_label=label, question=text,
+            provider=prov, model=mdl, smart=smart, rounds=_rounds_done,
+            tools_used=",".join(_used_tools[:15]),
+            duration_ms=int((time.time() - _t0) * 1000),
+            ok=ok_flag, error="" if ok_flag else reply_text[:200],
+        )
+    except Exception:
+        pass          # журнал не должен ломать ответ человеку
 
     return {"reply": reply_text, "pending": created_actions}
 
