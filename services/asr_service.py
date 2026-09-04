@@ -56,7 +56,9 @@ def _gemini_key() -> str:
 
 
 def _gemini_model() -> str:
-    return (os.getenv("ASR_MODEL") or "gemini-2.5-flash").strip()
+    # gemini-2.5-flash закрыт для новых аккаунтов (404 «no longer available
+    # to new users» — сам API подсказал замену, проверено 04.09.2026)
+    return (os.getenv("ASR_MODEL") or "gemini-3.6-flash").strip()
 
 
 def available() -> bool:
