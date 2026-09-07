@@ -10,3 +10,4 @@ fpdf2==2.8.3
 pypdf==5.1.0
 py7zr==0.22.0
 rarfile==4.2
+xlrd==2.0.1

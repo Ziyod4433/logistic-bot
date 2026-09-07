@@ -4116,6 +4116,208 @@ def _mesta_matches(bl: dict, mesta: int | None) -> bool:
     return mesta in [int(x) for x in re.findall(r"\d+", breakdown)]
 
 
+# ── СОДЕРЖИМОЕ PACKING LIST: итоги CTN / вес / куб ─────────────────
+# Дополнительный распознаватель (владелец 04.09.2026): внутри packing list
+# всегда есть итоговые места, брутто-вес и объём — они совпадают со
+# СТРОКОЙ шитса. ВАЖНО: на сайте вес/куб/места BL — СУММА по всем строкам
+# клиента в партии, поэтому сверяем с построчными данными плана и с
+# разбивкой мест, а не только с агрегатом. Читаем ТОЛЬКО числа —
+# текстовый поиск кодов внутри файла был снят владельцем 24.08 за ложные
+# переносы; числовые итоги такой болезни не имеют.
+_PL_CTN_HDRS = ("CTN", "CTNS", "CARTON", "件数", "箱数", "MESTA", "МЕСТ", "JOY")
+_PL_KG_HDRS = ("T.GW", "T GW", "TGW", "G.W", "GW", "GROSS", "毛重", "KG", "ВЕС", "OG'IRLIK")
+_PL_CBM_HDRS = ("CBM", "VOL", "VOLUME", "M3", "M³", "体积", "КУБ", "HAJM")
+
+
+def _pl_rows_from_bytes(data: bytes, base: str) -> list:
+    """Строки таблицы (списки ячеек) из xlsx/xls; иначе []."""
+    ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+    rows: list = []
+    try:
+        if ext in ("xlsx", "xlsm"):
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            for ws in wb.worksheets[:3]:
+                for r in ws.iter_rows(values_only=True, max_row=400):
+                    rows.append(list(r))
+            wb.close()
+        elif ext == "xls":
+            import xlrd
+            wb = xlrd.open_workbook(file_contents=data)
+            for sh in wb.sheets()[:3]:
+                for i in range(min(sh.nrows, 400)):
+                    rows.append([sh.cell_value(i, c) for c in range(sh.ncols)])
+    except Exception as exc:
+        app.logger.info("packing content: cannot read %s: %s", base, exc)
+        return []
+    return rows
+
+
+def _pl_header_cols(rows: list) -> dict:
+    """Индексы колонок CTN/KG/CBM по строке-заголовку (первое вхождение)."""
+    def _hit(cell: str, hdrs) -> bool:
+        c = cell.upper().replace(" ", "")
+        return any(h.replace(" ", "") in c for h in hdrs)
+    for r in rows[:60]:
+        cells = [str(c or "").strip() for c in r]
+        if not any(cells):
+            continue
+        cols: dict = {}
+        for idx, cell in enumerate(cells):
+            if not cell:
+                continue
+            if "ctn" not in cols and _hit(cell, _PL_CTN_HDRS) and "PCS" not in cell.upper():
+                cols["ctn"] = idx
+            if _hit(cell, _PL_CBM_HDRS):
+                cols["cbm"] = idx                     # последняя CBM-колонка
+            if _hit(cell, _PL_KG_HDRS):
+                # предпочитаем брутто-ИТОГ по строке (T.GW / 总毛重), а не
+                # вес одной коробки (GW / 毛重)
+                up = cell.upper().replace(" ", "").replace(".", "")
+                if ("kg" not in cols or up.startswith(("TGW", "TOTAL")) or "GROSS" in up
+                        or "总" in cell):
+                    cols["kg"] = idx
+        if "ctn" in cols and ("kg" in cols or "cbm" in cols):
+            return cols
+    return {}
+
+
+def _pl_extract_totals(data: bytes, base: str) -> dict:
+    """{'ctn': int, 'kg': float, 'cbm': float} — итоги packing list.
+    Итог = максимум по колонке (итоговая строка — сумма положительных
+    частей, значит она и есть максимум); строка «Total» подтверждает."""
+    rows = _pl_rows_from_bytes(data, base)
+    if not rows:
+        return {}
+    cols = _pl_header_cols(rows)
+    if not cols:
+        return {}
+
+    def _num(v):
+        try:
+            if v is None or v == "":
+                return None
+            return float(str(v).replace(",", ".").replace(" ", ""))
+        except (TypeError, ValueError):
+            return None
+
+    out: dict = {}
+    total_row = None
+    for r in rows:
+        if any(str(c or "").strip().lower().startswith("total") for c in r[:4]):
+            total_row = r
+    for key, idx in cols.items():
+        vals = [_num(r[idx]) for r in rows if idx < len(r)]
+        vals = [v for v in vals if v is not None and v >= 0]
+        if not vals:
+            continue
+        chosen = max(vals)
+        if total_row is not None and idx < len(total_row):
+            tv = _num(total_row[idx])
+            if tv is not None and tv > 0:
+                chosen = tv
+        out[key] = chosen
+    if "ctn" in out:
+        out["ctn"] = int(round(out["ctn"]))
+    return out
+
+
+def _pl_candidate_figures(bl: dict, blocks_cache: dict) -> list:
+    """Что считать «правдой» по этому BL: строки ПЛАНА (построчно, из
+    шитса) + агрегат сайта + компоненты разбивки мест. [{ctn, kg, cbm}]."""
+    figs: list = []
+    try:
+        figs.append({
+            "ctn": int(round(float(bl.get("quantity_places") or 0))),
+            "kg": float(bl.get("weight_kg") or 0),
+            "cbm": float(bl.get("volume_cbm") or 0),
+        })
+    except (TypeError, ValueError):
+        pass
+    for part in re.findall(r"\d+", str(bl.get("quantity_places_breakdown") or "")):
+        figs.append({"ctn": int(part), "kg": None, "cbm": None})
+    try:
+        from services import plan_sync_service as pss
+        batch = blocks_cache.setdefault(("batch", bl.get("batch_id")), db.get_batch(bl.get("batch_id")))
+        if batch and pss.batch_has_ref(batch):
+            if "blocks" not in blocks_cache:
+                blocks_cache["blocks"] = pss.all_blocks()
+            for block in blocks_cache["blocks"]:
+                if not pss.block_matches_ref(block, batch.get("plan_tab"), batch.get("plan_title"), batch.get("plan_date")):
+                    continue
+                want = pss.normalize_mark(str(bl.get("code") or ""))
+                for item in block.get("items") or []:
+                    if pss.normalize_mark(str(item.get("mark") or "")) == want:
+                        figs.append({"ctn": int(round(float(item.get("ctn") or 0))),
+                                     "kg": float(item.get("kg") or 0), "cbm": float(item.get("cbm") or 0)})
+                break
+    except Exception:
+        app.logger.exception("packing content: plan rows lookup failed")
+    return figs
+
+
+def _pl_score(totals: dict, figs: list) -> int:
+    """Совпадение итогов файла с одним из наборов цифр BL: места точно (+2),
+    вес ±3 % (+1), куб ±5 % (+1). Берём лучший набор."""
+    best = 0
+    for f in figs:
+        s = 0
+        if totals.get("ctn") is not None and f.get("ctn") is not None and totals["ctn"] == f["ctn"]:
+            s += 2
+        if totals.get("kg") and f.get("kg"):
+            if abs(totals["kg"] - f["kg"]) <= max(2.0, 0.03 * f["kg"]):
+                s += 1
+        if totals.get("cbm") and f.get("cbm"):
+            if abs(totals["cbm"] - f["cbm"]) <= max(0.05, 0.05 * f["cbm"]):
+                s += 1
+        best = max(best, s)
+    return best
+
+
+def _pick_by_content(base: str, data: bytes, candidates: list, blocks_cache: dict):
+    """(bl | None, totals, note). Уникальный лучший кандидат со счётом ≥ 2
+    (места + хотя бы вес или куб, либо места точно + ничего противоречащего)."""
+    totals = _pl_extract_totals(data, base)
+    if not totals:
+        return None, {}, ""
+    # пометка с итогами нужна и при неудаче — она идёт людям в вопрос
+    note = " · ".join(
+        x for x in (
+            f"{totals['ctn']} mesta" if totals.get("ctn") is not None else "",
+            f"{totals['kg']:.0f} kg" if totals.get("kg") else "",
+            f"{totals['cbm']:.2f} m³" if totals.get("cbm") else "",
+        ) if x
+    )
+    scored = [(_pl_score(totals, _pl_candidate_figures(c, blocks_cache)), c) for c in candidates]
+    scored.sort(key=lambda x: -x[0])
+    if not scored or scored[0][0] < 2:
+        return None, totals, note
+    if len(scored) > 1 and scored[1][0] == scored[0][0]:
+        return None, totals, note            # ничья — решать человеку
+    return scored[0][1], totals, note
+
+
+def _build_recent_closed_bl_rows(days: int = 45) -> list:
+    """BL недавно ЗАКРЫТЫХ партий: packing list нередко приходит уже после
+    доставки (кейс PARK LIGHTING 76 MESTA → партия 15.08, Доставлен).
+    Такие кандидаты выигрывают только при подтверждении местами/содержимым."""
+    conn = db.get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl.*, b.name AS batch_name
+            FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id
+            WHERE COALESCE(b.client_delivery_date, '') <> ''
+              AND b.client_delivery_date >= date('now', ?)
+            ORDER BY b.id DESC
+            """,
+            (f"-{int(days)} days",),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def _find_bl_candidates_by_brand(brand: str, rows: list, chat_titles: dict) -> list:
     """Active-batch BLs whose code / client / group title match the brand."""
     brand_norm = _normalize_bl_code(brand)
@@ -4198,6 +4400,8 @@ def _new_packing_results() -> dict:
         "rejected": [], "ambiguous": [], "mesta_warns": [], "unsupported": [],
         # сверка по имени файла / местам / истории прикреплений
         "resolved_by_history": [],
+        # сверка по СОДЕРЖИМОМУ (итоги мест/веса/куба) или по закрытой партии
+        "resolved_by_content": [],
         # файлы без BL — по ним бот задаст вопрос в группе
         "ask_queue": [],
     }
@@ -4221,38 +4425,72 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
     if len(data) > _PACKING_FILE_MAX_BYTES:
         results["rejected"].append(base)
         return
-    # 1) главный ключ — бренд/название из имени файла;
-    # 2) при нескольких кандидатах решает MESTA (CTN).
+    # Порядок распознавания (владелец 04.09.2026):
+    # 1) бренд из имени файла → кандидаты в АКТИВНЫХ партиях;
+    # 2) MESTA из имени (места = CTN/件数, целиком или компонент разбивки);
+    # 3) недавно ЗАКРЫТЫЕ партии — только при подтверждении местами/содержимым
+    #    (packing list часто приходит уже после доставки);
+    # 4) СОДЕРЖИМОЕ файла: итоги CTN / вес / куб против строк шитса;
+    # 5) история прикреплений; 6) вопрос людям — с итогами файла в подсказке.
     brand, mesta = _parse_packing_filename(base)
     candidates = _find_bl_candidates_by_brand(brand, rows, chat_titles)
+    cache = results.setdefault("_cache", {})
+    if "closed_rows" not in cache:
+        try:
+            cache["closed_rows"] = _build_recent_closed_bl_rows()
+        except Exception:
+            app.logger.exception("packing: closed rows lookup failed")
+            cache["closed_rows"] = []
+    closed_c = _find_bl_candidates_by_brand(brand, cache["closed_rows"], chat_titles) if brand else []
     bl = None
-    if len(candidates) == 1:
+    totals_note = ""
+
+    if len(candidates) == 1 and (mesta is None or _mesta_matches(candidates[0], mesta)):
         bl = candidates[0]
-        if mesta is not None and not _mesta_matches(bl, mesta):
-            results["mesta_warns"].append(
-                f"{base}: faylda {mesta} mesta, tizimda {bl.get('quantity_places') or 0}"
-            )
-    elif len(candidates) > 1:
-        filtered = [c for c in candidates if _mesta_matches(c, mesta)] if mesta is not None else []
-        if len(filtered) == 1:
-            bl = filtered[0]
+    elif candidates or closed_c:
+        pool_active = ([c for c in candidates if _mesta_matches(c, mesta)]
+                       if mesta is not None else list(candidates))
+        closed_m = [c for c in closed_c if _mesta_matches(c, mesta)] if mesta is not None else []
+        if len(pool_active) == 1:
+            bl = pool_active[0]
+        elif not pool_active and len(closed_m) == 1:
+            # активные не подходят по местам, а закрытая — точно (кейс PARK LIGHTING 76)
+            bl = closed_m[0]
+            results["resolved_by_content"].append(
+                (base, str(bl.get("code") or ""), str(bl.get("batch_name") or ""),
+                 f"{mesta} mesta — yopilgan partiya"))
         else:
-            # имя файла не различает кандидатов — смотрим ИСТОРИЮ
-            # ПРИКРЕПЛЕНИЙ: если такие файлы этого бренда уже уходили в
-            # одну из партий-кандидатов, продолжаем туда же
-            pool = filtered or candidates
-            by_history = _pick_by_attach_history(base, pool)
-            if by_history is not None:
-                bl = by_history
-                results["resolved_by_history"].append((base, str(bl.get("code") or ""), str(bl.get("batch_name") or "")))
-            else:
-                listed = ", ".join(
-                    f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4]
+            search = (pool_active or candidates) + (closed_m or closed_c)
+            by_content, totals, note = _pick_by_content(base, data, search, cache)
+            totals_note = note
+            if by_content is not None:
+                bl = by_content
+                results["resolved_by_content"].append(
+                    (base, str(bl.get("code") or ""), str(bl.get("batch_name") or ""), note))
+            elif len(candidates) == 1:
+                # единственный активный кандидат, места не сошлись, содержимое
+                # не помогло — прикрепляем с предупреждением (как раньше)
+                bl = candidates[0]
+                results["mesta_warns"].append(
+                    f"{base}: faylda {mesta} mesta, tizimda {bl.get('quantity_places') or 0}"
                 )
-                results["ambiguous"].append(base + " → " + listed)
-                # «не понял, куда прикрепить» — тоже повод спросить людей
-                _park_for_question(base, data, results, f"bir nechta mos keldi: {listed}")
-                return
+            elif candidates:
+                pool = pool_active or candidates
+                by_history = _pick_by_attach_history(base, pool)
+                if by_history is not None:
+                    bl = by_history
+                    results["resolved_by_history"].append(
+                        (base, str(bl.get("code") or ""), str(bl.get("batch_name") or "")))
+                else:
+                    listed = ", ".join(
+                        f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4]
+                    )
+                    results["ambiguous"].append(base + " → " + listed)
+                    reason = f"bir nechta mos keldi: {listed}"
+                    if totals_note:
+                        reason += f" · faylda: {totals_note}"
+                    _park_for_question(base, data, results, reason)
+                    return
     else:
         # запасной путь — общий резолвер (нестандартные имена)
         hit = _resolve_filename_to_bl(base, index, rows, chat_titles)
@@ -4260,7 +4498,7 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
             bl = hit["row"]
     if not bl:
         results["unmatched"].append(base)
-        _park_for_question(base, data, results, "")
+        _park_for_question(base, data, results, f"faylda: {totals_note}" if totals_note else "")
         return
 
     _store_packing_file(bl, base, data, results)
@@ -4310,6 +4548,8 @@ def _pick_by_attach_history(base: str, candidates: list):
 def _park_for_question(base: str, data: bytes, results: dict, reason: str) -> None:
     """Отложить файл на диск и поставить в очередь вопроса в группу —
     вместо сухого «не нашёл» бот спросит, куда его прикрепить."""
+    if results.get("_no_park"):
+        return          # повторный разбор уже заданного вопроса — не дублируем
     ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
     try:
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -4433,6 +4673,13 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
         for base, code, batch_name in results["resolved_by_history"][:10]:
             lines.append(
                 f"  • {html_escape(base)} → <code>{html_escape(code)}</code> ({html_escape(batch_name)})"
+            )
+    if results.get("resolved_by_content"):
+        lines.append("🔎 Fayl ichidagi yakunlar (mesta / kg / m³) shitsdagi qator bilan to'g'ri keldi:")
+        for base, code, batch_name, note in results["resolved_by_content"][:10]:
+            lines.append(
+                f"  • {html_escape(base)} → <code>{html_escape(code)}</code> ({html_escape(batch_name)})"
+                + (f" — {html_escape(note)}" if note else "")
             )
     if results["mesta_warns"]:
         lines.append("⚠️ Mesta (karobka soni) mos kelmadi, lekin nomi aniq bo'lgani uchun biriktirdim:")
@@ -4881,6 +5128,68 @@ def _iter_drive_files(folder_id: str, depth: int = 0, seen_folders=None, folder_
             yield entry_id, name, folder_name
 
 
+def retry_pending_packing_questions() -> int:
+    """Пересмотреть файлы, по которым бот уже СПРОСИЛ людей: состав партий
+    и правила распознавания меняются (новая партия открылась, файл читаем
+    по содержимому) — если теперь ответ однозначен, прикрепляем сами,
+    закрываем вопрос и говорим об этом в группе. Возвращает число решённых."""
+    from services import ai_assistant
+
+    pending = db.list_packing_questions("pending", 50)
+    if not pending:
+        return 0
+    index, rows = _build_active_bl_index()
+    chat_titles = _build_chat_title_lookup(rows)
+    resolved = 0
+    lines = []
+    for q in pending:
+        path = str(q.get("file_path") or "")
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        r = _new_packing_results()
+        r["_no_park"] = True                     # второй вопрос не задаём
+        try:
+            _attach_packing_bytes(str(q.get("filename") or ""), data, index, rows, chat_titles, r)
+        except Exception:
+            app.logger.exception("packing retry failed for %s", q.get("filename"))
+            continue
+        hit = (r["attached"] or [None])[0]
+        if not hit:
+            continue
+        base, code, batch_name = hit
+        note = next((n for b, c, bn, n in r["resolved_by_content"] if b == base), "")
+        pool = list(rows) + list((r.get("_cache") or {}).get("closed_rows") or [])
+        bl_id = next(
+            (int(x["id"]) for x in pool
+             if str(x.get("code") or "") == code and str(x.get("batch_name") or "") == batch_name),
+            None,
+        )
+        if db.resolve_packing_question(int(q["id"]), "resolved", answer="auto:" + (note or "match"), bl_id=bl_id):
+            resolved += 1
+            lines.append(
+                f"  • <code>{html.escape(base)}</code> → <code>{html.escape(code)}</code> "
+                f"({html.escape(batch_name)})" + (f" — {html.escape(note)}" if note else "")
+            )
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    if lines:
+        try:
+            telegram_send_message(
+                ai_assistant.control_group_id(),
+                "✅ Avval so'ragan edim — endi o'zim aniqladim va biriktirdim:\n" + "\n".join(lines[:15]),
+            )
+        except Exception:
+            app.logger.exception("packing retry report failed")
+    return resolved
+
+
 def scan_packing_drive(force: bool = False, only_folder: str = "") -> tuple:
     """Забрать НОВЫЕ файлы из общей Drive-папки packing list'ов.
     only_folder — обработать лишь подпапку с таким названием («14.08»).
@@ -4894,6 +5203,12 @@ def scan_packing_drive(force: bool = False, only_folder: str = "") -> tuple:
         if now_mono - _packing_drive_last_scan < PACKING_DRIVE_SCAN_MINUTES * 60:
             return 0, "throttled"
         _packing_drive_last_scan = now_mono
+
+    # сначала — зависшие вопросы: партия могла появиться, файл читаем иначе
+    try:
+        retry_pending_packing_questions()
+    except Exception:
+        app.logger.exception("packing retry pass failed")
 
     if not PACKING_DRIVE_FOLDER_ID:
         return 0, "PACKING_DRIVE_FOLDER_ID не задан"
