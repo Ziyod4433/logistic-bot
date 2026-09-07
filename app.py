@@ -5894,6 +5894,53 @@ def tgform_api_bootstrap():
     })
 
 
+@app.route("/api/tgform/client-button", methods=["POST"])
+@editor_required
+def api_tgform_client_button():
+    """Поставить в клиентскую группу кнопку «Yuklarim» (просмотр своего
+    груза). Группу НЕ добавляем в tgform_enabled_groups — иначе окно
+    открылось бы в режиме логистов."""
+    from services import ai_assistant
+
+    data = request.json or {}
+    chat_id = str(data.get("chat_id") or "").strip()
+    if not chat_id:
+        return jsonify({"error": "chat_id kerak"}), 400
+    if chat_id in ai_assistant.confidential_chat_ids():
+        return jsonify({"error": "Конфиденциальная группа — отправка запрещена"}), 403
+    if chat_id == str(ai_assistant.control_group_id()) or chat_id in _tgform_enabled_groups():
+        return jsonify({"error": "Это рабочая группа логистов — там форма уже есть"}), 400
+    keyboard = _tgform_group_keyboard(chat_id)
+    if not keyboard:
+        return jsonify({"error": "Бот не знает своего username — кнопку не собрать"}), 500
+    linked = sum(
+        1 for b in db.get_batches()
+        for r in db.get_bl_by_batch(b["id"])
+        if str(r.get("chat_id") or "").strip() == chat_id
+    )
+    try:
+        resp = telegram_send_message(
+            chat_id,
+            "📦 <b>Yuklaringiz holati</b>\n"
+            "Shu tugma orqali o'z yuklaringizni ko'rasiz: qaysi partiyada, hozir qayerda, "
+            "qancha muddat qoldi va packing list.",
+            reply_markup=keyboard,
+        )
+    except Exception as exc:
+        app.logger.exception("client button send failed for %s", chat_id)
+        return jsonify({"error": f"Не отправилось: {exc}"}), 500
+    mid = ((resp or {}).get("result") or {}).get("message_id")
+    if data.get("pin") and mid:
+        try:
+            telegram_api("pinChatMessage", json={
+                "chat_id": chat_id, "message_id": int(mid), "disable_notification": True,
+            })
+        except Exception:
+            app.logger.exception("client button pin failed for %s", chat_id)
+    return jsonify({"ok": True, "chat_id": chat_id, "message_id": mid,
+                    "title": _chat_title(chat_id), "linked_bl": linked})
+
+
 @app.route("/tgform/api/client/ask", methods=["POST"])
 def tgform_api_client_ask():
     """Вопрос клиента из окна — уходит логистам в Tracking gruppa."""
