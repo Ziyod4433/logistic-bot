@@ -4301,21 +4301,37 @@ def _build_recent_closed_bl_rows(days: int = 45) -> list:
     """BL недавно ЗАКРЫТЫХ партий: packing list нередко приходит уже после
     доставки (кейс PARK LIGHTING 76 MESTA → партия 15.08, Доставлен).
     Такие кандидаты выигрывают только при подтверждении местами/содержимым."""
+    # дата доставки на проде лежит как «05.09.2026» (ДД.ММ.ГГГГ) — строковое
+    # сравнение с ISO в SQL её отсекало; разбираем в Python оба формата
+    def _parse(value: str):
+        s = str(value or "").strip()[:10]
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d.%m.%y"):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    cutoff = datetime.now(db.TASHKENT_TZ).date() - timedelta(days=int(days))
     conn = db.get_conn()
     try:
         rows = conn.execute(
             """
-            SELECT bl.*, b.name AS batch_name
+            SELECT bl.*, b.name AS batch_name, b.client_delivery_date AS _delivered
             FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id
             WHERE COALESCE(b.client_delivery_date, '') <> ''
-              AND b.client_delivery_date >= date('now', ?)
             ORDER BY b.id DESC
-            """,
-            (f"-{int(days)} days",),
+            """
         ).fetchall()
-        return [dict(r) for r in rows]
     finally:
         conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        when = _parse(d.pop("_delivered", ""))
+        if when is not None and when >= cutoff:
+            out.append(d)
+    return out
 
 
 def _find_bl_candidates_by_brand(brand: str, rows: list, chat_titles: dict) -> list:
