@@ -1465,6 +1465,12 @@ def init_db():
         if not _table_has_column(conn, "batch_send_exclusions", column_name):
             conn.execute(f"ALTER TABLE batch_send_exclusions ADD COLUMN {column_name} {column_def}")
 
+    # папка Drive, из которой пришёл файл (её название = дата партии) —
+    # нужна при повторном разборе отложенного вопроса
+    for column_name, column_def in [("folder_name", "TEXT NOT NULL DEFAULT ''")]:
+        if not _table_has_column(conn, "packing_file_questions", column_name):
+            conn.execute(f"ALTER TABLE packing_file_questions ADD COLUMN {column_name} {column_def}")
+
     send_log_columns = [
         ("filled_by", "TEXT NOT NULL DEFAULT ''"),
         ("confirmed_by", "TEXT NOT NULL DEFAULT ''"),
@@ -4320,13 +4326,13 @@ def mark_drive_file_seen(file_id: str, name: str = "", folder_name: str = "") ->
         conn.close()
 
 
-def add_packing_question(filename: str, file_path: str, chat_id: str) -> int:
+def add_packing_question(filename: str, file_path: str, chat_id: str, folder_name: str = "") -> int:
     """Файл, для которого бот не нашёл BL: откладываем и спрашиваем людей."""
     conn = get_conn()
     try:
         cur = conn.execute(
-            "INSERT INTO packing_file_questions(filename, file_path, chat_id) VALUES (?, ?, ?)",
-            (str(filename), str(file_path), str(chat_id)),
+            "INSERT INTO packing_file_questions(filename, file_path, chat_id, folder_name) VALUES (?, ?, ?, ?)",
+            (str(filename), str(file_path), str(chat_id), str(folder_name or "")),
         )
         conn.commit()
         return cur.lastrowid

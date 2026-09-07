@@ -4418,9 +4418,48 @@ def _new_packing_results() -> dict:
         "resolved_by_history": [],
         # сверка по СОДЕРЖИМОМУ (итоги мест/веса/куба) или по закрытой партии
         "resolved_by_content": [],
+        # папка Drive (её название = дата партии) разрешила ничью
+        "resolved_by_folder": [],
+        # папка указывала одну партию, а улики — другую (груз переехал?)
+        "folder_notes": [],
         # файлы без BL — по ним бот задаст вопрос в группе
         "ask_queue": [],
     }
+
+
+# Папка Drive называется датой партии («21.08.2026», «21.08»): это ДОВОД за
+# партию с той датой — разрешает ничьи и подтверждает выбор, — но не
+# приговор: BL мог переехать в другую партию, поэтому места/содержимое
+# файла перебивают папку (с пометкой в отчёте).
+_FOLDER_DATE_RE = re.compile(r"(?<!\d)(\d{1,2})[.\-/](\d{1,2})(?:[.\-/](\d{4}|\d{2}))?(?!\d)")
+_FOLDER_ISO_RE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
+
+
+def _folder_date_key(name: str):
+    """«21.08.2026» → ('21','08','2026'); «21.08» → ('21','08',None);
+    «2026-08-21» → ('21','08','2026'); иначе None."""
+    text = str(name or "")
+    m = _FOLDER_ISO_RE.search(text)
+    if m:
+        return (m.group(3), m.group(2), m.group(1))
+    m = _FOLDER_DATE_RE.search(text)
+    if not m:
+        return None
+    dd, mm, yy = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+    if yy and len(yy) == 2:
+        yy = "20" + yy
+    return (dd, mm, yy)
+
+
+def _batch_in_folder(batch_name: str, folder_key) -> bool:
+    if not folder_key:
+        return False
+    bk = _folder_date_key(str(batch_name or ""))
+    if not bk:
+        return False
+    if bk[0] != folder_key[0] or bk[1] != folder_key[1]:
+        return False
+    return not (folder_key[2] and bk[2] and folder_key[2] != bk[2])
 
 
 _PACKING_TEXT_MAX = 200_000
@@ -4458,31 +4497,52 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
             app.logger.exception("packing: closed rows lookup failed")
             cache["closed_rows"] = []
     closed_c = _find_bl_candidates_by_brand(brand, cache["closed_rows"], chat_titles) if brand else []
+    folder_name = str(results.get("_folder_hint") or "").strip()
+    folder_key = _folder_date_key(folder_name)
     bl = None
     totals_note = ""
+    how = ""
+
+    def _in_folder(c) -> bool:
+        return _batch_in_folder(str(c.get("batch_name") or ""), folder_key)
 
     if len(candidates) == 1 and (mesta is None or _mesta_matches(candidates[0], mesta)):
         bl = candidates[0]
     elif candidates or closed_c:
-        pool_active = ([c for c in candidates if _mesta_matches(c, mesta)]
-                       if mesta is not None else list(candidates))
-        closed_m = [c for c in closed_c if _mesta_matches(c, mesta)] if mesta is not None else []
-        if len(pool_active) == 1:
-            bl = pool_active[0]
-        elif not pool_active and len(closed_m) == 1:
-            # активные не подходят по местам, а закрытая — точно (кейс PARK LIGHTING 76)
-            bl = closed_m[0]
-            results["resolved_by_content"].append(
-                (base, str(bl.get("code") or ""), str(bl.get("batch_name") or ""),
-                 f"{mesta} mesta — yopilgan partiya"))
+        pool_all = list(candidates) + list(closed_c)
+        mesta_ok = [c for c in pool_all if _mesta_matches(c, mesta)] if mesta is not None else []
+        mesta_ok_folder = [c for c in mesta_ok if _in_folder(c)]
+        hinted_active = [c for c in candidates if _in_folder(c)]
+        if mesta is not None and len(mesta_ok) == 1:
+            # места сошлись ровно у одного (в т.ч. у закрытой партии — кейс PARK 76)
+            bl = mesta_ok[0]
+            if bl not in candidates:
+                results["resolved_by_content"].append(
+                    (base, str(bl.get("code") or ""), str(bl.get("batch_name") or ""),
+                     f"{mesta} mesta — yopilgan partiya"))
+        elif mesta is not None and len(mesta_ok) > 1 and len(mesta_ok_folder) == 1:
+            # места сошлись у нескольких — ничью разрешает папка (дата партии)
+            bl = mesta_ok_folder[0]
+            how = "folder"
         else:
-            search = (pool_active or candidates) + (closed_m or closed_c)
+            search = mesta_ok or pool_all
             by_content, totals, note = _pick_by_content(base, data, search, cache)
             totals_note = note
             if by_content is not None:
                 bl = by_content
                 results["resolved_by_content"].append(
                     (base, str(bl.get("code") or ""), str(bl.get("batch_name") or ""), note))
+            elif mesta is None and len(hinted_active) == 1:
+                # без MESTA и без читаемых итогов — папка выбирает среди активных
+                bl = hinted_active[0]
+                how = "folder"
+            elif mesta is not None and not mesta_ok and len(hinted_active) == 1:
+                # места не сошлись ни у кого — берём партию из папки, но предупреждаем
+                bl = hinted_active[0]
+                how = "folder"
+                results["mesta_warns"].append(
+                    f"{base}: faylda {mesta} mesta, tizimda {bl.get('quantity_places') or 0}"
+                )
             elif len(candidates) == 1:
                 # единственный активный кандидат, места не сошлись, содержимое
                 # не помогло — прикрепляем с предупреждением (как раньше)
@@ -4491,7 +4551,7 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
                     f"{base}: faylda {mesta} mesta, tizimda {bl.get('quantity_places') or 0}"
                 )
             elif candidates:
-                pool = pool_active or candidates
+                pool = [c for c in mesta_ok if c in candidates] or candidates
                 by_history = _pick_by_attach_history(base, pool)
                 if by_history is not None:
                     bl = by_history
@@ -4505,6 +4565,8 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
                     reason = f"bir nechta mos keldi: {listed}"
                     if totals_note:
                         reason += f" · faylda: {totals_note}"
+                    if folder_name:
+                        reason += f" · papka: {folder_name}"
                     _park_for_question(base, data, results, reason)
                     return
     else:
@@ -4514,9 +4576,22 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
             bl = hit["row"]
     if not bl:
         results["unmatched"].append(base)
-        _park_for_question(base, data, results, f"faylda: {totals_note}" if totals_note else "")
+        reason = f"faylda: {totals_note}" if totals_note else ""
+        if folder_name:
+            reason = (reason + " · " if reason else "") + f"papka: {folder_name}"
+        _park_for_question(base, data, results, reason)
         return
 
+    if how == "folder":
+        results["resolved_by_folder"].append(
+            (base, str(bl.get("code") or ""), str(bl.get("batch_name") or ""), folder_name))
+    elif folder_key and not _in_folder(bl):
+        # папка говорила про другую партию — улики сильнее; сообщаем, чтобы
+        # человек видел, что груз, видимо, переехал
+        results["folder_notes"].append(
+            f"{base}: papka «{folder_name}», lekin fayl {bl.get('batch_name')} partiyasiga "
+            "to'g'ri keldi (yuk ko'chirilgan bo'lsa kerak)"
+        )
     _store_packing_file(bl, base, data, results)
 
 
@@ -4573,7 +4648,7 @@ def _park_for_question(base: str, data: bytes, results: dict, reason: str) -> No
         path = os.path.join(UPLOAD_FOLDER, f"ask_{secrets.token_hex(4)}_{stored}")
         with open(path, "wb") as fh:
             fh.write(data)
-        results["ask_queue"].append((base, path, reason))
+        results["ask_queue"].append((base, path, reason, str(results.get("_folder_hint") or "")))
     except Exception:
         app.logger.exception("packing ask: failed to park %s", base)
 
@@ -4697,6 +4772,17 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
                 f"  • {html_escape(base)} → <code>{html_escape(code)}</code> ({html_escape(batch_name)})"
                 + (f" — {html_escape(note)}" if note else "")
             )
+    if results.get("resolved_by_folder"):
+        lines.append("📁 Papka sanasi bo'yicha aniqladim:")
+        for base, code, batch_name, folder in results["resolved_by_folder"][:10]:
+            lines.append(
+                f"  • {html_escape(base)} → <code>{html_escape(code)}</code> ({html_escape(batch_name)})"
+                + (f" — papka «{html_escape(folder)}»" if folder else "")
+            )
+    if results.get("folder_notes"):
+        lines.append("📁 Papka boshqa partiyani ko'rsatgan edi, lekin fayl ma'lumotlari aniqroq:")
+        for n in results["folder_notes"][:10]:
+            lines.append(f"  • {html_escape(n)}")
     if results["mesta_warns"]:
         lines.append("⚠️ Mesta (karobka soni) mos kelmadi, lekin nomi aniq bo'lgani uchun biriktirdim:")
         for w in results["mesta_warns"][:10]:
@@ -4728,9 +4814,11 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
     if not lines:
         lines = [empty_note]
     telegram_send_message(chat_id, "\n".join(lines))
-    for base, path, reason in (results.get("ask_queue") or [])[:15]:
+    for item in (results.get("ask_queue") or [])[:15]:
+        base, path, reason = item[0], item[1], item[2]
+        folder = item[3] if len(item) > 3 else ""
         try:
-            ask_packing_file_owner(chat_id, base, path, reason)
+            ask_packing_file_owner(chat_id, base, path, reason, folder_name=folder)
         except Exception:
             app.logger.exception("packing ask failed for %s", base)
 
@@ -4738,12 +4826,12 @@ def _send_packing_report(chat_id, results: dict, empty_note: str = "ℹ️ Birik
 _PACKING_ASK_MAX_AGE_DAYS = 14
 
 
-def ask_packing_file_owner(chat_id, base: str, path: str, reason: str = "") -> None:
+def ask_packing_file_owner(chat_id, base: str, path: str, reason: str = "", folder_name: str = "") -> None:
     """Спросить в группе, к какому BL относится файл (правило владельца
     24.08.2026: не нашёл — спроси, получил ответ — прикрепи)."""
     from html import escape as html_escape
 
-    qid = db.add_packing_question(base, path, str(chat_id))
+    qid = db.add_packing_question(base, path, str(chat_id), folder_name=folder_name)
     mention = ""
     if PACKING_RESPONSIBLE_TG_ID:
         mention = f'<a href="tg://user?id={PACKING_RESPONSIBLE_TG_ID}">{html_escape(PACKING_RESPONSIBLE_NAME)}</a>, '
@@ -5169,6 +5257,7 @@ def retry_pending_packing_questions() -> int:
             continue
         r = _new_packing_results()
         r["_no_park"] = True                     # второй вопрос не задаём
+        r["_folder_hint"] = str(q.get("folder_name") or "")
         try:
             _attach_packing_bytes(str(q.get("filename") or ""), data, index, rows, chat_titles, r)
         except Exception:
@@ -5254,6 +5343,8 @@ def scan_packing_drive(force: bool = False, only_folder: str = "") -> tuple:
     for file_id, name, folder_name in fresh[:_PACKING_ZIP_MAX_FILES]:
         base = str(name or "").strip()
         kind = _archive_kind(base)
+        # название подпапки = дата партии — довод при сопоставлении
+        results["_folder_hint"] = str(folder_name or "")
         try:
             if kind:
                 data = _download_drive_bytes(file_id, _PACKING_URL_MAX_BYTES)
