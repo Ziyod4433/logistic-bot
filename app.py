@@ -5908,8 +5908,24 @@ def api_tgform_client_button():
         return jsonify({"error": "chat_id kerak"}), 400
     if chat_id in ai_assistant.confidential_chat_ids():
         return jsonify({"error": "Конфиденциальная группа — отправка запрещена"}), 403
-    if chat_id == str(ai_assistant.control_group_id()) or chat_id in _tgform_enabled_groups():
-        return jsonify({"error": "Это рабочая группа логистов — там форма уже есть"}), 400
+    if chat_id == str(ai_assistant.control_group_id()):
+        return jsonify({"error": "Это управляющая группа — там форма логистов"}), 400
+    if chat_id in _tgform_enabled_groups():
+        # когда-то включили /formon — окно открылось бы в режиме логистов.
+        # С force_client переводим группу обратно в клиентский режим.
+        if not data.get("force_client"):
+            return jsonify({
+                "error": "В этой группе включена форма логистов (/formon). "
+                         "Повторите с force_client=true, чтобы сделать её клиентской.",
+                "needs_force": True,
+            }), 409
+        groups = _tgform_enabled_groups() - {chat_id}
+        db.set_setting(_TGFORM_GROUPS_SETTING, ",".join(sorted(groups)) if groups else "__none__")
+        try:
+            telegram_send_message(chat_id, "ㅤ", reply_markup=REMOVE_REPLY_MARKUP,
+                                  parse_mode=None, disable_notification=True)
+        except Exception:
+            app.logger.exception("client button: reply keyboard cleanup failed for %s", chat_id)
     keyboard = _tgform_group_keyboard(chat_id)
     if not keyboard:
         return jsonify({"error": "Бот не знает своего username — кнопку не собрать"}), 500
