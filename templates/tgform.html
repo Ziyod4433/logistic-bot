@@ -6,7 +6,7 @@
 <title>Параметры партии</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
   --bg:#0a0a0f; --bg3:#15151f; --bg4:#1b1b28; --bg5:#212132;
@@ -101,6 +101,65 @@ h1 .hl{color:var(--amber)}
   animation:sp 0.9s linear infinite;
 }
 @keyframes sp{to{transform:rotate(360deg)}}
+
+/* ══ КЛИЕНТСКОЕ ОКНО: свой набор токенов, админ-палитру не трогаем ══ */
+body.client-mode{
+  --c-bg:#12181B; --c-sheet:#1A2226; --c-line:#263138; --c-ink:#EAF0F2; --c-mut:#8A9AA1;
+  --c-ok:#3FBF97; --c-wait:#5B9BD5; --c-warn:#E0A45C; --c-done:#7C8B92;
+  background:var(--c-bg); color:var(--c-ink);
+  font-family:'Manrope','DM Sans',system-ui,sans-serif;
+}
+body.client-mode .note{background:var(--c-sheet); border-color:var(--c-line); color:var(--c-mut)}
+body.client-mode .spin{border-color:var(--c-line); border-top-color:var(--c-ok)}
+.c-head{display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:12px}
+.c-head h2{font-family:'Manrope',sans-serif; font-size:19px; font-weight:800; letter-spacing:-.01em; line-height:1.25}
+.c-sublbl{font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--c-mut); font-weight:700; white-space:nowrap}
+.c-back{display:inline-block; color:var(--c-wait); font-size:13px; font-weight:600; margin-bottom:10px; cursor:pointer}
+.c-tabs{display:flex; gap:6px; background:var(--c-sheet); border:1px solid var(--c-line); border-radius:11px; padding:3px; margin-bottom:12px}
+.c-tab{flex:1; text-align:center; font-size:13px; font-weight:600; padding:7px; border-radius:8px; color:var(--c-mut); cursor:pointer}
+.c-tab.on{background:rgba(63,191,151,.16); color:var(--c-ok)}
+.c-card{background:var(--c-sheet); border:1px solid var(--c-line); border-radius:14px; padding:12px 13px; margin-bottom:10px; display:flex; flex-direction:column; gap:8px; cursor:pointer; position:relative}
+.c-card:active{background:#1F282D}
+.c-card.hi{border-color:rgba(91,155,213,.45)}
+.c-card::after{content:"›"; position:absolute; right:11px; top:10px; color:var(--c-mut); font-size:18px; line-height:1}
+.c-row{display:flex; align-items:center; justify-content:space-between; gap:8px; padding-right:14px}
+.c-name{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:15px}
+.c-pill{display:inline-flex; align-items:center; border-radius:999px; padding:3px 10px; font-size:11.5px; font-weight:700; white-space:nowrap}
+.c-pill.road{background:rgba(91,155,213,.16); color:var(--c-wait)}
+.c-pill.cust{background:rgba(224,164,92,.16); color:var(--c-warn)}
+.c-pill.done{background:rgba(124,139,146,.18); color:var(--c-done)}
+.c-mini{display:flex; align-items:center; gap:4px}
+.c-seg{height:4px; border-radius:2px; flex:1; background:var(--c-line)}
+.c-seg.on{background:var(--c-ok)}
+.c-seg.cur{background:var(--c-wait)}
+.c-meta{font-size:12.5px; color:var(--c-mut); display:flex; gap:5px; flex-wrap:wrap; align-items:center; line-height:1.5}
+.c-meta b{color:var(--c-ink); font-family:'IBM Plex Mono',monospace; font-weight:500}
+.c-warn{display:flex; gap:8px; align-items:flex-start; background:rgba(224,164,92,.12); border:1px solid rgba(224,164,92,.34); border-radius:11px; padding:9px 11px; font-size:12.5px; line-height:1.45; margin-bottom:10px}
+.c-warn.sm{margin:0; padding:7px 9px; font-size:11.5px}
+.c-warn b{color:var(--c-warn); font-weight:700}
+.c-kick{font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--c-mut); font-weight:700; margin:16px 0 8px}
+.c-road{display:flex; flex-direction:column; margin:4px 0 6px}
+.c-stop{display:grid; grid-template-columns:22px 1fr; gap:11px; position:relative; padding-bottom:16px}
+.c-stop:last-child{padding-bottom:0}
+.c-dot{width:13px; height:13px; border-radius:50%; margin:4px auto 0; border:2px solid var(--c-line); background:var(--c-bg); z-index:1}
+.c-stop.past .c-dot{background:var(--c-ok); border-color:var(--c-ok)}
+.c-stop.now .c-dot{background:var(--c-wait); border-color:var(--c-wait); box-shadow:0 0 0 5px rgba(91,155,213,.18)}
+.c-stop::before{content:""; position:absolute; left:10.5px; top:17px; bottom:-2px; width:2px; background:var(--c-line)}
+.c-stop:last-child::before{display:none}
+.c-stop.past::before{background:var(--c-ok)}
+.c-lbl{font-weight:600; font-size:14px; line-height:1.35}
+.c-stop.now .c-lbl{color:var(--c-wait)}
+.c-stop.future .c-lbl{color:var(--c-mut); font-weight:500}
+.c-sub{font-size:12px; color:var(--c-mut); line-height:1.45}
+.c-sub b{color:var(--c-ink); font-family:'IBM Plex Mono',monospace; font-weight:500}
+.c-figs{display:flex; gap:7px; margin-top:6px}
+.c-fig{background:var(--c-sheet); border:1px solid var(--c-line); border-radius:10px; padding:8px 10px; flex:1; min-width:0}
+.c-fig .k{font-size:9.5px; letter-spacing:.11em; text-transform:uppercase; color:var(--c-mut)}
+.c-fig .v{font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; font-variant-numeric:tabular-nums}
+.c-att{display:flex; align-items:center; gap:9px; background:var(--c-sheet); border:1px solid var(--c-line); border-radius:11px; padding:10px 12px; font-size:13px; margin-bottom:8px; color:var(--c-ink); text-decoration:none}
+.c-att .ic{width:26px; height:26px; border-radius:7px; background:rgba(63,191,151,.15); display:grid; place-items:center; flex:none}
+.c-btn{display:flex; width:100%; align-items:center; justify-content:center; gap:8px; background:var(--c-ok); color:#08221B; border:none; border-radius:12px; padding:13px; font-family:'Manrope',sans-serif; font-weight:700; font-size:14px; margin-top:16px; cursor:pointer}
+.c-foot{margin-top:14px; font-size:11px; color:var(--c-mut); text-align:center}
 </style>
 </head>
 <body>
@@ -146,6 +205,28 @@ h1 .hl{color:var(--amber)}
   <div class="hint" style="text-align:center;margin-top:8px">
     Saqlangan partiya ro'yxatda yashil bo'ladi. Hammasini yangilab bo'lgach,
     ro'yxat oynasidagi TASDIQLASH tugmasini bosing.
+  </div>
+</div>
+
+<!-- ── КЛИЕНТСКОЕ ОКНО (только просмотр своих грузов) ── -->
+<div id="client-mode" style="display:none">
+  <div id="c-list">
+    <div class="c-head">
+      <h2 id="c-title">Yuklarim</h2>
+      <span class="c-sublbl">BURAQ Logistics</span>
+    </div>
+    <div class="c-tabs">
+      <span class="c-tab on" id="c-tab-active" onclick="cSetTab('active')">Faol</span>
+      <span class="c-tab" id="c-tab-history" onclick="cSetTab('history')">Tarix</span>
+    </div>
+    <div id="c-list-warn"></div>
+    <div id="c-list-body"><div class="spin"></div></div>
+  </div>
+
+  <div id="c-batch" style="display:none">
+    <div class="c-back" onclick="cShow('list')">‹ Orqaga</div>
+    <div class="c-head"><h2 id="c-batch-name">—</h2></div>
+    <div id="c-batch-body"></div>
   </div>
 </div>
 
@@ -321,7 +402,148 @@ async function load() {
       '<div class="note">⚠️ ' + esc(e.message) + '</div>';
   }
 }
-load();
+
+// ── КЛИЕНТСКОЕ ОКНО: только свои грузы, без изменений ──
+let CDATA = null, CTAB = "active", CBATCH = null;
+
+function cShow(screen) {
+  document.getElementById("c-list").style.display = screen === "list" ? "block" : "none";
+  document.getElementById("c-batch").style.display = screen === "batch" ? "block" : "none";
+  if (tg && tg.BackButton) {
+    if (screen === "batch") { tg.BackButton.show(); } else { tg.BackButton.hide(); }
+  }
+}
+
+function cNum(v, digits) {
+  const n = Number(v || 0);
+  return n.toLocaleString("ru-RU", {minimumFractionDigits: digits || 0, maximumFractionDigits: digits || 0});
+}
+
+function cSegs(stage) {
+  let out = "";
+  for (let i = 0; i < 5; i++) {
+    out += '<span class="c-seg' + (i < stage ? " on" : (i === stage ? " cur" : "")) + '"></span>';
+  }
+  return out;
+}
+
+function cPill(b) {
+  if (b.delivered_at) return '<span class="c-pill done">Yetkazildi</span>';
+  if (b.stage >= 3) return '<span class="c-pill cust">Bojxonada</span>';
+  return '<span class="c-pill road">Yo\'lda</span>';
+}
+
+function cCard(b) {
+  const figs = [b.places + " joy", cNum(b.kg, 0) + " kg", cNum(b.cbm, 3) + " m³"];
+  return '<div class="c-card' + (b.stage < 3 && !b.delivered_at ? " hi" : "") + '" onclick="cOpen(' + b.id + ')">' +
+    '<div class="c-row"><span class="c-name">' + esc(b.name) + '</span>' + cPill(b) + '</div>' +
+    '<div class="c-mini">' + cSegs(b.stage) + '</div>' +
+    '<div class="c-meta"><span>' + esc(b.delivered_at ? (b.delivered_at + " topshirildi") : b.status) + '</span>' +
+      (b.eta && !b.delivered_at ? '<span>·</span><span>' + esc(b.eta_label) + ': <b>' + esc(b.eta) + '</b></span>' : "") +
+    '</div>' +
+    '<div class="c-meta">' + figs.map(f => "<span>" + esc(f) + "</span>").join("<span>·</span>") +
+      (b.files.length ? '<span>·</span><span>📎 ' + b.files.length + "</span>" : "") + '</div>' +
+    (b.incident ? '<div class="c-warn sm"><span>⚠️</span><span>' + esc(b.incident) + "</span></div>" : "") +
+    "</div>";
+}
+
+function cRenderList() {
+  const items = CTAB === "active" ? CDATA.active : CDATA.history;
+  document.getElementById("c-title").textContent = CDATA.group_title || "Yuklarim";
+  document.getElementById("c-tab-active").textContent = "Faol (" + CDATA.active.length + ")";
+  document.getElementById("c-tab-history").textContent = "Tarix (" + CDATA.history_total + ")";
+  document.getElementById("c-tab-active").className = "c-tab" + (CTAB === "active" ? " on" : "");
+  document.getElementById("c-tab-history").className = "c-tab" + (CTAB === "history" ? " on" : "");
+  const body = document.getElementById("c-list-body");
+  body.innerHTML = items.length
+    ? items.map(cCard).join("")
+    : '<div class="note">' + (CTAB === "active" ? "Hozircha faol yuk yo'q." : "Tarix bo'sh.") + "</div>";
+  const inc = CDATA.active.filter(b => b.incident);
+  document.getElementById("c-list-warn").innerHTML = (CTAB === "active" && inc.length)
+    ? inc.map(b => '<div class="c-warn"><span>⚠️</span><span><b>' + esc(b.name) + "</b> — " + esc(b.incident) + "</span></div>").join("")
+    : "";
+}
+
+function cStops(b) {
+  const names = b.kg_branch
+    ? ["Xitoy", "Qirg'iziston", "Yo'lda", "Toshkent · Chuqursoy", "Sizga topshirish"]
+    : ["Xitoy", "Horgos", "Qozog'iston", "Toshkent · Chuqursoy", "Sizga topshirish"];
+  const subs = [
+    "Omborga qabul qilindi",
+    b.kg_branch ? "Chegaradan o'tdi" : "Qozoq furaga ortildi",
+    "", "", "",
+  ];
+  let out = "";
+  for (let i = 0; i < 5; i++) {
+    const cls = i < b.stage ? "past" : (i === b.stage ? "now" : "future");
+    let sub = subs[i] || "";
+    if (i === b.stage && !b.delivered_at) sub = b.status ? esc(b.status) + " · hozir shu yerda" : "Hozir shu yerda";
+    if (i === 3 && b.stage < 3 && b.eta) sub = esc(b.eta_label) + ": <b>" + esc(b.eta) + "</b>";
+    if (i === 4 && b.delivered_at) sub = esc(b.delivered_at) + " da topshirildi";
+    out += '<div class="c-stop ' + cls + '"><span class="c-dot"></span><div>' +
+      '<div class="c-lbl">' + esc(names[i]) + "</div>" +
+      (sub ? '<div class="c-sub">' + sub + "</div>" : "") + "</div></div>";
+  }
+  return out;
+}
+
+function cOpen(id) {
+  const b = CDATA.active.concat(CDATA.history).find(x => x.id === id);
+  if (!b) return;
+  CBATCH = b;
+  document.getElementById("c-batch-name").textContent = b.name;
+  document.getElementById("c-batch-body").innerHTML =
+    (b.incident ? '<div class="c-warn"><span>⚠️</span><span><b>' + esc(b.incident) + "</b></span></div>" : "") +
+    '<div class="c-road">' + cStops(b) + "</div>" +
+    '<div class="c-figs">' +
+      '<div class="c-fig"><div class="k">Joy</div><div class="v">' + b.places + "</div></div>" +
+      '<div class="c-fig"><div class="k">Kg</div><div class="v">' + cNum(b.kg, 0) + "</div></div>" +
+      '<div class="c-fig"><div class="k">m³</div><div class="v">' + cNum(b.cbm, 3) + "</div></div>" +
+    "</div>" +
+    (b.codes.length ? '<div class="c-kick">BL kod</div><div class="c-meta"><span>' + b.codes.map(esc).join(", ") + "</span></div>" : "") +
+    (b.files.length
+      ? '<div class="c-kick">Hujjatlar</div>' + b.files.map(f =>
+          '<a class="c-att" href="' + esc(f.url) + '" target="_blank" rel="noopener">' +
+          '<span class="ic">📎</span><span>' + esc(f.name) + "</span></a>").join("")
+      : '<div class="c-kick">Hujjatlar</div><div class="note">Packing list hali biriktirilmagan.</div>') +
+    '<button class="c-btn" onclick="cAsk()">💬 Savol berish</button>' +
+    '<div class="c-foot"><span>' + (b.updated_at ? "Yangilandi: " + esc(b.updated_at) : "") + "</span></div>";
+  cShow("batch");
+}
+
+async function cAsk() {
+  const text = prompt("Savolingizni yozing — logistlarga yuboraman:");
+  if (!text || !text.trim()) return;
+  try {
+    const r = await api("/tgform/api/client/ask", {text: text.trim(), batch_id: CBATCH ? CBATCH.id : 0});
+    toast(r.already ? (r.note || "Yuborilgan") : "✅ Savolingiz logistlarga yuborildi");
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function boot() {
+  let info;
+  try {
+    info = await api("/tgform/api/bootstrap");
+  } catch (e) {
+    document.getElementById("list-body").innerHTML = '<div class="note">⚠️ ' + esc(e.message) + "</div>";
+    return;
+  }
+  if (info.mode !== "client") { load(); return; }
+  CDATA = info;
+  document.body.classList.add("client-mode");
+  document.getElementById("screen-list").style.display = "none";
+  document.getElementById("screen-form").style.display = "none";
+  document.getElementById("client-mode").style.display = "block";
+  if (tg && tg.BackButton) tg.BackButton.onClick(() => cShow("list"));
+  cRenderList();
+  cShow("list");
+}
+
+function cSetTab(tab) { CTAB = tab; cRenderList(); }
+
+boot();
 </script>
 </body>
 </html>

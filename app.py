@@ -5750,6 +5750,191 @@ def tgform_page():
     return render_template("tgform.html")
 
 
+# ── КЛИЕНТСКОЕ ОКНО ФОРМЫ (правило владельца 07.09.2026) ────────────
+# Управляющая группа видит форму изменения статусов, как раньше.
+# Клиентская группа — ТОЛЬКО просмотр СВОИХ грузов: маршрут, сроки,
+# цифры, packing list. Открывший обязан состоять в этой самой группе.
+
+# 18 внутренних статусов → 5 понятных клиенту этапов.
+_CLIENT_STAGES = ["Xitoy", "Horgos", "Qozog'iston", "Toshkent", "Topshirildi"]
+_STAGE_BY_STATUS = {
+    "Xitoy": 0, "Yiwu": 0, "Zhongshan": 0,
+    "Horgos": 1, db.LEGACY_HORGOS_STATUS: 1,
+    "Nurjo'li": 2, "Jarkent": 2, "Almata": 2, "Taraz": 2, "Shimkent": 2,
+    "Qonusbay": 2, "Saryagash": 2, "Yallama": 2,
+    # киргизская ветка идёт мимо Хоргоса — тот же «в пути»
+    "Kashgar (Qirg'iz)": 2, "Irkeshtam": 2, "Osh": 2, "Dostlik": 2, "Andijon": 2,
+    "Toshkent(Chuqursoy ULS da)": 3,
+    db.DELIVERED_STATUS: 4, db.LEGACY_DELIVERED_STATUS: 4,
+}
+_KG_BRANCH = {"Kashgar (Qirg'iz)", "Irkeshtam", "Osh", "Dostlik", "Andijon"}
+CLIENT_ASK_COOLDOWN_MINUTES = int(os.getenv("CLIENT_ASK_COOLDOWN_MINUTES", "10") or 10)
+
+
+def _client_stage(status: str) -> int:
+    return _STAGE_BY_STATUS.get(db.normalize_status_value(str(status or "")), 0)
+
+
+def _chat_title(chat_id: str) -> str:
+    for chat in db.get_telegram_chats(include_inactive=True) or []:
+        if str(chat.get("chat_id") or "") == str(chat_id):
+            return str(chat.get("title") or "")
+    return ""
+
+
+def _client_group_ok(user: dict, group_id: str) -> bool:
+    """Пускаем, только если человек РЕАЛЬНО состоит в этой группе —
+    иначе подстановкой чужого chat_id в ссылку можно было бы увидеть
+    чужой груз. Владельцу/оператору разрешаем для проверки."""
+    from services import ai_assistant
+
+    uid = str((user or {}).get("id") or "")
+    if not uid or not group_id:
+        return False
+    if group_id in ai_assistant.confidential_chat_ids():
+        return False
+    if ai_assistant.can_change(uid) or ai_assistant.is_readonly_user(uid):
+        return True
+    cache_key = f"{uid}@{group_id}"
+    now = time.time()
+    cached = _FORM_MEMBER_CACHE.get(cache_key)
+    if cached and cached[1] > now:
+        return cached[0]
+    allowed = False
+    try:
+        resp = telegram_api("getChatMember", json={"chat_id": group_id, "user_id": int(uid)})
+        status = ((resp.get("result") or {}).get("status")) or ""
+        allowed = status in {"creator", "administrator", "member", "restricted"}
+    except Exception:
+        app.logger.exception("client form: getChatMember failed for %s in %s", uid, group_id)
+    _FORM_MEMBER_CACHE[cache_key] = (allowed, now + 600)
+    return allowed
+
+
+def _client_batch_payload(batch: dict, rows: list) -> dict:
+    """Одна партия глазами клиента: этап, срок, цифры, файлы."""
+    status = str(batch.get("status") or "")
+    delivered = str(batch.get("client_delivery_date") or "").strip()
+    stage = 4 if delivered else _client_stage(status)
+    places = sum(float(r.get("quantity_places") or 0) for r in rows)
+    kg = sum(float(r.get("weight_kg") or 0) for r in rows)
+    cbm = sum(float(r.get("volume_cbm") or 0) for r in rows)
+    files = []
+    for r in rows:
+        for f in db.get_files(r["id"]) or []:
+            token = str(f.get("public_token") or "").strip()
+            if token:
+                files.append({"name": f.get("filename") or "", "url": f"/public/file/{token}"})
+    updated = ""
+    for r in rows:
+        for value in (r.get("tracking_sent_at"), r.get("status_updated_at")):
+            value = str(value or "")[:16]
+            if value > updated:
+                updated = value
+    dest = str(batch.get("eta_destination") or "Toshkent")
+    return {
+        "id": batch["id"],
+        "name": batch.get("name") or "",
+        "status": status,
+        "stage": stage,
+        "stage_label": _CLIENT_STAGES[stage],
+        "kg_branch": db.normalize_status_value(status) in _KG_BRANCH,
+        "eta": str(batch.get("eta_to_toshkent") or "").strip(),
+        "eta_label": db.ETA_DESTINATION_LABELS.get(dest, dest),
+        "incident": str(batch.get("incident_note") or "").strip(),
+        "delivered_at": delivered,
+        "codes": [str(r.get("code") or "") for r in rows],
+        "places": int(round(places)),
+        "kg": round(kg, 1),
+        "cbm": round(cbm, 3),
+        "files": files,
+        "updated_at": updated,
+    }
+
+
+def _client_cargo(group_id: str) -> dict:
+    active, history = [], []
+    for batch in db.get_batches():
+        rows = [r for r in db.get_bl_by_batch(batch["id"])
+                if str(r.get("chat_id") or "").strip() == str(group_id)]
+        if not rows:
+            continue
+        payload = _client_batch_payload(batch, rows)
+        (history if payload["delivered_at"] else active).append(payload)
+    active.sort(key=lambda x: (-x["stage"], x["name"]))
+    history.sort(key=lambda x: x["delivered_at"], reverse=True)
+    return {"active": active, "history": history[:20], "history_total": len(history)}
+
+
+@app.route("/tgform/api/bootstrap", methods=["POST"])
+def tgform_api_bootstrap():
+    """Какой режим показать: админ-форма или клиентский просмотр."""
+    from services import ai_assistant
+
+    data = request.json or {}
+    user = _validate_webapp_init_data(data.get("init_data") or "")
+    if not user:
+        return jsonify({"error": "auth"}), 403
+    src = str(data.get("src_chat_id") or "").strip()
+    control = str(ai_assistant.control_group_id() or "")
+    # управляющая и включённые через /formon группы — прежняя форма
+    if (not src) or src == control or src in _tgform_enabled_groups():
+        if not _webapp_user_allowed(user.get("id")):
+            return jsonify({"error": "forbidden"}), 403
+        return jsonify({"ok": True, "mode": "admin"})
+    if not _client_group_ok(user, src):
+        return jsonify({"error": "forbidden"}), 403
+    cargo = _client_cargo(src)
+    return jsonify({
+        "ok": True, "mode": "client",
+        "group_title": _chat_title(src),
+        "user_name": user.get("first_name") or "",
+        "stages": _CLIENT_STAGES,
+        **cargo,
+    })
+
+
+@app.route("/tgform/api/client/ask", methods=["POST"])
+def tgform_api_client_ask():
+    """Вопрос клиента из окна — уходит логистам в Tracking gruppa."""
+    from services import ai_assistant
+
+    data = request.json or {}
+    user = _validate_webapp_init_data(data.get("init_data") or "")
+    if not user:
+        return jsonify({"error": "auth"}), 403
+    src = str(data.get("src_chat_id") or "").strip()
+    if not src or not _client_group_ok(user, src):
+        return jsonify({"error": "forbidden"}), 403
+    text = str(data.get("text") or "").strip()[:400]
+    if not text:
+        return jsonify({"error": "Savolni yozing"}), 400
+    key = f"client_ask_last:{src}"
+    prev = _parse_local_ts(db.get_setting(key))
+    now_local = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
+    if prev and (now_local - prev) < timedelta(minutes=CLIENT_ASK_COOLDOWN_MINUTES):
+        return jsonify({"ok": True, "already": True,
+                        "note": "Savolingiz allaqachon yuborilgan — logistlar javob beradi."})
+    batch = db.get_batch(int(data.get("batch_id") or 0)) or {}
+    who = html.escape(str(user.get("first_name") or "mijoz"))
+    lines = [
+        "❓ <b>Mijoz savoli</b> (Treking oynasidan)",
+        f"👥 Guruh: {html.escape(_chat_title(src) or src)}",
+    ]
+    if batch:
+        lines.append(f"📦 Partiya: «{html.escape(str(batch.get('name') or ''))}» — "
+                     f"{html.escape(str(batch.get('status') or ''))}")
+    lines.append(f"👤 {who}: {html.escape(text)}")
+    lines.append("<i>Javobni mijozning o'z guruhiga yozing.</i>")
+    try:
+        telegram_send_message(ai_assistant.control_group_id(), "\n".join(lines))
+    except Exception as exc:
+        app.logger.exception("client ask: send failed")
+        return jsonify({"error": f"Yuborib bo'lmadi: {exc}"}), 500
+    db.set_setting(key, now_local.strftime("%Y-%m-%d %H:%M:%S"))
+    return jsonify({"ok": True})
+
+
 @app.route("/tgform/api/list", methods=["POST"])
 def tgform_api_list():
     user, err = _webapp_auth_or_403()
