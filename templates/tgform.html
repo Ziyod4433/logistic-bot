@@ -150,6 +150,17 @@ body.client-mode .spin{border-color:var(--c-line); border-top-color:var(--c-ok)}
 .c-lbl{font-weight:600; font-size:14px; line-height:1.35}
 .c-stop.now .c-lbl{color:var(--c-wait)}
 .c-stop.future .c-lbl{color:var(--c-mut); font-weight:500}
+/* точка из «Qaysi nuqtaga»: срок относится именно к ней */
+.c-stop.target .c-dot{border-color:var(--c-ok); background:var(--c-bg); box-shadow:0 0 0 4px rgba(63,191,151,.16)}
+.c-stop.target .c-lbl{color:var(--c-ok); font-weight:700}
+.c-stop.target .c-sub b{color:var(--c-ok); font-size:13px}
+/* линия перехода «откуда → куда»: зелёная пунктирная */
+.c-stop.moving::before{
+  background:repeating-linear-gradient(to bottom, var(--c-ok) 0 6px, transparent 6px 11px);
+  width:2px;
+}
+.c-stale{font-size:12px; color:var(--c-mut); margin-top:8px}
+.c-stale b{color:var(--c-ink); font-family:'IBM Plex Mono',monospace}
 .c-sub{font-size:12px; color:var(--c-mut); line-height:1.45}
 .c-sub b{color:var(--c-ink); font-family:'IBM Plex Mono',monospace; font-weight:500}
 .c-figs{display:flex; gap:7px; margin-top:6px}
@@ -473,16 +484,42 @@ function cStops(b) {
     b.kg_branch ? "Chegaradan o'tdi" : "Qozoq furaga ortildi",
     "", "", "",
   ];
+  // базовые точки маршрута
+  const pts = [];
+  for (let i = 0; i < 5; i++) pts.push({stage: i, label: names[i], sub: subs[i] || "", eta: false});
+
+  // точка из «Qaysi nuqtaga» — ОТДЕЛЬНАЯ следующая точка, срок под НЕЙ
+  const delivered = !!b.delivered_at;
+  let etaIdx = -1;
+  if (b.eta && !delivered) {
+    if (b.eta_slot_kind === "extra" && b.eta_slot_at >= b.stage) {
+      const at = pts.findIndex(p => p.stage === b.eta_slot_at);
+      pts.splice(at + 1, 0, {stage: b.eta_slot_at + 0.5, label: b.eta_point_label, sub: "", eta: true});
+    } else if (b.eta_slot_kind === "stage" && b.eta_slot_at > b.stage) {
+      const at = pts.findIndex(p => p.stage === b.eta_slot_at);
+      if (at >= 0) { pts[at].eta = true; pts[at].label = b.eta_point_label || pts[at].label; }
+    }
+    etaIdx = pts.findIndex(p => p.eta);
+  }
+  const nowIdx = pts.findIndex(p => p.stage === b.stage);
+
   let out = "";
-  for (let i = 0; i < 5; i++) {
-    const cls = i < b.stage ? "past" : (i === b.stage ? "now" : "future");
-    let sub = subs[i] || "";
-    if (i === b.stage && !b.delivered_at) sub = b.status ? esc(b.status) + " · hozir shu yerda" : "Hozir shu yerda";
-    if (i === 3 && b.stage < 3 && b.eta) sub = esc(b.eta_label) + ": <b>" + esc(b.eta) + "</b>";
-    if (i === 4 && b.delivered_at) sub = esc(b.delivered_at) + " da topshirildi";
+  pts.forEach((p, i) => {
+    let cls = i < nowIdx ? "past" : (i === nowIdx ? "now" : "future");
+    if (p.eta) cls += " target";
+    // линия перехода: от текущего пункта к точке срока — подсвечена
+    if (etaIdx > nowIdx && i >= nowIdx && i < etaIdx) cls += " moving";
+    let sub = p.sub;
+    if (i === nowIdx && !delivered) sub = b.status ? esc(b.status) + " · hozir shu yerda" : "Hozir shu yerda";
+    if (p.eta) sub = '<b>' + esc(b.eta) + "</b> · " + esc(b.eta_label);
+    if (p.stage === 4 && delivered) sub = esc(b.delivered_at) + " da topshirildi";
     out += '<div class="c-stop ' + cls + '"><span class="c-dot"></span><div>' +
-      '<div class="c-lbl">' + esc(names[i]) + "</div>" +
+      '<div class="c-lbl">' + esc(p.label) + "</div>" +
       (sub ? '<div class="c-sub">' + sub + "</div>" : "") + "</div></div>";
+  });
+  // срок относится к уже пройденной точке (данные не обновили) — не прячем
+  if (b.eta && !delivered && etaIdx < 0) {
+    out += '<div class="c-stale">⏳ ' + esc(b.eta_label) + ": <b>" + esc(b.eta) + "</b></div>";
   }
   return out;
 }

@@ -5768,6 +5768,25 @@ _STAGE_BY_STATUS = {
     db.DELIVERED_STATUS: 4, db.LEGACY_DELIVERED_STATUS: 4,
 }
 _KG_BRANCH = {"Kashgar (Qirg'iz)", "Irkeshtam", "Osh", "Dostlik", "Andijon"}
+# Точка из «Qaysi nuqtaga» — ОТДЕЛЬНАЯ точка маршрута, срок висит под НЕЙ.
+# Иначе клиент читает «Qozoq furaga ortilish: 2-3 kun» под Ташкентом и
+# думает, что это срок до Ташкента (замечание владельца 07.09.2026).
+#   ("stage", i) — совпадает с базовой точкой i
+#   ("extra", i) — вставляется отдельной точкой сразу после базовой i
+_ETA_ROUTE_SLOT = {
+    "Horgos": ("stage", 1),
+    "Qozog'istonga o'tish": ("extra", 1),
+    "Qozoq furaga ortilish": ("extra", 1),
+    "Toshkent": ("stage", 3),
+    "Mijozga yetib borish": ("stage", 4),
+}
+_ETA_POINT_LABEL = {
+    "Horgos": "Horgos",
+    "Qozog'istonga o'tish": "Qozog'istonga o'tish",
+    "Qozoq furaga ortilish": "Qozoq furaga ortilish",
+    "Toshkent": "Toshkent · Chuqursoy",
+    "Mijozga yetib borish": "Sizga topshirish",
+}
 CLIENT_ASK_COOLDOWN_MINUTES = int(os.getenv("CLIENT_ASK_COOLDOWN_MINUTES", "10") or 10)
 
 
@@ -5832,6 +5851,7 @@ def _client_batch_payload(batch: dict, rows: list) -> dict:
             if value > updated:
                 updated = value
     dest = str(batch.get("eta_destination") or "Toshkent")
+    slot_kind, slot_at = _ETA_ROUTE_SLOT.get(dest, ("stage", 3))
     return {
         "id": batch["id"],
         "name": batch.get("name") or "",
@@ -5841,6 +5861,10 @@ def _client_batch_payload(batch: dict, rows: list) -> dict:
         "kg_branch": db.normalize_status_value(status) in _KG_BRANCH,
         "eta": str(batch.get("eta_to_toshkent") or "").strip(),
         "eta_label": db.ETA_DESTINATION_LABELS.get(dest, dest),
+        "eta_point": dest,
+        "eta_point_label": _ETA_POINT_LABEL.get(dest, dest),
+        "eta_slot_kind": slot_kind,
+        "eta_slot_at": slot_at,
         "incident": str(batch.get("incident_note") or "").strip(),
         "delivered_at": delivered,
         "codes": [str(r.get("code") or "") for r in rows],
