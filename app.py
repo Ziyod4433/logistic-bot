@@ -5490,18 +5490,19 @@ _FORM_MEMBER_CACHE: dict = {}
 
 
 def _tgform_enabled_groups() -> set:
-    """Группы, где Mini App активирован (/formon / /formoff).
+    """Где живёт ФОРМА ЛОГИСТОВ (изменение статусов, утренний запрос).
 
-    Пока настройка ни разу не менялась — по умолчанию управляющая
-    группа. "__none__" = явно выключено везде."""
+    ЖЁСТКОЕ ПРАВИЛО владельца (07.09.2026): только Tracking gruppa.
+    Клиентские группы получают клиентское окно (просмотр своего груза),
+    даже если там кто-то выполнил /formon — иначе клиент видел бы форму
+    редактирования чужих партий. "__none__" = выключено везде."""
     from services import ai_assistant
 
     raw = (db.get_setting(_TGFORM_GROUPS_SETTING) or "").strip()
-    if not raw:
-        return {ai_assistant.control_group_id()}
     if raw == "__none__":
         return set()
-    return {p.strip() for p in raw.split(",") if p.strip()}
+    control = str(ai_assistant.control_group_id() or "").strip()
+    return {control} if control else set()
 
 
 def _save_tgform_groups(groups: set) -> None:
@@ -5523,8 +5524,22 @@ def handle_tgform_toggle_command(message: dict, command: str) -> None:
         telegram_send_message(chat_id, "❌ Bu guruhda forma yoqilmaydi.")
         return
 
-    groups = _tgform_enabled_groups()
     enable = command in {"formon", "form_on"}
+    control = str(ai_assistant.control_group_id() or "")
+    if enable and chat_id != control:
+        # Логистическая форма — только в Tracking gruppa. В клиентской
+        # группе вместо неё даём КЛИЕНТСКОЕ окно: свой груз, без правок.
+        telegram_send_message(
+            chat_id,
+            "ℹ️ Logistlar formasi faqat Tracking gruppada ishlaydi.\n"
+            "Bu guruh uchun <b>o'z yuklaringiz oynasi</b> — partiyalar, yo'l, muddat va packing list:",
+            reply_markup=_tgform_group_keyboard(chat_id),
+        )
+        telegram_send_message(chat_id, "ㅤ", reply_markup=REMOVE_REPLY_MARKUP,
+                              parse_mode=None, disable_notification=True)
+        return
+
+    groups = _tgform_enabled_groups()
     if enable:
         groups.add(chat_id)
         _save_tgform_groups(groups)
@@ -5907,8 +5922,9 @@ def tgform_api_bootstrap():
     control = str(ai_assistant.control_group_id() or "")
     staff = (ai_assistant.can_change(uid) or ai_assistant.is_readonly_user(uid))
     app.logger.info("TGFORM bootstrap: uid=%s src=%r staff=%s", uid, src, staff)
-    # управляющая и включённые через /formon группы — прежняя форма
-    if src == control or (src and src in _tgform_enabled_groups()):
+    # ЖЁСТКОЕ ПРАВИЛО: форма логистов — ТОЛЬКО Tracking gruppa.
+    # Любая другая группа = клиентское окно, что бы там ни включали.
+    if src == control:
         if not _webapp_user_allowed(uid):
             return jsonify({"error": "forbidden"}), 403
         return jsonify({"ok": True, "mode": "admin"})
@@ -5953,22 +5969,13 @@ def api_tgform_client_button():
         return jsonify({"error": "Конфиденциальная группа — отправка запрещена"}), 403
     if chat_id == str(ai_assistant.control_group_id()):
         return jsonify({"error": "Это управляющая группа — там форма логистов"}), 400
-    if chat_id in _tgform_enabled_groups():
-        # когда-то включили /formon — окно открылось бы в режиме логистов.
-        # С force_client переводим группу обратно в клиентский режим.
-        if not data.get("force_client"):
-            return jsonify({
-                "error": "В этой группе включена форма логистов (/formon). "
-                         "Повторите с force_client=true, чтобы сделать её клиентской.",
-                "needs_force": True,
-            }), 409
-        groups = _tgform_enabled_groups() - {chat_id}
-        db.set_setting(_TGFORM_GROUPS_SETTING, ",".join(sorted(groups)) if groups else "__none__")
-        try:
-            telegram_send_message(chat_id, "ㅤ", reply_markup=REMOVE_REPLY_MARKUP,
-                                  parse_mode=None, disable_notification=True)
-        except Exception:
-            app.logger.exception("client button: reply keyboard cleanup failed for %s", chat_id)
+    # старая reply-клавиатура «📝 Treking forma» от прежнего /formon —
+    # снимаем, чтобы у клиента не осталось входа в форму логистов
+    try:
+        telegram_send_message(chat_id, "ㅤ", reply_markup=REMOVE_REPLY_MARKUP,
+                              parse_mode=None, disable_notification=True)
+    except Exception:
+        app.logger.exception("client button: reply keyboard cleanup failed for %s", chat_id)
     keyboard = _tgform_group_keyboard(chat_id)
     if not keyboard:
         return jsonify({"error": "Бот не знает своего username — кнопку не собрать"}), 500
