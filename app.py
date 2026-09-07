@@ -5896,18 +5896,37 @@ def tgform_api_bootstrap():
     from services import ai_assistant
 
     data = request.json or {}
-    user = _validate_webapp_init_data(data.get("init_data") or "")
-    if not user:
-        return jsonify({"error": "auth"}), 403
+    raw_init = data.get("init_data") or ""
+    user = _validate_webapp_init_data(raw_init)
     src = str(data.get("src_chat_id") or "").strip()
+    if not user:
+        app.logger.warning("TGFORM bootstrap: auth failed (src=%r, init_data_len=%s)",
+                           src, len(str(raw_init)))
+        return jsonify({"error": "auth"}), 403
+    uid = str(user.get("id") or "")
     control = str(ai_assistant.control_group_id() or "")
+    staff = (ai_assistant.can_change(uid) or ai_assistant.is_readonly_user(uid))
+    app.logger.info("TGFORM bootstrap: uid=%s src=%r staff=%s", uid, src, staff)
     # управляющая и включённые через /formon группы — прежняя форма
-    if (not src) or src == control or src in _tgform_enabled_groups():
-        if not _webapp_user_allowed(user.get("id")):
+    if src == control or (src and src in _tgform_enabled_groups()):
+        if not _webapp_user_allowed(uid):
             return jsonify({"error": "forbidden"}), 403
         return jsonify({"ok": True, "mode": "admin"})
+    if not src:
+        # кнопка открылась без метки группы (старое сообщение, кнопка из
+        # лички, клиент Telegram не передал startapp). Сотруднику — форма,
+        # клиенту — понятная подсказка вместо глухого отказа.
+        if _webapp_user_allowed(uid):
+            return jsonify({"ok": True, "mode": "admin"})
+        app.logger.warning("TGFORM bootstrap: no src for uid=%s", uid)
+        return jsonify({"error": "no_group",
+                        "message": "Yuklaringizni ko'rish uchun formani O'Z GURUHINGIZDAGI "
+                                   "tugma orqali oching."}), 403
     if not _client_group_ok(user, src):
-        return jsonify({"error": "forbidden"}), 403
+        app.logger.warning("TGFORM bootstrap: uid=%s NOT a member of %s", uid, src)
+        return jsonify({"error": "not_member",
+                        "message": "Bu guruh yuklarini ko'rish huquqi yo'q — formani "
+                                   "o'z guruhingizdagi tugma orqali oching."}), 403
     cargo = _client_cargo(src)
     return jsonify({
         "ok": True, "mode": "client",

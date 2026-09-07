@@ -270,7 +270,8 @@ async function api(path, payload) {
     body: JSON.stringify(Object.assign({init_data: initData, src_chat_id: srcChatId}, payload || {})),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error === "auth" ? "Avtorizatsiya xatosi — formani bot tugmasidan oching" :
+  if (!r.ok) throw new Error(data.message ? data.message :
+                             data.error === "auth" ? "Avtorizatsiya xatosi — formani bot tugmasidan oching" :
                              data.error === "forbidden" ? "Sizga bu forma uchun ruxsat yo'q" :
                              (data.error || ("HTTP " + r.status)));
   return data;
