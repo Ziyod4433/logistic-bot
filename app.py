@@ -5527,16 +5527,12 @@ def handle_tgform_toggle_command(message: dict, command: str) -> None:
     enable = command in {"formon", "form_on"}
     control = str(ai_assistant.control_group_id() or "")
     if enable and chat_id != control:
-        # Логистическая форма — только в Tracking gruppa. В клиентской
-        # группе вместо неё даём КЛИЕНТСКОЕ окно: свой груз, без правок.
-        telegram_send_message(
-            chat_id,
-            "ℹ️ Logistlar formasi faqat Tracking gruppada ishlaydi.\n"
-            "Bu guruh uchun <b>o'z yuklaringiz oynasi</b> — partiyalar, yo'l, muddat va packing list:",
-            reply_markup=_tgform_group_keyboard(chat_id),
-        )
+        # Логистическая форма — только в Tracking gruppa. Клиенту про это
+        # знать незачем: молча даём его собственное окно (владелец 07.09).
         telegram_send_message(chat_id, "ㅤ", reply_markup=REMOVE_REPLY_MARKUP,
                               parse_mode=None, disable_notification=True)
+        telegram_send_message(chat_id, CLIENT_FORM_INTRO,
+                              reply_markup=_tgform_group_keyboard(chat_id))
         return
 
     groups = _tgform_enabled_groups()
@@ -5772,6 +5768,13 @@ def tgform_page():
 
 # 18 внутренних статусов → 5 понятных клиенту этапов.
 _CLIENT_STAGES = ["Xitoy", "Horgos", "Qozog'iston", "Toshkent", "Topshirildi"]
+# Единственный текст, которым клиентская группа получает своё окно —
+# и от кнопки из панели, и в ответ на /formon в этой группе.
+CLIENT_FORM_INTRO = (
+    "📦 <b>Yuklaringiz holati</b>\n"
+    "Shu tugma orqali o'z yuklaringizni ko'rasiz: qaysi partiyada, hozir qayerda, "
+    "qancha muddat qoldi va packing list."
+)
 _STAGE_BY_STATUS = {
     "Xitoy": 0, "Yiwu": 0, "Zhongshan": 0,
     "Horgos": 1, db.LEGACY_HORGOS_STATUS: 1,
@@ -5985,13 +5988,7 @@ def api_tgform_client_button():
         if str(r.get("chat_id") or "").strip() == chat_id
     )
     try:
-        resp = telegram_send_message(
-            chat_id,
-            "📦 <b>Yuklaringiz holati</b>\n"
-            "Shu tugma orqali o'z yuklaringizni ko'rasiz: qaysi partiyada, hozir qayerda, "
-            "qancha muddat qoldi va packing list.",
-            reply_markup=keyboard,
-        )
+        resp = telegram_send_message(chat_id, CLIENT_FORM_INTRO, reply_markup=keyboard)
     except Exception as exc:
         app.logger.exception("client button send failed for %s", chat_id)
         return jsonify({"error": f"Не отправилось: {exc}"}), 500
