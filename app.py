@@ -3940,6 +3940,23 @@ def api_dev_overview():
     })
 
 
+@app.route("/api/dev/query", methods=["POST"])
+@editor_required
+def api_dev_query():
+    """Диагностический SELECT к базе для консоли разработчика. Тот же
+    read-only исполнитель, что у ассистента: только SELECT/WITH, один
+    запрос, соединение mode=ro, конфиденциальные chat_id маскируются."""
+    from services import ai_assistant
+
+    data = request.json or {}
+    result = ai_assistant._tool_query_database({
+        "sql": data.get("sql") or "",
+        "limit": data.get("limit") or 100,
+    })
+    status = 400 if result.get("error") else 200
+    return jsonify(result), status
+
+
 @app.route("/api/dev/ai-log")
 @editor_required
 def api_dev_ai_log():
