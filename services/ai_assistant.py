@@ -306,6 +306,29 @@ def is_group_link_responsible(voter: dict) -> bool:
     return bool(uname and responsible and uname == responsible)
 
 
+# ── ОБЪЯВЛЕНИЯ ГРУППАМ (владелец, 10.09.2026) ────────────────────────
+# Рассылку клиентским группам подтверждают ТОЛЬКО владелец и Jahongir
+# (модератор, id найден в участниках групп на проде). Готовить черновик
+# может любой, кто вправе менять данные, — но отправит его только ✅ одного
+# из подтверждающих. Переопределение: ANNOUNCE_APPROVER_IDS="id,id".
+_DEFAULT_ANNOUNCE_APPROVER = "7588682119"   # @JAHONGIR_moderator
+
+
+def announce_approver_ids() -> set:
+    raw = (os.getenv("ANNOUNCE_APPROVER_IDS") or "").strip()
+    ids = {p.strip() for p in raw.split(",") if p.strip()} if raw else {_DEFAULT_ANNOUNCE_APPROVER}
+    ids.add(owner_id())                     # владелец несъёмен
+    return {i for i in ids if i}
+
+
+def can_approve_announcement(tg_user_id) -> bool:
+    return str(tg_user_id or "").strip() in announce_approver_ids()
+
+
+def can_prepare_announcement(tg_user_id) -> bool:
+    return can_approve_announcement(tg_user_id) or can_change(tg_user_id)
+
+
 def confidential_chat_ids() -> set:
     """Chats the bot must NEVER message or reveal anything about."""
     raw = os.getenv("CONFIDENTIAL_CHAT_IDS", "-1002687342009")
@@ -2601,17 +2624,21 @@ def _anthropic_chat(messages, tools=None, use_model=None):
     raise DeepSeekBusy(str(last_status or "timeout"))
 
 
-def _chat_completion(messages, use_model=None, tools=None, smart=False):
+def _chat_completion(messages, use_model=None, tools=None, smart=False, temperature=0.1):
     if smart and smart_available():
         return _anthropic_chat(messages, tools=tools)
     payload = {
         "model": use_model or _model(),
         "messages": messages,
-        "tools": tools if tools is not None else TOOLS,
         # низкая температура: ассистент оперирует фактами из базы,
         # креативность здесь превращается в выдуманные коды и списки
-        "temperature": 0.1,
+        "temperature": temperature,
     }
+    effective_tools = tools if tools is not None else TOOLS
+    if effective_tools:
+        # пустой список не шлём вовсе: OpenAI-совместимые API на tools=[]
+        # отвечают 400, а «без инструментов» = просто нет ключа
+        payload["tools"] = effective_tools
     body_json = json.dumps(payload)
     last_status = None
     for attempt in range(len(_RETRY_DELAYS) + 1):
@@ -2636,7 +2663,8 @@ def _chat_completion(messages, use_model=None, tools=None, smart=False):
             # this account) — retry once with the provider's standard model.
             body = response.text or ""
             if "model" in body.lower():
-                return _chat_completion(messages, use_model=_fallback_model(), tools=tools)
+                return _chat_completion(messages, use_model=_fallback_model(), tools=tools,
+                                        temperature=temperature)
         if response.status_code in _RETRY_STATUSES:
             # Повтор безопасен: ответ модели не пришёл, значит ни один
             # инструмент не выполнялся и побочных эффектов не было.
@@ -2648,6 +2676,103 @@ def _chat_completion(messages, use_model=None, tools=None, smart=False):
         response.raise_for_status()
         return response.json()
     raise DeepSeekBusy(str(last_status or "timeout"))
+
+
+ANNOUNCE_PROMPT = """Ты редактор объявлений компании BURAQ Logistics — карго из Китая в Узбекистан \
+(Китай → Хоргос → Казахстан → Ташкент). Сотрудник прислал черновик объявления для Telegram-групп \
+клиентов{photo_note}. Предложи 3 варианта текста.
+
+ЖЁСТКИЕ ПРАВИЛА
+• Факты черновика неприкосновенны: даты, сроки, суммы, телефоны, адреса, ссылки, коды BL и названия \
+партий переносишь дословно. Ничего не выдумывай — никаких новых цен, сроков, скидок, обещаний, контактов.
+• Язык — как у черновика. Узбекский пиши латиницей (o', g', sh, ch), как пишет компания \
+(«Hurmatli mijozlar»). Черновик на русском — вариант на русском. Смесь языков — узбекский латиницей.
+• Только обычный текст и эмодзи: без markdown (*, _, #) и без HTML-тегов. Переносы строк можно.
+• Каждый вариант не длиннее 800 символов{limit_note}.
+
+ТРИ ВАРИАНТА
+1. «Короткий» — суть в 1–3 предложениях.
+2. «Подробный» — деловой тон, всё важное на своих строках.
+3. «Тёплый» — дружелюбно, 2–4 уместных эмодзи, обращение к клиентам.
+
+Ответ — СТРОГО JSON без пояснений:
+{{"variants": [{{"label": "Короткий", "text": "..."}}, {{"label": "Подробный", "text": "..."}}, \
+{{"label": "Тёплый", "text": "..."}}]}}"""
+
+_ANNOUNCE_LABELS = ["Короткий", "Подробный", "Тёплый"]
+
+
+def _parse_announce_variants(raw: str) -> list:
+    """JSON из ответа модели → [{label, text}]; терпит ```-обёртку и текст
+    вокруг объекта. Markdown-звёздочки срезаем: рассылка идёт без разметки."""
+    raw = (raw or "").strip()
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return []
+    try:
+        data = json.loads(raw[start:end + 1])
+    except ValueError:
+        return []
+    items = data.get("variants") if isinstance(data, dict) else None
+    out = []
+    for idx, item in enumerate(items or []):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").replace("**", "").replace("__", "").strip()
+        if not text:
+            continue
+        label = str(item.get("label") or "").strip() or (
+            _ANNOUNCE_LABELS[idx] if idx < len(_ANNOUNCE_LABELS) else f"Вариант {idx + 1}")
+        out.append({"label": label[:30], "text": text})
+    return out[:3]
+
+
+def compose_announcement_variants(text: str, photo_count: int = 0, instruction: str = "",
+                                  avoid: list | None = None, user_id="", user_label: str = "") -> list:
+    """3 варианта объявления по черновику сотрудника. Умной моделью, если
+    она подключена (узбекский у неё заметно лучше). Бросает RuntimeError
+    с понятным текстом, когда вариантов не получилось."""
+    photo_note = ""
+    if photo_count == 1:
+        photo_note = " (текст уйдёт подписью к фото)"
+    elif photo_count > 1:
+        photo_note = f" (текст уйдёт подписью к альбому из {photo_count} фото)"
+    parts = [f"Черновик:\n<<<\n{(text or '').strip()}\n>>>"]
+    if instruction.strip():
+        parts.append(f"Пожелание сотрудника к новым вариантам: {instruction.strip()}")
+    if avoid:
+        parts.append("Прошлые варианты не подошли — сформулируй заметно иначе:\n"
+                     + "\n".join(f"- {str(v)[:300]}" for v in avoid[:3]))
+    limit_note = " — он уйдёт подписью к фото (лимит Telegram 1024)" if photo_count else ""
+    messages = [
+        {"role": "system", "content": ANNOUNCE_PROMPT.format(photo_note=photo_note, limit_note=limit_note)},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+    smart = smart_available()
+    t0 = time.time()
+    variants, error = [], ""
+    try:
+        data = _chat_completion(messages, tools=[], smart=smart, temperature=0.7)
+        content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        variants = _parse_announce_variants(content)
+        if not variants:
+            error = "модель вернула ответ не в том формате"
+    except DeepSeekBusy:
+        error = "модель перегружена, попробуйте через минуту"
+    except Exception as exc:
+        error = f"ошибка модели: {exc}"[:200]
+    try:
+        prov, mdl = ("anthropic", _smart_model()) if smart else (provider_name(), _model())
+        db.add_ai_request_log(
+            channel="announce", user_id=user_id, user_label=user_label or "объявление",
+            question=(text or "")[:200], provider=prov, model=mdl, smart=smart,
+            duration_ms=int((time.time() - t0) * 1000), ok=bool(variants), error=error,
+        )
+    except Exception:
+        pass
+    if not variants:
+        raise RuntimeError(error or "варианты не получились")
+    return variants
 
 
 COMPANION_PROMPT = """

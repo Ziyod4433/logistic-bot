@@ -881,6 +881,43 @@ def init_db():
             active INTEGER NOT NULL DEFAULT 1
         );
 
+        -- Объявления клиентским группам из лички бота (владелец, 10.09.2026):
+        -- фото + текст → варианты от AI → выбор → подтверждение владельца
+        -- или Jahongir → рассылка. Строка живёт от черновика до отчёта.
+        CREATE TABLE IF NOT EXISTS bot_announcements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_by TEXT NOT NULL,
+            created_by_name TEXT NOT NULL DEFAULT '',
+            dm_chat_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'await_input',
+            source_text TEXT NOT NULL DEFAULT '',
+            source_entities TEXT NOT NULL DEFAULT '[]',
+            photos TEXT NOT NULL DEFAULT '[]',
+            media_group_id TEXT NOT NULL DEFAULT '',
+            variants TEXT NOT NULL DEFAULT '[]',
+            choice TEXT NOT NULL DEFAULT '',
+            final_text TEXT NOT NULL DEFAULT '',
+            final_entities TEXT NOT NULL DEFAULT '[]',
+            audience TEXT NOT NULL DEFAULT '',
+            audience_label TEXT NOT NULL DEFAULT '',
+            recipients TEXT NOT NULL DEFAULT '[]',
+            card_message_id INTEGER NOT NULL DEFAULT 0,
+            approval_cards TEXT NOT NULL DEFAULT '{}',
+            approved_by TEXT NOT NULL DEFAULT '',
+            approved_by_name TEXT NOT NULL DEFAULT '',
+            sent_count INTEGER NOT NULL DEFAULT 0,
+            failed_count INTEGER NOT NULL DEFAULT 0,
+            errors TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT NOT NULL DEFAULT '',
+            sent_at TEXT NOT NULL DEFAULT ''
+        );
+        -- альбом приходит несколькими апдейтами параллельно: один черновик
+        -- на media_group_id, остальные фото дописываются в него
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_bot_ann_media_group
+            ON bot_announcements(created_by, media_group_id)
+            WHERE media_group_id != '';
+
         CREATE TABLE IF NOT EXISTS tracking_delivery_coverage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
@@ -4686,6 +4723,246 @@ def agent_memory_list(limit: int = 50, include_inactive: bool = False) -> list:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+# ── ОБЪЯВЛЕНИЯ ИЗ ЛИЧКИ БОТА ────────────────────────────────────────
+
+_ANN_JSON_FIELDS = {
+    "source_entities": list, "photos": list, "variants": list,
+    "final_entities": list, "recipients": list, "errors": list,
+    "approval_cards": dict,
+}
+_ANN_FIELDS = {
+    "created_by_name", "dm_chat_id", "status", "source_text", "source_entities",
+    "photos", "media_group_id", "variants", "choice", "final_text", "final_entities",
+    "audience", "audience_label", "recipients", "card_message_id", "approval_cards",
+    "approved_by", "approved_by_name", "sent_count", "failed_count", "errors", "sent_at",
+}
+
+
+def _ann_row(row) -> dict | None:
+    if not row:
+        return None
+    item = dict(row)
+    for key, kind in _ANN_JSON_FIELDS.items():
+        try:
+            value = json.loads(item.get(key) or "")
+        except (TypeError, ValueError):
+            value = kind()
+        item[key] = value if isinstance(value, kind) else kind()
+    return item
+
+
+def announce_create(created_by, created_by_name: str = "", dm_chat_id="",
+                    status: str = "await_input", source_text: str = "",
+                    source_entities: list | None = None, photos: list | None = None,
+                    media_group_id: str = "") -> tuple[int, bool]:
+    """Новый черновик → (id, создан_сейчас). Для альбома второй вызов с тем
+    же media_group_id не плодит строку — отдаёт id уже созданной и False
+    (уникальный индекс), чтобы сценарий запустило только первое фото."""
+    now = current_ts()
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO bot_announcements(
+                created_by, created_by_name, dm_chat_id, status, source_text,
+                source_entities, photos, media_group_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (str(created_by), str(created_by_name or ""), str(dm_chat_id or ""), status,
+             str(source_text or ""), json.dumps(source_entities or [], ensure_ascii=False),
+             json.dumps(photos or [], ensure_ascii=False), str(media_group_id or ""), now, now),
+        )
+        conn.commit()
+        if cur.rowcount:
+            return int(cur.lastrowid), True
+        row = conn.execute(
+            "SELECT id FROM bot_announcements WHERE created_by = ? AND media_group_id = ?",
+            (str(created_by), str(media_group_id or "")),
+        ).fetchone()
+        return (int(row["id"]) if row else 0), False
+    finally:
+        conn.close()
+
+
+def announce_get(announcement_id) -> dict | None:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM bot_announcements WHERE id = ?", (int(announcement_id),)
+        ).fetchone()
+        return _ann_row(row)
+    finally:
+        conn.close()
+
+
+def announce_update(announcement_id, **fields) -> None:
+    sets, values = [], []
+    for key, value in fields.items():
+        if key not in _ANN_FIELDS:
+            raise ValueError(f"Неизвестное поле объявления: {key}")
+        if key in _ANN_JSON_FIELDS:
+            value = json.dumps(value, ensure_ascii=False)
+        sets.append(f"{key} = ?")
+        values.append(value)
+    sets.append("updated_at = ?")
+    values.append(current_ts())
+    conn = get_conn()
+    try:
+        conn.execute(
+            f"UPDATE bot_announcements SET {', '.join(sets)} WHERE id = ?",
+            (*values, int(announcement_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def announce_claim(announcement_id, from_statuses, to_status: str, **fields) -> bool:
+    """Compare-and-set статуса: двойное нажатие и два подтверждающих
+    одновременно не запустят рассылку дважды."""
+    from_statuses = list(from_statuses)
+    sets, values = ["status = ?", "updated_at = ?"], [to_status, current_ts()]
+    for key, value in fields.items():
+        if key not in _ANN_FIELDS:
+            raise ValueError(f"Неизвестное поле объявления: {key}")
+        if key in _ANN_JSON_FIELDS:
+            value = json.dumps(value, ensure_ascii=False)
+        sets.append(f"{key} = ?")
+        values.append(value)
+    marks = ",".join("?" for _ in from_statuses)
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            f"UPDATE bot_announcements SET {', '.join(sets)} "
+            f"WHERE id = ? AND status IN ({marks})",
+            (*values, int(announcement_id), *from_statuses),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def announce_add_photo(announcement_id, file_id: str, caption: str = "",
+                       caption_entities: list | None = None) -> dict | None:
+    """Дописать фото альбома (до 10 — лимит Telegram) и подпись, если она
+    пришла не с первым фото. BEGIN IMMEDIATE — апдейты альбома параллельны."""
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT photos, source_text FROM bot_announcements WHERE id = ?",
+            (int(announcement_id),),
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            return None
+        try:
+            photos = json.loads(row["photos"] or "[]")
+        except ValueError:
+            photos = []
+        if file_id and file_id not in photos and len(photos) < 10:
+            photos.append(file_id)
+        params = [json.dumps(photos), current_ts()]
+        extra = ""
+        if caption and not (row["source_text"] or "").strip():
+            extra = ", source_text = ?, source_entities = ?"
+            params += [caption, json.dumps(caption_entities or [], ensure_ascii=False)]
+        conn.execute(
+            f"UPDATE bot_announcements SET photos = ?, updated_at = ?{extra} WHERE id = ?",
+            (*params, int(announcement_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return announce_get(announcement_id)
+
+
+def announce_find_open(created_by, statuses, max_age_minutes: int = 30) -> dict | None:
+    """Свежий незавершённый черновик сотрудника — ему уходит следующий
+    текст из лички (подпись к фото, правка вариантов)."""
+    statuses = list(statuses)
+    cutoff = (datetime.now(TASHKENT_TZ) - timedelta(minutes=int(max_age_minutes))
+              ).strftime("%Y-%m-%d %H:%M:%S")
+    marks = ",".join("?" for _ in statuses)
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            f"""
+            SELECT * FROM bot_announcements
+            WHERE created_by = ? AND status IN ({marks}) AND updated_at >= ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (str(created_by), *statuses, cutoff),
+        ).fetchone()
+        return _ann_row(row)
+    finally:
+        conn.close()
+
+
+def announce_cancel_open(created_by, statuses, except_id: int = 0) -> int:
+    """Новое объявление закрывает брошенные черновики того же сотрудника."""
+    statuses = list(statuses)
+    marks = ",".join("?" for _ in statuses)
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            f"UPDATE bot_announcements SET status = 'cancelled', updated_at = ? "
+            f"WHERE created_by = ? AND id != ? AND status IN ({marks})",
+            (current_ts(), str(created_by), int(except_id or 0), *statuses),
+        )
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
+def announcement_audience(kind: str, batch_id: int | None = None) -> list:
+    """Группы-получатели объявления: только активные группы.
+    all   — клиентские группы: есть привязанный BL ИЛИ название по
+            шаблону клиента «… & BURAQ …» (группа есть, BL ещё не привязан);
+    cargo — группы, чей груз в пути (BL в партии без даты выдачи);
+    batch — группы BL одной партии.
+    Управляющую и конфиденциальные чаты вырезает вызывающий код."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                c.chat_id,
+                COALESCE(NULLIF(TRIM(c.title), ''), c.chat_id) AS title,
+                COUNT(bl.id) AS bl_count,
+                SUM(CASE WHEN bl.id IS NOT NULL
+                          AND COALESCE(b.client_delivery_date, '') = '' THEN 1 ELSE 0 END) AS cargo_count,
+                SUM(CASE WHEN bl.batch_id = ? THEN 1 ELSE 0 END) AS batch_hits
+            FROM telegram_chats c
+            LEFT JOIN bl_codes bl ON bl.chat_id = c.chat_id
+            LEFT JOIN batches b ON b.id = bl.batch_id
+            WHERE c.is_active = 1
+              AND c.chat_id != ''
+              AND c.chat_type IN ('group', 'supergroup')
+            GROUP BY c.chat_id
+            ORDER BY title COLLATE NOCASE
+            """,
+            (int(batch_id or 0),),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        item = dict(row)
+        title_l = str(item.get("title") or "").lower()
+        if kind == "cargo":
+            ok = (item.get("cargo_count") or 0) > 0
+        elif kind == "batch":
+            ok = (item.get("batch_hits") or 0) > 0
+        else:
+            ok = (item.get("bl_count") or 0) > 0 or ("&" in title_l and "buraq" in title_l)
+        if ok:
+            out.append({"chat_id": str(item["chat_id"]), "title": item["title"]})
+    return out
 
 
 def get_global_ai_enabled() -> bool:

@@ -2042,6 +2042,10 @@ def handle_callback_query(callback_query: dict):
         handle_ai_action_callback(callback_query, callback_id, data)
         return
 
+    if data.startswith(f"{ANNOUNCE_PREFIX}:"):
+        handle_announce_callback(callback_query, callback_id, data)
+        return
+
     if data.startswith("trkform:"):
         # Старая кнопочная форма заменена мини-приложением (/tgform);
         # старые карточки в истории чата просто гаснут.
@@ -2597,6 +2601,11 @@ def handle_telegram_message(message: dict):
             handle_private_voice_message(chat_id, sender_id, voice)
         return
 
+    # Фото/альбом в личке от тех, кто готовит объявления, — черновик
+    # объявления клиентским группам. У фото нет text, поэтому ДО text-чека.
+    if chat_type == "private" and message.get("photo") and maybe_handle_announce_media(message):
+        return
+
     if not chat_id or not text:
         return
 
@@ -2679,6 +2688,17 @@ def handle_telegram_message(message: dict):
             f"📍 Чат: <b>{title}</b>\n🆔 ID: <code>{chat_id}</code>",
         )
         return
+
+    # ── Объявления группам: /elon и текст к открытому черновику ──
+    # До ассистента: подпись к фото или «короче» — это правка объявления,
+    # а не вопрос к AI.
+    if chat_type == "private":
+        from services import ai_assistant as _ai
+        if bot_command in ANNOUNCE_COMMANDS and _ai.can_prepare_announcement(sender_id):
+            start_announce_command(chat_id, sender)
+            return
+        if maybe_handle_announce_text(message):
+            return
 
     # ── AI assistant (DeepSeek): private chat, admin + read-only ids ──
     # Admin ids get the full assistant; read-only ids (например,
@@ -3680,6 +3700,876 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
                 app.logger.exception("AI action result delivery failed")
 
     threading.Thread(target=_worker, daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════
+# ОБЪЯВЛЕНИЯ ГРУППАМ ИЗ ЛИЧКИ БОТА (владелец, 10.09.2026)
+# ═══════════════════════════════════════════════════════════════
+# Фото/альбом с подписью (или текст после /elon) → 3 варианта от AI или
+# «мой текст как есть» → превью ровно в том виде, как увидят клиенты →
+# кому: все клиенты / груз в пути / одна партия → ✅ ТОЛЬКО владельца или
+# Jahongir → рассылка в фоне, отчёт с недоставленными группами.
+# Отправка идёт через telegram_api: его гард не пустит ни одного сообщения
+# в конфиденциальные чаты, даже если они попадут в выборку.
+
+ANNOUNCE_PREFIX = "ann"
+ANNOUNCE_COMMANDS = {"elon", "announce"}
+# черновик ещё собирается — следующий текст из лички уходит в него
+ANNOUNCE_TEXT_STATUSES = ("collecting", "await_input", "await_text", "composing", "choosing")
+# новое объявление закрывает брошенные черновики автора; заявки «на
+# подтверждении» уже в руках подтверждающих — их не трогаем
+ANNOUNCE_ABANDON_STATUSES = ANNOUNCE_TEXT_STATUSES + ("audience", "ready")
+ANNOUNCE_TEXT_WINDOW_MIN = 30
+ANNOUNCE_ALBUM_WAIT_SECONDS = 2.5
+ANNOUNCE_PAUSE_SECONDS = float(os.getenv("ANNOUNCE_PAUSE_SECONDS", "0.08") or 0.08)
+ANNOUNCE_SYNC = False            # тесты: фоновые шаги выполняются сразу
+_ANNOUNCE_AUDIENCE_LABELS = {
+    "all": "👥 все клиентские группы",
+    "cargo": "🚚 группы с грузом в пути",
+}
+_ANNOUNCE_STATUS_NOTE = {
+    "pending_approval": "Заявка уже ждёт подтверждения",
+    "sending": "Уже отправляется",
+    "sent": "Уже отправлено",
+    "failed": "Уже отправлялось",
+    "cancelled": "Черновик отменён",
+    "rejected": "Заявка отклонена",
+}
+_ANNOUNCE_ERROR_HINTS = (
+    ("bot was kicked", "бота удалили из группы"),
+    ("bot is not a member", "бота нет в группе"),
+    ("chat not found", "группа не найдена"),
+    ("not enough rights", "нет прав писать в группу"),
+    ("have no rights", "нет прав писать в группу"),
+    ("upgraded to a supergroup", "группа стала супергруппой — новый id"),
+    ("blocked_confidential", "закрытый чат — отправка запрещена"),
+)
+
+
+def _announce_bg(fn, *args):
+    if ANNOUNCE_SYNC:
+        fn(*args)
+        return
+    threading.Thread(target=fn, args=args, daemon=True).start()
+
+
+def _announce_api(method: str, payload: dict):
+    """Один вызов Telegram с повтором на 429. Повтор — на уровне отдельного
+    вызова, чтобы фото не ушло дважды, если споткнулся текст после него."""
+    for attempt in range(3):
+        try:
+            result = telegram_api(method, json=payload, timeout=30)
+        except RuntimeError as exc:
+            match = re.search(r"retry after (\d+)", str(exc), re.IGNORECASE)
+            if match and attempt < 2:
+                if not ANNOUNCE_SYNC:
+                    time.sleep(min(int(match.group(1)) + 1, 60))
+                continue
+            raise
+        if isinstance(result, dict) and result.get("blocked_confidential"):
+            raise RuntimeError("blocked_confidential")
+        return result
+    raise RuntimeError("Telegram: слишком много запросов")
+
+
+def _announce_deliver(chat_id, d: dict):
+    """Объявление в один чат — ровно так, как его увидят клиенты: одно фото
+    — с подписью; альбом — подпись у первого фото; текст длиннее лимита
+    подписи (1024) — отдельным сообщением сразу после фото."""
+    photos = [p for p in (d.get("photos") or []) if p]
+    text = d.get("final_text") or ""
+    entities = d.get("final_entities") or []
+    has_text = bool(text.strip())
+    as_caption = has_text and _tg_text_len(text) <= TELEGRAM_MAX_CAPTION_UNITS
+
+    def _text_payload():
+        payload = {"chat_id": chat_id, "text": text}
+        if entities:
+            payload["entities"] = entities
+        return payload
+
+    if not photos:
+        return _announce_api("sendMessage", _text_payload())
+    if len(photos) == 1:
+        payload = {"chat_id": chat_id, "photo": photos[0]}
+        if as_caption:
+            payload["caption"] = text
+            if entities:
+                payload["caption_entities"] = entities
+        result = _announce_api("sendPhoto", payload)
+    else:
+        media = [{"type": "photo", "media": fid} for fid in photos[:10]]
+        if as_caption:
+            media[0]["caption"] = text
+            if entities:
+                media[0]["caption_entities"] = entities
+        result = _announce_api("sendMediaGroup", {"chat_id": chat_id, "media": media})
+    if has_text and not as_caption:
+        result = _announce_api("sendMessage", _text_payload())
+    return result
+
+
+def _announce_person(user: dict) -> str:
+    name = " ".join(str(user.get(k) or "").strip() for k in ("first_name", "last_name")).strip()
+    return name or str(user.get("username") or user.get("id") or "").strip()
+
+
+def _announce_approver_label(uid) -> str:
+    from services import ai_assistant
+    uid = str(uid)
+    if uid == ai_assistant.owner_id():
+        return "владелец"
+    if uid == ai_assistant._DEFAULT_ANNOUNCE_APPROVER:
+        return "Jahongir"
+    return uid
+
+
+def _ru_groups_acc(n: int) -> str:
+    """«в 1 группу / в 3 группы / в 5 групп»."""
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} группу"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return f"{n} группы"
+    return f"{n} групп"
+
+
+def _clean_entities(entities) -> list:
+    """Разметку автора (жирный, ссылки) сохраняем, кроме custom_emoji: бот
+    без Fragment-юзернейма их не отправит — Telegram отклонит сообщение."""
+    return [e for e in (entities or []) if isinstance(e, dict) and e.get("type") != "custom_emoji"]
+
+
+def _announce_short_error(exc) -> str:
+    raw = str(exc)
+    low = raw.lower()
+    for needle, hint in _ANNOUNCE_ERROR_HINTS:
+        if needle in low:
+            return hint
+    return re.sub(r"^Telegram \w+:\s*", "", raw)[:90]
+
+
+def _announce_recipients(kind: str, batch_id: int | None = None) -> list:
+    """Получатели: без управляющей группы и конфиденциальных чатов."""
+    from services import ai_assistant
+    skip = ({ai_assistant.control_group_id()} | ai_assistant.confidential_chat_ids()
+            | CONFIDENTIAL_CHAT_IDS)
+    return [r for r in db.announcement_audience(kind, batch_id) if r["chat_id"] not in skip]
+
+
+def telegram_edit_text(chat_id, message_id, text: str, reply_markup: dict | None = None,
+                       parse_mode: str | None = "HTML"):
+    """Правка текста сообщения; без reply_markup Telegram снимает кнопки."""
+    payload = {"chat_id": chat_id, "message_id": int(message_id), "text": text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    return telegram_api("editMessageText", json=payload)
+
+
+def _announce_card(chat_id, message_id, text: str, reply_markup: dict | None = None) -> int:
+    """Показать карточку: правим прежнее сообщение, а не вышло (удалено,
+    слишком старое) — присылаем новое. Возвращает message_id карточки."""
+    if message_id:
+        try:
+            telegram_edit_text(chat_id, message_id, text, reply_markup=reply_markup)
+            return int(message_id)
+        except Exception:
+            pass
+    try:
+        return _extract_message_id(telegram_send_message(chat_id, text, reply_markup=reply_markup))
+    except Exception:
+        app.logger.exception("Announcement card to %s failed", chat_id)
+        return 0
+
+
+def _announce_drop_keyboard(chat_id, message_id):
+    """Кнопки прошлой карточки гаснут — чтобы не нажать вариант, которого
+    уже нет."""
+    if not (chat_id and message_id):
+        return
+    try:
+        telegram_api("editMessageReplyMarkup", json={
+            "chat_id": chat_id, "message_id": int(message_id),
+            "reply_markup": {"inline_keyboard": []},
+        })
+    except Exception:
+        pass
+
+
+def _announce_btn(ann_id, action: str, text: str) -> dict:
+    return {"text": text, "callback_data": f"{ANNOUNCE_PREFIX}:{ann_id}:{action}"}
+
+
+def _announce_media_note(d: dict) -> str:
+    n = len(d.get("photos") or [])
+    if not n:
+        return "без фото"
+    return "🖼 1 фото" if n == 1 else f"🖼 альбом · {n} фото"
+
+
+def _announce_head(d: dict) -> str:
+    return f"📢 <b>Объявление для групп</b> · {_announce_media_note(d)}"
+
+
+def _announce_text_label(d: dict) -> str:
+    choice = str(d.get("choice") or "")
+    if choice == "0":
+        return "ваш текст как есть"
+    if choice == "none":
+        return "без текста"
+    try:
+        variant = (d.get("variants") or [])[int(choice) - 1]
+        return f"вариант {choice} · {variant.get('label')}"
+    except (ValueError, IndexError):
+        return "—"
+
+
+# ── карточки ─────────────────────────────────────────────────────────
+
+def _announce_variants_messages(d: dict) -> list:
+    """Карточка выбора текста. Обычно одно сообщение; не влезли варианты
+    в лимит Telegram (4096) — каждый вариант отдельным сообщением."""
+    src = d.get("source_text") or ""
+    shown = src if len(src) <= 350 else src[:350].rstrip() + "…"
+    src_block = f"<b>Ваш текст</b>\n<blockquote expandable>{html.escape(shown)}</blockquote>"
+    blocks = [
+        f"<b>{i} · {html.escape(str(v.get('label') or ''))}</b>\n"
+        f"<blockquote>{html.escape(str(v.get('text') or ''))}</blockquote>"
+        for i, v in enumerate(d.get("variants") or [], 1)
+    ]
+    foot = (
+        "Выберите текст кнопкой. Не подошёл ни один — «📝 Мой текст как есть».\n"
+        "Можно написать, что поправить («короче», «на русском», «добавь телефон»), "
+        "или прислать новый текст целиком."
+    )
+    single = "\n\n".join([_announce_head(d), src_block, *blocks, foot])
+    if len(single) <= 4000 or not blocks:
+        return [single]
+    return (["\n\n".join([_announce_head(d), src_block])] + blocks[:-1]
+            + ["\n\n".join([blocks[-1], foot])])
+
+
+def _announce_variants_markup(d: dict) -> dict:
+    ann_id = d["id"]
+    rows = []
+    numbers = [_announce_btn(ann_id, f"v:{i}", f"{i}️⃣")      # 1️⃣ 2️⃣ 3️⃣
+               for i in range(1, len(d.get("variants") or []) + 1)]
+    if numbers:
+        rows.append(numbers)
+    rows.append([_announce_btn(ann_id, "v:0", "📝 Мой текст как есть")])
+    rows.append([_announce_btn(ann_id, "more", "🔄 Другие варианты"),
+                 _announce_btn(ann_id, "x", "✖ Отмена")])
+    return {"inline_keyboard": rows}
+
+
+def _announce_audience_card(d: dict):
+    ann_id = d["id"]
+    n_all = len(_announce_recipients("all"))
+    n_cargo = len(_announce_recipients("cargo"))
+    text = (
+        "👆 <b>Так объявление увидят клиенты.</b>\n"
+        f"Текст: {html.escape(_announce_text_label(d))} · {_announce_media_note(d)}\n\n"
+        "Кому отправить?"
+    )
+    rows = [
+        [_announce_btn(ann_id, "aud:all", f"👥 Все клиентские группы · {n_all}")],
+        [_announce_btn(ann_id, "aud:cargo", f"🚚 Только с грузом в пути · {n_cargo}")],
+        [_announce_btn(ann_id, "aud:batch", "📦 Группы одной партии")],
+    ]
+    last = [_announce_btn(ann_id, "x", "✖ Отмена")]
+    if d.get("variants") or (d.get("source_text") or "").strip():
+        last.insert(0, _announce_btn(ann_id, "retext", "⬅️ Другой текст"))
+    rows.append(last)
+    return text, {"inline_keyboard": rows}
+
+
+def _announce_batch_picker(d: dict):
+    ann_id = d["id"]
+    rows = []
+    for b in db.get_announcement_batches()[:12]:
+        label = f"{b['name']} · {b['status']} · {b['group_count']} гр."
+        rows.append([_announce_btn(ann_id, f"aud:b{b['id']}", label[:60])])
+    rows.append([_announce_btn(ann_id, "aud:back", "⬅️ Назад")])
+    text = ("📦 <b>Выберите партию</b>\nОбъявление получат только группы её BL."
+            if len(rows) > 1 else "📦 Активных партий с группами сейчас нет.")
+    return text, {"inline_keyboard": rows}
+
+
+def _announce_final_card(d: dict):
+    from services import ai_assistant
+    ann_id = d["id"]
+    n = len(d.get("recipients") or [])
+    lines = [
+        "📢 <b>Проверьте и подтвердите</b>",
+        "",
+        f"Текст: {html.escape(_announce_text_label(d))} · {_announce_media_note(d)} — превью выше",
+        f"Кому: {html.escape(d.get('audience_label') or '')} — <b>{n}</b>",
+        "Не получат: Tracking gruppa, служебные и закрытые чаты.",
+    ]
+    if ai_assistant.can_approve_announcement(d["created_by"]):
+        first = [_announce_btn(ann_id, "go", f"✅ Отправить в {_ru_groups_acc(n)}")]
+    else:
+        lines += ["", "Отправит только ✅ владельца или Jahongir — заявка уйдёт им."]
+        first = [_announce_btn(ann_id, "ask", "📨 Отправить на подтверждение")]
+    rows = [
+        first,
+        [_announce_btn(ann_id, "list", "📋 Кто получит"), _announce_btn(ann_id, "back", "⬅️ Назад")],
+        [_announce_btn(ann_id, "x", "✖ Отмена")],
+    ]
+    return "\n".join(lines), {"inline_keyboard": rows}
+
+
+def _announce_approval_card(d: dict, in_group: bool = False):
+    from services import ai_assistant
+    ann_id = d["id"]
+    n = len(d.get("recipients") or [])
+    lines = [
+        f"📨 <b>Заявка на рассылку</b> от {html.escape(d.get('created_by_name') or d['created_by'])}",
+        "",
+        f"Кому: {html.escape(d.get('audience_label') or '')} — <b>{n}</b>",
+        f"Текст: {html.escape(_announce_text_label(d))} · {_announce_media_note(d)} — превью выше",
+        "Подтверждают владелец или Jahongir — первое решение окончательное.",
+    ]
+    if in_group:
+        mentions = ", ".join(
+            f'<a href="tg://user?id={html.escape(i)}">{html.escape(_announce_approver_label(i))}</a>'
+            for i in sorted(ai_assistant.announce_approver_ids())
+        )
+        lines.append(f"В личку заявка не дошла — {mentions}, решите здесь.")
+    rows = [
+        [_announce_btn(ann_id, "ok", f"✅ Подтвердить — в {_ru_groups_acc(n)}")],
+        [_announce_btn(ann_id, "list", "📋 Кто получит"), _announce_btn(ann_id, "no", "✖ Отклонить")],
+    ]
+    return "\n".join(lines), {"inline_keyboard": rows}
+
+
+def _announce_report(d: dict) -> str:
+    total = len(d.get("recipients") or [])
+    sent = int(d.get("sent_count") or 0)
+    errors = d.get("errors") or []
+    when = (d.get("sent_at") or "")[11:16]
+    head = (f"✅ <b>Объявление отправлено</b> — доставлено {sent} из {total}" if sent
+            else f"⚠️ <b>Объявление не доставлено</b> — 0 из {total}")
+    lines = [
+        head,
+        f"Кому: {html.escape(d.get('audience_label') or '')}",
+        f"Подтверждение: {html.escape(d.get('approved_by_name') or '')}" + (f" · {when}" if when else ""),
+    ]
+    if errors:
+        lines += ["", f"❌ Не доставлено: {len(errors)}"]
+        for err in errors[:15]:
+            lines.append(f"• {html.escape(str(err.get('title') or err.get('chat_id')))}"
+                         f" — {html.escape(str(err.get('error') or ''))}")
+        if len(errors) > 15:
+            lines.append(f"…и ещё {len(errors) - 15}")
+    return "\n".join(lines)
+
+
+def _announce_send_list(chat_id, d: dict):
+    recipients = d.get("recipients") or []
+    chunks = []
+    current = (f"📋 <b>Получат объявление — {len(recipients)}</b>\n"
+               f"{html.escape(d.get('audience_label') or '')}\n")
+    for i, rec in enumerate(recipients, 1):
+        line = f"\n{i}. {html.escape(str(rec.get('title') or rec.get('chat_id')))}"
+        if len(current) + len(line) > 3800:
+            chunks.append(current)
+            current = line.lstrip("\n")
+        else:
+            current += line
+    chunks.append(current)
+    for chunk in chunks:
+        try:
+            telegram_send_message(chat_id, chunk, disable_notification=True)
+        except Exception:
+            app.logger.exception("Announcement recipients list failed")
+
+
+# ── шаги сценария (фон) ──────────────────────────────────────────────
+
+def _announce_send_variants(ann_id: int, wait_card_id: int = 0, note: str = ""):
+    d = db.announce_get(ann_id)
+    if not d:
+        return
+    chat_id = d["dm_chat_id"]
+    messages = _announce_variants_messages(d)
+    if note:
+        messages[-1] += "\n\n" + note
+    markup = _announce_variants_markup(d)
+    last_id = 0
+    for idx, text in enumerate(messages):
+        keyboard = markup if idx == len(messages) - 1 else None
+        last_id = _announce_card(chat_id, wait_card_id if idx == 0 else 0, text, keyboard)
+    db.announce_update(ann_id, card_message_id=last_id)
+
+
+def _announce_compose(ann_id: int, instruction: str = "", regenerate: bool = False):
+    """Варианты от AI → карточка выбора. Ошибка модели — не тупик:
+    карточка всё равно предлагает «мой текст как есть»."""
+    from services import ai_assistant
+    d = db.announce_get(ann_id)
+    if not d or d["status"] != "composing":
+        return
+    chat_id = d["dm_chat_id"]
+    _announce_drop_keyboard(chat_id, d.get("card_message_id"))
+    wait = ("⏳ Готовлю другие варианты…" if (regenerate or instruction)
+            else "⏳ Готовлю варианты текста…")
+    wait_id = _announce_card(chat_id, 0, f"{_announce_head(d)}\n\n{wait}")
+    avoid = [v.get("text") for v in (d.get("variants") or [])] if (regenerate or instruction) else None
+    variants, error = [], ""
+    try:
+        with TypingIndicator(chat_id):
+            variants = ai_assistant.compose_announcement_variants(
+                d.get("source_text") or "", len(d.get("photos") or []),
+                instruction=instruction, avoid=avoid, user_id=d["created_by"],
+                user_label=f"объявление · {d.get('created_by_name') or d['created_by']}",
+            )
+    except Exception as exc:
+        error = str(exc)
+    keep = variants or d.get("variants") or []
+    if not db.announce_claim(ann_id, ("composing",), "choosing", variants=keep):
+        return          # черновик отменили, пока модель думала
+    note = ""
+    if error:
+        note = f"⚠️ Варианты не получились: {html.escape(error)}.\n" + (
+            "Остались прежние варианты." if keep
+            else "Можно отправить ваш текст как есть или нажать «🔄 Другие варианты».")
+    _announce_send_variants(ann_id, wait_card_id=wait_id, note=note)
+
+
+def _announce_start(ann_id: int, wait_seconds: float = 0.0):
+    """Дождаться остальных фото альбома; есть текст — к вариантам, нет —
+    попросить текст."""
+    if wait_seconds and not ANNOUNCE_SYNC:
+        time.sleep(wait_seconds)
+    d = db.announce_get(ann_id)
+    if not d or d["status"] != "collecting":
+        return
+    if (d.get("source_text") or "").strip():
+        if db.announce_claim(ann_id, ("collecting",), "composing"):
+            _announce_compose(ann_id)
+        return
+    if db.announce_claim(ann_id, ("collecting",), "await_text"):
+        keyboard = {"inline_keyboard": [[
+            _announce_btn(ann_id, "notext", "Отправить без текста"),
+            _announce_btn(ann_id, "x", "✖ Отмена"),
+        ]]}
+        card_id = _announce_card(
+            d["dm_chat_id"], 0,
+            f"{_announce_head(d)}\n\nФото получил. Пришлите текст объявления одним "
+            "сообщением — предложу варианты.",
+            keyboard,
+        )
+        db.announce_update(ann_id, card_message_id=card_id)
+
+
+def _announce_show_preview(ann_id: int):
+    """Превью в личку автора ровно в том виде, как увидят клиенты, затем
+    выбор получателей. Не прошло превью — не пройдёт и рассылка: назад к
+    выбору текста."""
+    d = db.announce_get(ann_id)
+    if not d or d["status"] != "audience":
+        return
+    chat_id = d["dm_chat_id"]
+    try:
+        _announce_deliver(chat_id, d)
+    except Exception as exc:
+        app.logger.warning("Announcement %s preview failed: %s", ann_id, exc)
+        has_text = bool(d.get("variants") or (d.get("source_text") or "").strip())
+        back = "choosing" if has_text else "await_text"
+        db.announce_claim(ann_id, ("audience",), back, choice="", final_text="", final_entities=[])
+        _announce_card(chat_id, 0, f"⚠️ Telegram не принял объявление: "
+                                   f"{html.escape(_announce_short_error(exc))}.\n"
+                                   "Выберите другой текст или пришлите объявление заново.")
+        if back == "choosing":
+            _announce_send_variants(ann_id)
+        return
+    card_id = _announce_card(chat_id, 0, *_announce_audience_card(d))
+    db.announce_update(ann_id, card_message_id=card_id)
+
+
+def _announce_request_approval(ann_id: int, creator_chat_id, creator_msg_id):
+    """Заявка подтверждающим в личку: превью + карточка с ✅/✖. Никому не
+    дошло — в Tracking gruppa: кнопки там сработают только у владельца и
+    Jahongir."""
+    from services import ai_assistant
+    d = db.announce_get(ann_id)
+    if not d or d["status"] != "pending_approval":
+        return
+    cards, missed = {}, []
+    for approver in sorted(ai_assistant.announce_approver_ids()):
+        if approver == d["created_by"]:
+            continue
+        try:
+            _announce_deliver(approver, d)
+            text, keyboard = _announce_approval_card(d)
+            cards[approver] = _extract_message_id(
+                telegram_send_message(approver, text, reply_markup=keyboard))
+        except Exception as exc:
+            missed.append(_announce_approver_label(approver))
+            app.logger.warning("Announcement %s approval DM to %s failed: %s", ann_id, approver, exc)
+    via_group = False
+    if not cards:
+        control = ai_assistant.control_group_id()
+        try:
+            _announce_deliver(control, d)
+            text, keyboard = _announce_approval_card(d, in_group=True)
+            cards[control] = _extract_message_id(
+                telegram_send_message(control, text, reply_markup=keyboard))
+            via_group = True
+        except Exception:
+            app.logger.exception("Announcement %s approval fallback failed", ann_id)
+    db.announce_update(ann_id, approval_cards=cards)
+    if not cards:
+        db.announce_claim(ann_id, ("pending_approval",), "ready")
+        text, keyboard = _announce_final_card(db.announce_get(ann_id))
+        _announce_card(creator_chat_id, creator_msg_id,
+                       "⚠️ Заявку не удалось доставить подтверждающим — попробуйте ещё раз.\n\n" + text,
+                       keyboard)
+        return
+    lines = ["📨 <b>Заявка отправлена на подтверждение</b>"]
+    if via_group:
+        lines.append("В личку подтверждающим не дошло — заявка в Tracking gruppa.")
+    elif missed:
+        lines.append(f"Не дошла в личку: {html.escape(', '.join(missed))} (личка с ботом не открыта) "
+                     "— подтвердить может другой.")
+    lines.append("Сообщу, когда решат.")
+    keyboard = {"inline_keyboard": [[_announce_btn(ann_id, "x", "✖ Отозвать заявку")]]}
+    card_id = _announce_card(creator_chat_id, creator_msg_id, "\n".join(lines), keyboard)
+    db.announce_update(ann_id, card_message_id=card_id)
+
+
+def _announce_send_worker(ann_id: int, status_chat_id, status_msg_id):
+    """Рассылка по снимку получателей: прогресс в карточке подтвердившего,
+    отчёт — ему, автору и в карточки остальных подтверждающих."""
+    d = db.announce_get(ann_id)
+    if not d or d["status"] != "sending":
+        return
+    recipients = d.get("recipients") or []
+    total = len(recipients)
+    sent, errors = 0, []
+
+    def _progress(done):
+        if status_chat_id and status_msg_id:
+            try:
+                telegram_edit_text(status_chat_id, status_msg_id,
+                                   f"⏳ Отправляю объявление: {done} из {total}…")
+            except Exception:
+                pass
+
+    _progress(0)
+    for idx, rec in enumerate(recipients, 1):
+        chat_id = str(rec.get("chat_id") or "")
+        try:
+            _announce_deliver(chat_id, d)
+            sent += 1
+        except Exception as exc:
+            errors.append({"chat_id": chat_id, "title": rec.get("title") or chat_id,
+                           "error": _announce_short_error(exc)})
+            app.logger.warning("Announcement %s to %s failed: %s", ann_id, chat_id, exc)
+        if idx % 20 == 0 and idx < total:
+            _progress(idx)
+        if ANNOUNCE_PAUSE_SECONDS and not ANNOUNCE_SYNC and idx < total:
+            time.sleep(ANNOUNCE_PAUSE_SECONDS)
+    db.announce_update(ann_id, status="sent" if sent else "failed", sent_count=sent,
+                       failed_count=len(errors), errors=errors, sent_at=db.current_ts())
+    d = db.announce_get(ann_id)
+    report = _announce_report(d)
+    _announce_card(status_chat_id, status_msg_id, report)
+    if d["created_by"] != d.get("approved_by"):
+        _announce_card(d["dm_chat_id"], d.get("card_message_id"), report)
+    for chat, message_id in (d.get("approval_cards") or {}).items():
+        if str(chat) not in (str(status_chat_id), str(d["dm_chat_id"])):
+            _announce_card(chat, message_id, report)
+
+
+# ── входы: фото, текст, /elon, кнопки ────────────────────────────────
+
+def _announce_abandon_previous(uid: str, except_id: int = 0):
+    """Новое объявление закрывает брошенный черновик автора и гасит его
+    кнопки, чтобы старая карточка не отправила не то."""
+    prev = db.announce_find_open(uid, ANNOUNCE_ABANDON_STATUSES, max_age_minutes=7 * 24 * 60)
+    if prev and prev["id"] != except_id:
+        _announce_drop_keyboard(prev.get("dm_chat_id"), prev.get("card_message_id"))
+    db.announce_cancel_open(uid, ANNOUNCE_ABANDON_STATUSES, except_id=except_id)
+
+
+def maybe_handle_announce_media(message: dict) -> bool:
+    """Фото/альбом в личке от того, кто готовит объявления → черновик.
+    Раньше фото в личке бот молча игнорировал — другие сценарии не задеты."""
+    from services import ai_assistant
+    chat = message.get("chat") or {}
+    photos = message.get("photo") or []
+    if chat.get("type") != "private" or not photos or message.get("edit_date"):
+        return False
+    sender = message.get("from") or {}
+    uid = str(sender.get("id") or "")
+    if not ai_assistant.can_prepare_announcement(uid):
+        return False
+    file_id = str((photos[-1] or {}).get("file_id") or "")       # самый крупный размер
+    caption = message.get("caption") or ""
+    entities = _clean_entities(message.get("caption_entities"))
+    media_group = str(message.get("media_group_id") or "")
+    ann_id, created = db.announce_create(
+        uid, _announce_person(sender), chat.get("id"), status="collecting",
+        source_text=caption, source_entities=entities, photos=[file_id],
+        media_group_id=media_group,
+    )
+    if not created:
+        db.announce_add_photo(ann_id, file_id, caption, entities)   # следующее фото альбома
+        return True
+    _announce_abandon_previous(uid, except_id=ann_id)
+    _announce_bg(_announce_start, ann_id, ANNOUNCE_ALBUM_WAIT_SECONDS if media_group else 0.0)
+    return True
+
+
+def maybe_handle_announce_text(message: dict) -> bool:
+    """Текст в личке, пока черновик собирается: подпись к фото, текст после
+    /elon, правка вариантов («короче») или новый текст целиком."""
+    from services import ai_assistant
+    chat = message.get("chat") or {}
+    if chat.get("type") != "private" or message.get("edit_date"):
+        return False
+    text = message.get("text") or ""
+    if not text.strip() or text.strip().startswith("/"):
+        return False
+    uid = str((message.get("from") or {}).get("id") or "")
+    if not ai_assistant.can_prepare_announcement(uid):
+        return False
+    d = db.announce_find_open(uid, ANNOUNCE_TEXT_STATUSES, ANNOUNCE_TEXT_WINDOW_MIN)
+    if not d:
+        return False
+    ann_id, status = d["id"], d["status"]
+    entities = _clean_entities(message.get("entities"))
+    if status == "collecting":
+        if not (d.get("source_text") or "").strip():
+            db.announce_update(ann_id, source_text=text, source_entities=entities)
+        return True
+    if status in ("await_input", "await_text"):
+        if db.announce_claim(ann_id, (status,), "composing",
+                             source_text=text, source_entities=entities):
+            _announce_bg(_announce_compose, ann_id)
+        return True
+    if status == "composing":
+        telegram_send_message(chat.get("id"), "⏳ Ещё готовлю варианты — секунду.")
+        return True
+    # choosing: короткое — пожелание к вариантам, длинное — новый текст целиком
+    replace = len(text.strip()) > 120 or "\n" in text.strip()
+    fields = {"source_text": text, "source_entities": entities, "variants": []} if replace else {}
+    if db.announce_claim(ann_id, ("choosing",), "composing", **fields):
+        _announce_bg(_announce_compose, ann_id, "" if replace else text.strip(), False)
+    return True
+
+
+def start_announce_command(chat_id, sender: dict):
+    """/elon — объявление без фото или напоминание, как его прислать."""
+    uid = str(sender.get("id") or "")
+    _announce_abandon_previous(uid)
+    ann_id, _created = db.announce_create(uid, _announce_person(sender), chat_id, status="await_input")
+    keyboard = {"inline_keyboard": [[_announce_btn(ann_id, "x", "✖ Отмена")]]}
+    card_id = _announce_card(
+        chat_id, 0,
+        "📢 <b>Объявление для клиентских групп</b>\n\n"
+        "Пришлите фото с подписью, альбом или просто текст — предложу 3 варианта.\n"
+        "В группы уйдёт только после ✅ владельца или Jahongir.",
+        keyboard,
+    )
+    db.announce_update(ann_id, card_message_id=card_id)
+
+
+def handle_announce_callback(callback_query: dict, callback_id, data: str):
+    from services import ai_assistant
+
+    presser = callback_query.get("from") or {}
+    uid = str(presser.get("id") or "")
+    message = callback_query.get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    msg_id = message.get("message_id")
+    parts = data.split(":")
+    try:
+        ann_id = int(parts[1])
+    except (IndexError, ValueError):
+        telegram_answer_callback_query(callback_id, "Неверная кнопка")
+        return
+    action = parts[2] if len(parts) > 2 else ""
+    arg = parts[3] if len(parts) > 3 else ""
+    d = db.announce_get(ann_id)
+    if not d:
+        telegram_answer_callback_query(callback_id, "Черновик не найден")
+        return
+    approver = ai_assistant.can_approve_announcement(uid)
+    if uid != d["created_by"] and not approver:
+        telegram_answer_callback_query(callback_id, "Подтверждают только владелец и Jahongir")
+        return
+    status = d["status"]
+    who = _announce_person(presser)
+
+    def _closed():
+        telegram_answer_callback_query(callback_id, _ANNOUNCE_STATUS_NOTE.get(status, "Этот шаг уже пройден"))
+
+    if action == "x":
+        if not db.announce_claim(ann_id, ANNOUNCE_ABANDON_STATUSES + ("pending_approval",), "cancelled"):
+            return _closed()
+        telegram_answer_callback_query(callback_id, "Отменено")
+        _announce_card(chat_id, msg_id, "✖ Объявление отменено — ничего не отправлено.")
+        if status == "pending_approval":
+            note = f"✖ Заявка отозвана ({html.escape(who)}) — ничего не отправлено."
+            for chat, message_id in (d.get("approval_cards") or {}).items():
+                if str(chat) != str(chat_id):
+                    _announce_card(chat, message_id, note)
+        return
+
+    if action == "v":
+        if status != "choosing":
+            return _closed()
+        if arg == "0":
+            final_text, final_entities = d.get("source_text") or "", d.get("source_entities") or []
+        else:
+            try:
+                final_text, final_entities = (d.get("variants") or [])[int(arg) - 1]["text"], []
+            except (ValueError, IndexError, KeyError, TypeError):
+                telegram_answer_callback_query(callback_id, "Такого варианта нет")
+                return
+        if not final_text.strip() and not d.get("photos"):
+            telegram_answer_callback_query(callback_id, "Текст пустой — пришлите объявление заново")
+            return
+        if not db.announce_claim(ann_id, ("choosing",), "audience", choice=arg,
+                                 final_text=final_text, final_entities=final_entities):
+            return _closed()
+        telegram_answer_callback_query(callback_id, "Ваш текст" if arg == "0" else f"Вариант {arg}")
+        _announce_drop_keyboard(chat_id, msg_id)
+        _announce_bg(_announce_show_preview, ann_id)
+        return
+
+    if action == "notext":
+        if status != "await_text" or not d.get("photos"):
+            return _closed()
+        if not db.announce_claim(ann_id, ("await_text",), "audience", choice="none",
+                                 final_text="", final_entities=[]):
+            return _closed()
+        telegram_answer_callback_query(callback_id, "Без текста")
+        _announce_drop_keyboard(chat_id, msg_id)
+        _announce_bg(_announce_show_preview, ann_id)
+        return
+
+    if action == "more":
+        if not db.announce_claim(ann_id, ("choosing",), "composing"):
+            return _closed()
+        telegram_answer_callback_query(callback_id, "Готовлю другие варианты")
+        _announce_bg(_announce_compose, ann_id, "", True)
+        return
+
+    if action == "retext":
+        if not (d.get("variants") or (d.get("source_text") or "").strip()):
+            telegram_answer_callback_query(callback_id, "Текста нет — пришлите объявление заново")
+            return
+        if not db.announce_claim(ann_id, ("audience",), "choosing", choice="",
+                                 final_text="", final_entities=[]):
+            return _closed()
+        telegram_answer_callback_query(callback_id, "Выберите текст")
+        _announce_drop_keyboard(chat_id, msg_id)
+        _announce_bg(_announce_send_variants, ann_id)
+        return
+
+    if action == "aud":
+        if status != "audience":
+            return _closed()
+        if arg == "batch":
+            telegram_answer_callback_query(callback_id, "Выберите партию")
+            _announce_card(chat_id, msg_id, *_announce_batch_picker(d))
+            return
+        if arg == "back":
+            telegram_answer_callback_query(callback_id, "Назад")
+            _announce_card(chat_id, msg_id, *_announce_audience_card(d))
+            return
+        batch_id = None
+        if arg.startswith("b") and arg[1:].isdigit():
+            batch_id = int(arg[1:])
+            batch = db.get_batch(batch_id)
+            if not batch:
+                telegram_answer_callback_query(callback_id, "Партия не найдена")
+                return
+            kind, label = "batch", f"📦 группы партии «{batch['name']}»"
+        elif arg in _ANNOUNCE_AUDIENCE_LABELS:
+            kind, label = arg, _ANNOUNCE_AUDIENCE_LABELS[arg]
+        else:
+            telegram_answer_callback_query(callback_id, "Неизвестная выборка")
+            return
+        recipients = _announce_recipients(kind, batch_id)
+        if not recipients:
+            telegram_answer_callback_query(callback_id, "В этой выборке нет групп")
+            return
+        if not db.announce_claim(ann_id, ("audience",), "ready", audience=arg,
+                                 audience_label=label, recipients=recipients):
+            return _closed()
+        telegram_answer_callback_query(callback_id, f"Получателей: {len(recipients)}")
+        card_id = _announce_card(chat_id, msg_id, *_announce_final_card(db.announce_get(ann_id)))
+        db.announce_update(ann_id, card_message_id=card_id)
+        return
+
+    if action == "back":
+        if not db.announce_claim(ann_id, ("ready",), "audience", audience="",
+                                 audience_label="", recipients=[]):
+            return _closed()
+        telegram_answer_callback_query(callback_id, "Назад")
+        _announce_card(chat_id, msg_id, *_announce_audience_card(db.announce_get(ann_id)))
+        return
+
+    if action == "list":
+        if not d.get("recipients"):
+            telegram_answer_callback_query(callback_id, "Получатели ещё не выбраны")
+            return
+        telegram_answer_callback_query(callback_id, f"Получателей: {len(d['recipients'])}")
+        _announce_send_list(chat_id, d)
+        return
+
+    if action == "go":
+        if not approver:
+            telegram_answer_callback_query(callback_id, "Отправляют только владелец и Jahongir")
+            return
+        if not db.announce_claim(ann_id, ("ready",), "sending",
+                                 approved_by=uid, approved_by_name=who):
+            return _closed()
+        telegram_answer_callback_query(callback_id, "✅ Отправляю")
+        _announce_bg(_announce_send_worker, ann_id, chat_id, msg_id)
+        return
+
+    if action == "ask":
+        if uid != d["created_by"] or not db.announce_claim(ann_id, ("ready",), "pending_approval"):
+            return _closed()
+        telegram_answer_callback_query(callback_id, "Отправляю на подтверждение")
+        _announce_bg(_announce_request_approval, ann_id, chat_id, msg_id)
+        return
+
+    if action in ("ok", "no"):
+        if not approver:
+            telegram_answer_callback_query(callback_id, "Подтверждают только владелец и Jahongir")
+            return
+        target = "sending" if action == "ok" else "rejected"
+        if not db.announce_claim(ann_id, ("pending_approval",), target,
+                                 approved_by=uid, approved_by_name=who):
+            return _closed()
+        if action == "no":
+            telegram_answer_callback_query(callback_id, "Отклонено")
+            note = f"✖ Заявка отклонена ({html.escape(who)}) — ничего не отправлено."
+            _announce_card(chat_id, msg_id, note)
+            for chat, message_id in (d.get("approval_cards") or {}).items():
+                if str(chat) != str(chat_id):
+                    _announce_card(chat, message_id, note)
+            _announce_card(d["dm_chat_id"], d.get("card_message_id"), note)
+            return
+        telegram_answer_callback_query(callback_id, "✅ Подтверждено — отправляю")
+        note = f"✅ Подтверждено ({html.escape(who)}) — отправляю…"
+        for chat, message_id in (d.get("approval_cards") or {}).items():
+            if str(chat) != str(chat_id):
+                _announce_card(chat, message_id, note)
+        _announce_card(d["dm_chat_id"], d.get("card_message_id"), note)
+        _announce_bg(_announce_send_worker, ann_id, chat_id, msg_id)
+        return
+
+    telegram_answer_callback_query(callback_id, "Неизвестное действие")
 
 
 # ═══════════════════════════════════════════════════════════════
