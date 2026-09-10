@@ -3997,16 +3997,35 @@ def _announce_batch_picker(d: dict):
     return text, {"inline_keyboard": rows}
 
 
+def _announce_left_out(d: dict) -> list:
+    """Активные группы, которые НЕ получат рассылку «всем клиентам», —
+    чтобы подтверждающий видел их поимённо. Закрытый чат без названия."""
+    from services import ai_assistant
+    included = {str(r.get("chat_id")) for r in (d.get("recipients") or [])}
+    hidden = ai_assistant.confidential_chat_ids() | CONFIDENTIAL_CHAT_IDS
+    return [
+        "закрытый чат" if r["chat_id"] in hidden else str(r["title"])
+        for r in db.announcement_audience("any") if r["chat_id"] not in included
+    ]
+
+
 def _announce_final_card(d: dict):
     from services import ai_assistant
     ann_id = d["id"]
     n = len(d.get("recipients") or [])
+    if d.get("audience") == "all":
+        left_out = _announce_left_out(d)
+        shown = ", ".join(html.escape(t) for t in left_out[:8])
+        tail = f" …и ещё {len(left_out) - 8}" if len(left_out) > 8 else ""
+        skip_line = f"Не получат ({len(left_out)}): {shown}{tail}." if left_out else "Получат все активные группы."
+    else:
+        skip_line = "Не получат: Tracking gruppa, служебные и закрытые чаты."
     lines = [
         "📢 <b>Проверьте и подтвердите</b>",
         "",
         f"Текст: {html.escape(_announce_text_label(d))} · {_announce_media_note(d)} — превью выше",
         f"Кому: {html.escape(d.get('audience_label') or '')} — <b>{n}</b>",
-        "Не получат: Tracking gruppa, служебные и закрытые чаты.",
+        skip_line,
     ]
     if ai_assistant.can_approve_announcement(d["created_by"]):
         first = [_announce_btn(ann_id, "go", f"✅ Отправить в {_ru_groups_acc(n)}")]

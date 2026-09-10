@@ -1955,8 +1955,22 @@ OWNER_DIRECT_TOOLS = [
         "type": "function",
         "function": {
             "name": "list_groups",
-            "description": "Известные боту Telegram-группы: название, chat_id, активна ли. Для выбора куда писать/опрашивать.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
+            "description": (
+                "Telegram-группы, где состоит бот: summary со счётчиками по ВСЕЙ базе (сколько групп всего, "
+                "активных, с привязанными BL и без) + список с chat_id и BL. Список может быть неполным — "
+                "смотри shown/matched; «сколько групп» отвечай по summary, не по длине списка. "
+                "Для поиска конкретной группы передай query."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string",
+                              "description": "Часть названия группы, код BL или chat_id"},
+                    "limit": {"type": "integer",
+                              "description": "Сколько групп показать (по умолчанию 60, максимум 300)"},
+                },
+                "required": [],
+            },
         },
     },
 ]
@@ -2088,25 +2102,64 @@ def _tool_cancel_scheduled_task(args: dict) -> dict:
     return {"ok": ok} if ok else {"error": "Задача не найдена или уже не pending"}
 
 
-def _tool_list_groups(_args: dict) -> dict:
+def _tool_list_groups(args: dict) -> dict:
+    """Группы бота с ИТОГАМИ. Раньше отдавали молча первые 60 строк — модель
+    приняла их за «всего 60 групп» при 295 в базе (владелец, 10.09.2026).
+    Теперь: сводка по всей базе + поиск + явное «показано N из M»."""
+    query = str((args or {}).get("query") or "").strip().lower()
+    try:
+        limit = max(1, min(int((args or {}).get("limit") or 60), 300))
+    except (TypeError, ValueError):
+        limit = 60
     conn = db.get_conn()
     try:
         rows = conn.execute(
-            "SELECT chat_id, title, is_active FROM telegram_chats ORDER BY is_active DESC, last_seen_at DESC LIMIT 60"
+            """
+            SELECT c.chat_id, c.title, c.chat_type, c.is_active,
+                   GROUP_CONCAT(DISTINCT bl.code) AS codes
+            FROM telegram_chats c
+            LEFT JOIN bl_codes bl ON bl.chat_id = c.chat_id
+            WHERE c.chat_type IN ('group', 'supergroup')
+            GROUP BY c.chat_id
+            ORDER BY c.is_active DESC, c.last_seen_at DESC
+            """
         ).fetchall()
     finally:
         conn.close()
     hidden = confidential_chat_ids()
-    return {
-        "groups": [
-            {
-                "chat_id": ("🔒 конфиденциально" if str(r["chat_id"]) in hidden else r["chat_id"]),
-                "title": ("🔒" if str(r["chat_id"]) in hidden else (r["title"] or "")),
-                "active": bool(r["is_active"]),
-            }
-            for r in rows
-        ]
+    items = []
+    for r in rows:
+        secret = str(r["chat_id"]) in hidden
+        codes = [c for c in str(r["codes"] or "").split(",") if c]
+        items.append({
+            "chat_id": "🔒 конфиденциально" if secret else r["chat_id"],
+            "title": "🔒" if secret else (r["title"] or ""),
+            "active": bool(r["is_active"]),
+            "bl_codes": [] if secret else codes[:6],
+            "bl_count": 0 if secret else len(codes),
+            "_search": "" if secret else f"{r['title'] or ''} {r['chat_id']} {' '.join(codes)}".lower(),
+        })
+    active = [i for i in items if i["active"]]
+    summary = {
+        "total_groups": len(items),
+        "active": len(active),
+        "inactive": len(items) - len(active),
+        "active_with_linked_bl": sum(1 for i in active if i["bl_count"]),
+        "active_without_linked_bl": sum(1 for i in active if not i["bl_count"]),
     }
+    matched = [i for i in items if not query or query in i["_search"]]
+    shown = matched[:limit]
+    for i in shown:
+        i.pop("_search", None)
+    note = (
+        "Это ВСЕ группы, где бот состоит и которые записаны в базу: бот видит группу, как только "
+        "получает из неё первое событие (добавление бота, команду, сообщение). Цифры summary — по всей базе."
+    )
+    if len(shown) < len(matched):
+        note += (f" Показано {len(shown)} из {len(matched)} — это НЕ полный список: "
+                 "для поиска передай query (название/BL/chat_id), для большего — limit до 300.")
+    return {"summary": summary, "query": query, "matched": len(matched),
+            "shown": len(shown), "groups": shown, "note": note}
 
 
 ALLOWED_ACTION_KINDS = {

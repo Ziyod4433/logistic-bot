@@ -4919,12 +4919,26 @@ def announce_cancel_open(created_by, statuses, except_id: int = 0) -> int:
         conn.close()
 
 
+# код BL в названии группы: «BL-584 China-Tashkent», «Bl-729 & …», «BL321»
+_BL_IN_TITLE_RE = re.compile(r"\bBL[-\s]?\d{1,5}\b", re.IGNORECASE)
+
+
+def is_client_group_title(title: str) -> bool:
+    """Название похоже на клиентскую группу, даже если BL ещё не привязан:
+    шаблон «Клиент & BURAQ …» или код BL в названии. Служебные группы
+    («Tracking gruppa», «Идеи ИИ», «ICHKI GURUX BURAQ LOGISTICS») сюда не
+    попадают: у них нет ни «&», ни кода BL."""
+    low = str(title or "").lower()
+    return ("&" in low and "buraq" in low) or bool(_BL_IN_TITLE_RE.search(str(title or "")))
+
+
 def announcement_audience(kind: str, batch_id: int | None = None) -> list:
     """Группы-получатели объявления: только активные группы.
-    all   — клиентские группы: есть привязанный BL ИЛИ название по
-            шаблону клиента «… & BURAQ …» (группа есть, BL ещё не привязан);
+    all   — клиентские группы: есть привязанный BL ИЛИ название клиента
+            (is_client_group_title) — группа есть, BL ещё не привязан;
     cargo — группы, чей груз в пути (BL в партии без даты выдачи);
-    batch — группы BL одной партии.
+    batch — группы BL одной партии;
+    any   — все активные группы (чтобы показать, кто НЕ получит).
     Управляющую и конфиденциальные чаты вырезает вызывающий код."""
     conn = get_conn()
     try:
@@ -4953,13 +4967,14 @@ def announcement_audience(kind: str, batch_id: int | None = None) -> list:
     out = []
     for row in rows:
         item = dict(row)
-        title_l = str(item.get("title") or "").lower()
-        if kind == "cargo":
+        if kind == "any":
+            ok = True
+        elif kind == "cargo":
             ok = (item.get("cargo_count") or 0) > 0
         elif kind == "batch":
             ok = (item.get("batch_hits") or 0) > 0
         else:
-            ok = (item.get("bl_count") or 0) > 0 or ("&" in title_l and "buraq" in title_l)
+            ok = (item.get("bl_count") or 0) > 0 or is_client_group_title(item.get("title"))
         if ok:
             out.append({"chat_id": str(item["chat_id"]), "title": item["title"]})
     return out
