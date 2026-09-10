@@ -35,19 +35,24 @@ import database as db
 #   openrouter — Hermes 4 через OpenRouter (OPENROUTER_API_KEY)
 # AI_API_BASE_URL / AI_API_KEY / AI_MODEL перекрывают любой пресет —
 # откат на DeepSeek = убрать AI_PROVIDER, ничего не передеплоивая руками.
+# Две ступени (владелец, 10.09.2026): model — лёгкие вопросы, smart_model —
+# сложные (AI_SMART_MODEL перекрывает). Имена моделей DeepSeek сверены с их
+# /models на ключе прода: там ровно deepseek-flash и deepseek-v4-pro.
 _PROVIDER_PRESETS = {
     "deepseek": {
         "base": "https://api.deepseek.com",
         "base_env": "DEEPSEEK_BASE_URL",       # исторические переменные
-        "model": "deepseek-v4-pro",
+        "model": "deepseek-flash",
         "model_env": "DEEPSEEK_MODEL",
-        "fallback_model": "deepseek-chat",
+        "smart_model": "deepseek-v4-pro",
+        "fallback_model": "deepseek-v4-pro",
         "key_envs": ("DEEPSEEK_API_KEY",),
         "key_hint": "DEEPSEEK_API_KEY (platform.deepseek.com → API Keys)",
     },
     "hermes": {
         "base": "https://inference-api.nousresearch.com/v1",
         "model": "Hermes-4-405B",
+        "smart_model": "Hermes-4-405B",
         "fallback_model": "Hermes-4-70B",
         "key_envs": ("NOUS_API_KEY", "AI_API_KEY"),
         "key_hint": "NOUS_API_KEY (portal.nousresearch.com)",
@@ -55,6 +60,7 @@ _PROVIDER_PRESETS = {
     "openrouter": {
         "base": "https://openrouter.ai/api/v1",
         "model": "nousresearch/hermes-4-405b",
+        "smart_model": "nousresearch/hermes-4-405b",
         "fallback_model": "nousresearch/hermes-4-70b",
         "key_envs": ("OPENROUTER_API_KEY", "AI_API_KEY"),
         "key_hint": "OPENROUTER_API_KEY (openrouter.ai → Keys)",
@@ -88,7 +94,7 @@ REQUEST_TIMEOUT = 90
 # DeepSeek в часы пик отвечает 503 «Service is busy» (и 429 при лимите) —
 # это перегрузка ИХ сервера, а не ошибка бота. Один такой ответ раньше
 # убивал весь ответ пользователю, поэтому повторяем с нарастающей паузой.
-_RETRY_STATUSES = {429, 500, 502, 503, 504, 529}   # 529 = Anthropic overloaded
+_RETRY_STATUSES = {429, 500, 502, 503, 504, 529}   # 529 — «overloaded» у части прокси
 _RETRY_DELAYS = (2, 5, 12)   # + джиттер; суммарно до ~20 с ожидания
 # лимит одного результата инструмента в контексте модели (символов JSON);
 # при превышении вывод обрезается С ПОМЕТКОЙ, чтобы модель не решила,
@@ -2512,12 +2518,10 @@ class DeepSeekBusy(Exception):
     провайдера, повторы не помогли. Имя историческое, ловится всюду."""
 
 
-# ── MODEL ROUTER: DeepSeek на массовое, Claude Sonnet 5 на сложное ──
-# Схема «Hermes поверх Core», шаг 2. Роутер — обычный код (не LLM):
-# лишний LLM-хоп на каждое сообщение удваивал бы цену и задержку.
-ANTHROPIC_BASE_URL = (os.getenv("ANTHROPIC_BASE_URL") or "https://api.anthropic.com").rstrip("/")
-_ANTHROPIC_VERSION = "2023-06-01"
-_SMART_MAX_TOKENS = 8192
+# ── MODEL ROUTER: лёгкие вопросы — deepseek-flash, сложные — deepseek-v4-pro ──
+# Владелец, 10.09.2026: Claude Sonnet 5 убран, обе ступени — DeepSeek.
+# Роутер — обычный код (не LLM): лишний LLM-хоп на каждое сообщение
+# удваивал бы цену и задержку.
 
 # сигналы «сложного» вопроса: анализ, причины, сравнение, инциденты
 _SMART_RE = re.compile(
@@ -2529,16 +2533,17 @@ _SMART_RE = re.compile(
 )
 
 
-def _anthropic_key() -> str:
-    return (os.getenv("ANTHROPIC_API_KEY") or "").strip()
-
-
 def _smart_model() -> str:
-    return (os.getenv("AI_SMART_MODEL") or "claude-sonnet-5").strip()
+    return (os.getenv("AI_SMART_MODEL") or _provider().get("smart_model") or _model()).strip()
 
 
 def smart_available() -> bool:
-    return bool(_anthropic_key()) and (os.getenv("AI_SMART_DISABLE") or "").strip() not in ("1", "true", "yes")
+    """Есть отдельная ступень для сложных вопросов: её модель задана и не
+    совпадает с моделью лёгких. AI_SMART_DISABLE=1 — всё на лёгкую."""
+    if (os.getenv("AI_SMART_DISABLE") or "").strip().lower() in ("1", "true", "yes"):
+        return False
+    smart = _smart_model()
+    return bool(smart) and smart != _model()
 
 
 def _wants_smart(text: str) -> bool:
@@ -2547,141 +2552,11 @@ def _wants_smart(text: str) -> bool:
     return bool(_SMART_RE.search(t)) or len(t) > 350
 
 
-def _openai_to_anthropic(messages: list, tools: list | None):
-    """OpenAI chat-формат (наш внутренний) → Anthropic Messages API.
-    system уходит отдельным полем; role='tool' становится tool_result-блоком
-    в user-сообщении; tool_calls ассистента — tool_use-блоками. Соседние
-    сообщения одной роли сливаются (Anthropic ждёт чередование)."""
-    system_parts: list = []
-    out: list = []
-
-    def _push(role: str, blocks: list):
-        if out and out[-1]["role"] == role:
-            out[-1]["content"].extend(blocks)
-        else:
-            out.append({"role": role, "content": list(blocks)})
-
-    for m in messages:
-        role = m.get("role") or ""
-        if role == "system":
-            system_parts.append(str(m.get("content") or ""))
-            continue
-        if role == "tool":
-            _push("user", [{
-                "type": "tool_result",
-                "tool_use_id": str(m.get("tool_call_id") or ""),
-                "content": str(m.get("content") or ""),
-            }])
-            continue
-        if role == "assistant":
-            blocks: list = []
-            content = str(m.get("content") or "")
-            if content.strip():
-                blocks.append({"type": "text", "text": content})
-            for call in (m.get("tool_calls") or []):
-                fn = call.get("function") or {}
-                try:
-                    args = json.loads(fn.get("arguments") or "{}")
-                except Exception:
-                    args = {}
-                blocks.append({
-                    "type": "tool_use",
-                    "id": str(call.get("id") or ""),
-                    "name": str(fn.get("name") or ""),
-                    "input": args if isinstance(args, dict) else {},
-                })
-            if blocks:
-                _push("assistant", blocks)
-            continue
-        # user (и всё незнакомое) — текстом; пустой блок Anthropic отвергает
-        _push("user", [{"type": "text", "text": str(m.get("content") or "").strip() or "—"}])
-
-    # Messages API требует, чтобы диалог начинался с user
-    if not out or out[0]["role"] != "user":
-        out.insert(0, {"role": "user", "content": [{"type": "text", "text": "(продолжение диалога)"}]})
-
-    a_tools = [
-        {
-            "name": t["function"]["name"],
-            "description": t["function"].get("description") or "",
-            "input_schema": t["function"].get("parameters") or {"type": "object", "properties": {}},
-        }
-        for t in (tools or [])
-    ]
-    return "\n\n".join(p for p in system_parts if p), out, a_tools
-
-
-def _anthropic_to_openai(data: dict) -> dict:
-    """Ответ Anthropic → форма OpenAI, которую понимает наш цикл."""
-    text_parts: list = []
-    tool_calls: list = []
-    for block in data.get("content") or []:
-        btype = block.get("type")
-        if btype == "text":
-            text_parts.append(str(block.get("text") or ""))
-        elif btype == "tool_use":
-            tool_calls.append({
-                "id": str(block.get("id") or ""),
-                "type": "function",
-                "function": {
-                    "name": str(block.get("name") or ""),
-                    "arguments": json.dumps(block.get("input") or {}, ensure_ascii=False),
-                },
-            })
-    msg: dict = {"role": "assistant", "content": "\n".join(text_parts)}
-    if tool_calls:
-        msg["tool_calls"] = tool_calls
-    return {"choices": [{"message": msg}]}
-
-
-def _anthropic_chat(messages, tools=None, use_model=None):
-    """Вызов Claude через Messages API с теми же повторами, что у DeepSeek.
-    temperature НЕ передаём — на Sonnet 5 параметр удалён (был бы 400)."""
-    system, a_messages, a_tools = _openai_to_anthropic(messages, tools if tools is not None else TOOLS)
-    payload: dict = {
-        "model": use_model or _smart_model(),
-        "max_tokens": _SMART_MAX_TOKENS,
-        "messages": a_messages,
-    }
-    if system:
-        payload["system"] = system
-    if a_tools:
-        payload["tools"] = a_tools
-    body_json = json.dumps(payload)
-    last_status = None
-    for attempt in range(len(_RETRY_DELAYS) + 1):
-        try:
-            response = req.post(
-                f"{ANTHROPIC_BASE_URL}/v1/messages",
-                headers={
-                    "x-api-key": _anthropic_key(),
-                    "anthropic-version": _ANTHROPIC_VERSION,
-                    "Content-Type": "application/json",
-                },
-                data=body_json,
-                timeout=REQUEST_TIMEOUT,
-            )
-        except (req.Timeout, req.ConnectionError):
-            if attempt >= len(_RETRY_DELAYS):
-                raise
-            time.sleep(_RETRY_DELAYS[attempt] + random.uniform(0, 1))
-            continue
-        if response.status_code in _RETRY_STATUSES:
-            last_status = response.status_code
-            if attempt < len(_RETRY_DELAYS):
-                time.sleep(_RETRY_DELAYS[attempt] + random.uniform(0, 1))
-                continue
-            raise DeepSeekBusy(str(last_status))
-        response.raise_for_status()
-        return _anthropic_to_openai(response.json())
-    raise DeepSeekBusy(str(last_status or "timeout"))
-
-
-def _chat_completion(messages, use_model=None, tools=None, smart=False, temperature=0.1):
-    if smart and smart_available():
-        return _anthropic_chat(messages, tools=tools)
+def _chat_completion(messages, use_model=None, tools=None, smart=False, temperature=0.1,
+                     _model_retry=False):
+    model = use_model or (_smart_model() if smart and smart_available() else _model())
     payload = {
-        "model": use_model or _model(),
+        "model": model,
         "messages": messages,
         # низкая температура: ассистент оперирует фактами из базы,
         # креативность здесь превращается в выдуманные коды и списки
@@ -2711,13 +2586,15 @@ def _chat_completion(messages, use_model=None, tools=None, smart=False, temperat
                 raise
             time.sleep(_RETRY_DELAYS[attempt] + random.uniform(0, 1))
             continue
-        if response.status_code == 400 and use_model is None:
-            # Unknown model name (e.g. the configured one isn't available on
-            # this account) — retry once with the provider's standard model.
+        if response.status_code == 400 and not _model_retry:
+            # имя модели не принято (переименовали, нет на аккаунте) — один
+            # повтор на другой ступени, чтобы ответ человеку не потерялся
             body = response.text or ""
             if "model" in body.lower():
-                return _chat_completion(messages, use_model=_fallback_model(), tools=tools,
-                                        temperature=temperature)
+                alt = _model() if model != _model() else _fallback_model()
+                if alt and alt != model:
+                    return _chat_completion(messages, use_model=alt, tools=tools,
+                                            temperature=temperature, _model_retry=True)
         if response.status_code in _RETRY_STATUSES:
             # Повтор безопасен: ответ модели не пришёл, значит ни один
             # инструмент не выполнялся и побочных эффектов не было.
@@ -2782,9 +2659,9 @@ def _parse_announce_variants(raw: str) -> list:
 
 def compose_announcement_variants(text: str, photo_count: int = 0, instruction: str = "",
                                   avoid: list | None = None, user_id="", user_label: str = "") -> list:
-    """3 варианта объявления по черновику сотрудника. Умной моделью, если
-    она подключена (узбекский у неё заметно лучше). Бросает RuntimeError
-    с понятным текстом, когда вариантов не получилось."""
+    """3 варианта объявления по черновику сотрудника. Ступенью для сложных
+    (deepseek-v4-pro): текст увидят все клиенты, качество важнее скорости.
+    Бросает RuntimeError с понятным текстом, когда вариантов не получилось."""
     photo_note = ""
     if photo_count == 1:
         photo_note = " (текст уйдёт подписью к фото)"
@@ -2815,7 +2692,7 @@ def compose_announcement_variants(text: str, photo_count: int = 0, instruction: 
     except Exception as exc:
         error = f"ошибка модели: {exc}"[:200]
     try:
-        prov, mdl = ("anthropic", _smart_model()) if smart else (provider_name(), _model())
+        prov, mdl = provider_name(), (_smart_model() if smart else _model())
         db.add_ai_request_log(
             channel="announce", user_id=user_id, user_label=user_label or "объявление",
             question=(text or "")[:200], provider=prov, model=mdl, smart=smart,
@@ -2925,7 +2802,7 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
             "по клиентским группам — по-прежнему только через propose_action (send_tracking_batch)."
         )
 
-    # ── роутер моделей: сложные разборы — Claude, массовое — DeepSeek ──
+    # ── роутер моделей: сложные разборы — deepseek-v4-pro, остальное — flash ──
     smart = smart_available() and _wants_smart(text)
     _t0 = time.time()
     _used_tools: list = []
@@ -2999,8 +2876,8 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
                 ),
             })
             try:
-                # добор ответа по собранным данным — умной моделью, если есть:
-                # у неё это получается заметно лучше, а инструментов уже нет
+                # добор ответа по собранным данным — ступенью для сложных
+                # (deepseek-v4-pro): связать разрозненные факты ей удаётся лучше
                 _escalated = (not smart) and smart_available()
                 data = _chat_completion(messages, tools=[], smart=smart_available())
                 reply_text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
@@ -3044,10 +2921,7 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
 
     # журнал для консоли /dev: какой вопрос → какая модель (best-effort)
     try:
-        if smart:
-            prov, mdl = "anthropic", _smart_model()
-        else:
-            prov, mdl = provider_name(), _model()
+        prov, mdl = provider_name(), (_smart_model() if smart else _model())
         if _escalated:
             mdl += f"→{_smart_model()}"
         label = (f"продавец {sales_name}" if sales_name

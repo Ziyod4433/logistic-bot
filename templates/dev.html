@@ -107,8 +107,8 @@ async function loadOverview(){
     const today = (d.summary_today||[]).reduce((a,x)=>a+x.cnt,0);
     const cards = [
       {lbl:'запросов сегодня', val: today},
-      {lbl:'основная модель', val: esc(s.ai_model||'—')},
-      {lbl:'умный маршрут', val: s.smart_router ? esc(s.smart_model) : 'выкл'},
+      {lbl:'лёгкие вопросы', val: esc(s.ai_model||'—')},
+      {lbl:'сложные вопросы', val: s.smart_router ? esc(s.smart_model) : 'как лёгкие'},
       {lbl:'распознавание речи', val: esc((d.asr||{}).provider||'—') + ((d.asr||{}).available?'':' (нет ключа)')},
     ];
     for(const row of (d.summary_today||[]).slice(0,3)){
