@@ -917,6 +917,20 @@ def init_db():
         CREATE UNIQUE INDEX IF NOT EXISTS ux_bot_ann_media_group
             ON bot_announcements(created_by, media_group_id)
             WHERE media_group_id != '';
+        -- что именно ушло в каждую группу (фото/альбом + текст) — чтобы
+        -- объявление можно было удалить из групп, как отзыв трекинга
+        CREATE TABLE IF NOT EXISTS bot_announcement_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            announcement_id INTEGER NOT NULL,
+            chat_id TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            message_ids TEXT NOT NULL DEFAULT '[]',
+            sent_at TEXT NOT NULL DEFAULT '',
+            deleted_at TEXT NOT NULL DEFAULT '',
+            delete_error TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_bot_ann_msgs
+            ON bot_announcement_messages(announcement_id);
 
         CREATE TABLE IF NOT EXISTS tracking_delivery_coverage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1507,6 +1521,18 @@ def init_db():
     for column_name, column_def in [("folder_name", "TEXT NOT NULL DEFAULT ''")]:
         if not _table_has_column(conn, "packing_file_questions", column_name):
             conn.execute(f"ALTER TABLE packing_file_questions ADD COLUMN {column_name} {column_def}")
+
+    # удаление объявления из групп (владелец, 10.09.2026): кто и когда
+    # удалил, сколько групп вычищено и где Telegram отказал
+    for column_name, column_def in [
+        ("recalled_at", "TEXT NOT NULL DEFAULT ''"),
+        ("recalled_by_name", "TEXT NOT NULL DEFAULT ''"),
+        ("recall_deleted", "INTEGER NOT NULL DEFAULT 0"),
+        ("recall_failed", "INTEGER NOT NULL DEFAULT 0"),
+        ("recall_errors", "TEXT NOT NULL DEFAULT '[]'"),
+    ]:
+        if not _table_has_column(conn, "bot_announcements", column_name):
+            conn.execute(f"ALTER TABLE bot_announcements ADD COLUMN {column_name} {column_def}")
 
     send_log_columns = [
         ("filled_by", "TEXT NOT NULL DEFAULT ''"),
@@ -4730,13 +4756,14 @@ def agent_memory_list(limit: int = 50, include_inactive: bool = False) -> list:
 _ANN_JSON_FIELDS = {
     "source_entities": list, "photos": list, "variants": list,
     "final_entities": list, "recipients": list, "errors": list,
-    "approval_cards": dict,
+    "approval_cards": dict, "recall_errors": list,
 }
 _ANN_FIELDS = {
     "created_by_name", "dm_chat_id", "status", "source_text", "source_entities",
     "photos", "media_group_id", "variants", "choice", "final_text", "final_entities",
     "audience", "audience_label", "recipients", "card_message_id", "approval_cards",
     "approved_by", "approved_by_name", "sent_count", "failed_count", "errors", "sent_at",
+    "recalled_at", "recalled_by_name", "recall_deleted", "recall_failed", "recall_errors",
 }
 
 
@@ -4917,6 +4944,102 @@ def announce_cancel_open(created_by, statuses, except_id: int = 0) -> int:
         return cur.rowcount
     finally:
         conn.close()
+
+
+def announce_record_message(announcement_id, chat_id, title: str, message_ids: list) -> None:
+    """Запомнить, какие сообщения объявления ушли в группу. Сбой записи не
+    должен ронять рассылку — сообщение уже доставлено, теряется лишь
+    возможность удалить его потом."""
+    ids = [int(m) for m in (message_ids or []) if str(m).strip().lstrip("-").isdigit()]
+    if not ids:
+        return
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO bot_announcement_messages(announcement_id, chat_id, title, message_ids, sent_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (int(announcement_id), str(chat_id), str(title or ""), json.dumps(ids), current_ts()),
+        )
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.close()
+
+
+def announce_messages(announcement_id, only_live: bool = True) -> list:
+    """Сообщения объявления по группам; only_live — ещё не удалённые."""
+    where = "AND deleted_at = ''" if only_live else ""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM bot_announcement_messages
+            WHERE announcement_id = ? {where}
+            ORDER BY id
+            """,
+            (int(announcement_id),),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["message_ids"] = [int(m) for m in json.loads(item.get("message_ids") or "[]")]
+        except (TypeError, ValueError):
+            item["message_ids"] = []
+        out.append(item)
+    return out
+
+
+def announce_mark_deleted(row_id, error: str = "") -> None:
+    """Группа вычищена (или причина, почему Telegram отказал)."""
+    conn = get_conn()
+    try:
+        if error:
+            conn.execute("UPDATE bot_announcement_messages SET delete_error = ? WHERE id = ?",
+                         (str(error)[:300], int(row_id)))
+        else:
+            conn.execute("UPDATE bot_announcement_messages SET deleted_at = ?, delete_error = '' "
+                         "WHERE id = ?", (current_ts(), int(row_id)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def announce_recent(limit: int = 10) -> list:
+    """Последние разосланные объявления (для «удали объявление»): сколько
+    групп получили, сколько ещё можно удалить, кто подтвердил."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT a.id, a.created_by_name, a.approved_by_name, a.audience_label,
+                   a.status, a.sent_count, a.failed_count, a.sent_at, a.final_text,
+                   a.photos, a.recalled_at, a.recalled_by_name, a.recall_deleted, a.recall_failed,
+                   (SELECT COUNT(*) FROM bot_announcement_messages m
+                     WHERE m.announcement_id = a.id AND m.deleted_at = '') AS live_groups
+            FROM bot_announcements a
+            WHERE a.sent_at != ''
+            ORDER BY a.sent_at DESC, a.id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["photo_count"] = len(json.loads(item.pop("photos") or "[]"))
+        except (TypeError, ValueError):
+            item["photo_count"] = 0
+        out.append(item)
+    return out
 
 
 # код BL в названии группы: «BL-584 China-Tashkent», «Bl-729 & …», «BL321»

@@ -3203,6 +3203,24 @@ def execute_ai_action(action: dict, actor: str = ""):
         return removed, (f"🏷 Метка снята — «{html.escape(code)}» снова обычный груз"
                          if removed else f"«{html.escape(code)}» не был помечен")
 
+    if kind == "recall_announcement":
+        ann_id = int(params.get("announcement_id") or 0)
+        ann = db.announce_get(ann_id)
+        if not ann:
+            return False, "Объявление не найдено"
+        if not db.announce_claim(ann_id, ("sent", "recalled"), "recalling",
+                                 recalled_by_name=actor or "ассистент"):
+            return False, f"Объявление #{ann_id} сейчас удалить нельзя (статус: {ann.get('status')})"
+        outcome = _announce_recall_worker(ann_id)
+        if outcome is None:
+            return False, "Удаление не запустилось"
+        deleted, errors = outcome
+        text = f"🗑 Объявление #{ann_id} удалено из {_ru_groups_gen(deleted)}"
+        if errors:
+            text += f"; не удалось в {len(errors)}: " + "; ".join(
+                f"{html.escape(str(e.get('title')))} — {html.escape(str(e.get('error')))}" for e in errors[:5])
+        return bool(deleted) or not errors, text
+
     if kind == "delete_batch":
         batch = db.get_batch(int(params.get("batch_id") or 0))
         if not batch:
@@ -3629,7 +3647,13 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
     # Treking forma, её по-прежнему подтверждает любой участник группы;
     # перенос казахского плана — подтверждает и Hoji dodam (его и
     # спрашивают).
-    if not ai_assistant.can_change(voter.get("id")):
+    if action.get("kind") == "recall_announcement":
+        # удаление объявления из групп — как и сама рассылка: только
+        # владелец или Jahongir (операторам это действие не положено)
+        if not ai_assistant.can_approve_announcement(voter.get("id")):
+            telegram_answer_callback_query(callback_id, "Удаляют объявление только владелец и Jahongir")
+            return
+    elif not ai_assistant.can_change(voter.get("id")):
         allowed = is_basket and ai_assistant.is_control_chat(origin_chat_id)
         if (action.get("kind") == "apply_kazakh_plan"
                 and str(voter.get("id") or "") == HOJI_DODAM_TG_ID):
@@ -3734,6 +3758,8 @@ _ANNOUNCE_STATUS_NOTE = {
     "failed": "Уже отправлялось",
     "cancelled": "Черновик отменён",
     "rejected": "Заявка отклонена",
+    "recalling": "Уже удаляется из групп",
+    "recalled": "Объявление уже удалено из групп",
 }
 _ANNOUNCE_ERROR_HINTS = (
     ("bot was kicked", "бота удалили из группы"),
@@ -3772,15 +3798,28 @@ def _announce_api(method: str, payload: dict):
     raise RuntimeError("Telegram: слишком много запросов")
 
 
-def _announce_deliver(chat_id, d: dict):
+def _announce_msg_ids(result) -> list:
+    """message_id из ответа send*: одно сообщение или альбом (список)."""
+    res = result.get("result") if isinstance(result, dict) else None
+    if isinstance(res, list):
+        return [int(m["message_id"]) for m in res if isinstance(m, dict) and m.get("message_id")]
+    if isinstance(res, dict) and res.get("message_id"):
+        return [int(res["message_id"])]
+    return []
+
+
+def _announce_deliver(chat_id, d: dict, sent_ids: list | None = None) -> list:
     """Объявление в один чат — ровно так, как его увидят клиенты: одно фото
     — с подписью; альбом — подпись у первого фото; текст длиннее лимита
-    подписи (1024) — отдельным сообщением сразу после фото."""
+    подписи (1024) — отдельным сообщением сразу после фото.
+    sent_ids пополняется ПО ХОДУ отправки: если текст после фото сорвётся,
+    фото всё равно останется в журнале и его можно будет удалить."""
     photos = [p for p in (d.get("photos") or []) if p]
     text = d.get("final_text") or ""
     entities = d.get("final_entities") or []
     has_text = bool(text.strip())
     as_caption = has_text and _tg_text_len(text) <= TELEGRAM_MAX_CAPTION_UNITS
+    ids = sent_ids if sent_ids is not None else []
 
     def _text_payload():
         payload = {"chat_id": chat_id, "text": text}
@@ -3789,24 +3828,25 @@ def _announce_deliver(chat_id, d: dict):
         return payload
 
     if not photos:
-        return _announce_api("sendMessage", _text_payload())
+        ids += _announce_msg_ids(_announce_api("sendMessage", _text_payload()))
+        return ids
     if len(photos) == 1:
         payload = {"chat_id": chat_id, "photo": photos[0]}
         if as_caption:
             payload["caption"] = text
             if entities:
                 payload["caption_entities"] = entities
-        result = _announce_api("sendPhoto", payload)
+        ids += _announce_msg_ids(_announce_api("sendPhoto", payload))
     else:
         media = [{"type": "photo", "media": fid} for fid in photos[:10]]
         if as_caption:
             media[0]["caption"] = text
             if entities:
                 media[0]["caption_entities"] = entities
-        result = _announce_api("sendMediaGroup", {"chat_id": chat_id, "media": media})
+        ids += _announce_msg_ids(_announce_api("sendMediaGroup", {"chat_id": chat_id, "media": media}))
     if has_text and not as_caption:
-        result = _announce_api("sendMessage", _text_payload())
-    return result
+        ids += _announce_msg_ids(_announce_api("sendMessage", _text_payload()))
+    return ids
 
 
 def _announce_person(user: dict) -> str:
@@ -4086,6 +4126,100 @@ def _announce_report(d: dict) -> str:
     return "\n".join(lines)
 
 
+def _ru_groups_gen(n: int) -> str:
+    """«из 1 группы / из 5 групп / из 21 группы»."""
+    n = abs(int(n))
+    return f"{n} группы" if n % 10 == 1 and n % 100 != 11 else f"{n} групп"
+
+
+def _announce_hours_since(ts: str):
+    try:
+        sent = datetime.strptime(str(ts or "")[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    return (datetime.now(db.TASHKENT_TZ).replace(tzinfo=None) - sent).total_seconds() / 3600
+
+
+def _announce_card_chats(d: dict) -> dict:
+    """Все карточки объявления {chat_id: message_id}: у автора и у
+    подтверждающих — итог показываем на каждой."""
+    cards = {}
+    if d.get("dm_chat_id") and d.get("card_message_id"):
+        cards[str(d["dm_chat_id"])] = d["card_message_id"]
+    for chat, message_id in (d.get("approval_cards") or {}).items():
+        if message_id:
+            cards[str(chat)] = message_id
+    return cards
+
+
+def _announce_report_markup(d: dict, chat_id):
+    """«🗑 Удалить из групп» — только там, где кнопку могут нажать (личка
+    владельца/Jahongir или Tracking gruppa), и пока в группах есть что удалять."""
+    from services import ai_assistant
+    chat = str(chat_id)
+    if not (ai_assistant.can_approve_announcement(chat) or ai_assistant.is_control_chat(chat)):
+        return None
+    live = len(db.announce_messages(d["id"], only_live=True))
+    if not live:
+        return None
+    label = (f"🗑 Повторить для оставшихся · {live}" if d.get("recalled_at")
+             else f"🗑 Удалить из групп · {live}")
+    return {"inline_keyboard": [[_announce_btn(d["id"], "del", label)]]}
+
+
+def _announce_refresh_cards(d: dict, render):
+    for chat, message_id in _announce_card_chats(d).items():
+        _announce_card(chat, message_id, render(d), _announce_report_markup(d, chat))
+
+
+def _announce_recall_confirm_card(d: dict, live: int):
+    ann_id = d["id"]
+    sent = d.get("sent_at") or ""
+    lines = [
+        f"🗑 <b>Удалить объявление из {_ru_groups_gen(live)}?</b>",
+        "",
+        f"Отправлено {sent[8:10]}.{sent[5:7]} в {sent[11:16]} · {html.escape(d.get('audience_label') or '')}",
+        "Бот удалит сообщения объявления (фото и текст) в каждой группе — вернуть их будет нельзя.",
+    ]
+    hours = _announce_hours_since(sent)
+    if hours is not None and hours >= 47:
+        lines.append("⚠️ С отправки прошло больше 48 часов — Telegram, скорее всего, "
+                     "не даст боту удалить часть сообщений.")
+    rows = [
+        [_announce_btn(ann_id, "delok", f"🗑 Да, удалить из {_ru_groups_gen(live)}")],
+        [_announce_btn(ann_id, "delno", "↩️ Не удалять")],
+    ]
+    return "\n".join(lines), {"inline_keyboard": rows}
+
+
+def _announce_recall_report(d: dict) -> str:
+    deleted = int(d.get("recall_deleted") or 0)
+    errors = d.get("recall_errors") or []
+    when = (d.get("recalled_at") or "")[11:16]
+    head = (f"🗑 <b>Объявление удалено</b> из {_ru_groups_gen(deleted)}" if deleted
+            else "⚠️ <b>Объявление удалить не удалось</b>")
+    lines = [
+        head,
+        f"Кому уходило: {html.escape(d.get('audience_label') or '')} · доставлено {int(d.get('sent_count') or 0)}",
+        f"Удаление: {html.escape(d.get('recalled_by_name') or '')}" + (f" · {when}" if when else ""),
+    ]
+    if errors:
+        lines += ["", f"❌ Не удалось удалить: {len(errors)}"]
+        for err in errors[:15]:
+            lines.append(f"• {html.escape(str(err.get('title') or err.get('chat_id')))}"
+                         f" — {html.escape(str(err.get('error') or ''))}")
+        if len(errors) > 15:
+            lines.append(f"…и ещё {len(errors) - 15}")
+    return "\n".join(lines)
+
+
+def _announce_recall_error(exc) -> str:
+    low = str(exc).lower()
+    if "can't be deleted" in low or "cant be deleted" in low:
+        return "Telegram не даёт удалить (прошло больше 48 часов или нет прав)"
+    return _announce_short_error(exc)
+
+
 def _announce_send_list(chat_id, d: dict):
     recipients = d.get("recipients") or []
     chunks = []
@@ -4281,27 +4415,76 @@ def _announce_send_worker(ann_id: int, status_chat_id, status_msg_id):
     _progress(0)
     for idx, rec in enumerate(recipients, 1):
         chat_id = str(rec.get("chat_id") or "")
+        ids: list = []
         try:
-            _announce_deliver(chat_id, d)
+            _announce_deliver(chat_id, d, ids)
             sent += 1
         except Exception as exc:
             errors.append({"chat_id": chat_id, "title": rec.get("title") or chat_id,
                            "error": _announce_short_error(exc)})
             app.logger.warning("Announcement %s to %s failed: %s", ann_id, chat_id, exc)
+        if ids:        # что ушло в группу — чтобы потом можно было удалить
+            db.announce_record_message(ann_id, chat_id, rec.get("title") or chat_id, ids)
         if idx % 20 == 0 and idx < total:
             _progress(idx)
         if ANNOUNCE_PAUSE_SECONDS and not ANNOUNCE_SYNC and idx < total:
             time.sleep(ANNOUNCE_PAUSE_SECONDS)
     db.announce_update(ann_id, status="sent" if sent else "failed", sent_count=sent,
                        failed_count=len(errors), errors=errors, sent_at=db.current_ts())
+    _announce_refresh_cards(db.announce_get(ann_id), _announce_report)
+
+
+def _announce_recall_worker(ann_id: int, status_chat_id=None, status_msg_id=None):
+    """Удалить объявление из групп — как отзыв трекинга: deleteMessage по
+    каждому сообщению из журнала рассылки. «Уже удалено» (удалили руками) —
+    тоже успех; прочие отказы Telegram записываются с причиной, группа
+    остаётся в журнале — удаление можно повторить для оставшихся.
+    Возвращает (удалено_групп, ошибки) или None, если удалять не положено."""
     d = db.announce_get(ann_id)
-    report = _announce_report(d)
-    _announce_card(status_chat_id, status_msg_id, report)
-    if d["created_by"] != d.get("approved_by"):
-        _announce_card(d["dm_chat_id"], d.get("card_message_id"), report)
-    for chat, message_id in (d.get("approval_cards") or {}).items():
-        if str(chat) not in (str(status_chat_id), str(d["dm_chat_id"])):
-            _announce_card(chat, message_id, report)
+    if not d or d["status"] != "recalling":
+        return None
+    rows = db.announce_messages(ann_id, only_live=True)
+    total = len(rows)
+    deleted, errors = 0, []
+
+    def _progress(done):
+        if status_chat_id and status_msg_id:
+            try:
+                telegram_edit_text(status_chat_id, status_msg_id,
+                                   f"🗑 Удаляю объявление из групп: {done} из {total}…")
+            except Exception:
+                pass
+
+    _progress(0)
+    for idx, row in enumerate(rows, 1):
+        error = ""
+        for message_id in row.get("message_ids") or []:
+            try:
+                _announce_api("deleteMessage", {"chat_id": row["chat_id"], "message_id": int(message_id)})
+            except Exception as exc:
+                if "to delete not found" in str(exc).lower():
+                    continue            # уже удалили руками — цель достигнута
+                error = _announce_recall_error(exc)
+        if error:
+            db.announce_mark_deleted(row["id"], error=error)
+            errors.append({"chat_id": row["chat_id"], "title": row.get("title") or row["chat_id"],
+                           "error": error})
+        else:
+            db.announce_mark_deleted(row["id"])
+            deleted += 1
+        if idx % 20 == 0 and idx < total:
+            _progress(idx)
+        if ANNOUNCE_PAUSE_SECONDS and not ANNOUNCE_SYNC and idx < total:
+            time.sleep(ANNOUNCE_PAUSE_SECONDS)
+    db.announce_update(ann_id, status="recalled", recalled_at=db.current_ts(),
+                       recall_deleted=int(d.get("recall_deleted") or 0) + deleted,
+                       recall_failed=len(errors), recall_errors=errors)
+    d = db.announce_get(ann_id)
+    _announce_refresh_cards(d, _announce_recall_report)
+    if status_chat_id and status_msg_id and str(status_chat_id) not in _announce_card_chats(d):
+        _announce_card(status_chat_id, status_msg_id, _announce_recall_report(d),
+                       _announce_report_markup(d, status_chat_id))
+    return deleted, errors
 
 
 # ── входы: фото, текст, /elon, кнопки ────────────────────────────────
@@ -4586,6 +4769,33 @@ def handle_announce_callback(callback_query: dict, callback_id, data: str):
                 _announce_card(chat, message_id, note)
         _announce_card(d["dm_chat_id"], d.get("card_message_id"), note)
         _announce_bg(_announce_send_worker, ann_id, chat_id, msg_id)
+        return
+
+    # ── удаление разосланного объявления из групп ──
+    if action in ("del", "delok"):
+        if not approver:
+            telegram_answer_callback_query(callback_id, "Удаляют объявление только владелец и Jahongir")
+            return
+        if status not in ("sent", "recalled"):
+            return _closed()
+        live = len(db.announce_messages(ann_id, only_live=True))
+        if not live:
+            telegram_answer_callback_query(callback_id, "Удалять нечего — в группах объявления уже нет")
+            return
+        if action == "del":
+            telegram_answer_callback_query(callback_id, "Подтвердите удаление")
+            _announce_card(chat_id, msg_id, *_announce_recall_confirm_card(d, live))
+            return
+        if not db.announce_claim(ann_id, ("sent", "recalled"), "recalling", recalled_by_name=who):
+            return _closed()
+        telegram_answer_callback_query(callback_id, "🗑 Удаляю из групп")
+        _announce_bg(_announce_recall_worker, ann_id, chat_id, msg_id)
+        return
+
+    if action == "delno":
+        telegram_answer_callback_query(callback_id, "Не удаляю")
+        render = _announce_recall_report if d.get("recalled_at") else _announce_report
+        _announce_card(chat_id, msg_id, render(d), _announce_report_markup(d, chat_id))
         return
 
     telegram_answer_callback_query(callback_id, "Неизвестное действие")

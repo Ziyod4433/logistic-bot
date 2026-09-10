@@ -605,6 +605,10 @@ def _system_prompt() -> str:
   send_group_message в управляющую группу, в тексте @{grouper}, список кодов BL и просьба добавить бота
   (без него трекинг этим клиентам не уйдёт). Это стандартный ответ на «не нашёл группу».
 • «что сделала автоматика / почему не открылась партия / когда сверка» → get_automation_status (+ get_batch_plan_status по партии).
+• «удали объявление / убери рассылку / e'lonni o'chir / o'chirib tashla» → list_announcements → нужное
+  (по умолчанию последнее; если неясно какое — перечисли 2–3 последних с датой и началом текста и спроси) →
+  propose_action kind='recall_announcement'. Бот удаляет его из всех групп, куда оно ушло. Прошло больше ~48 ч
+  (hours_since_sent) — предупреди заранее: Telegram такие сообщения боту удалять не даёт.
 • «отправь трекинг» → СНАЧАЛА get_batch_plan_status/get_batch_detail (tracking_readiness), потом
   партия: send_tracking_batch; один BL: find_bl → send_tracking_bl.
   ЖЕЛЕЗНОЕ ПРАВИЛО: если партия в статусе Nurjo'li, Jarkent, Almata, Taraz, Shimkent, Qonusbay, Saryagash,
@@ -926,6 +930,22 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "list_announcements",
+            "description": (
+                "Последние объявления, разосланные ботом по группам: id, когда, кто подготовил и подтвердил, "
+                "кому, в сколько групп дошло, сколько ещё можно удалить (live_groups), начало текста. "
+                "Используй на «удали объявление / e'lonni o'chir», «что мы рассылали», «сколько групп получили»."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer", "description": "Сколько последних (по умолчанию 5)"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "find_group",
             "description": (
                 "Поиск Telegram-группы клиента по подстроке названия или коду BL: возвращает chat_id и название. "
@@ -1093,13 +1113,16 @@ TOOLS = [
                 "партию: переименовать, поменять ДАТУ в названии, срок или точку маршрута. Просят «поменяй "
                 "дату партии» — это сюда, ты это умеешь); "
                 "'watch_plans' (сверить сайт с шитсом ПРЯМО СЕЙЧАС: подтянуть новые партии, применить "
-                "изменения плана, доложить о переездах грузов). "
+                "изменения плана, доложить о переездах грузов); "
+                "'recall_announcement' (params: announcement_id из list_announcements — УДАЛИТЬ разосланное "
+                "объявление из всех групп, куда оно ушло, как отзыв трекинга; создавать может и подтверждает "
+                "только владелец или Jahongir; Telegram даёт боту удалять свои сообщения ~48 часов). "
                 "summary: короткое человекочитаемое описание действия по-русски."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch", "mark_no_tracking"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -2172,8 +2195,49 @@ ALLOWED_ACTION_KINDS = {
     "set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan",
     "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan",
     "move_file", "delete_file", "update_batch", "watch_plans",
-    "merge_batches", "delete_batch", "mark_no_tracking",
+    "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement",
 }
+
+
+def _tool_list_announcements(args: dict) -> dict:
+    """Последние разосланные объявления — чтобы по «удали объявление» агент
+    выбрал нужное и создал recall_announcement."""
+    from datetime import datetime
+    try:
+        limit = max(1, min(int((args or {}).get("limit") or 5), 20))
+    except (TypeError, ValueError):
+        limit = 5
+    now = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
+    items = []
+    for a in db.announce_recent(limit):
+        hours = None
+        try:
+            hours = round((now - datetime.strptime(a["sent_at"][:19], "%Y-%m-%d %H:%M:%S")
+                           ).total_seconds() / 3600, 1)
+        except (TypeError, ValueError):
+            pass
+        text = str(a.get("final_text") or "").strip()
+        items.append({
+            "announcement_id": a["id"],
+            "sent_at": a["sent_at"],
+            "hours_since_sent": hours,
+            "prepared_by": a.get("created_by_name") or "",
+            "approved_by": a.get("approved_by_name") or "",
+            "audience": a.get("audience_label") or "",
+            "delivered_groups": a.get("sent_count") or 0,
+            "live_groups": a.get("live_groups") or 0,
+            "photos": a.get("photo_count") or 0,
+            "text_start": (text[:120] + "…") if len(text) > 120 else text,
+            "recalled_at": a.get("recalled_at") or "",
+            "recalled_by": a.get("recalled_by_name") or "",
+        })
+    return {
+        "announcements": items,
+        "note": ("live_groups — в скольких группах объявление ещё висит (можно удалить). Удаление — "
+                 "propose_action kind='recall_announcement' с announcement_id. Telegram даёт боту удалять свои "
+                 "сообщения примерно 48 часов после отправки — старше hours_since_sent≈48 удаление, скорее "
+                 "всего, не пройдёт: скажи об этом заранее."),
+    }
 
 
 def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> dict:
@@ -2298,6 +2362,25 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
                 "потом пустышку удалим."
             )}
         params["batch_name"] = batch["name"]
+    elif kind == "recall_announcement":
+        # удаление из групп — массовое действие по клиентам: как и саму
+        # рассылку, его заводит и подтверждает только владелец или Jahongir
+        if not can_approve_announcement(tg_user_id):
+            return {"error": ("Удалить объявление из групп можно из лички владельца или кнопкой «🗑 Удалить из "
+                              "групп» в отчёте о рассылке — подтверждают только владелец или Jahongir. "
+                              "Скажи это человеку.")}
+        try:
+            ann = db.announce_get(int(params.get("announcement_id") or 0))
+        except (TypeError, ValueError):
+            ann = None
+        if not ann or not ann.get("sent_at"):
+            return {"error": "Объявление не найдено — возьми announcement_id из list_announcements"}
+        live = len(db.announce_messages(ann["id"], only_live=True))
+        if not live:
+            return {"error": (f"Объявление #{ann['id']} уже удалено из всех групп"
+                              if ann.get("recalled_at") else
+                              f"У объявления #{ann['id']} нет сообщений, которые можно удалить")}
+        params = {"announcement_id": ann["id"], "groups": live, "sent_at": ann["sent_at"]}
     elif kind == "move_file":
         file_row = db.get_file_by_id(int(params.get("file_id") or 0))
         if not file_row:
@@ -2464,6 +2547,8 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_get_batch_plan_status(args)
         if name == "get_unlinked_bls":
             return _tool_get_unlinked_bls(args)
+        if name == "list_announcements":
+            return _tool_list_announcements(args)
         if name == "find_group":
             return _tool_find_group(args)
         if name == "get_automation_status":
