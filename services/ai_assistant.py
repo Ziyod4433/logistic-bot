@@ -312,6 +312,25 @@ def is_group_link_responsible(voter: dict) -> bool:
     return bool(uname and responsible and uname == responsible)
 
 
+# ── КТО ПИШЕТ В УПРАВЛЯЮЩЕЙ ГРУППЕ (владелец, 15.09.2026) ─────────────
+# В группе несколько людей и общая история; модель должна знать автора и
+# его права, иначе путает людей и выдумывает «вы писали в личку».
+# Узкие роли получают ровно те заявки, которые им же и подтверждать.
+def speaker_role(speaker: dict) -> tuple:
+    """(подпись роли, виды заявок): None — все виды, set() — никаких."""
+    uid = str((speaker or {}).get("id") or "")
+    if is_admin(uid):
+        return "владелец", None
+    if is_operator(uid):
+        return "оператор", None
+    packing_id = (os.getenv("PACKING_RESPONSIBLE_TG_ID", "8526226966") or "").strip()
+    if uid and uid == packing_id:
+        return "ответственный за packing list", {"attach_pending_file"}
+    if is_group_link_responsible(speaker):
+        return "ответственный за привязку групп", {"link_bl_group", "mark_no_tracking"}
+    return "участник без прав на изменения", set()
+
+
 # ── ОБЪЯВЛЕНИЯ ГРУППАМ (владелец, 10.09.2026) ────────────────────────
 # Рассылку клиентским группам подтверждают ТОЛЬКО владелец и Jahongir
 # (модератор, id найден в участниках групп на проде). Готовить черновик
@@ -636,8 +655,12 @@ def _system_prompt() -> str:
 • «загрузи/забери packing list'ы с Drive», «drive'ga yuklangan 14.08 ni yukla», «прикрепи файлы из папки» →
   import_packing_from_drive (folder='14.08'). ТЫ ЭТО УМЕЕШЬ — никогда не отвечай «у меня нет инструмента»
   и не отправляй человека кидать ссылку в группу. Бот и сам проверяет папку каждые ~15 минут, но по просьбе
-  запускай проверку сразу. Уже разобранные файлы повторно не качаются; по файлам без BL бот спросит в группе,
-  и ответ REPLY'ем с кодом BL прикрепит их.
+  запускай проверку сразу. Уже разобранные файлы повторно не качаются; по файлам без BL бот спросит в группе.
+• «прикрепи этот файл к SUN 12.09», «SUNlighting 7 MESTA ni 12.09 dagi SUN ga biriktir» — если это файл, по
+  которому бот СПРОСИЛ в группе (он в очереди, в files его ещё нет, move_file к нему не применим) →
+  get_pending_packing_files (question_id + кандидаты BL с folder_match/mesta_ok) → propose_action
+  kind='attach_pending_file' (question_id, bl_id). ТЫ ЭТО УМЕЕШЬ: не отправляй человека отвечать REPLY'ем
+  и не предлагай «напомнить в группе» — прикрепи заявкой. REPLY в группе — лишь второй способ.
 • «почему не ушло / ошибка отправки» → get_send_logs (+ get_batch_detail).
 • «КТО обновил трекинг / кто разрешил отправку / кто дал добро» → get_batch_detail (last_tracking.confirmed_by
   и filled_by) либо find_bl (last_tracking_by / last_tracking_filled_by); подробности — get_send_logs.
@@ -857,6 +880,20 @@ TOOLS = [
         "function": {
             "name": "get_missing_packing_lists",
             "description": "BL активных партий, к которым ещё не прикреплён packing list (их бот утром запрашивает у ответственного).",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_pending_packing_files",
+            "description": (
+                "Packing list'ы, которые бот НЕ смог прикрепить сам и по которым СПРОСИЛ в управляющей группе "
+                "(«bu packing list qaysi BL uchun?»). Файлы лежат в очереди, в files их ещё нет — move_file к ним "
+                "не применим. Отдаёт question_id, имя файла, папку Drive (= дата партии) и кандидатов BL "
+                "с bl_id, партией, местами (mesta_ok) и совпадением папки (folder_match). Дальше — "
+                "propose_action kind='attach_pending_file'."
+            ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -1109,6 +1146,9 @@ TOOLS = [
                 "'move_file' (params: file_id, bl_id — ПЕРЕПРИВЯЗАТЬ packing list к другому BL, когда файл "
                 "прикрепился не туда: file_id и нужный bl_id бери из get_bl_files); "
                 "'delete_file' (params: file_id — удалить ошибочно прикреплённый файл); "
+                "'attach_pending_file' (params: question_id, bl_id — ПРИКРЕПИТЬ файл из очереди вопросов, "
+                "по которому бот спросил в группе «qaysi BL uchun?»: question_id и bl_id бери из "
+                "get_pending_packing_files; вопрос в группе закроется сам); "
                 "'update_batch' (params: batch_id + любое из name / eta / eta_destination — ИЗМЕНИТЬ саму "
                 "партию: переименовать, поменять ДАТУ в названии, срок или точку маршрута. Просят «поменяй "
                 "дату партии» — это сюда, ты это умеешь); "
@@ -1122,7 +1162,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement", "attach_pending_file"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -1674,6 +1714,66 @@ def _tool_import_packing_from_drive(args: dict) -> dict:
     }
 
 
+def _tool_get_pending_packing_files(_args: dict) -> dict:
+    """Очередь отложенных packing list'ов (бот спросил в группе, ответа нет):
+    id вопроса + кандидаты BL, чтобы прикрепить заявкой attach_pending_file,
+    а не гонять людей отвечать reply'ем (жалоба владельца 15.09.2026)."""
+    import app as _app
+
+    pending = db.list_packing_questions("pending", limit=30)
+    try:
+        _index, rows = _app._build_active_bl_index()
+        titles = _app._build_chat_title_lookup(rows)
+    except Exception:
+        rows, titles = [], {}
+    items = []
+    for q in pending:
+        filename = str(q.get("filename") or "")
+        brand, mesta = _app._parse_packing_filename(filename)
+        try:
+            cands = list(_app._find_bl_candidates_by_brand(brand, rows, titles))
+        except Exception:
+            cands = []
+        # «SUNlighting 7 MESTA» → код SUN: бренд в имени начинается с кода
+        brand_norm = _app._normalize_bl_code(brand)
+        seen = {c.get("id") for c in cands}
+        for r in rows:
+            code_norm = _app._normalize_bl_code(str(r.get("code") or ""))
+            if r.get("id") not in seen and len(code_norm) >= 3 and brand_norm.startswith(code_norm):
+                cands.append(r)
+                seen.add(r.get("id"))
+        folder = str(q.get("folder_name") or "")
+        m = re.match(r"(\d{2}\.\d{2})", folder)
+        folder_key = m.group(1) if m else ""
+        items.append({
+            "question_id": q["id"],
+            "file": filename,
+            "folder": folder,
+            "asked_at": q.get("created_at"),
+            "file_on_server": os.path.exists(str(q.get("file_path") or "")),
+            "mesta_in_name": mesta,
+            "candidates": [
+                {
+                    "bl_id": c.get("id"),
+                    "code": c.get("code"),
+                    "batch": c.get("batch_name"),
+                    "places": c.get("quantity_places"),
+                    "places_breakdown": c.get("quantity_places_breakdown") or "",
+                    "mesta_ok": _app._mesta_matches(c, mesta),
+                    "folder_match": bool(folder_key) and folder_key in str(c.get("batch_name") or ""),
+                    "files_already": [f.get("filename") for f in (db.get_files(c.get("id")) or [])][:6],
+                }
+                for c in cands[:8]
+            ],
+        })
+    return {
+        "pending": items,
+        "note": ("Прикрепить: propose_action kind='attach_pending_file' (question_id, bl_id). Если человек назвал "
+                 "BL и партию — бери его выбор; иначе кандидата, где совпали папка (folder_match) и места "
+                 "(mesta_ok). Не проси отвечать REPLY'ем и не предлагай «напомнить в группе» — прикрепи заявкой."),
+    }
+
+
 def _tool_get_bl_files(args: dict) -> dict:
     """Файлы BL с их id — чтобы можно было перепривязать или удалить."""
     bl_id = args.get("bl_id")
@@ -2196,6 +2296,7 @@ ALLOWED_ACTION_KINDS = {
     "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan",
     "move_file", "delete_file", "update_batch", "watch_plans",
     "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement",
+    "attach_pending_file",
 }
 
 
@@ -2381,6 +2482,32 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
                               if ann.get("recalled_at") else
                               f"У объявления #{ann['id']} нет сообщений, которые можно удалить")}
         params = {"announcement_id": ann["id"], "groups": live, "sent_at": ann["sent_at"]}
+    elif kind == "attach_pending_file":
+        try:
+            qid = int(params.get("question_id") or 0)
+            bl_id = int(params.get("bl_id") or 0)
+        except (TypeError, ValueError):
+            return {"error": "question_id и bl_id должны быть числами"}
+        question = db.get_packing_question(qid)
+        if not question:
+            return {"error": "Вопрос не найден — возьми question_id из get_pending_packing_files"}
+        if question.get("status") != "pending":
+            return {"error": (f"Файл «{question.get('filename')}» уже обработан (статус {question.get('status')}) "
+                              "— прикреплять нечего; если лёг не туда, это move_file")}
+        bl = db.get_bl_by_id(bl_id)
+        if not bl:
+            return {"error": "bl_id не найден — возьми его из candidates get_pending_packing_files или find_bl"}
+        if not os.path.exists(str(question.get("file_path") or "")):
+            return {"error": "Файл на сервере не сохранился — попроси прислать его заново"}
+        existing = {str(f.get("filename") or "").strip().lower() for f in (db.get_files(bl_id) or [])}
+        if str(question.get("filename") or "").strip().lower() in existing:
+            return {"error": f"У {bl.get('code')} уже есть файл с таким именем — повторно не прикрепляю"}
+        batch = db.get_batch(bl.get("batch_id")) or {}
+        params = {
+            "question_id": qid, "bl_id": bl_id, "filename": question.get("filename"),
+            "bl_code": bl.get("code"), "batch_name": batch.get("name") or "",
+            "folder": question.get("folder_name") or "",
+        }
     elif kind == "move_file":
         file_row = db.get_file_by_id(int(params.get("file_id") or 0))
         if not file_row:
@@ -2465,8 +2592,16 @@ _OWNER_TOOL_NAMES = {t["function"]["name"] for t in OWNER_DIRECT_TOOLS}
 
 
 def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
-              readonly: bool = False, owner_direct: bool = False) -> dict:
+              readonly: bool = False, owner_direct: bool = False,
+              allowed_kinds: set | None = None) -> dict:
     try:
+        if allowed_kinds and name == "propose_action":
+            # узкая роль (Jigar, Jahongir): только свои виды заявок
+            kind = str((args or {}).get("kind") or "").strip()
+            if kind not in allowed_kinds:
+                return {"error": (f"Этому собеседнику доступны только заявки вида: "
+                                  f"{', '.join(sorted(allowed_kinds))}. Остальное делает владелец или оператор.")}
+            return _tool_propose_action(args, tg_user_id, created_actions)
         if readonly and name == "propose_action":
             return {"error": (
                 "Действия недоступны: у этого собеседника нет прав на изменения. "
@@ -2555,6 +2690,8 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_get_automation_status(args)
         if name == "get_missing_packing_lists":
             return _tool_get_missing_packing_lists(args)
+        if name == "get_pending_packing_files":
+            return _tool_get_pending_packing_files(args)
         if name == "get_bl_files":
             return _tool_get_bl_files(args)
         if name == "import_packing_from_drive":
@@ -2807,7 +2944,7 @@ COMPANION_PROMPT = """
 
 
 def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_direct: bool = False,
-                         companion: bool = False, sales_name: str = "") -> dict:
+                         companion: bool = False, sales_name: str = "", speaker: dict | None = None) -> dict:
     """Process one owner/staff message. Returns {"reply", "pending": [...]}.
 
     readonly=True (просмотровый доступ): все READ-инструменты доступны,
@@ -2817,6 +2954,9 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
     без подтверждений — сообщения/упоминания, опросы, задачи по расписанию."""
     tg_user_id = str(tg_user_id)
     text = str(text or "").strip()
+    speaker = speaker or {}
+    speaker_label, speaker_kinds = speaker_role(speaker) if speaker.get("id") else ("", None)
+    limited_kinds = speaker_kinds if (companion and speaker_kinds) else None
 
     if not _api_key():
         return {
@@ -2861,8 +3001,16 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
         )
     elif companion:
         # участник управляющей группы без прав на изменения
-        tools = [t for t in TOOLS if t["function"]["name"] not in _mutating]
-        system_prompt += COMPANION_PROMPT
+        if limited_kinds:
+            tools = [t for t in TOOLS if t["function"]["name"] not in {"remember_fact", "forget_fact"}]
+            system_prompt += COMPANION_PROMPT + (
+                "\nИСКЛЮЧЕНИЕ для этого человека: ему можно завести заявку propose_action ТОЛЬКО вида "
+                f"{', '.join(sorted(limited_kinds))} — делай её сам, без отсылок к владельцу; подтвердить ✅ "
+                "сможет он же, владелец или оператор. Любые другие изменения — по-прежнему нельзя.\n"
+            )
+        else:
+            tools = [t for t in TOOLS if t["function"]["name"] not in _mutating]
+            system_prompt += COMPANION_PROMPT
     elif readonly:
         tools = [t for t in TOOLS if t["function"]["name"] not in _mutating]
         system_prompt += (
@@ -2885,6 +3033,23 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
             "Выполняй такие просьбы немедленно и отчитывайся, что сделано. "
             "ИСКЛЮЧЕНИЯ: конфиденциальная группа — по-прежнему абсолютное табу; массовая рассылка трекинга "
             "по клиентским группам — по-прежнему только через propose_action (send_tracking_batch)."
+        )
+
+    if tg_user_id.startswith("group:"):
+        who = str(speaker.get("name") or "").strip() or "сотрудник"
+        if speaker_kinds is None and speaker_label:
+            rights = ("У него есть право создавать заявки и подтверждать их ✅ — делай нужное заявкой сам, "
+                      "не отсылай его «к владельцу или оператору».")
+        elif limited_kinds:
+            rights = f"Заявки ему доступны только вида: {', '.join(sorted(limited_kinds))}."
+        else:
+            rights = "Прав на изменения у него нет."
+        system_prompt += (
+            "\n\nКАНАЛ: ты отвечаешь в управляющей группе «Tracking gruppa», а НЕ в личке. Здесь пишут несколько "
+            "сотрудников, история диалога общая, каждое сообщение подписано именем автора. "
+            f"Сейчас пишет: {who}" + (f" — {speaker_label}" if speaker_label else "") + f". {rights} "
+            "Никогда не говори «вы писали в личку / в другом чате»: всё в истории написано в этой группе. "
+            "Если разные люди просят разное — отвечай тому, кто написал последним."
         )
 
     # ── роутер моделей: сложные разборы — deepseek-v4-pro, остальное — flash ──
@@ -2932,7 +3097,8 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
                     args = {}
                 _used_tools.append(name)
                 result = _run_tool(name, args, tg_user_id, created_actions,
-                                   readonly=readonly or companion, owner_direct=owner_direct)
+                                   readonly=readonly or companion, owner_direct=owner_direct,
+                                   allowed_kinds=limited_kinds)
                 payload = json.dumps(result, ensure_ascii=False, default=str)
                 if len(payload) > TOOL_RESULT_LIMIT:
                     # обрезка ЯВНАЯ — модель должна знать, что видит не всё,
@@ -3010,13 +3176,14 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
         if _escalated:
             mdl += f"→{_smart_model()}"
         label = (f"продавец {sales_name}" if sales_name
+                 else f"{speaker.get('name') or speaker.get('id')} · {speaker_label}" if speaker_label
                  else "владелец" if is_admin(tg_user_id)
                  else "оператор" if is_operator(tg_user_id)
                  else "companion" if companion
                  else "readonly" if readonly else "staff")
         ok_flag = not reply_text.startswith(("⚠️", "⏳"))
         db.add_ai_request_log(
-            channel="control-group" if companion else "dm",
+            channel="control-group" if tg_user_id.startswith("group:") else "dm",
             user_id=tg_user_id, user_label=label, question=text,
             provider=prov, model=mdl, smart=smart, rounds=_rounds_done,
             tools_used=",".join(_used_tools[:15]),

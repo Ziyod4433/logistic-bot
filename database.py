@@ -4429,6 +4429,18 @@ def find_packing_question_by_message(chat_id, message_id):
     return dict(row) if row else None
 
 
+def get_packing_question(question_id) -> dict | None:
+    """Вопрос по отложенному файлу по его id (для прикрепления из ассистента)."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM packing_file_questions WHERE id = ?", (int(question_id),)
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
 def list_packing_questions(status: str = "pending", limit: int = 50) -> list:
     conn = get_conn()
     try:

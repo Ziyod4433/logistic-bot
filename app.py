@@ -2287,7 +2287,9 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
         try:
             with TypingIndicator(chat_id):
                 result = ai_assistant.handle_owner_message(
-                    f"group:{chat_id}", assistant_input, companion=companion_mode
+                    f"group:{chat_id}", assistant_input, companion=companion_mode,
+                    speaker={"id": sender.get("id"), "name": sender_name,
+                             "username": sender.get("username") or ""},
                 )
         except Exception as exc:
             app.logger.exception("Control-group assistant failure")
@@ -3250,6 +3252,11 @@ def execute_ai_action(action: dict, actor: str = ""):
             f"{res.get('to_code')} («{params.get('to_batch') or '?'}»)"
         )
 
+    if kind == "attach_pending_file":
+        return attach_pending_packing_file(
+            int(params.get("question_id") or 0), int(params.get("bl_id") or 0), actor=actor,
+        )
+
     if kind == "delete_file":
         file_id = int(params.get("file_id") or 0)
         if not db.get_file_by_id(file_id):
@@ -3663,6 +3670,11 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
         # подтверждение
         if (action.get("kind") in ("link_bl_group", "mark_no_tracking")
                 and ai_assistant.is_group_link_responsible(voter)):
+            allowed = True
+        # отложенный packing list подтверждает и ответственный за них (Jigar):
+        # это ему бот задавал вопрос «qaysi BL uchun?»
+        if (action.get("kind") == "attach_pending_file"
+                and str(voter.get("id") or "") == PACKING_RESPONSIBLE_TG_ID):
             allowed = True
         if not allowed:
             telegram_answer_callback_query(
@@ -6134,6 +6146,66 @@ def maybe_handle_packing_answer(message: dict) -> bool:
             f"<code>{html_escape(str(bl.get('code')))}</code> ga biriktirilgan edi.",
         )
     return True
+
+
+def attach_pending_packing_file(question_id: int, bl_id: int, actor: str = ""):
+    """Прикрепить отложенный файл из очереди вопросов к BL, выбранному в
+    диалоге с ассистентом (заявка + ✅) — тот же итог, что REPLY на вопрос в
+    группе. Вопрос закрывается, группа получает отметку. → (ok, текст)."""
+    from html import escape as html_escape
+
+    question = db.get_packing_question(question_id)
+    if not question:
+        return False, "Вопрос по файлу не найден"
+    base = str(question.get("filename") or "")
+    if question.get("status") != "pending":
+        return False, (f"«{html_escape(base)}» уже обработан "
+                       f"(статус: {html_escape(str(question.get('status')))})")
+    bl = db.get_bl_by_id(bl_id)
+    if not bl:
+        return False, "BL не найден"
+    batch = db.get_batch(bl.get("batch_id")) or {}
+    bl = dict(bl, batch_name=batch.get("name") or "")
+    path = str(question.get("file_path") or "")
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return False, f"Файл «{html_escape(base)}» на сервере не найден — пусть пришлют заново"
+    # CAS: reply в группе и заявка могли прийти одновременно
+    if not db.resolve_packing_question(question["id"], "attached",
+                                       f"assistant: {actor}".strip(), bl_id=bl["id"]):
+        return False, f"«{html_escape(base)}» уже обработали параллельно"
+    stored = _store_packing_file(bl, base, data, _new_packing_results())
+    if stored:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    _brand, mesta = _parse_packing_filename(base)
+    mesta_note = ""
+    if not _mesta_matches(bl, mesta):
+        try:
+            places = int(round(float(bl.get("quantity_places") or 0)))
+        except (TypeError, ValueError):
+            places = 0
+        mesta_note = f" ⚠️ в имени {mesta} MESTA, у BL {places} мест"
+    code = html_escape(str(bl.get("code") or ""))
+    bname = html_escape(bl["batch_name"])
+    group = question.get("chat_id")
+    if group:
+        who = f" ({html_escape(actor)})" if actor else ""
+        note = (f"✅ <code>{html_escape(base)}</code> → <code>{code}</code> ({bname}) biriktirildi{who}. "
+                if stored else
+                f"↩️ <code>{html_escape(base)}</code> allaqachon <code>{code}</code> ({bname}) da bor edi. ")
+        try:
+            telegram_send_message(group, note + f"So'rov #{question['id']} yopildi.")
+        except Exception:
+            app.logger.exception("pending packing attach: group note failed")
+    if not stored:
+        return True, f"«{html_escape(base)}» уже был у {code} («{bname}») — вопрос #{question['id']} закрыт"
+    return True, (f"📎 «{html_escape(base)}» прикреплён к {code} («{bname}»){mesta_note}; "
+                  f"вопрос #{question['id']} в группе закрыт")
 
 
 def _ingest_packing_zip(chat_id, zip_source, kind: str = "zip"):
