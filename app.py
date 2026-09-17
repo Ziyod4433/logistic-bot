@@ -74,10 +74,10 @@ ROLE_EDITOR = "editor"
 ROLE_VIEWER = "viewer"
 ROLE_KIOSK  = "kiosk"  # TV display profile — sees only Sales Monitor
 
-# TV-display kiosk credentials (used for 50-inch monitor display in the office).
-# These are intentionally hard-coded so the TV always has a working login.
-KIOSK_LOGIN    = os.getenv("KIOSK_LOGIN", "sales")
-KIOSK_PASSWORD = os.getenv("KIOSK_PASSWORD", "sales123")
+# Профиль телевизора в отделе продаж. Пароля больше нет (владелец,
+# 17.09.2026): на странице входа стоит кнопка «Sales Monitor». Логин нужен
+# только как имя сессии в журнале входов.
+KIOSK_LOGIN = os.getenv("KIOSK_LOGIN", "sales")
 
 ALLOWED_EXT = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "xlsm", "doc", "docx", "zip"}
 # Announcements additionally accept GIF and video attachments.
@@ -897,14 +897,34 @@ def get_auth_users():
     add_user(ADMIN1_LOGIN, ADMIN1_PASSWORD, ROLE_EDITOR)
     for guest_login in guest_logins:
         add_user(guest_login, GUEST_PASSWORD, ROLE_VIEWER)
-    # TV kiosk user — sees only the Sales Monitor full-screen view
-    add_user(KIOSK_LOGIN, KIOSK_PASSWORD, ROLE_KIOSK)
+    # Профиля телевизора здесь больше НЕТ: он входит кнопкой без пароля
+    # (/login/kiosk), поэтому паролем «sales» войти нельзя.
 
     return users
 
 
 def get_role_label(role: str) -> str:
     return "Editor" if role == ROLE_EDITOR else "View only"
+
+
+# Вход телевизора открыт всем, кто знает адрес, поэтому сессия киоска
+# жёстко заперта на самом мониторе: только чтение и только его страницы.
+_KIOSK_FREE_PREFIXES = ("/static/", "/login", "/logout", "/health", "/favicon")
+_KIOSK_ALLOWED_PREFIXES = ("/analytics/monitor", "/analytics/api/monitor")
+
+
+@app.before_request
+def _kiosk_scope_guard():
+    if session.get("role") != ROLE_KIOSK:
+        return None
+    path = request.path or "/"
+    if path.startswith(_KIOSK_FREE_PREFIXES):
+        return None
+    if request.method in ("GET", "HEAD") and (path == "/" or path.startswith(_KIOSK_ALLOWED_PREFIXES)):
+        return None
+    if path.startswith(("/api/", "/analytics/api/")):
+        return jsonify({"error": "Sales Monitor profile: read-only"}), 403
+    return redirect(url_for("analytics_monitor_page"))
 
 
 def get_request_ip() -> str:
@@ -9065,6 +9085,26 @@ def login():
         )
         error = "Invalid login or password"
     return render_template("index.html", login_page=True, error=error)
+
+
+@app.route("/login/kiosk", methods=["GET", "POST"])
+def kiosk_login():
+    """Кнопка «Sales Monitor» на странице входа: телевизору в отделе продаж
+    пароль больше не нужен (владелец, 17.09.2026). Адрес можно поставить
+    в закладку — телевизор откроет монитор сам. Что доступно этой сессии,
+    ограничивает _kiosk_scope_guard."""
+    session.clear()
+    session["logged_in"] = True
+    session["username"] = KIOSK_LOGIN
+    session["role"] = ROLE_KIOSK
+    db.record_login_history(
+        username=KIOSK_LOGIN,
+        role=ROLE_KIOSK,
+        success=True,
+        ip_address=get_request_ip(),
+        user_agent=request.headers.get("User-Agent", ""),
+    )
+    return redirect(url_for("analytics_monitor_page"))
 
 
 @app.route("/logout")

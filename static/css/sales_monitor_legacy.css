@@ -988,7 +988,7 @@ body.monitor-fullscreen .bottom {
   display: none;
 }
 
-/* Kiosk profile (login `sales` / `sales123`) — hide the OYLIK DINAMIKA
+/* Kiosk profile (passwordless «Sales Monitor» button) — hide the OYLIK DINAMIKA
    monthly-dynamics card. Per-request: that block is operationally noisy
    on the wall TV and not useful for the floor team. Other roles continue
    to see it. We also collapse the grid so the remaining left-column

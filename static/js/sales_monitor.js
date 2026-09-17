@@ -2,7 +2,7 @@
   const bootstrap = window.SALES_MONITOR_BOOTSTRAP || {};
   const query = new URLSearchParams(window.location.search);
   const REFRESH_SECONDS = 120;            // 2-min data refresh (background, silent)
-  // Kiosk profile (login `sales` / `sales123`) — no UI to switch plans.
+  // Kiosk profile (passwordless «Sales Monitor» button) — no UI to switch plans.
   // We deliberately DON'T lock to the bootstrap.activePlanId here, because
   // the TV stays open for days/weeks while the admin may activate new
   // monthly plans. By sending no sales_plan_id to the backend, the

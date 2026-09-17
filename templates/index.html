@@ -325,6 +325,27 @@ body::after {
 }
 .login-btn:hover { background: var(--amber2); box-shadow: 0 4px 32px rgba(126,231,255,.45); }
 .login-btn:active { transform: scale(.98); }
+/* вход для телевизора в отделе продаж — без пароля, одной кнопкой */
+.login-sep {
+  display: flex; align-items: center; gap: 10px;
+  margin: 18px 0 12px; color: var(--muted2);
+  font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+}
+.login-sep::before, .login-sep::after {
+  content: ""; flex: 1; height: 1px; background: var(--border2);
+}
+/* селектор нарочно «тяжелее» .login-btn: ниже в файле он перекрашивается
+   градиентом с !important, и по весу выиграть может только специфичность */
+a.login-btn.login-btn-kiosk {
+  display: block; text-align: center; text-decoration: none;
+  background: transparent !important; color: var(--text) !important;
+  border: 1px solid var(--border2) !important; box-shadow: none !important;
+}
+a.login-btn.login-btn-kiosk:hover {
+  background: rgba(126,231,255,.08) !important; border-color: var(--amber) !important;
+  color: var(--amber) !important;
+}
+.login-hint { margin-top: 8px; text-align: center; font-size: 11.5px; color: var(--muted2); }
 
 /* ── APP ─────────────────────────────────────────────── */
 #app { display: none; }
@@ -1607,6 +1628,9 @@ svg.oi {
       <div class="login-err">{{ error or '' }}</div>
       <button type="submit" class="login-btn">ВОЙТИ →</button>
     </form>
+    <div class="login-sep"><span>или</span></div>
+    <a class="login-btn login-btn-kiosk" href="{{ url_for('kiosk_login') }}">📺 SALES MONITOR</a>
+    <div class="login-hint">Экран отдела продаж — без пароля</div>
   </div>
 </div>
 {% else %}
