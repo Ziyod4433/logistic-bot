@@ -2060,6 +2060,12 @@ def get_batches():
                 WHERE bl.batch_id = b.id
                   AND TRIM(COALESCE(bl.chat_id, '')) != ''
                   AND COALESCE(c.last_source_batch_id, 0) != b.id
+                  -- считаем только в пути: у прибывших в Ташкент и доставленных
+                  -- партий это уже не задача логиста, а старые отправки без
+                  -- записи покрытия давали ложную тревогу
+                  AND COALESCE(b.client_delivery_date, '') = ''
+                  AND b.status NOT LIKE 'Toshkent%'
+                  AND b.status NOT IN ('Доставлен', 'Mijozga yetkazib berildi')
                   -- сосед по группе в ЭТОЙ ЖЕ партии получил трекинг: сообщение
                   -- на группу одно, оно покрывает и этот BL («⏭ одна группа с …»)
                   AND NOT EXISTS (
@@ -2114,6 +2120,12 @@ def get_batch(batch_id):
                 WHERE bl.batch_id = b.id
                   AND TRIM(COALESCE(bl.chat_id, '')) != ''
                   AND COALESCE(c.last_source_batch_id, 0) != b.id
+                  -- считаем только в пути: у прибывших в Ташкент и доставленных
+                  -- партий это уже не задача логиста, а старые отправки без
+                  -- записи покрытия давали ложную тревогу
+                  AND COALESCE(b.client_delivery_date, '') = ''
+                  AND b.status NOT LIKE 'Toshkent%'
+                  AND b.status NOT IN ('Доставлен', 'Mijozga yetkazib berildi')
                   -- сосед по группе в ЭТОЙ ЖЕ партии получил трекинг: сообщение
                   -- на группу одно, оно покрывает и этот BL («⏭ одна группа с …»)
                   AND NOT EXISTS (
