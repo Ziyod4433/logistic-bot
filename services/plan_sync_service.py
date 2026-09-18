@@ -150,6 +150,26 @@ def aggregate_block(block: dict) -> dict:
     return agg
 
 
+def stays_at_horgos(block: dict | None, blocks: list | None = None) -> dict:
+    """Грузы из таблицы «horgos skladda qoladigan yuklar» под планом:
+    {ключ: {code, ctn, …}}. Они приехали в Хоргос, но на ЭТУ фуру не
+    погружены — в составе партии их не считаем (владелец, 18.09.2026).
+
+    Таблица стоит под последним блоком колонки: пока казахского плана нет —
+    под китайским, потом под казахским. Поэтому к своим остаткам блока
+    добавляем остатки блоков той же колонки той же вкладки."""
+    if not block:
+        return {}
+    items = list(block.get("stays") or [])
+    for other in blocks or []:
+        if other is block or not other.get("stays"):
+            continue
+        if other.get("tab") == block.get("tab") and other.get("col") is not None \
+                and other.get("col") == block.get("col"):
+            items.extend(other["stays"])
+    return aggregate_block({"items": items})
+
+
 def _tab_rank(tab: str) -> tuple:
     """(год, месяц) вкладки — чтобы из двух копий блока предпочесть более
     позднюю (логисты копируют блок в следующий месяц и правят там)."""

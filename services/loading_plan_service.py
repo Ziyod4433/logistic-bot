@@ -127,6 +127,56 @@ def _num(value) -> float:
         return 0.0
 
 
+# Под планом логисты ведут отдельную таблицу «horgos skladda qoladigan yuklar»
+# («HORGOSDA QOLADIGAN YUKLAR» в старых вкладках): груз, который приехал в
+# Хоргос, но на эту фуру НЕ погружен. Это не состав партии.
+_STAYS_RE = re.compile(r"horgos\w*\s+(sklad\w*\s+)?qol", re.IGNORECASE)
+# на сколько строк ниже конца блока искать эту таблицу
+_STAYS_SCAN_ROWS = 15
+
+
+def _is_stays_heading(value) -> bool:
+    return isinstance(value, str) and bool(_STAYS_RE.search(value))
+
+
+def _parse_stays(grid: list, j: int, after: int) -> list:
+    """Строки таблицы «остаётся на складе Хоргоса» под блоком в колонке j.
+    Ищем заголовок ниже строки `after`; новый блок в этой колонке — стоп."""
+    n_rows = len(grid)
+
+    def cell(r, c=j):
+        return grid[r][c] if r < n_rows and c < len(grid[r]) else None
+
+    head = None
+    for r in range(after, min(n_rows, after + _STAYS_SCAN_ROWS)):
+        v = cell(r)
+        if _is_stays_heading(v):
+            head = r
+            break
+        if _is_block_date(v) and _is_title(cell(r + 1)):
+            return []
+    if head is None:
+        return []
+    k = head + 1
+    first = cell(k)
+    if isinstance(first, str) and first.strip().upper().startswith("SHIPPING MARK"):
+        k += 1
+    out = []
+    while k < n_rows:
+        v = cell(k)
+        mark = str(v).strip() if v is not None else ""
+        if not mark or mark.upper() == "TOTAL" or _is_block_date(v) or _is_stays_heading(v):
+            break
+        out.append({
+            "mark": mark,
+            "ctn": _num(cell(k, j + 1)),
+            "cbm": _num(cell(k, j + 2)),
+            "kg": _num(cell(k, j + 3)),
+        })
+        k += 1
+    return out
+
+
 def _parse_tab(grid: list) -> list:
     """Extract every plan block from one tab's cell grid."""
     blocks = []
@@ -158,6 +208,10 @@ def _parse_tab(grid: list) -> list:
                     continue
                 empty_streak = 0
                 if mark.upper() == "TOTAL":
+                    break
+                if _is_stays_heading(mark_cell):
+                    # у блока нет строки TOTAL, и сразу под ним таблица
+                    # остатков — её строки НЕ состав фуры
                     break
                 if isinstance(mark_cell, (datetime, date)) or (
                     isinstance(mark_cell, str) and _DATE_STR_RE.match(mark_cell)
@@ -204,6 +258,9 @@ def _parse_tab(grid: list) -> list:
                 "kind": kind,          # china (склад→Horgos) | kazakh (Horgos→Tashkent)
                 "warehouses": warehouses,
                 "items": items,
+                # «horgos skladda qoladigan yuklar» под этим блоком
+                "stays": _parse_stays(grid, j, k),
+                "col": j,
                 "total_ctn": round(sum(x["ctn"] for x in items), 2),
                 "total_cbm": round(sum(x["cbm"] for x in items), 3),
                 "total_kg": round(sum(x["kg"] for x in items), 2),

@@ -3129,6 +3129,30 @@ def execute_ai_action(action: dict, actor: str = ""):
     if kind == "apply_kazakh_plan":
         return _apply_kazakh_plan(params)
 
+    if kind == "update_language":
+        from services import ai_assistant as _ai
+        lang = _ai.normalize_language_choice(params.get("language"))
+        if not lang:
+            return False, "Язык не распознан"
+        label = db.MESSAGE_LANGUAGES[lang]
+        chat_id = str(params.get("chat_id") or "").strip()
+        if chat_id and not params.get("only_this_bl"):
+            if chat_id in _ai.confidential_chat_ids():
+                return False, "Конфиденциальная группа — менять нельзя"
+            changed = db.set_chat_language(chat_id, lang)
+            where = f"группы «{params.get('chat_title') or chat_id}»"
+            if not changed:
+                return True, f"🌐 У всех грузов {where} язык уже «{label}»"
+            codes = ", ".join(f"{r['code']} ({r['batch_name']})" for r in changed[:10])
+            tail = f" …и ещё {len(changed) - 10}" if len(changed) > 10 else ""
+            return True, f"🌐 Язык сообщений {where} → «{label}»: {len(changed)} BL — {codes}{tail}"
+        bl = db.get_bl_by_id(int(params.get("bl_id") or 0))
+        if not bl:
+            return False, "BL не найден"
+        if not db.set_bl_language(bl["id"], lang):
+            return False, "Не удалось сохранить язык"
+        return True, f"🌐 Язык сообщений BL {bl.get('code')} → «{label}»"
+
     if kind == "link_bl_group":
         bl = db.get_bl_by_id(int(params.get("bl_id") or 0))
         if not bl:
@@ -3462,7 +3486,10 @@ def verify_batch_against_plan(batch: dict, blocks: list | None = None) -> dict:
             plan = pss.aggregate_block(block)
             bls = db.get_bl_by_batch(batch["id"])
             d = pss.diff_against_plan(bls, plan)
-            extra = [str(x.get("code")) for x in d["extra"]]
+            # «horgos skladda qoladigan yuklar» — не состав фуры и не расхождение
+            stays = pss.stays_at_horgos(block, blocks)
+            extra = [str(x.get("code")) for x in d["extra"]
+                     if pss.normalize_mark(x.get("code")) not in stays]
             missing = [e["code"] for e in d["add"]]
             if extra or missing:
                 out["diff"] = {"not_in_plan": extra[:20], "in_plan_but_absent": missing[:20]}
@@ -8685,7 +8712,19 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
         if _plan_add_bl(batch["id"], entry, chat_lookup, known_chat_ids, unlinked):
             added.append(entry["code"])
 
-    moved_away, stuck, waiting = [], [], []
+    moved_away, stuck, waiting, stayed = [], [], [], []
+    # таблица «horgos skladda qoladigan yuklar» под планом: груз в Хоргосе,
+    # но на эту фуру не погружен — в составе партии не считаем
+    stays = pss.stays_at_horgos(block, blocks)
+
+    def _exclude_from_sends(row) -> None:
+        try:
+            if not row.get("send_excluded"):
+                db.set_batch_send_exclusion(row["id"], True, source="plan")
+                newly_excluded.append(str(row.get("code")))
+        except Exception:
+            app.logger.exception("plan apply: exclude bl_id=%s failed", row.get("id"))
+
     # ИМЕННО НОВЫЕ исключения — повод сообщить. Сами списки stuck/waiting
     # это устойчивое состояние: они повторяются на каждой сверке, и если
     # считать их «изменением», один и тот же отчёт уходит в группу снова
@@ -8714,6 +8753,12 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
                 if outcome in ("moved", "dropped"):
                     moved_away.append(f"{html.escape(str(bl.get('code')))} (→ «{html.escape(target['name'])}», дубль сведён)")
                     continue
+                if key in stays:
+                    # шитс прямо говорит: на нашу фуру не погружен, а груз уже
+                    # числится в своей партии — наш трекинг клиенту слать нельзя
+                    _exclude_from_sends(bl)
+                    stayed.append(f"{html.escape(str(bl.get('code')))} (груз уже в «{html.escape(target['name'])}»)")
+                    continue
                 kept_dups.append(f"{html.escape(str(bl.get('code')))} (и в «{html.escape(target['name'])}»)")
                 continue
             elif _safe_move_bl(bl["id"], target["id"]):
@@ -8731,6 +8776,12 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
             except Exception:
                 app.logger.exception("plan apply: exclude waiting bl_id=%s failed", bl.get("id"))
             waiting.append(f"{html.escape(str(bl.get('code')))} (план «{html.escape(str(in_block.get('date')))}»)")
+            continue
+        if key in stays:
+            # остался на складе Хоргоса: строку и файлы храним до его фуры
+            # (казахский план той фуры заберёт их к себе), трекинг не шлём
+            _exclude_from_sends(bl)
+            stayed.append(html.escape(str(bl.get("code"))))
             continue
         # Груза нет НИ В ОДНОМ казахском плане окна: куда он уехал —
         # неизвестно. Строку и файлы сохраняем (владелец 24.08.2026), но
@@ -8779,6 +8830,8 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
         parts.append(_line("📤", "уехали в свои партии", moved_away))
     if waiting:
         parts.append(_line("⏳", "ждут свою фуру, пока без рассылки", waiting))
+    if stayed:
+        parts.append(_line("⚓", "остались на складе Хоргоса, в партии не считаю", stayed))
     if stuck:
         parts.append(_line("🚫", "нет в планах, убраны из рассылки", stuck))
     if kept_dups:

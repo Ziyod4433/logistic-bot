@@ -609,6 +609,12 @@ def _system_prompt() -> str:
 • «есть ли план (китайский/казахский) на дату» → get_loading_plans (смотри ОБА вида и summary) → при нужде get_plan_marks.
 • «что с казахским планом партии / применился ли / что изменится / почему не перегрузил» → get_batch_plan_status.
 • «кто не привязан к группе / почему клиент не получил трекинг» → get_unlinked_bls, затем find_group и, если просят, propose_action link_bl_group.
+• «поменяй язык клиенту / пиши этой группе по-русски / tilni o'zgartir» → find_bl или find_group, затем
+  propose_action kind='update_language' (language: uz_latn | uz_cyrl | ru | en). ТЫ ЭТО УМЕЕШЬ — не отправляй
+  человека в панель. Язык ставится всей группе клиента; «только этому BL» — only_this_bl=true.
+• Грузы из таблицы шитса «horgos skladda qoladigan yuklar» (под планом) НЕ входят в партию: они остались на
+  складе Хоргоса и на эту фуру не погружены. В составе, местах и количестве BL партии их не считай; в
+  get_batch_plan_status они помечены ⚓, в get_batch_detail у них excluded_from_send=true.
 • Когда человек НАЗЫВАЕТ принадлежность кода («8304 bu RM (BL-253)», «этот код — группа X») — особенно
   ответственный за привязки @{grouper} — НЕМЕДЛЕННО создай propose_action kind='link_bl_group' для КАЖДОГО
   подходящего неприкреплённого bl_id (код может жить в двух партиях — тогда ДВЕ заявки подряд). НИКОГДА не
@@ -1157,6 +1163,11 @@ TOOLS = [
                 "'move_file' (params: file_id, bl_id — ПЕРЕПРИВЯЗАТЬ packing list к другому BL, когда файл "
                 "прикрепился не туда: file_id и нужный bl_id бери из get_bl_files); "
                 "'delete_file' (params: file_id — удалить ошибочно прикреплённый файл); "
+                "'update_language' (params: language = uz_latn | uz_cyrl | ru | en, плюс bl_id ИЛИ chat_id — "
+                "ПОМЕНЯТЬ ЯЗЫК сообщений клиента: трекинг и уведомления пойдут на этом языке. По умолчанию "
+                "меняется у ВСЕХ грузов этой группы в невыданных партиях (сообщение на группу одно, новые грузы "
+                "наследуют язык группы); only_this_bl=true — только у одного BL. bl_id бери из find_bl, chat_id — "
+                "из find_group); "
                 "'attach_pending_file' (params: question_id, bl_id — ПРИКРЕПИТЬ файл из очереди вопросов, "
                 "по которому бот спросил в группе «qaysi BL uchun?»: question_id и bl_id бери из "
                 "get_pending_packing_files; вопрос в группе закроется сам); "
@@ -1173,7 +1184,7 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement", "attach_pending_file"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement", "attach_pending_file", "update_language"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -1298,6 +1309,9 @@ def _tool_get_batch_detail(args: dict) -> dict:
                 "never_received_this_batch приехали по казахскому плану и трекинг ЭТОЙ партии ещё не получали — "
                 "у них в группе стоит старое имя (last_tracking_as_batch) и старая дата. Отвечай ДВУМЯ фактами: "
                 "«рассылка партии была тогда-то» + «N клиентов её не получали, им нужен новый трекинг». "
+                "bl_codes с excluded_from_send=true при применённом казахском плане — это НЕ состав фуры: груз "
+                "остался на складе Хоргоса (таблица «horgos skladda qoladigan yuklar» в шитсе) или ждёт свою фуру; "
+                "в состав, места и «сколько BL в партии» их не включай, называй отдельно как оставшиеся в Хоргосе. "
                 "tracking_readiness.safe_to_send=false — рассылка ЗАБЛОКИРОВАНА: партия уже за Хоргосом "
                 "(Nurjo'li…Toshkent), а казахский план не применён; сначала применить план.",
         "bl_codes": [
@@ -1647,11 +1661,15 @@ def _tool_get_batch_plan_status(args: dict) -> dict:
             return _oc_cache[b["id"]]
 
         extras_out = []
+        stays = pss.stays_at_horgos(kz_block, blocks)
         for x in d["extra"][:20]:
             k = pss.normalize_mark(x.get("code"))
             tgt, in_block = pss.extra_destination(k, kz_block, blocks, others, _codes_of, batches=batches)
             if tgt:
                 extras_out.append(f"{x['code']} → уедет в «{tgt['name']}»")
+            elif k in stays:
+                extras_out.append(f"{x['code']} ⚓ остался на складе Хоргоса (таблица «horgos skladda qoladigan "
+                                  "yuklar») — в составе этой фуры НЕ считать, трекинг ему не идёт")
             elif in_block is not None:
                 extras_out.append(f"{x['code']} ⏳ ждёт свою фуру (план «{in_block.get('date')}», она ещё не в Хоргосе)")
             else:
@@ -2338,8 +2356,34 @@ ALLOWED_ACTION_KINDS = {
     "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan",
     "move_file", "delete_file", "update_batch", "watch_plans",
     "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement",
-    "attach_pending_file",
+    "attach_pending_file", "update_language",
 }
+
+# как люди называют язык → код в базе
+_LANGUAGE_ALIASES = {
+    "uz_latn": ("uz_latn", "uz", "uzb", "uzbek", "o'zbek", "ozbek", "o'zbekcha", "lotin", "latin", "латиница",
+                "узбекский", "узбекча"),
+    "uz_cyrl": ("uz_cyrl", "kirill", "cyrillic", "кирилл", "кириллица", "ўзбекча"),
+    "ru": ("ru", "rus", "russian", "русский", "русском", "рус", "ruscha", "русча"),
+    "en": ("en", "eng", "english", "английский", "английском", "inglizcha", "инглизча"),
+}
+
+
+def normalize_language_choice(value) -> str:
+    """«русский» / «kirill» / «EN» → код языка; неизвестное → ''."""
+    text = str(value or "").strip().lower()
+    for ch in ("\u02bb", "\u2019", "\u2018", "`"):
+        text = text.replace(ch, "'")
+    if not text:
+        return ""
+    for code, names in _LANGUAGE_ALIASES.items():
+        if text in names:
+            return code
+    # «на русском», «узбекский (кириллица)» — кириллицу проверяем раньше латиницы
+    for code in ("uz_cyrl", "ru", "en", "uz_latn"):
+        if any(len(n) > 3 and n in text for n in _LANGUAGE_ALIASES[code]):
+            return code
+    return ""
 
 
 def _tool_list_announcements(args: dict) -> dict:
@@ -2432,6 +2476,34 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
         params["plan_title"] = kz.get("title")
         params["plan_date"] = kz.get("date")
         params["preview"] = status.get("kazakh_preview")
+    elif kind == "update_language":
+        lang = normalize_language_choice(params.get("language"))
+        if not lang:
+            return {"error": "Не понял язык. Допустимо: uz_latn (узбекский, латиница), uz_cyrl (узбекский, "
+                             "кириллица), ru (русский), en (английский)."}
+        bl = db.get_bl_by_id(int(params.get("bl_id") or 0)) if params.get("bl_id") else None
+        if params.get("bl_id") and not bl:
+            return {"error": "bl_id не найден — найди BL через find_bl"}
+        chat_id = str(params.get("chat_id") or "").strip() or str((bl or {}).get("chat_id") or "").strip()
+        if not bl and not chat_id:
+            return {"error": "Нужен bl_id (find_bl) или chat_id группы (find_group)"}
+        if chat_id and chat_id in confidential_chat_ids():
+            return {"error": "Эта группа строго конфиденциальна — менять её настройки нельзя."}
+        only_bl = bool(params.get("only_this_bl")) or not chat_id
+        if only_bl and not bl:
+            return {"error": "only_this_bl=true требует bl_id"}
+        if only_bl and str(bl.get("message_language") or "") == lang:
+            return {"error": f"У {bl.get('code')} уже стоит язык «{db.MESSAGE_LANGUAGES[lang]}»"}
+        title = ""
+        for chat in (db.get_telegram_chats(include_inactive=True) or []) if chat_id else []:
+            if str(chat.get("chat_id") or "").strip() == chat_id:
+                title = chat.get("title") or ""
+                break
+        params = {
+            "language": lang, "language_label": db.MESSAGE_LANGUAGES[lang],
+            "bl_id": (bl or {}).get("id"), "bl_code": (bl or {}).get("code") or "",
+            "chat_id": "" if only_bl else chat_id, "chat_title": title, "only_this_bl": only_bl,
+        }
     elif kind == "link_bl_group":
         bl = db.get_bl_by_id(int(params.get("bl_id") or 0))
         if not bl:

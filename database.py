@@ -3138,6 +3138,39 @@ def set_bl_language(bl_id, language: str) -> bool:
         conn.close()
 
 
+def set_chat_language(chat_id, language: str) -> list:
+    """Язык сообщений для ВСЕЙ группы клиента: все её BL в невыданных партиях.
+    Сообщение на группу одно, новые грузы наследуют язык группы
+    (language_for_chat), поэтому менять у одного BL мало. → [{id, code, batch_name}]"""
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        return []
+    lang = _normalize_message_language(language)
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl.id, bl.code, b.name AS batch_name
+            FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id
+            WHERE TRIM(COALESCE(bl.chat_id, '')) = ?
+              AND COALESCE(b.client_delivery_date, '') = ''
+              AND COALESCE(bl.message_language, '') != ?
+            ORDER BY b.id DESC, bl.code
+            """,
+            (chat_id, lang),
+        ).fetchall()
+        if rows:
+            marks = ",".join("?" for _ in rows)
+            conn.execute(
+                f"UPDATE bl_codes SET message_language = ? WHERE id IN ({marks})",
+                (lang, *[int(r["id"]) for r in rows]),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
 def set_bl_chat_id(bl_id, chat_id) -> bool:
     """Set chat_id on a single BL and record the link in the memory."""
     chat_id = str(chat_id or "").strip()
