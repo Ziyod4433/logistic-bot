@@ -5091,6 +5091,42 @@ def api_dev_overview():
     })
 
 
+@app.route("/api/packing/revalidate", methods=["POST"])
+@editor_required
+def api_packing_revalidate():
+    """Перепроверка прикреплённых packing list'ов по местам. {apply: true} —
+    исправить однозначные случаи; без него — только отчёт."""
+    data = request.json or {}
+    try:
+        report = revalidate_packing_files(apply=bool(data.get("apply")))
+    except Exception as exc:
+        app.logger.exception("packing revalidate via API failed")
+        return jsonify({"error": f"Проверка не удалась: {exc}"}), 500
+    return jsonify({"ok": True, "applied": bool(data.get("apply")), **report})
+
+
+@app.route("/api/files/<int:file_id>/move", methods=["POST"])
+@editor_required
+def api_move_file(file_id: int):
+    """Перепривязать packing list к другому BL. Тело: {bl_id}."""
+    data = request.json or {}
+    try:
+        result = db.move_file_to_bl(file_id, int(data.get("bl_id") or 0))
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, **result})
+
+
+@app.route("/api/files/<int:file_id>/requeue", methods=["POST"])
+@editor_required
+def api_requeue_file(file_id: int):
+    """Открепить packing list и вернуть в очередь вопросов (бот спросит в
+    Tracking gruppa, чей он, и будет напоминать). Тело: {reason}."""
+    data = request.json or {}
+    ok, text = requeue_attached_file(file_id, str(data.get("reason") or "").strip())
+    return jsonify({"ok": ok, "message": text}), (200 if ok else 400)
+
+
 @app.route("/api/packing/drive-scan", methods=["POST"])
 @editor_required
 def api_packing_drive_scan():
@@ -5278,7 +5314,12 @@ def _build_active_bl_index():
 # The brand (before the number) says WHOSE packing list it is; N = carton
 # count (CTN/件数 from the Sklad sheet → bl.quantity_places) and is used
 # as the secondary check when the brand matches several BLs.
-_MESTA_RE = re.compile(r"^(?P<brand>.+?)\s+(?P<mesta>\d{1,5})\s+MESTA\b", re.IGNORECASE)
+# «MESAT», «MEST», «МЕСТА» — живые опечатки из папки Drive: без них файл
+# «MILANO 8 MESAT WALL LAMP» шёл мимо проверки мест вообще (18.09.2026)
+_MESTA_RE = re.compile(
+    r"^(?P<brand>.+?)\s+(?P<mesta>\d{1,5})\s+(?:MESTA|MESAT|MESTO|MEST|МЕСТА|МЕСТО|МЕСТ)\b",
+    re.IGNORECASE,
+)
 
 
 def _parse_packing_filename(base_name: str):
@@ -6274,6 +6315,110 @@ def attach_pending_packing_file(question_id: int, bl_id: int, actor: str = ""):
         return True, f"«{html_escape(base)}» уже был у {code} («{bname}») — вопрос #{question['id']} закрыт"
     return True, (f"📎 «{html_escape(base)}» прикреплён к {code} («{bname}»){mesta_note}; "
                   f"вопрос #{question['id']} в группе закрыт")
+
+
+def revalidate_packing_files(apply: bool = False) -> dict:
+    """Перепроверить прикреплённые packing list'ы активных партий по числу мест.
+
+    Казахский план меняет цифры и перевозит строки, а файлы остаются, где
+    были: у ELEGANCE в 05.09 было 41 место (1 + 40), в казахскую фуру ушло
+    одно — файл «40 MESTA» так и висел на ней; файлы DREAM остались на строке
+    31.08, хотя груз оказался в 04.09 (владелец, 18.09.2026).
+    Файл, который НЕ сходится со своим BL, но сходится ровно с ОДНИМ другим
+    грузом того же клиента (та же группа или тот же код), переносится; если
+    там уже лежит такой же файл — лишняя копия удаляется. Остальные
+    несовпадения только перечисляются: решает человек.
+    apply=False — только отчёт, ничего не меняется."""
+    _index, rows = _build_active_bl_index()
+    out = {"moved": [], "dups_removed": [], "review": []}
+    files_by_bl = {}
+    for bl in rows:
+        attached = db.get_files(bl["id"]) or []
+        if attached:
+            files_by_bl[bl["id"]] = attached
+    for bl in rows:
+        parsed = [(f, _parse_packing_filename(str(f.get("filename") or ""))[1])
+                  for f in files_by_bl.get(bl["id"]) or []]
+        if not parsed:
+            continue
+        try:
+            places = int(round(float(bl.get("quantity_places") or 0)))
+        except (TypeError, ValueError):
+            places = 0
+        numbers = [n for _f, n in parsed if n is not None]
+        if numbers and len(numbers) == len(parsed) and sum(numbers) == places:
+            continue          # файлы вместе дают ровно места BL — всё на своём месте
+        chat = str(bl.get("chat_id") or "").strip()
+        code_norm = _normalize_bl_code(str(bl.get("code") or ""))
+        for f, n in parsed:
+            if n is None or _mesta_matches(bl, n):
+                continue
+            fname = str(f.get("filename") or "")
+            better = [
+                o for o in rows
+                if o["id"] != bl["id"] and _mesta_matches(o, n)
+                and ((chat and str(o.get("chat_id") or "").strip() == chat)
+                     or _normalize_bl_code(str(o.get("code") or "")) == code_norm)
+            ]
+            item = {
+                "file_id": f["id"], "filename": fname, "mesta": n,
+                "from": {"bl_id": bl["id"], "code": bl.get("code"), "batch": bl.get("batch_name"),
+                         "places": places, "breakdown": bl.get("quantity_places_breakdown") or ""},
+            }
+            if len(better) != 1:
+                item["candidates"] = [
+                    {"bl_id": o["id"], "code": o.get("code"), "batch": o.get("batch_name")} for o in better[:5]
+                ]
+                out["review"].append(item)
+                continue
+            target = better[0]
+            item["to"] = {"bl_id": target["id"], "code": target.get("code"), "batch": target.get("batch_name")}
+            already_there = any(
+                str(x.get("filename") or "").strip().lower() == fname.strip().lower()
+                for x in files_by_bl.get(target["id"]) or []
+            )
+            if already_there:
+                if apply:
+                    db.delete_file(f["id"])
+                out["dups_removed"].append(item)
+                continue
+            if apply:
+                try:
+                    db.move_file_to_bl(f["id"], target["id"])
+                except ValueError as exc:
+                    item["error"] = str(exc)
+                    out["review"].append(item)
+                    continue
+                files_by_bl.setdefault(target["id"], []).append(dict(f, bl_id=target["id"]))
+            out["moved"].append(item)
+    return out
+
+
+def requeue_attached_file(file_id: int, reason: str = ""):
+    """Открепить packing list от BL и вернуть в очередь вопросов: бот спросит
+    в Tracking gruppa, чей это файл, и будет напоминать, пока не ответят.
+    Для файлов, которым после смены плана не подходит ни один груз. → (ok, текст)"""
+    from services import ai_assistant
+
+    row = db.get_file_by_id(int(file_id))
+    if not row:
+        return False, "Файл не найден"
+    base = str(row.get("filename") or "")
+    src = str(row.get("file_path") or "")
+    if not os.path.exists(src):
+        return False, f"Файл «{base}» на диске не найден — вернуть в очередь нечего"
+    ext = base.rsplit(".", 1)[-1].lower() if "." in base else "bin"
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    stored = secure_filename(base) or f"file_{secrets.token_hex(4)}.{ext}"
+    parked = os.path.join(UPLOAD_FOLDER, f"ask_{secrets.token_hex(4)}_{stored}")
+    shutil.copyfile(src, parked)               # delete_file ниже удалит оригинал с диска
+    db.delete_file(int(file_id))
+    try:
+        ask_packing_file_owner(ai_assistant.control_group_id(), base, parked, reason)
+    except Exception as exc:
+        app.logger.exception("requeue: question for %s failed", base)
+        return False, f"Файл откреплён, но вопрос в группу не ушёл: {exc}"
+    return True, f"«{base}» откреплён, вопрос задан в Tracking gruppa"
 
 
 def _ingest_packing_zip(chat_id, zip_source, kind: str = "zip"):
@@ -8601,6 +8746,31 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
                            sorted(set(kept_dups))))
     if unlinked:
         parts.append(_line("👥", "без Telegram-группы", [html.escape(c) for c in unlinked]))
+    # Цифры и состав поменялись — прикреплённые packing list'ы могли остаться
+    # не на своём месте. Однозначные случаи исправляем сразу, остальное
+    # показываем (только по этой партии, чтобы отчёт не обрастал шумом).
+    try:
+        fixes = revalidate_packing_files(apply=True)
+    except Exception:
+        app.logger.exception("plan apply: packing revalidation failed for batch %s", batch.get("id"))
+        fixes = {"moved": [], "dups_removed": [], "review": []}
+    if fixes["moved"]:
+        parts.append(_line("📎", "packing list перенесён к своему грузу", [
+            f"{html.escape(i['filename'])} → {html.escape(str(i['to']['code']))} "
+            f"(«{html.escape(str(i['to']['batch']))}»)" for i in fixes["moved"]
+        ], limit=6))
+    if fixes["dups_removed"]:
+        parts.append(_line("🗑", "лишняя копия packing list убрана", [
+            f"{html.escape(i['filename'])} у {html.escape(str(i['from']['code']))} "
+            f"(«{html.escape(str(i['from']['batch']))}»)" for i in fixes["dups_removed"]
+        ], limit=6))
+    mismatched = [i for i in fixes["review"] if str(i["from"]["batch"]) == str(batch["name"])]
+    if mismatched:
+        parts.append(_line("⚠️", "packing list не сходится по местам — проверьте", [
+            f"{html.escape(i['filename'])} (у {html.escape(str(i['from']['code']))} "
+            f"{i['from']['places']} мест)" for i in mismatched
+        ], limit=6))
+
     # Приехавшие по плану BL ни разу не получали трекинг ЭТОЙ партии: в их
     # группах стоит имя старой партии. Пока это не сказано вслух, «последний
     # трекинг вчера» у партии вводит в заблуждение (владелец, 18.09.2026)
@@ -8625,7 +8795,8 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
     # stuck/waiting в «изменения» НЕ входят: это устойчивое состояние,
     # иначе один и тот же отчёт уходил бы на каждой сверке.
     changed = bool(moved_in or added or updated or moved_away or merged or kept_dups
-                   or reused_files or restored or newly_excluded)
+                   or reused_files or restored or newly_excluded
+                   or fixes["moved"] or fixes["dups_removed"])
     return True, "\n".join(parts), changed
 
 
