@@ -669,6 +669,11 @@ def _system_prompt() -> str:
   рассылает. «Бот отправил автоматически, человека нет» — НЕВЕРНО: автоматически рассылка не запускается никогда.
   Если в старой записи confirmed_by пуст — говори «в журнале того периода имя не сохранялось», а НЕ «отправил бот сам».
 • «КОГДА обновили/отправили трекинг» → last_tracking.sent_at (get_batch_detail) или last_tracking_at (find_bl).
+  ЛОВУШКА (18.09.2026): казахский план ПЕРЕВОЗИТ BL между партиями. У приехавших BL последний трекинг ушёл под
+  именем СТАРОЙ партии — get_batch_detail показывает их в last_tracking.coverage.never_received_this_batch, а find_bl
+  — в last_tracking_as_batch. На «когда отправляли трекинг партии X» отвечай ДВУМЯ фактами: дата последней рассылки
+  под именем X + сколько BL текущего состава её не получали (с датой и именем их старого трекинга). Одна дата без
+  второй части — неверный ответ.
   НЕ путай с датой смены статуса (status_changed_at / status_updated_at) и с датой самого статуса в шитсе —
   это разные вещи, и именно из-за такой путаницы бот называл дату «4 дня назад» вместо сегодняшней отправки.
 • цифры, суммы, динамика, «сколько всего…» → query_database (после get_db_schema), крупное — make_pdf_report.
@@ -798,7 +803,9 @@ TOOLS = [
                 "Ты УМЕЕШЬ это делать сам — не отвечай «у меня нет инструмента». "
                 "Бот и так проверяет папку каждые ~15 минут, но по просьбе («drive'ga yuklangan 14.08 ni yukla») "
                 "запусти проверку СРАЗУ этим инструментом. Обрабатываются только НОВЫЕ файлы: то, что уже "
-                "разобрано раньше, повторно не качается. Файл, для которого BL не нашёлся, бот сам спросит в группе."
+                "разобрано раньше, повторно не качается — кроме retry_file: файл с таким именем разбирается "
+                "ЗАНОВО (просят «переразбери/переприкрепи файл X»). Файл, для которого BL не нашёлся, бот "
+                "сам спросит в группе и будет напоминать, пока не ответят."
             ),
             "parameters": {
                 "type": "object",
@@ -806,7 +813,11 @@ TOOLS = [
                     "folder": {
                         "type": "string",
                         "description": "название подпапки/партии («14.08», «14.08.2026»); пусто — вся папка",
-                    }
+                    },
+                    "retry_file": {
+                        "type": "string",
+                        "description": "часть имени файла, который нужно разобрать заново («BL-59 211»)",
+                    },
                 },
                 "required": [],
             },
@@ -1245,6 +1256,24 @@ def _tool_get_batch_detail(args: dict) -> dict:
             "filled_by": last_send.get("filled_by") or "",       # кто обновил данные в форме
             "sent_via": last_send.get("sent_via") or "",
         }
+    # Кто из ТЕКУЩЕГО состава этот трекинг вообще получал: после казахского
+    # плана в партию приезжают BL, у которых последний трекинг ушёл под именем
+    # СТАРОЙ партии (18.09.2026: 13 из 17 BL партии 04.09 видели только «31.08»)
+    awaiting = db.get_bls_awaiting_batch_tracking(found["id"])
+    with_group = sum(1 for bl in bls if str(bl.get("chat_id") or "").strip())
+    tracking["coverage"] = {
+        "bls_with_group": with_group,
+        "received_this_batch": max(0, with_group - len(awaiting)),
+        "never_received_this_batch": [
+            {
+                "code": a.get("code"),
+                "last_tracking_at": a.get("last_sent_at") or "никогда",
+                "last_tracking_as_batch": a.get("last_sent_batch") or "",
+                "excluded_from_send": bool(a.get("excluded")),
+            }
+            for a in awaiting
+        ],
+    }
     # готовность к рассылке: за Хоргосом казахский план обязан быть применён
     ready = {"checked": False}
     try:
@@ -1263,9 +1292,12 @@ def _tool_get_batch_detail(args: dict) -> dict:
         "status_changed_at": found.get("status_updated_at") or "",
         "tracking_readiness": ready,
         "last_tracking": tracking,
-        "note": "«когда обновили/отправили трекинг» = last_tracking.sent_at, НЕ status_changed_at "
-                "(то — когда в последний раз менялся СТАТУС). «кто разрешил/обновил» = "
-                "last_tracking.confirmed_by / filled_by. "
+        "note": "«когда обновили/отправили трекинг» = last_tracking.sent_at — последняя рассылка ПОД ИМЕНЕМ "
+                "этой партии, НЕ status_changed_at (то — когда менялся СТАТУС). «кто разрешил/обновил» = "
+                "last_tracking.confirmed_by / filled_by. ОБЯЗАТЕЛЬНО смотри last_tracking.coverage: BL из "
+                "never_received_this_batch приехали по казахскому плану и трекинг ЭТОЙ партии ещё не получали — "
+                "у них в группе стоит старое имя (last_tracking_as_batch) и старая дата. Отвечай ДВУМЯ фактами: "
+                "«рассылка партии была тогда-то» + «N клиентов её не получали, им нужен новый трекинг». "
                 "tracking_readiness.safe_to_send=false — рассылка ЗАБЛОКИРОВАНА: партия уже за Хоргосом "
                 "(Nurjo'li…Toshkent), а казахский план не применён; сначала применить план.",
         "bl_codes": [
@@ -1305,7 +1337,8 @@ def _tool_find_bl(args: dict) -> dict:
                    (SELECT sl.sent_at FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_tracking_at,
                    (SELECT sl.confirmed_by FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_tracking_by,
                    (SELECT sl.filled_by FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_tracking_filled_by,
-                   (SELECT sl.sent_via FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_tracking_via
+                   (SELECT sl.sent_via FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_tracking_via,
+                   (SELECT sl.batch_name FROM send_logs sl WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_tracking_batch
             FROM bl_codes bl
             JOIN batches b ON b.id = bl.batch_id
             LEFT JOIN telegram_chats tc ON tc.chat_id = bl.chat_id
@@ -1346,11 +1379,19 @@ def _tool_find_bl(args: dict) -> dict:
                 "last_tracking_by": r["last_tracking_by"] or "",       # кто нажал TASDIQLASH/✅
                 "last_tracking_filled_by": r["last_tracking_filled_by"] or "",  # кто обновил форму
                 "last_tracking_via": r["last_tracking_via"] or "",
+                # под каким именем партии клиент видел последний трекинг: после
+                # переезда по казахскому плану оно отличается от текущей партии
+                "last_tracking_as_batch": r["last_tracking_batch"] or "",
+                "current_batch_tracking_received": bool(
+                    r["last_tracking_batch"] and r["last_tracking_batch"] == r["batch_name"]
+                ),
             }
             for r in rows
         ],
         "hint": "last_tracking_at — КОГДА ушёл трекинг (для вопроса «когда обновили трекинг» — это, "
-                "а НЕ дата смены статуса). last_tracking_by/filled_by — кто разрешил/обновил.",
+                "а НЕ дата смены статуса). last_tracking_by/filled_by — кто разрешил/обновил. "
+                "Если last_tracking_as_batch ≠ batch — груз переехал по казахскому плану, и клиент "
+                "ещё НЕ получал трекинг текущей партии: скажи это прямо, с датой и старым именем.",
     }
 
 
@@ -1696,8 +1737,9 @@ def _tool_import_packing_from_drive(args: dict) -> dict:
     import app as _app
 
     folder = str(args.get("folder") or "").strip()
+    retry_file = str(args.get("retry_file") or "").strip()
     try:
-        processed, info = _app.scan_packing_drive(force=True, only_folder=folder)
+        processed, info = _app.scan_packing_drive(force=True, only_folder=folder, retry_file=retry_file)
     except Exception as exc:
         return {"error": f"Не смог разобрать папку: {exc}"}
     pending = db.list_packing_questions("pending", limit=20)

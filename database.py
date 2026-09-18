@@ -1518,7 +1518,15 @@ def init_db():
 
     # папка Drive, из которой пришёл файл (её название = дата партии) —
     # нужна при повторном разборе отложенного вопроса
-    for column_name, column_def in [("folder_name", "TEXT NOT NULL DEFAULT ''")]:
+    # повторные напоминания по вопросу «qaysi BL uchun?» (владелец, 18.09.2026):
+    # когда спрашивали в последний раз, сколько раз, id повторных сообщений —
+    # reply на любое из них засчитывается ответом
+    for column_name, column_def in [
+        ("folder_name", "TEXT NOT NULL DEFAULT ''"),
+        ("last_asked_at", "TEXT NOT NULL DEFAULT ''"),
+        ("ask_count", "INTEGER NOT NULL DEFAULT 1"),
+        ("reask_message_ids", "TEXT NOT NULL DEFAULT ''"),
+    ]:
         if not _table_has_column(conn, "packing_file_questions", column_name):
             conn.execute(f"ALTER TABLE packing_file_questions ADD COLUMN {column_name} {column_def}")
 
@@ -2028,18 +2036,35 @@ def get_batches():
                 WHERE p.batch_id = b.id AND p.status = 'open'
             ) AS problem_count,
             (
+                -- последняя отправка ПОД ИМЕНЕМ ЭТОЙ партии. Отправки по BL,
+                -- сделанные под другой партией (груз потом переехал по
+                -- казахскому плану), сюда не входят: иначе партия показывала
+                -- «вчера», хотя клиенты видели в группе другое имя (18.09.2026)
                 SELECT MAX(sent_at) FROM (
+                    SELECT MAX(m.sent_at) AS sent_at
+                    FROM tracking_sent_messages m
+                    WHERE m.batch_id = b.id AND m.kind = 'tracking'
+                      AND COALESCE(m.recalled_at, '') = ''
+                    UNION ALL
                     SELECT MAX(sl.sent_at) AS sent_at
                     FROM send_logs sl
-                    JOIN bl_codes bl ON bl.id = sl.bl_id
-                    WHERE bl.batch_id = b.id
-                      AND sl.success = 1
-                    UNION ALL
-                    SELECT MAX(c.sent_at) AS sent_at
-                    FROM tracking_delivery_coverage c
-                    WHERE c.batch_id = b.id
+                    WHERE sl.batch_name = b.name AND sl.success = 1
                 )
-            ) AS last_tracking_at
+            ) AS last_tracking_at,
+            (
+                -- BL с группой, которым трекинг ЭТОЙ партии ещё не уходил:
+                -- покрытие пустое или получено под другой партией
+                SELECT COUNT(*)
+                FROM bl_codes bl
+                LEFT JOIN tracking_delivery_coverage c ON c.bl_id = bl.id
+                WHERE bl.batch_id = b.id
+                  AND TRIM(COALESCE(bl.chat_id, '')) != ''
+                  AND COALESCE(c.last_source_batch_id, 0) != b.id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM batch_send_exclusions e
+                      WHERE e.batch_id = b.id AND e.bl_id = bl.id AND e.is_excluded = 1
+                  )
+            ) AS tracking_never_count
         FROM batches b
         ORDER BY b.created_at DESC
         """
@@ -2057,18 +2082,35 @@ def get_batch(batch_id):
             {_delay_days_sql('b')} AS delay_days,
             CASE WHEN COALESCE(b.client_delivery_date, '') != '' THEN 1 ELSE 0 END AS is_inactive,
             (
+                -- последняя отправка ПОД ИМЕНЕМ ЭТОЙ партии. Отправки по BL,
+                -- сделанные под другой партией (груз потом переехал по
+                -- казахскому плану), сюда не входят: иначе партия показывала
+                -- «вчера», хотя клиенты видели в группе другое имя (18.09.2026)
                 SELECT MAX(sent_at) FROM (
+                    SELECT MAX(m.sent_at) AS sent_at
+                    FROM tracking_sent_messages m
+                    WHERE m.batch_id = b.id AND m.kind = 'tracking'
+                      AND COALESCE(m.recalled_at, '') = ''
+                    UNION ALL
                     SELECT MAX(sl.sent_at) AS sent_at
                     FROM send_logs sl
-                    JOIN bl_codes bl ON bl.id = sl.bl_id
-                    WHERE bl.batch_id = b.id
-                      AND sl.success = 1
-                    UNION ALL
-                    SELECT MAX(c.sent_at) AS sent_at
-                    FROM tracking_delivery_coverage c
-                    WHERE c.batch_id = b.id
+                    WHERE sl.batch_name = b.name AND sl.success = 1
                 )
-            ) AS last_tracking_at
+            ) AS last_tracking_at,
+            (
+                -- BL с группой, которым трекинг ЭТОЙ партии ещё не уходил:
+                -- покрытие пустое или получено под другой партией
+                SELECT COUNT(*)
+                FROM bl_codes bl
+                LEFT JOIN tracking_delivery_coverage c ON c.bl_id = bl.id
+                WHERE bl.batch_id = b.id
+                  AND TRIM(COALESCE(bl.chat_id, '')) != ''
+                  AND COALESCE(c.last_source_batch_id, 0) != b.id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM batch_send_exclusions e
+                      WHERE e.batch_id = b.id AND e.bl_id = bl.id AND e.is_excluded = 1
+                  )
+            ) AS tracking_never_count
         FROM batches b
         WHERE b.id = ?
         """,
@@ -4407,8 +4449,31 @@ def set_packing_question_message(question_id: int, message_id) -> None:
     conn = get_conn()
     try:
         conn.execute(
-            "UPDATE packing_file_questions SET message_id = ? WHERE id = ?",
-            (str(message_id), int(question_id)),
+            "UPDATE packing_file_questions SET message_id = ?, last_asked_at = ? WHERE id = ?",
+            (str(message_id), current_ts(), int(question_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_packing_question_reask(question_id: int, message_id) -> None:
+    """Вопрос повторили новым сообщением: запоминаем его id, чтобы reply на
+    повтор тоже считался ответом, и сдвигаем время следующего напоминания."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT reask_message_ids, ask_count FROM packing_file_questions WHERE id = ?",
+            (int(question_id),),
+        ).fetchone()
+        if not row:
+            return
+        ids = [x for x in str(row["reask_message_ids"] or "").split(",") if x]
+        ids.append(str(message_id))
+        conn.execute(
+            "UPDATE packing_file_questions SET reask_message_ids = ?, ask_count = ?, last_asked_at = ? "
+            "WHERE id = ?",
+            (",".join(ids[-20:]), int(row["ask_count"] or 1) + 1, current_ts(), int(question_id)),
         )
         conn.commit()
     finally:
@@ -4416,17 +4481,36 @@ def set_packing_question_message(question_id: int, message_id) -> None:
 
 
 def find_packing_question_by_message(chat_id, message_id):
-    """Ожидающий ответа вопрос по сообщению, на которое ответили reply."""
+    """Ожидающий ответа вопрос по сообщению, на которое ответили reply —
+    первому вопросу или любому его повтору."""
     conn = get_conn()
     try:
         row = conn.execute(
             "SELECT * FROM packing_file_questions "
-            "WHERE chat_id = ? AND message_id = ? AND status = 'pending' LIMIT 1",
-            (str(chat_id), str(message_id)),
+            "WHERE chat_id = ? AND status = 'pending' "
+            "  AND (message_id = ? OR (',' || reask_message_ids || ',') LIKE ?) LIMIT 1",
+            (str(chat_id), str(message_id), f"%,{message_id},%"),
         ).fetchone()
     finally:
         conn.close()
     return dict(row) if row else None
+
+
+def forget_drive_files(name_part: str) -> int:
+    """Снять отметку «уже разобран» с файлов Drive по части имени — чтобы
+    следующий скан обработал их заново (правила распознавания поменялись)."""
+    part = str(name_part or "").strip().lower()
+    if len(part) < 3:
+        return 0
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "DELETE FROM drive_seen_files WHERE lower(name) LIKE ?", (f"%{part}%",)
+        )
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
 
 
 def get_packing_question(question_id) -> dict | None:
@@ -4481,6 +4565,37 @@ def clear_plan_send_exclusion(bl_id: int) -> bool:
         return cur.rowcount > 0
     finally:
         conn.close()
+
+
+def get_bls_awaiting_batch_tracking(batch_id) -> list:
+    """BL партии с Telegram-группой, которым трекинг ЭТОЙ партии ещё не
+    уходил: покрытие пустое или получено под другой партией (груз переехал
+    по казахскому плану). Для каждого — когда и под каким именем партии
+    клиент видел последний трекинг, и исключён ли он из рассылки."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT bl.id, bl.code, bl.chat_id,
+                   c.last_source_batch_id AS covered_by_batch_id,
+                   (SELECT sl.sent_at FROM send_logs sl
+                     WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_sent_at,
+                   (SELECT sl.batch_name FROM send_logs sl
+                     WHERE sl.bl_id = bl.id AND sl.success = 1 ORDER BY sl.id DESC LIMIT 1) AS last_sent_batch,
+                   EXISTS(SELECT 1 FROM batch_send_exclusions e
+                           WHERE e.batch_id = bl.batch_id AND e.bl_id = bl.id AND e.is_excluded = 1) AS excluded
+            FROM bl_codes bl
+            LEFT JOIN tracking_delivery_coverage c ON c.bl_id = bl.id
+            WHERE bl.batch_id = ?
+              AND TRIM(COALESCE(bl.chat_id, '')) != ''
+              AND COALESCE(c.last_source_batch_id, 0) != bl.batch_id
+            ORDER BY bl.code
+            """,
+            (int(batch_id),),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_last_tracking_send(bl_id=None, batch_name=None):

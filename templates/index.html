@@ -4156,11 +4156,17 @@ function getTrackingIndication(b) {
 function renderActiveBatchRows(list) {
   return list.length ? list.map(b=>{
     const trk = getTrackingIndication(b);
+    // после казахского плана в партию приезжают BL, ни разу не получавшие
+    // трекинг с её именем — «вчера» у партии без этой пометки вводит в заблуждение
+    const never = Number(b.tracking_never_count || 0);
+    const neverBadge = never
+      ? ` <span class="badge badge-red" title="Клиенты ещё не получали трекинг с именем этой партии">📨 ${never} без трекинга</span>`
+      : "";
     return `
-    <tr class="${trk.cls}">
+    <tr class="${never ? "trk-red" : trk.cls}">
       <td><span style="cursor:pointer;font-weight:600;color:var(--amber)" onclick="openBatchDetail(${b.id},'${esc(b.name)}')">${esc(b.name)}</span></td>
       <td>${statusBadge(b.status || "Xitoy")}</td>
-      <td>${trk.badge}</td>
+      <td>${trk.badge}${neverBadge}</td>
       <td>${Number(b.delay_days || 0) > 0 ? `<span class="badge badge-red">+${b.delay_days} дн.</span>` : `<span style="color:var(--muted)">—</span>`}</td>
       <td>${renderProblemsCell(b)}</td>
       <td><span class="badge badge-muted">${b.bl_count} BL</span></td>
@@ -4321,9 +4327,11 @@ async function loadBatchDetail(batchId) {
       const trackingChip = document.getElementById("detail-tracking-chip");
       if (trackingChip) {
         const lastTracking = data.batch.last_tracking_at || "Отправок ещё не было";
+        const neverCount = Number(data.batch.tracking_never_count || 0);
         trackingChip.innerHTML = `
         <div class="kicker">Последний трекинг</div>
         <div class="value">${esc(lastTracking)}</div>
+        ${neverCount ? `<div style="margin-top:4px;font-size:11.5px;color:var(--red)">📨 ${neverCount} BL ещё не получали трекинг этой партии</div>` : ""}
       `;
       }
 

@@ -5091,6 +5091,26 @@ def api_dev_overview():
     })
 
 
+@app.route("/api/packing/drive-scan", methods=["POST"])
+@editor_required
+def api_packing_drive_scan():
+    """Разобрать Drive-папку packing list'ов сейчас. Тело: {folder, retry_file} —
+    retry_file снимает с файла отметку «уже разобран» (правила распознавания
+    поменялись, файл нужно прогнать заново)."""
+    data = request.json or {}
+    try:
+        processed, info = scan_packing_drive(
+            force=True,
+            only_folder=str(data.get("folder") or "").strip(),
+            retry_file=str(data.get("retry_file") or "").strip(),
+        )
+    except Exception as exc:
+        app.logger.exception("drive scan via API failed")
+        return jsonify({"error": f"Скан не удался: {exc}"}), 500
+    return jsonify({"ok": True, "processed": processed, "info": info,
+                    "open_questions": len(db.list_packing_questions("pending", 50))})
+
+
 @app.route("/api/dev/query", methods=["POST"])
 @editor_required
 def api_dev_query():
@@ -5532,6 +5552,20 @@ def _find_bl_candidates_by_brand(brand: str, rows: list, chat_titles: dict) -> l
     return [row for s, row in scored if s == best]
 
 
+def _same_group_rows(candidates: list, rows: list) -> list:
+    """Другие грузы ТОГО ЖЕ клиента: строки из тех же Telegram-групп, что и
+    кандидаты, но под другим кодом. «BL-59 211 MESTA» лежит у SAROY LIGHTING
+    из группы BL-59 (владелец, 18.09.2026). Подключаются, только когда у
+    «своего» кода места не сошлись — иначе два BL одной группы с одинаковым
+    числом мест давали бы ложную неоднозначность."""
+    chats = {str(r.get("chat_id") or "").strip() for r in candidates} - {""}
+    seen_ids = {r.get("id") for r in candidates}
+    return [
+        row for row in rows
+        if str(row.get("chat_id") or "").strip() in chats and row.get("id") not in seen_ids
+    ]
+
+
 def maybe_handle_control_group_document(message: dict) -> bool:
     """ZIP dropped in the control group → unpack & attach packing lists."""
     from services import ai_assistant
@@ -5657,6 +5691,10 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
     # 5) история прикреплений; 6) вопрос людям — с итогами файла в подсказке.
     brand, mesta = _parse_packing_filename(base)
     candidates = _find_bl_candidates_by_brand(brand, rows, chat_titles)
+    if mesta is not None and candidates and not any(_mesta_matches(c, mesta) for c in candidates):
+        # у «своего» кода места не сошлись — возможно, это другой груз того же
+        # клиента под другим кодом в той же группе; берём только совпавшие по местам
+        candidates = candidates + [r for r in _same_group_rows(candidates, rows) if _mesta_matches(r, mesta)]
     cache = results.setdefault("_cache", {})
     if "closed_rows" not in cache:
         try:
@@ -5704,20 +5742,30 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
                 # без MESTA и без читаемых итогов — папка выбирает среди активных
                 bl = hinted_active[0]
                 how = "folder"
-            elif mesta is not None and not mesta_ok and len(hinted_active) == 1:
-                # места не сошлись ни у кого — берём партию из папки, но предупреждаем
-                bl = hinted_active[0]
-                how = "folder"
-                results["mesta_warns"].append(
-                    f"{base}: faylda {mesta} mesta, tizimda {bl.get('quantity_places') or 0}"
-                )
-            elif len(candidates) == 1:
-                # единственный активный кандидат, места не сошлись, содержимое
-                # не помогло — прикрепляем с предупреждением (как раньше)
-                bl = candidates[0]
-                results["mesta_warns"].append(
-                    f"{base}: faylda {mesta} mesta, tizimda {bl.get('quantity_places') or 0}"
-                )
+            elif mesta is not None and not mesta_ok:
+                # места из имени файла не сошлись НИ У КОГО. Раньше файл всё
+                # равно ложился к единственному кандидату / партии из папки
+                # «с предупреждением» — так packing list второго груза клиента
+                # оказывался у первого (владелец, 18.09.2026: SAROY LIGHTING).
+                # Теперь не гадаем: спрашиваем и ждём ответа.
+                if len(candidates) > 1:
+                    # кандидатов несколько — показываем всех, человеку есть из чего выбрать
+                    listed = ", ".join(f"{c.get('code')}({c.get('batch_name')})" for c in candidates[:4])
+                    results["ambiguous"].append(base + " → " + listed)
+                    reason = (f"bir nechta mos keldi: {listed} · faylda {mesta} mesta — "
+                              "hech biriga to'g'ri kelmadi")
+                else:
+                    guess = (hinted_active[0] if len(hinted_active) == 1
+                             else (candidates[0] if candidates else pool_all[0]))
+                    results["unmatched"].append(base)
+                    reason = (f"faylda {mesta} mesta, tizimda {guess.get('quantity_places') or 0} "
+                              f"({guess.get('code')}, {guess.get('batch_name')}) — mos kelmadi")
+                if totals_note:
+                    reason += f" · faylda: {totals_note}"
+                if folder_name:
+                    reason += f" · papka: {folder_name}"
+                _park_for_question(base, data, results, reason)
+                return
             elif candidates:
                 pool = [c for c in mesta_ok if c in candidates] or candidates
                 by_history = _pick_by_attach_history(base, pool)
@@ -6523,10 +6571,56 @@ def retry_pending_packing_questions() -> int:
     return resolved
 
 
-def scan_packing_drive(force: bool = False, only_folder: str = "") -> tuple:
+PACKING_REASK_HOURS = float(os.getenv("PACKING_REASK_HOURS", "4") or 4)
+
+
+def reask_pending_packing_questions() -> int:
+    """Вопрос «qaysi BL uchun?» без ответа повторяется каждые
+    PACKING_REASK_HOURS часов, пока кто-нибудь не ответит (владелец,
+    18.09.2026): файл не должен молча висеть в очереди. Reply на повтор
+    засчитывается так же, как на первый вопрос."""
+    from services import ai_assistant
+    from html import escape as html_escape
+
+    now = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
+    asked = 0
+    for q in db.list_packing_questions("pending", 50):
+        last = _parse_local_ts(q.get("last_asked_at") or q.get("created_at"))
+        if last and (now - last) < timedelta(hours=PACKING_REASK_HOURS):
+            continue
+        if not os.path.exists(str(q.get("file_path") or "")):
+            db.resolve_packing_question(int(q["id"]), "failed", "fayl serverda yo'q")
+            continue
+        chat_id = q.get("chat_id") or ai_assistant.control_group_id()
+        mention = ""
+        if PACKING_RESPONSIBLE_TG_ID:
+            mention = (f'<a href="tg://user?id={PACKING_RESPONSIBLE_TG_ID}">'
+                       f'{html_escape(PACKING_RESPONSIBLE_NAME)}</a>, ')
+        nth = int(q.get("ask_count") or 1) + 1
+        text = (
+            f"⏰ {mention}javob kutyapman ({nth}-eslatma): bu packing list qaysi BL uchun?\n"
+            f"📎 <code>{html_escape(str(q.get('filename') or ''))}</code>\n"
+            + (f"📁 papka: {html_escape(str(q.get('folder_name')))}\n" if q.get("folder_name") else "")
+            + "\n<i>Shu xabarga REPLY qilib BL kodini yozing (kerak bo'lsa partiya bilan: "
+            "<code>BL-690 14.08</code>). Kerak bo'lmasa: <code>yo'q</code>.</i>"
+        )
+        try:
+            resp = telegram_send_message(chat_id, text)
+        except Exception:
+            app.logger.exception("packing re-ask failed for %s", q.get("filename"))
+            continue
+        message_id = ((resp or {}).get("result") or {}).get("message_id")
+        if message_id:
+            db.record_packing_question_reask(int(q["id"]), message_id)
+            asked += 1
+    return asked
+
+
+def scan_packing_drive(force: bool = False, only_folder: str = "", retry_file: str = "") -> tuple:
     """Забрать НОВЫЕ файлы из общей Drive-папки packing list'ов.
-    only_folder — обработать лишь подпапку с таким названием («14.08»).
-    Возвращает (обработано_файлов, текст_отчёта)."""
+    only_folder — обработать лишь подпапку с таким названием («14.08»);
+    retry_file — часть имени файла, который нужно разобрать ЗАНОВО (с него
+    снимается отметка «уже обработан»). Возвращает (обработано, отчёт)."""
     import zipfile
     from services import ai_assistant
 
@@ -6542,6 +6636,11 @@ def scan_packing_drive(force: bool = False, only_folder: str = "") -> tuple:
         retry_pending_packing_questions()
     except Exception:
         app.logger.exception("packing retry pass failed")
+    # что так и не решилось — напомнить людям (пока не ответят)
+    try:
+        reask_pending_packing_questions()
+    except Exception:
+        app.logger.exception("packing re-ask pass failed")
 
     if not PACKING_DRIVE_FOLDER_ID:
         return 0, "PACKING_DRIVE_FOLDER_ID не задан"
@@ -6558,6 +6657,8 @@ def scan_packing_drive(force: bool = False, only_folder: str = "") -> tuple:
 
     # уже обработанные файлы не трогаем: иначе при каждом скане бот заново
     # качал бы их и повторно задавал те же вопросы в группе
+    if retry_file:
+        db.forget_drive_files(retry_file)
     known = db.drive_files_seen([fid for fid, _n, _f in entries])
     fresh = [e for e in entries if e[0] not in known]
     if not fresh:
@@ -6895,7 +6996,13 @@ def send_tracking_update_request(force: bool = False, target_chat_id=None):
         "",
     ]
     for b in batches[:30]:
-        lines.append(f"📦 <b>{html_escape(b['name'])}</b> — {html_escape(b['status'])}")
+        line = f"📦 <b>{html_escape(b['name'])}</b> — {html_escape(b['status'])}"
+        never = int(b.get("tracking_never_count") or 0)
+        if never:
+            # после переезда по казахскому плану часть клиентов ещё не видела
+            # трекинг с именем этой партии
+            line += f" · 📨 {never} ta BL bu partiya trekingini olmagan"
+        lines.append(line)
     lines.append("")
     lines.append("Quyidagi tugma orqali formani oching:")
     text = "\n".join(lines)
@@ -8494,6 +8601,19 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
                            sorted(set(kept_dups))))
     if unlinked:
         parts.append(_line("👥", "без Telegram-группы", [html.escape(c) for c in unlinked]))
+    # Приехавшие по плану BL ни разу не получали трекинг ЭТОЙ партии: в их
+    # группах стоит имя старой партии. Пока это не сказано вслух, «последний
+    # трекинг вчера» у партии вводит в заблуждение (владелец, 18.09.2026)
+    try:
+        awaiting = [a for a in db.get_bls_awaiting_batch_tracking(batch["id"]) if not a.get("excluded")]
+    except Exception:
+        app.logger.exception("plan apply: awaiting-tracking lookup failed for batch %s", batch.get("id"))
+        awaiting = []
+    if awaiting:
+        parts.append(_line("📨", "трекинг этой партии ещё не получали",
+                           [html.escape(str(a.get("code"))) for a in awaiting]))
+        parts.append("   ↳ отправьте им трекинг через Treking forma: в группах у них ещё старое имя партии")
+
     if standalone:
         if stuck or waiting:
             parts.append("")
