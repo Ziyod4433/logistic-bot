@@ -2060,6 +2060,14 @@ def get_batches():
                 WHERE bl.batch_id = b.id
                   AND TRIM(COALESCE(bl.chat_id, '')) != ''
                   AND COALESCE(c.last_source_batch_id, 0) != b.id
+                  -- сосед по группе в ЭТОЙ ЖЕ партии получил трекинг: сообщение
+                  -- на группу одно, оно покрывает и этот BL («⏭ одна группа с …»)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM bl_codes sib
+                      JOIN tracking_delivery_coverage cs ON cs.bl_id = sib.id
+                      WHERE sib.batch_id = b.id AND sib.chat_id = bl.chat_id AND sib.id != bl.id
+                        AND cs.last_source_batch_id = b.id
+                  )
                   AND NOT EXISTS (
                       SELECT 1 FROM batch_send_exclusions e
                       WHERE e.batch_id = b.id AND e.bl_id = bl.id AND e.is_excluded = 1
@@ -2106,6 +2114,14 @@ def get_batch(batch_id):
                 WHERE bl.batch_id = b.id
                   AND TRIM(COALESCE(bl.chat_id, '')) != ''
                   AND COALESCE(c.last_source_batch_id, 0) != b.id
+                  -- сосед по группе в ЭТОЙ ЖЕ партии получил трекинг: сообщение
+                  -- на группу одно, оно покрывает и этот BL («⏭ одна группа с …»)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM bl_codes sib
+                      JOIN tracking_delivery_coverage cs ON cs.bl_id = sib.id
+                      WHERE sib.batch_id = b.id AND sib.chat_id = bl.chat_id AND sib.id != bl.id
+                        AND cs.last_source_batch_id = b.id
+                  )
                   AND NOT EXISTS (
                       SELECT 1 FROM batch_send_exclusions e
                       WHERE e.batch_id = b.id AND e.bl_id = bl.id AND e.is_excluded = 1
@@ -4589,6 +4605,14 @@ def get_bls_awaiting_batch_tracking(batch_id) -> list:
             WHERE bl.batch_id = ?
               AND TRIM(COALESCE(bl.chat_id, '')) != ''
               AND COALESCE(c.last_source_batch_id, 0) != bl.batch_id
+              -- сообщение на группу одно: сосед по группе в этой же партии
+              -- с трекингом покрывает и этот BL
+              AND NOT EXISTS (
+                  SELECT 1 FROM bl_codes sib
+                  JOIN tracking_delivery_coverage cs ON cs.bl_id = sib.id
+                  WHERE sib.batch_id = bl.batch_id AND sib.chat_id = bl.chat_id AND sib.id != bl.id
+                    AND cs.last_source_batch_id = bl.batch_id
+              )
             ORDER BY bl.code
             """,
             (int(batch_id),),
