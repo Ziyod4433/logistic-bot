@@ -4512,6 +4512,21 @@ def find_packing_question_by_message(chat_id, message_id):
     return dict(row) if row else None
 
 
+def drive_folder_of(filename: str) -> str:
+    """Папка Drive (= дата партии), из которой бот взял файл с таким именем;
+    пусто, если файл пришёл не из Drive. При нескольких — самая свежая."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT folder_name FROM drive_seen_files WHERE name = ? AND folder_name != '' "
+            "ORDER BY seen_at DESC LIMIT 1",
+            (str(filename or ""),),
+        ).fetchone()
+    finally:
+        conn.close()
+    return str(row["folder_name"]) if row else ""
+
+
 def forget_drive_files(name_part: str) -> int:
     """Снять отметку «уже разобран» с файлов Drive по части имени — чтобы
     следующий скан обработал их заново (правила распознавания поменялись)."""

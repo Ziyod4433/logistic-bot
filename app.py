@@ -5123,7 +5123,8 @@ def api_requeue_file(file_id: int):
     """Открепить packing list и вернуть в очередь вопросов (бот спросит в
     Tracking gruppa, чей он, и будет напоминать). Тело: {reason}."""
     data = request.json or {}
-    ok, text = requeue_attached_file(file_id, str(data.get("reason") or "").strip())
+    ok, text = requeue_attached_file(file_id, str(data.get("reason") or "").strip(),
+                                     folder_name=str(data.get("folder") or "").strip())
     return jsonify({"ok": ok, "message": text}), (200 if ok else 400)
 
 
@@ -5559,6 +5560,7 @@ def _build_recent_closed_bl_rows(days: int = 45) -> list:
         d = dict(r)
         when = _parse(d.pop("_delivered", ""))
         if when is not None and when >= cutoff:
+            d["_delivered_on"] = when.isoformat()
             out.append(d)
     return out
 
@@ -5705,6 +5707,18 @@ def _batch_in_folder(batch_name: str, folder_key) -> bool:
     return not (folder_key[2] and bk[2] and folder_key[2] != bk[2])
 
 
+def _folder_after_delivery(folder_key, delivered_iso) -> bool:
+    """Папка Drive датирована позже дня доставки закрытой партии."""
+    if not folder_key or not delivered_iso:
+        return False
+    try:
+        delivered = datetime.strptime(str(delivered_iso)[:10], "%Y-%m-%d").date()
+        folder_day = datetime(int(folder_key[2] or delivered.year), int(folder_key[1]), int(folder_key[0])).date()
+    except (TypeError, ValueError):
+        return False
+    return folder_day > delivered
+
+
 _PACKING_TEXT_MAX = 200_000
 # системные файлы, которые Windows/macOS кладут в папки — это не packing
 # list, ругаться на них «формат не принят» незачем
@@ -5752,6 +5766,28 @@ def _attach_packing_bytes(base: str, data: bytes, index, rows, chat_titles, resu
 
     def _in_folder(c) -> bool:
         return _batch_in_folder(str(c.get("batch_name") or ""), folder_key)
+
+    def _closed_can_take(c) -> bool:
+        """ЗАКРЫТАЯ партия принимает «опоздавший» packing list, только если
+        (а) папка Drive не датирована ПОЗЖЕ её доставки — файл из такой папки
+        не может быть про уже доставленный груз (соседняя папка допустима:
+        PARK LIGHTING лежал в 18.08, а груз был в закрытой 15.08) — и (б) её
+        места ещё не закрыты собственными файлами. Иначе «ELEGANCE 40 MESTA»
+        из папки 09.09 уезжал в июльскую партию, где тоже 40 мест и свой файл
+        уже лежит (18.09.2026)."""
+        if _folder_after_delivery(folder_key, c.get("_delivered_on")):
+            return False
+        if mesta is None:
+            return True
+        have = [_parse_packing_filename(str(f.get("filename") or ""))[1] for f in (db.get_files(c["id"]) or [])]
+        have = [n for n in have if n is not None]
+        try:
+            places = int(round(float(c.get("quantity_places") or 0)))
+        except (TypeError, ValueError):
+            places = 0
+        return not (mesta in have or (have and places and sum(have) >= places))
+
+    closed_c = [c for c in closed_c if _closed_can_take(c)]
 
     if len(candidates) == 1 and (mesta is None or _mesta_matches(candidates[0], mesta)):
         bl = candidates[0]
@@ -6394,16 +6430,19 @@ def revalidate_packing_files(apply: bool = False) -> dict:
     return out
 
 
-def requeue_attached_file(file_id: int, reason: str = ""):
+def requeue_attached_file(file_id: int, reason: str = "", folder_name: str = ""):
     """Открепить packing list от BL и вернуть в очередь вопросов: бот спросит
     в Tracking gruppa, чей это файл, и будет напоминать, пока не ответят.
-    Для файлов, которым после смены плана не подходит ни один груз. → (ok, текст)"""
+    Для файлов, которым после смены плана не подходит ни один груз.
+    Папка Drive (= дата партии) сохраняется в вопросе: без неё автоповтор
+    распознавания может увести файл в чужую партию. → (ok, текст)"""
     from services import ai_assistant
 
     row = db.get_file_by_id(int(file_id))
     if not row:
         return False, "Файл не найден"
     base = str(row.get("filename") or "")
+    folder_name = str(folder_name or "").strip() or db.drive_folder_of(base)
     src = str(row.get("file_path") or "")
     if not os.path.exists(src):
         return False, f"Файл «{base}» на диске не найден — вернуть в очередь нечего"
@@ -6414,7 +6453,8 @@ def requeue_attached_file(file_id: int, reason: str = ""):
     shutil.copyfile(src, parked)               # delete_file ниже удалит оригинал с диска
     db.delete_file(int(file_id))
     try:
-        ask_packing_file_owner(ai_assistant.control_group_id(), base, parked, reason)
+        ask_packing_file_owner(ai_assistant.control_group_id(), base, parked, reason,
+                               folder_name=folder_name)
     except Exception as exc:
         app.logger.exception("requeue: question for %s failed", base)
         return False, f"Файл откреплён, но вопрос в группу не ушёл: {exc}"
