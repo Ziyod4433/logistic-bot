@@ -5118,6 +5118,31 @@ def api_dev_overview():
     })
 
 
+@app.route("/api/groups/activity", methods=["GET"])
+@editor_required
+def api_groups_activity():
+    """Активность клиентских групп — те же данные, что видит ассистент:
+    ?segment=asleep|fading|dropped|unanswered|active|new|no_cargo|all,
+    ?chat=<chat_id | название | BL> — карточка одной группы."""
+    from services import ai_assistant
+
+    try:
+        if request.args.get("chat"):
+            out = ai_assistant._tool_get_group_activity({
+                "query": request.args.get("chat"), "messages_limit": request.args.get("messages") or 12})
+        else:
+            out = ai_assistant._tool_analyze_group_activity({
+                "segment": request.args.get("segment") or "asleep",
+                "min_batches": request.args.get("min_batches") or 0,
+                "sales_manager": request.args.get("sales_manager") or "",
+                "limit": request.args.get("limit") or 40,
+            })
+    except Exception as exc:
+        app.logger.exception("group activity via API failed")
+        return jsonify({"error": f"Анализ не удался: {exc}"}), 500
+    return jsonify(out), (400 if out.get("error") else 200)
+
+
 @app.route("/api/packing/revalidate", methods=["POST"])
 @editor_required
 def api_packing_revalidate():

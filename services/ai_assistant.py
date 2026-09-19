@@ -609,6 +609,12 @@ def _system_prompt() -> str:
 • «есть ли план (китайский/казахский) на дату» → get_loading_plans (смотри ОБА вида и summary) → при нужде get_plan_marks.
 • «что с казахским планом партии / применился ли / что изменится / почему не перегрузил» → get_batch_plan_status.
 • «кто не привязан к группе / почему клиент не получил трекинг» → get_unlinked_bls, затем find_group и, если просят, propose_action link_bl_group.
+• «кто заснул / kim uxlab qoldi / кого будить / кто перестал возить / проанализируй активность групп» →
+  analyze_group_activity (он сам проходит по ВСЕМ группам бота; сначала назови цифры summary по сегментам, потом
+  список). Для конкретного клиента и перед любым «будящим» сообщением → get_group_activity: там видно, ПОЧЕМУ
+  он замолчал (вопрос без ответа, проблема с грузом, низкая оценка). Разбудить = личное короткое сообщение на
+  языке клиента через propose_action kind='send_group_message' — по одной заявке на группу, только после ✅;
+  массовую одинаковую рассылку спящим не предлагай, если прямо не попросили.
 • «поменяй язык клиенту / пиши этой группе по-русски / tilni o'zgartir» → find_bl или find_group, затем
   propose_action kind='update_language' (language: uz_latn | uz_cyrl | ru | en). ТЫ ЭТО УМЕЕШЬ — не отправляй
   человека в панель. Язык ставится всей группе клиента; «только этому BL» — only_this_bl=true.
@@ -1008,6 +1014,59 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string", "description": "часть названия группы или код BL/бренд"}},
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_group_activity",
+            "description": (
+                "АКТИВНОСТЬ КЛИЕНТОВ: разбирает ВСЕ группы, где состоит бот, и делит клиентов на 🟢 активен / "
+                "🟡 затихает / 🔴 заснул / ⚪ новая / ⚫ груз не виден. По каждой группе: когда клиент последний "
+                "раз ДАЛ НАМ ГРУЗ (дата партии, сколько партий/мест/кг всего, его обычный ритм отгрузок и во "
+                "сколько раз он его уже пропустил), когда САМ КЛИЕНТ последний раз писал (наши сотрудники не "
+                "считаются), сколько сообщений за 30 / предыдущие 30 / 90 дней, резко ли замолчал (dropped), "
+                "сколько его сообщений осталось БЕЗ ОТВЕТА, среднее время ответа, последняя рассылка трекинга, "
+                "последняя оценка сервиса, проблемы по грузам, ответственный продажник и wake_priority — кого "
+                "будить первым. summary считается по ВСЕМ группам, список — по выбранному сегменту. Вопросы "
+                "«кто заснул / kim uxlab qoldi / кого будить / кто перестал возить / анализ активности групп» — сюда."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "segment": {"type": "string",
+                                "enum": ["asleep", "fading", "dropped", "unanswered", "active", "new", "no_cargo", "all"],
+                                "description": "Кого показать списком (по умолчанию asleep). dropped — резко "
+                                               "замолчали; unanswered — клиент писал, ему не ответили."},
+                    "min_batches": {"type": "integer",
+                                    "description": "Только клиенты, возившие не меньше N партий (ценные)"},
+                    "sales_manager": {"type": "string", "description": "Часть имени продажника — только его клиенты"},
+                    "limit": {"type": "integer", "description": "Сколько групп в списке (по умолчанию 40, максимум 150)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_group_activity",
+            "description": (
+                "КАРТОЧКА ОДНОЙ ГРУППЫ для предметного «пробуждения»: история грузов по партиям (дата, места, кг, "
+                "статус, выдан ли), сообщения клиента по месяцам, его ПОСЛЕДНИЕ СООБЩЕНИЯ с текстом и тем, кто и "
+                "через сколько минут ответил (или не ответил), кто из клиентов и наших состоит в группе, оценки "
+                "сервиса, проблемы по грузам, язык сообщений. Вызывай перед тем, как писать клиенту: причина сна "
+                "часто видна здесь (вопрос без ответа, проблема с грузом, низкая оценка)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "chat_id, часть названия группы или код BL"},
+                    "messages_limit": {"type": "integer",
+                                       "description": "Сколько последних сообщений клиента показать (12, максимум 40)"},
+                },
                 "required": ["query"],
             },
         },
@@ -1879,6 +1938,92 @@ def _tool_get_bl_files(args: dict) -> dict:
         "note": "Перепривязать файл: propose_action kind='move_file' (file_id, bl_id). "
                 "Удалить: kind='delete_file' (file_id). Это ты УМЕЕШЬ — не отвечай «нет инструмента».",
     }
+
+
+_ACTIVITY_LIST_FIELDS = (
+    "chat_id", "title", "bl_codes", "segment_label", "why", "batches", "last_cargo", "days_since_cargo",
+    "usual_gap_days", "overdue_vs_usual", "total_places", "total_kg", "cargo_in_transit",
+    "last_client_message", "days_since_client_message", "client_msgs_30d", "client_msgs_prev_30d",
+    "client_msgs_total", "dropped", "unanswered_client_msgs", "avg_reply_minutes", "last_tracking_sent",
+    "last_rating", "problems_open", "sales_manager", "wake_priority",
+)
+
+
+def _tool_analyze_group_activity(args: dict) -> dict:
+    from services import group_activity_service as gas
+
+    args = args or {}
+    segment = str(args.get("segment") or "asleep").strip().lower()
+    try:
+        limit = max(1, min(int(args.get("limit") or 40), 150))
+    except (TypeError, ValueError):
+        limit = 40
+    try:
+        min_batches = max(0, int(args.get("min_batches") or 0))
+    except (TypeError, ValueError):
+        min_batches = 0
+    manager = str(args.get("sales_manager") or "").strip().lower()
+    data = gas.analyze_all()
+    groups = data["groups"]
+    if segment == "dropped":
+        picked = [g for g in groups if g["dropped"]]
+    elif segment == "unanswered":
+        picked = [g for g in groups if g["unanswered_client_msgs"]]
+    elif segment == "all":
+        picked = list(groups)
+    elif segment in gas.SEGMENT_LABELS:
+        picked = [g for g in groups if g["segment"] == segment]
+    else:
+        return {"error": f"Неизвестный segment «{segment}»"}
+    if min_batches:
+        picked = [g for g in picked if g["batches"] >= min_batches]
+    if manager:
+        picked = [g for g in picked if manager in str(g.get("sales_manager") or "").lower()]
+    picked.sort(key=lambda g: (-g["wake_priority"], -(g["days_since_cargo"] or 0)))
+    shown = [{k: g.get(k) for k in _ACTIVITY_LIST_FIELDS} for g in picked[:limit]]
+    for item in shown:
+        item["chat_id"] = _mask_chat_id(item["chat_id"])
+    note = (
+        "summary — по ВСЕМ группам бота; groups — сегмент, отсортированный по wake_priority (кого будить "
+        "первым: больше возил, недавно замолчал, есть наш долг — вопрос без ответа/проблема/низкая оценка). "
+        "История ведётся с 18.04.2026 — «первый груз» раньше этой даты не виден. «no_cargo» — чаще всего "
+        "НЕ спящий клиент, а группа без привязанного BL: груз может идти прямо сейчас (см. get_unlinked_bls). "
+        "Молчание между отгрузками — не сон: смотри usual_gap_days и overdue_vs_usual (во сколько раз клиент "
+        "превысил свой обычный перерыв). Перед тем как писать клиенту — get_group_activity по его группе."
+    )
+    if len(shown) < len(picked):
+        note += f" Показано {len(shown)} из {len(picked)} — для остальных увеличь limit или сузь фильтр."
+    return {"today": data["today"], "thresholds": data["thresholds"], "summary": data["summary"],
+            "segment": segment, "matched": len(picked), "shown": len(shown), "groups": shown, "note": note}
+
+
+def _tool_get_group_activity(args: dict) -> dict:
+    from services import group_activity_service as gas
+
+    query = str((args or {}).get("query") or "").strip()
+    if not query:
+        return {"error": "Нужен query: chat_id, часть названия группы или код BL"}
+    if query in confidential_chat_ids():
+        return {"error": "Эта группа строго конфиденциальна."}
+    found = gas.resolve_chat(query)
+    if not found:
+        return {"error": f"Группа по «{query}» не найдена — попробуй find_group"}
+    exact = [f for f in found if str(f["chat_id"]) == query]
+    if len(found) > 1 and not exact:
+        return {"several": [{"chat_id": f["chat_id"], "title": f["title"]} for f in found],
+                "note": "Нашлось несколько групп — повтори вызов с точным chat_id."}
+    chat = (exact or found)[0]
+    detail = gas.group_detail(chat["chat_id"], (args or {}).get("messages_limit") or 12)
+    if detail.get("error"):
+        return detail
+    detail["note"] = (
+        "Чтобы разбудить клиента: напиши КОРОТКОЕ личное сообщение на его языке (message_language), опираясь "
+        "на факты карточки — последний груз, его последний вопрос, незакрытую проблему. Сначала закрой наш "
+        "долг (неотвеченный вопрос, проблема), потом предлагай новую отгрузку. Отправка — propose_action "
+        "kind='send_group_message' (chat_id, text): уйдёт только после ✅. Клиентам НИКОГДА не пиши, что мы "
+        "«анализировали их активность»."
+    )
+    return detail
 
 
 def _tool_find_group(args: dict) -> dict:
@@ -2800,6 +2945,10 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_list_announcements(args)
         if name == "find_group":
             return _tool_find_group(args)
+        if name == "analyze_group_activity":
+            return _tool_analyze_group_activity(args)
+        if name == "get_group_activity":
+            return _tool_get_group_activity(args)
         if name == "get_automation_status":
             return _tool_get_automation_status(args)
         if name == "get_missing_packing_lists":
