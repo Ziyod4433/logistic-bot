@@ -150,6 +150,45 @@ def aggregate_block(block: dict) -> dict:
     return agg
 
 
+_HEADER_MARKS = {"SHIPPINGMARK", "TOTAL"}
+
+
+def is_sheet_header_mark(code) -> bool:
+    """«Код груза», который на деле строка-шапка таблицы шитса («SHIPPING
+    MARK», «TOTAL», «horgos skladda qoladigan yuklar») — старый разбор
+    принимал такие строки за груз, когда таблицы стояли вплотную (17.09)."""
+    key = normalize_mark(code)
+    return key in _HEADER_MARKS or bool(re.search(r"HORGOS\w*QOL", key))
+
+
+def applied_kazakh_holder(key: str, block: dict, blocks: list, others: list, codes_of,
+                          window_days: int = 21):
+    """Незакрытая партия (не прибывшая), чей ПРИМЕНЁННЫЙ казахский план
+    содержит этот код и в которой этот груз уже числится, в пределах
+    ±window_days от даты блока. Для «лишних» строк: груз мог уехать фурой
+    партии с БОЛЕЕ РАННЕЙ датой (кейс 17.09 → 13.09 YIWU), а
+    extra_destination смотрит только вперёд по датам."""
+    try:
+        base = datetime.strptime(date_key(block.get("date")), "%d%m%Y").date()
+    except ValueError:
+        return None
+    for other in others:
+        if (other.get("plan_kind") or "") != "kazakh" or is_arrived(other):
+            continue
+        if key not in codes_of(other):
+            continue
+        other_block = resolve_ref_block(other, blocks, "kazakh", codes_of(other))
+        if other_block is None or other_block is block or key not in aggregate_block(other_block):
+            continue
+        try:
+            odate = datetime.strptime(date_key(other_block.get("date")), "%d%m%Y").date()
+        except ValueError:
+            continue
+        if abs((odate - base).days) <= window_days:
+            return other
+    return None
+
+
 def stays_at_horgos(block: dict | None, blocks: list | None = None) -> dict:
     """Грузы из таблицы «horgos skladda qoladigan yuklar» под планом:
     {ключ: {code, ctn, …}}. Они приехали в Хоргос, но на ЭТУ фуру не
@@ -161,12 +200,20 @@ def stays_at_horgos(block: dict | None, blocks: list | None = None) -> dict:
     if not block:
         return {}
     items = list(block.get("stays") or [])
+    # одну таблицу остатков могут видеть два блока колонки (китайский и
+    # казахский под ним) — её строки считаем один раз
+    seen = {x.get("table_row") for x in items if x.get("table_row") is not None}
     for other in blocks or []:
         if other is block or not other.get("stays"):
             continue
         if other.get("tab") == block.get("tab") and other.get("col") is not None \
                 and other.get("col") == block.get("col"):
-            items.extend(other["stays"])
+            for x in other["stays"]:
+                row = x.get("table_row")
+                if row is not None and row in seen:
+                    continue
+                items.append(x)
+            seen |= {x.get("table_row") for x in other["stays"] if x.get("table_row") is not None}
     return aggregate_block({"items": items})
 
 

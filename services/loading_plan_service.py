@@ -139,9 +139,24 @@ def _is_stays_heading(value) -> bool:
     return isinstance(value, str) and bool(_STAYS_RE.search(value))
 
 
+def _is_table_header(value) -> bool:
+    """Шапка таблицы груза: «SHIPPING MARK | CTN | T/CBM | KG …»."""
+    return isinstance(value, str) and value.strip().upper().startswith("SHIPPING MARK")
+
+
+def _is_kazakh_title(title) -> bool:
+    """Казахская фура: «HORGOS TO TASHKENT…», «HORGOS - TASHKENT…», «HORGOS
+    YARGXOL» — всё, что начинается с HORGOS или содержит HORGOS не в виде
+    «TO HORGOS» (китайская: «YIWU TO HORGOS…»)."""
+    compact = re.sub(r"\s+", " ", str(title or "").upper()).strip()
+    return compact.startswith("HORGOS") or ("HORGOS" in compact and "TO HORGOS" not in compact)
+
+
 def _parse_stays(grid: list, j: int, after: int) -> list:
     """Строки таблицы «остаётся на складе Хоргоса» под блоком в колонке j.
-    Ищем заголовок ниже строки `after`; новый блок в этой колонке — стоп."""
+    Ищем заголовок ниже строки `after`; новый блок в этой колонке — стоп.
+    Промежуточную таблицу (неподписанный казахский план, копию с ценами)
+    проходим насквозь: остатки всех блоков колонки всё равно общие."""
     n_rows = len(grid)
 
     def cell(r, c=j):
@@ -172,9 +187,163 @@ def _parse_stays(grid: list, j: int, after: int) -> list:
             "ctn": _num(cell(k, j + 1)),
             "cbm": _num(cell(k, j + 2)),
             "kg": _num(cell(k, j + 3)),
+            # строка заголовка таблицы: одну и ту же таблицу могут увидеть
+            # два блока колонки (китайский и казахский) — считать её раз
+            "table_row": head,
         })
         k += 1
     return out
+
+
+def _read_rows(grid: list, j: int, start: int) -> tuple:
+    """Строки груза таблицы в колонке j, начиная со строки start.
+    → (items, строка, с которой продолжать поиск ниже таблицы).
+
+    Стоп: TOTAL, три пустые строки подряд, заголовок таблицы остатков,
+    дата следующего блока и ШАПКА НОВОЙ ТАБЛИЦЫ (SHIPPING MARK) — иначе
+    китайский план, под которым логисты не подписали казахский, проглатывал
+    его строки как свои (17.09.2026)."""
+    n_rows = len(grid)
+    items = []
+    empty_streak = 0
+    k = start
+    while k < n_rows and empty_streak <= 2:
+        mark_cell = grid[k][j] if j < len(grid[k]) else None
+        mark = str(mark_cell).strip() if mark_cell is not None else ""
+        if not mark:
+            empty_streak += 1
+            k += 1
+            continue
+        empty_streak = 0
+        if mark.upper() == "TOTAL":
+            return items, k + 1
+        if _is_stays_heading(mark_cell):
+            # у блока нет строки TOTAL, и сразу под ним таблица
+            # остатков — её строки НЕ состав фуры
+            break
+        if _is_table_header(mark_cell):
+            break
+        if _is_title(mark_cell) and re.search(r"HORGOS|TASHKENT|\bTO\b", mark.upper()):
+            # заголовок следующей таблицы без даты («HORGOS TO TASHKENT …»):
+            # марки грузов таких слов не содержат
+            break
+        if isinstance(mark_cell, (datetime, date)) or (
+            isinstance(mark_cell, str) and _DATE_STR_RE.match(mark_cell)
+            and _is_title(grid[k + 1][j] if k + 1 < n_rows and j < len(grid[k + 1]) else None)
+        ):
+            # наткнулись на дату следующего блока в этой же колонке
+            break
+
+        def cval(off, _k=k):
+            idx = j + off
+            return grid[_k][idx] if idx < len(grid[_k]) else None
+
+        arrive = ""
+        for off in (5, 4, 6):
+            v = cval(off)
+            if isinstance(v, (datetime, date)):
+                arrive = _fmt_date(v)
+                break
+            if isinstance(v, str) and re.match(r"^\d{1,2}[-./]", v.strip()):
+                arrive = v.strip()
+                break
+        items.append({
+            "mark": mark,
+            "ctn": _num(cval(1)),
+            "cbm": _num(cval(2)),
+            "kg": _num(cval(3)),
+            "arrive": arrive,
+        })
+        k += 1
+    return items, k
+
+
+# Под китайским планом логисты пишут казахский (Horgos → Tashkent) и иногда
+# забывают его дату и заголовок «HORGOS TO TASHKENT»: остаётся голая таблица
+# с шапкой SHIPPING MARK. По правилу владельца (30.09.2026) таблица под
+# китайским планом — это его казахский план; бот предупреждает логистов, но
+# без ответа принимает её как казахский.
+# Признак казахской таблицы — колонка PARTIYA (из какой партии груз): она
+# есть у всех казахских планов с мая 2026. Таблица без неё под китайским
+# планом бывает и другой — в 03.09 это копия китайского плана с ценами,
+# а настоящий казахский план подписан ниже.
+_UNTITLED_SCAN_ROWS = 25
+
+
+def _header_has_partiya(grid: list, r: int, j: int) -> bool:
+    row = grid[r] if 0 <= r < len(grid) else []
+    for c in range(j, min(len(row), j + 11)):
+        v = row[c]
+        if isinstance(v, str) and re.search(r"PART|ПАРТ", v.strip().upper()):
+            return True
+    return False
+
+
+def _find_untitled_table(grid: list, j: int, after: int):
+    """Таблица без даты/заголовка под китайским планом в колонке j.
+    → (строка шапки SHIPPING MARK, заголовок, если он всё-таки написан
+    без даты, иначе "") или None. Без заголовка таблица должна иметь
+    колонку PARTIYA — иначе это не казахский план."""
+    n_rows = len(grid)
+
+    def cell(r):
+        return grid[r][j] if r < n_rows and j < len(grid[r]) else None
+
+    title = ""
+    preamble = 0
+    for r in range(after, min(n_rows, after + _UNTITLED_SCAN_ROWS)):
+        v = cell(r)
+        text = str(v).strip() if v is not None else ""
+        if not text or text.upper() == "TOTAL":
+            continue
+        if _is_block_date(v) and _is_title(cell(r + 1)):
+            return None          # ниже обычный блок с датой и заголовком
+        if _is_stays_heading(v):
+            return None          # сразу таблица остатков — казахского плана нет
+        if _is_table_header(v):
+            if not title and not _header_has_partiya(grid, r, j):
+                return None      # не казахская таблица (копия, расчёт цен…)
+            return r, title
+        preamble += 1
+        if preamble > 2:
+            return None          # что-то своё — не угадываем
+        if _is_block_date(v):
+            continue             # дата без заголовка
+        if _is_title(v) and _is_kazakh_title(text):
+            title = text         # заголовок без даты
+            continue
+        return None
+    return None
+
+
+def _implicit_kazakh_title(warehouses: list) -> str:
+    """Название для неподписанного казахского плана — так, как логисты
+    обычно пишут сами: когда они допишут заголовок, привязка партии не
+    потеряется."""
+    wh = set(warehouses or [])
+    if {"YIWU", "ZHONGSHAN"} <= wh:
+        return "HORGOS TO TASHKENT YIWU + ZH YARGXOL"
+    if "YIWU" in wh:
+        return "HORGOS TO TASHKENT - YIWU YARGXOL"
+    if "ZHONGSHAN" in wh:
+        return "HORGOS TO TASHKENT - ZHONGSHAN YARGXOL"
+    return "HORGOS TO TASHKENT YARGXOL"
+
+
+def _block(date_cell, title: str, kind: str, warehouses: list, items: list, stays: list, col: int) -> dict:
+    return {
+        "date": _fmt_date(date_cell),
+        "title": title,
+        "kind": kind,          # china (склад→Horgos) | kazakh (Horgos→Tashkent)
+        "warehouses": warehouses,
+        "items": items,
+        # «horgos skladda qoladigan yuklar» под этим блоком
+        "stays": stays,
+        "col": col,
+        "total_ctn": round(sum(x["ctn"] for x in items), 2),
+        "total_cbm": round(sum(x["cbm"] for x in items), 3),
+        "total_kg": round(sum(x["kg"] for x in items), 2),
+    }
 
 
 def _parse_tab(grid: list) -> list:
@@ -194,78 +363,38 @@ def _parse_tab(grid: list) -> list:
             # пропускаем (в казахских блоках её может не быть)
             start = i + 2
             first = grid[start][j] if start < n_rows and j < len(grid[start]) else None
-            if isinstance(first, str) and first.strip().upper().startswith("SHIPPING MARK"):
+            if _is_table_header(first):
                 start += 1
-            items = []
-            empty_streak = 0
-            k = start
-            while k < n_rows and empty_streak <= 2:
-                mark_cell = grid[k][j] if j < len(grid[k]) else None
-                mark = str(mark_cell).strip() if mark_cell is not None else ""
-                if not mark:
-                    empty_streak += 1
-                    k += 1
-                    continue
-                empty_streak = 0
-                if mark.upper() == "TOTAL":
-                    break
-                if _is_stays_heading(mark_cell):
-                    # у блока нет строки TOTAL, и сразу под ним таблица
-                    # остатков — её строки НЕ состав фуры
-                    break
-                if isinstance(mark_cell, (datetime, date)) or (
-                    isinstance(mark_cell, str) and _DATE_STR_RE.match(mark_cell)
-                    and _is_title(grid[k + 1][j] if k + 1 < n_rows and j < len(grid[k + 1]) else None)
-                ):
-                    # наткнулись на дату следующего блока в этой же колонке
-                    break
-                def cval(off):
-                    idx = j + off
-                    return grid[k][idx] if idx < len(grid[k]) else None
-                arrive = ""
-                for off in (5, 4, 6):
-                    v = cval(off)
-                    if isinstance(v, (datetime, date)):
-                        arrive = _fmt_date(v)
-                        break
-                    if isinstance(v, str) and re.match(r"^\d{1,2}[-./]", v.strip()):
-                        arrive = v.strip()
-                        break
-                items.append({
-                    "mark": mark,
-                    "ctn": _num(cval(1)),
-                    "cbm": _num(cval(2)),
-                    "kg": _num(cval(3)),
-                    "arrive": arrive,
-                })
-                k += 1
+            items, k = _read_rows(grid, j, start)
             if not items:
                 continue
             upper_title = title.upper()
-            # казахская фура: «HORGOS TO TASHKENT…», «HORGOS - TASHKENT…»,
-            # «HORGOS YARGXOL» — всё, что начинается с HORGOS или содержит
-            # HORGOS не в виде «TO HORGOS» (китайская: «YIWU TO HORGOS…»)
-            compact = re.sub(r"\s+", " ", upper_title).strip()
-            kind = "china"
-            if compact.startswith("HORGOS") or ("HORGOS" in compact and "TO HORGOS" not in compact):
-                kind = "kazakh"
+            kind = "kazakh" if _is_kazakh_title(title) else "china"
             warehouses = [w for w in ("YIWU", "ZHONGSHAN") if w in upper_title]
             if kind == "kazakh" and ("ZH" in upper_title and "ZHONGSHAN" not in warehouses):
                 warehouses.append("ZHONGSHAN")
-            blocks.append({
-                "date": _fmt_date(cell),
-                "title": title,
-                "kind": kind,          # china (склад→Horgos) | kazakh (Horgos→Tashkent)
-                "warehouses": warehouses,
-                "items": items,
-                # «horgos skladda qoladigan yuklar» под этим блоком
-                "stays": _parse_stays(grid, j, k),
-                "col": j,
-                "total_ctn": round(sum(x["ctn"] for x in items), 2),
-                "total_cbm": round(sum(x["cbm"] for x in items), 3),
-                "total_kg": round(sum(x["kg"] for x in items), 2),
-            })
-    return blocks
+            blocks.append(_block(cell, title, kind, warehouses, items, _parse_stays(grid, j, k), j))
+            if kind != "china":
+                continue
+            found = _find_untitled_table(grid, j, k)
+            if found is None:
+                continue
+            header_row, written_title = found
+            kz_items, kz_end = _read_rows(grid, j, header_row + 1)
+            if not kz_items:
+                continue
+            kz = _block(cell, written_title or _implicit_kazakh_title(warehouses), "kazakh",
+                        list(warehouses), kz_items, _parse_stays(grid, j, kz_end), j)
+            # логисты не написали «HORGOS TO TASHKENT» — бот предупредит их
+            kz["untitled"] = not written_title
+            kz["header_row"] = header_row + 1          # номер строки в листе (с 1)
+            blocks.append(kz)
+    # подписанный казахский план той же даты в той же колонке — главный:
+    # таблица без заголовка над ним тогда не план (кейс 03.09.2026)
+    titled = {(b["col"], b["date"][:10]) for b in blocks
+              if b["kind"] == "kazakh" and not b.get("header_row")}
+    return [b for b in blocks
+            if not (b.get("header_row") and (b["col"], b["date"][:10]) in titled)]
 
 
 def _get_parsed(force: bool = False) -> dict:

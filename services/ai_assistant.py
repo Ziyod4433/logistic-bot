@@ -620,7 +620,11 @@ def _system_prompt() -> str:
   человека в панель. Язык ставится всей группе клиента; «только этому BL» — only_this_bl=true.
 • Грузы из таблицы шитса «horgos skladda qoladigan yuklar» (под планом) НЕ входят в партию: они остались на
   складе Хоргоса и на эту фуру не погружены. В составе, местах и количестве BL партии их не считай; в
-  get_batch_plan_status они помечены ⚓, в get_batch_detail у них excluded_from_send=true.
+  get_batch_plan_status они помечены ⚓, в get_batch_detail у них excluded_from_send=true. Трекинг этой
+  партии им не уходит НИКОГДА — бот сам снимает их с любой рассылки.
+• Таблица под китайским планом БЕЗ заголовка «HORGOS TO TASHKENT» — это казахский план той же партии
+  (правило владельца, 30.09.2026): логисты забыли подписать. В get_batch_plan_status у него untitled=true;
+  бот отмечает Jasur и Jigar, а без ответа применяет его как казахский. Говори об этом прямо.
 • Когда человек НАЗЫВАЕТ принадлежность кода («8304 bu RM (BL-253)», «этот код — группа X») — особенно
   ответственный за привязки @{grouper} — НЕМЕДЛЕННО создай propose_action kind='link_bl_group' для КАЖДОГО
   подходящего неприкреплённого bl_id (код может жить в двух партиях — тогда ДВЕ заявки подряд). НИКОГДА не
@@ -1659,11 +1663,21 @@ def _tool_get_batch_plan_status(args: dict) -> dict:
 
     def block_brief(block):
         agg = pss.aggregate_block(block)
-        return {
+        out = {
             "found": True, "title": block["title"], "date": block["date"], "tab": block.get("tab"),
             "kind": block["kind"], "marks_count": len(agg),
             "marks": ", ".join(e["code"] for e in agg.values()),
         }
+        if block.get("untitled"):
+            out["untitled"] = True
+            out["untitled_note"] = (
+                "В шитсе у этой таблицы НЕТ заголовка «HORGOS TO TASHKENT» — логисты его не написали. "
+                "По правилу владельца таблица под китайским планом = казахский план; бот предупредил "
+                "Jasur и Jigar и без ответа применяет её как казахскую. Название выше дал бот.")
+        stays = pss.stays_at_horgos(block, blocks)
+        if stays:
+            out["stays_at_horgos"] = ", ".join(e["code"] for e in stays.values())
+        return out
 
     # китайский блок
     china_block = None

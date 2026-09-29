@@ -4629,12 +4629,13 @@ def resolve_packing_question(question_id: int, status: str, answer: str = "", bl
 
 
 def clear_plan_send_exclusion(bl_id: int) -> bool:
-    """Снять исключение, поставленное БОТОМ (source='plan'), когда груз
-    снова появился в казахском плане. Ручные исключения не трогаем."""
+    """Снять исключение, поставленное БОТОМ (source='plan' — нет в плане
+    фуры, 'stays' — остался на складе Хоргоса), когда груз снова появился
+    в казахском плане. Ручные исключения не трогаем."""
     conn = get_conn()
     try:
         cur = conn.execute(
-            "DELETE FROM batch_send_exclusions WHERE bl_id = ? AND source = 'plan'",
+            "DELETE FROM batch_send_exclusions WHERE bl_id = ? AND source IN ('plan', 'stays')",
             (int(bl_id),),
         )
         conn.commit()

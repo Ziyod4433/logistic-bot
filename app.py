@@ -3347,7 +3347,11 @@ def execute_ai_action(action: dict, actor: str = ""):
                 batch = db.get_batch(bl.get("batch_id")) or batch
                 batch_name = batch.get("name") or batch_name
             _refresh_batch_figures_from_plan(batch)
+            _exclude_horgos_stays(batch)
             bl = db.get_bl_by_id(bl["id"]) or bl
+            if _bl_stays_at_horgos(bl):
+                return False, (f"BL {bl.get('code')} остался на складе Хоргоса (таблица «horgos skladda "
+                               f"qoladigan yuklar») — трекинг «{batch_name}» ему не отправляю")
         try:
             success, error_msg = send_bl_package(dict(bl), batch_name, include_related_batches=False)
         except Exception as exc:
@@ -3426,6 +3430,90 @@ def _refresh_batch_figures_from_plan(batch: dict, blocks: list | None = None) ->
     except Exception:
         app.logger.exception("Tracking pre-send figure refresh failed for batch %s", batch.get("id"))
         return []
+
+
+def _horgos_stays_now(batch: dict, blocks: list | None = None) -> tuple:
+    """(остатки, коды казахского плана, найден ли казахский план) для
+    партии на казахской стадии. Остатки — грузы из таблиц «horgos skladda
+    qoladigan yuklar» под планами партии в шитсе; казахский план —
+    применённый или уже появившийся в шитсе (в т.ч. без заголовка).
+    Вне казахской стадии, для прибывших и без шитса — ({}, set(), False)."""
+    from services import plan_sync_service as pss
+
+    if pss.stage_for_status(batch.get("status")) != "kazakh" or pss.is_arrived(batch):
+        return {}, set(), False
+    try:
+        if blocks is None:
+            blocks = pss.all_blocks()
+    except Exception:
+        app.logger.exception("Horgos stays: sheet unavailable for batch %s", batch.get("id"))
+        return {}, set(), False
+    codes = _plan_batch_codes(batch["id"])
+    kz = None
+    if (batch.get("plan_kind") or "") == "kazakh":
+        kz = pss.resolve_ref_block(batch, blocks, "kazakh", codes)
+    if kz is None:
+        probe = dict(batch)
+        probe["status"] = pss.HORGOS_STATUS
+        got, _why = pss.find_block_for_batch(probe, blocks, codes, batches=db.get_batches())
+        if got is not None and got.get("kind") == "kazakh":
+            kz = got
+    base = kz
+    if base is None and (batch.get("plan_kind") or "") == "china":
+        base = pss.resolve_ref_block(batch, blocks, "china", codes)
+    if base is None:
+        return {}, set(), False
+    plan_keys = set(pss.aggregate_block(kz).keys()) if kz is not None else set()
+    return pss.stays_at_horgos(base, blocks), plan_keys, kz is not None
+
+
+def _exclude_horgos_stays(batch: dict, blocks: list | None = None) -> list:
+    """Прямо перед рассылкой: грузы из «horgos skladda qoladigan yuklar»
+    трекинг этой партии НЕ получают никогда (владелец, 30.09.2026) — даже
+    если казахский план ещё не применён: SMART TOOLS остался на складе, а
+    ему уходил трекинг 17.09. Груз, который есть и в казахском плане
+    (частично остался), едет — ему трекинг положен. Пока казахского плана
+    нет, исключаем только тех, у кого на складе остаётся ВЕСЬ груз.
+    Исключение снимается само, когда груз попадает в план этой фуры.
+    Возвращает коды, исключённые сейчас."""
+    from services import plan_sync_service as pss
+
+    stays, plan_keys, has_kz = _horgos_stays_now(batch, blocks)
+    if not stays and not plan_keys:
+        return []
+    try:
+        sources = db.get_batch_send_exclusion_sources(batch["id"])
+    except Exception:
+        sources = {}
+    newly = []
+    for bl in db.get_bl_by_batch(batch["id"]):
+        key = pss.normalize_mark(bl.get("code"))
+        entry = stays.get(key)
+        if has_kz:
+            stays_here = entry is not None and key not in plan_keys
+        else:
+            stays_here = entry is not None and (
+                float(entry.get("ctn") or 0) + pss.CTN_EPS >= float(bl.get("quantity_places") or 0))
+        try:
+            if stays_here and not bl.get("send_excluded"):
+                db.set_batch_send_exclusion(bl["id"], True, source="stays")
+                newly.append(str(bl.get("code")))
+            elif (not stays_here and sources.get(bl.get("id")) == "stays"
+                  and (not has_kz or key in plan_keys)):
+                db.clear_plan_send_exclusion(bl["id"])   # груз уже в плане фуры
+        except Exception:
+            app.logger.exception("Horgos stays: exclusion update failed for bl_id=%s", bl.get("id"))
+    if newly:
+        app.logger.info("Horgos stays «%s»: без трекинга %s", batch.get("name"), ", ".join(newly))
+    return newly
+
+
+def _bl_stays_at_horgos(bl: dict) -> bool:
+    """BL исключён из рассылки как оставшийся на складе Хоргоса."""
+    try:
+        return db.get_batch_send_exclusion_sources(bl.get("batch_id")).get(bl.get("id")) == "stays"
+    except Exception:
+        return False
 
 
 def verify_batch_against_plan(batch: dict, blocks: list | None = None) -> dict:
@@ -3580,6 +3668,8 @@ def _execute_tracking_broadcast(batch_id: int, actor: str = "", filled_by: str =
 
     # цифры BL — к плану, прямо перед отправкой (иначе уйдут устаревшие)
     _refresh_batch_figures_from_plan(batch)
+    # оставшимся на складе Хоргоса трекинг этой фуры не положен никогда
+    _exclude_horgos_stays(batch)
 
     # ── разбираем ВСЕХ BL партии: кто едет, кто и ПОЧЕМУ пропущен ──
     # Молчаливый пропуск скрывал ошибки: 02.09 BL-547 (группа привязана,
@@ -3605,8 +3695,13 @@ def _execute_tracking_broadcast(batch_id: int, actor: str = "", filled_by: str =
             info_skips.append(f"{code} — наш груз, трекинг не нужен")
             continue
         if bl.get("send_excluded"):
+            source = excl_sources.get(bl.get("id"))
+            if source == "stays":
+                # штатно: груз остался на складе Хоргоса, в эту фуру не погружен
+                info_skips.append(f"{code} — остался на складе Хоргоса, не в этой фуре")
+                continue
             why = ("исключён вручную"
-                   if excl_sources.get(bl.get("id")) == "manual"
+                   if source == "manual"
                    else "исключён: нет в плане этой фуры")
             warn_skips.append(f"{code} — {why}")
             continue
@@ -3712,6 +3807,13 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
         if (action.get("kind") == "apply_kazakh_plan"
                 and str(voter.get("id") or "") == HOJI_DODAM_TG_ID):
             allowed = True
+        # казахский план без заголовка: бот отмечал и Jigar — его ответ тоже в силе
+        if (action.get("kind") == "apply_kazakh_plan"
+                and str(voter.get("id") or "") == PACKING_RESPONSIBLE_TG_ID):
+            try:
+                allowed = allowed or bool(json.loads(action.get("params_json") or "{}").get("untitled"))
+            except Exception:
+                pass
         # привязки групп и метки «наш груз» подтверждает и ответственный
         # за них (Jahongir): он сам называет, чей код, — его ✅ и есть
         # подтверждение
@@ -8004,6 +8106,36 @@ def _plan_staff_mentions() -> str:
     return " ".join(parts)
 
 
+def _untitled_plan_mentions() -> str:
+    """Кто пишет казахские планы в шитс: Jasur (Hoji dodam) и Jigar —
+    их отмечаем, когда план остался без заголовка «HORGOS TO TASHKENT»."""
+    people, seen, parts = ((HOJI_DODAM_TG_ID, HOJI_DODAM_NAME),
+                           (PACKING_RESPONSIBLE_TG_ID, PACKING_RESPONSIBLE_NAME)), set(), []
+    for uid, label in people:
+        if uid and uid not in seen:
+            seen.add(uid)
+            parts.append(f'<a href="tg://user?id={uid}">{html.escape(label)}</a>')
+    return ", ".join(parts)
+
+
+def _sheet_cell(block: dict) -> str:
+    """Адрес шапки таблицы плана в шитсе: колонка блока + строка («BH50»)."""
+    row = block.get("header_row")
+    if not row:
+        return ""
+    letters, n = "", int(block.get("col") or 0) + 1
+    while n:
+        n, rem = divmod(n - 1, 26)
+        letters = chr(65 + rem) + letters
+    return f"{letters}{row}"
+
+
+def _sheet_place(block: dict) -> str:
+    """«SENTABR 2026», ячейка BH50 — где в шитсе таблица плана."""
+    cell = _sheet_cell(block)
+    return f"«{html.escape(str(block.get('tab') or ''))}»" + (f", ячейка {cell}" if cell else "")
+
+
 def _group_link_mention() -> str:
     """Упоминание того, кто добавляет бота в группы клиентов."""
     if GROUP_LINK_RESPONSIBLE_TG_ID:
@@ -8061,7 +8193,12 @@ def _plan_batch_codes(batch_id) -> set:
 def _plan_add_bl(batch_id, entry, chat_lookup, known_chat_ids, unlinked: list) -> bool:
     """Добавить BL из плана с авто-привязкой группы (цепочка как при
     ручном импорте: название группы → постоянная история связок)."""
+    from services import plan_sync_service as pss
+
     code = entry["code"]
+    if pss.is_sheet_header_mark(code):
+        # «SHIPPING MARK»/«TOTAL» — шапка таблицы, не груз (17.09.2026)
+        return False
     target_chat = _find_chat_for_bl_code(code, chat_lookup)
     if not target_chat:
         hist = db.lookup_bl_link_history(code)
@@ -8091,6 +8228,17 @@ def _plan_add_bl(batch_id, entry, chat_lookup, known_chat_ids, unlinked: list) -
     if created and not target_chat:
         unlinked.append(code)
     return bool(created)
+
+
+def _lift_bot_exclusion(bl_id) -> None:
+    """Груз переехал в партию, в плане которой он ЕСТЬ: исключение из
+    рассылки, которое бот поставил в старой партии («нет в плане этой
+    фуры», «остался на складе»), здесь не действует — иначе BL-77, погруженный
+    в фуру 17.09, не получил бы её трекинг. Ручное исключение сохраняется."""
+    try:
+        db.clear_plan_send_exclusion(bl_id)
+    except Exception:
+        app.logger.exception("plan apply: lift exclusion bl_id=%s failed", bl_id)
 
 
 def _safe_move_bl(bl_id, target_batch_id) -> bool:
@@ -8676,6 +8824,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
                 continue
             if _safe_move_bl(donor_bl["id"], batch["id"]):
                 db.update_bl_figures(donor_bl["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+                _lift_bot_exclusion(donor_bl["id"])
                 moved_in.append(f"{html.escape(entry['code'])} (из «{html.escape(donor_batch['name'])}»)")
                 moved = True
                 break
@@ -8699,6 +8848,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
                     continue
                 if _safe_move_bl(cand["id"], batch["id"]):
                     db.update_bl_figures(cand["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+                    _lift_bot_exclusion(cand["id"])
                     reused_files.append(
                         f"{html.escape(entry['code'])} (из «{html.escape(other['name'])}», файлы сохранены)"
                     )
@@ -8727,6 +8877,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
             )
             if cand and _safe_move_bl(cand["id"], batch["id"]):
                 db.update_bl_figures(cand["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+                _lift_bot_exclusion(cand["id"])
                 moved_in.append(
                     f"{html.escape(entry['code'])} (из «{html.escape(other['name'])}», плана там больше нет)"
                 )
@@ -8742,10 +8893,10 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
     # но на эту фуру не погружен — в составе партии не считаем
     stays = pss.stays_at_horgos(block, blocks)
 
-    def _exclude_from_sends(row) -> None:
+    def _exclude_from_sends(row, source: str = "plan") -> None:
         try:
             if not row.get("send_excluded"):
-                db.set_batch_send_exclusion(row["id"], True, source="plan")
+                db.set_batch_send_exclusion(row["id"], True, source=source)
                 newly_excluded.append(str(row.get("code")))
         except Exception:
             app.logger.exception("plan apply: exclude bl_id=%s failed", row.get("id"))
@@ -8759,9 +8910,38 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
     # позади, он физически здесь (симметрично donor_eligible, который
     # прибывшие партии донорами не считает)
     source_arrived = pss.is_arrived(batch)
+    junk: list = []
     for key, bl in list(have.items()):
         if key in plan or source_arrived:
             continue
+        code_html = html.escape(str(bl.get("code")))
+        # строка-шапка таблицы шитса («SHIPPING MARK»), которую старый разбор
+        # принял за груз (17.09.2026) — это не груз: пустую убираем
+        if pss.is_sheet_header_mark(bl.get("code")) and _bl_is_bare(bl):
+            try:
+                db.delete_bl(bl["id"])
+                junk.append(code_html)
+                continue
+            except Exception:
+                app.logger.exception("plan apply: junk row bl_id=%s delete failed", bl.get("id"))
+        # груз уже едет фурой другой партии, чей казахский план применён, —
+        # в т.ч. с БОЛЕЕ РАННЕЙ датой (17.09 → 13.09 YIWU): наша строка —
+        # лишний дубль, трекинг нашей фуры ему слать нельзя. Если шитс
+        # оставляет груз на складе под НАШИМ планом — решает таблица остатков.
+        if key not in stays:
+            holder = pss.applied_kazakh_holder(key, block, blocks, others, codes_of)
+            holder_row = next(
+                (x for x in db.get_bl_by_batch(holder["id"]) if pss.normalize_mark(x.get("code")) == key),
+                None,
+            ) if holder is not None else None
+            if holder_row is not None:
+                outcome = _merge_duplicate_into(holder_row, bl, holder["id"])
+                if outcome in ("moved", "dropped"):
+                    moved_away.append(f"{code_html} (едет фурой «{html.escape(holder['name'])}», дубль сведён)")
+                    continue
+                _exclude_from_sends(bl)
+                kept_dups.append(f"{code_html} (и в «{html.escape(holder['name'])}»)")
+                continue
         # «СПЕРВА УБРАТЬ КИТАЙСКИЙ ПЛАН» (правило владельца, 24.08.2026):
         # остаток китайского плана, числящийся в казахском плане ДРУГОЙ
         # партии, уезжает туда СРАЗУ — даже если тот план ещё не применён
@@ -8781,9 +8961,12 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
                 if key in stays:
                     # шитс прямо говорит: на нашу фуру не погружен, а груз уже
                     # числится в своей партии — наш трекинг клиенту слать нельзя
-                    _exclude_from_sends(bl)
+                    _exclude_from_sends(bl, source="stays")
                     stayed.append(f"{html.escape(str(bl.get('code')))} (груз уже в «{html.escape(target['name'])}»)")
                     continue
+                # один груз в двух партиях, у обеих строк файлы — решает человек,
+                # но трекинг НАШЕЙ фуры этому грузу уже не положен
+                _exclude_from_sends(bl)
                 kept_dups.append(f"{html.escape(str(bl.get('code')))} (и в «{html.escape(target['name'])}»)")
                 continue
             elif _safe_move_bl(bl["id"], target["id"]):
@@ -8805,7 +8988,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
         if key in stays:
             # остался на складе Хоргоса: строку и файлы храним до его фуры
             # (казахский план той фуры заберёт их к себе), трекинг не шлём
-            _exclude_from_sends(bl)
+            _exclude_from_sends(bl, source="stays")
             stayed.append(html.escape(str(bl.get("code"))))
             continue
         # Груза нет НИ В ОДНОМ казахском плане окна: куда он уехал —
@@ -8835,6 +9018,13 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
         f"📦 <b>{html.escape(batch['name'])}</b>",
         f"   🇰🇿 план {html.escape(str(block['date']))} применён",
     ]
+    if block.get("untitled"):
+        # логисты не подписали казахский план — бот принял его по правилу
+        # «таблица под китайским планом = казахский план» (владелец, 30.09.2026)
+        parts.append(
+            "   ⚠️ у таблицы нет заголовка «HORGOS TO TASHKENT» — принята как казахский план "
+            f"({_sheet_place(block)}) · {_untitled_plan_mentions()}"
+        )
     if moved_in:
         parts.append(_line("🔁", "переехали сюда", moved_in))
     if restored:
@@ -8862,6 +9052,8 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
     if kept_dups:
         parts.append(_line("⚠️", "один груз в двух партиях — решите вручную",
                            sorted(set(kept_dups))))
+    if junk:
+        parts.append(_line("🗑", "убрал строки-шапки таблицы, принятые за груз", junk))
     if unlinked:
         parts.append(_line("👥", "без Telegram-группы", [html.escape(c) for c in unlinked]))
     # Цифры и состав поменялись — прикреплённые packing list'ы могли остаться
@@ -8913,7 +9105,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
     # stuck/waiting в «изменения» НЕ входят: это устойчивое состояние,
     # иначе один и тот же отчёт уходил бы на каждой сверке.
     changed = bool(moved_in or added or updated or moved_away or merged or kept_dups
-                   or reused_files or restored or newly_excluded
+                   or reused_files or restored or newly_excluded or junk
                    or fixes["moved"] or fixes["dups_removed"])
     return True, "\n".join(parts), changed
 
@@ -9127,26 +9319,55 @@ def check_kazakh_plan_asks():
                 break
         if skip:
             continue
+        untitled = bool(block.get("untitled"))
         params = {
             "batch_id": batch["id"],
             "batch_name": batch["name"],
             "tab": block["tab"],
             "plan_title": pss.ref_title(block),
             "plan_date": block["date"],
+            # таблица без заголовка «HORGOS TO TASHKENT»: ответить может и Jigar
+            "untitled": untitled,
         }
         summary = f"Перенести казахский план «{block['title']}» ({block['date']}) в партию «{batch['name']}»"
         action_id = db.ai_create_pending_action(ask_key, "apply_kazakh_plan", json.dumps(params, ensure_ascii=False), summary)
-        mention = f'<a href="tg://user?id={HOJI_DODAM_TG_ID}">{html.escape(HOJI_DODAM_NAME)}</a>'
-        text = (
-            f"{mention}, <b>{html.escape(batch['name'])}</b> partiya Horgosga yetib keldi.\n"
-            f"Horgos→Tashkent planini ({html.escape(block['date'])} — {html.escape(block['title'])}, "
-            f"{len(plan_keys)} BL) shu partiyaga o'tkazsam maylimi?\n"
-            f"⏳ {PLAN_KAZAKH_AUTO_MINUTES} daqiqada javob bo'lmasa — o'zim o'tkazaman."
-        )
-        keyboard = {"inline_keyboard": [[
-            {"text": "✅ Ha", "callback_data": f"aiact:ok:{action_id}"},
-            {"text": "❌ Yo'q", "callback_data": f"aiact:no:{action_id}"},
-        ]]}
+        # «horgos skladda qoladigan yuklar»: трекинг этой фуры им не уйдёт
+        stays_out = [str(e["code"]) for k, e in pss.stays_at_horgos(block, blocks).items() if k not in plan_keys]
+        stay_line = ""
+        if stays_out:
+            stay_line = (f"⚓ Horgos skladida qoladi ({len(stays_out)}): "
+                         f"{html.escape(', '.join(stays_out[:12]))} — bu partiya trekingi ularga yuborilmaydi.\n")
+        if untitled:
+            cell = _sheet_cell(block)
+            where = f"«{html.escape(str(block['tab']))}» varag'i" + (f", {cell} katak" if cell else "")
+            text = (
+                "🚨🚨 <b>DIQQAT: QOZOQ PLANI SARLAVHASIZ!</b> 🚨🚨\n"
+                f"{_untitled_plan_mentions()}\n"
+                f"<b>{html.escape(batch['name'])}</b> partiyaning xitoy plani ostidagi jadvalga "
+                f"<b>«HORGOS TO TASHKENT»</b> yozilmagan ({where}).\n"
+                f"Qoida bo'yicha bu jadvalni qozoq plani deb hisoblayman: {len(plan_keys)} BL, "
+                f"{float(block.get('total_ctn') or 0):g} joy.\n"
+                + stay_line
+                + "✏️ Iltimos, jadval ustiga sana va «HORGOS TO TASHKENT» sarlavhasini yozib qo'ying.\n"
+                f"⏳ {PLAN_KAZAKH_AUTO_MINUTES} daqiqada javob bo'lmasa — qozoq plani sifatida o'zim o'tkazaman."
+            )
+            keyboard = {"inline_keyboard": [
+                [{"text": "✅ Ha, bu qozoq plani", "callback_data": f"aiact:ok:{action_id}"}],
+                [{"text": "❌ Yo'q, qozoq plani emas", "callback_data": f"aiact:no:{action_id}"}],
+            ]}
+        else:
+            mention = f'<a href="tg://user?id={HOJI_DODAM_TG_ID}">{html.escape(HOJI_DODAM_NAME)}</a>'
+            text = (
+                f"{mention}, <b>{html.escape(batch['name'])}</b> partiya Horgosga yetib keldi.\n"
+                f"Horgos→Tashkent planini ({html.escape(block['date'])} — {html.escape(block['title'])}, "
+                f"{len(plan_keys)} BL) shu partiyaga o'tkazsam maylimi?\n"
+                + stay_line
+                + f"⏳ {PLAN_KAZAKH_AUTO_MINUTES} daqiqada javob bo'lmasa — o'zim o'tkazaman."
+            )
+            keyboard = {"inline_keyboard": [[
+                {"text": "✅ Ha", "callback_data": f"aiact:ok:{action_id}"},
+                {"text": "❌ Yo'q", "callback_data": f"aiact:no:{action_id}"},
+            ]]}
         try:
             telegram_send_message(control_chat, text, reply_markup=keyboard)
             pending_blocks.add(block_key)
@@ -11098,6 +11319,11 @@ def api_send_batch(batch_id):
                 continue
     include_related_batches = False
 
+    # оставшимся на складе Хоргоса трекинг этой фуры не положен — даже
+    # если их выбрали вручную (владелец, 30.09.2026)
+    _exclude_horgos_stays(batch)
+    stays_ids = {bl_id for bl_id, src in (db.get_batch_send_exclusion_sources(batch_id) or {}).items()
+                 if src == "stays"}
     bl_rows = db.get_bl_by_batch(batch_id)
     if selected_ids:
         bl_rows = [bl for bl in bl_rows if int(bl.get("id") or 0) in selected_ids]
@@ -11120,6 +11346,15 @@ def api_send_batch(batch_id):
     dispatch_rows: list[dict] = []
     for bl in bl_rows:
         chat_id = str(bl.get("chat_id") or "").strip()
+        if bl.get("id") in stays_ids:
+            results.append({
+                "code": bl["code"],
+                "client": bl["client_name"],
+                "success": False,
+                "skipped": True,
+                "error": "Остался на складе Хоргоса (horgos skladda qoladigan yuklar) — не в этой фуре",
+            })
+            continue
         if not chat_id:
             results.append({
                 "code": bl["code"],
@@ -11276,6 +11511,11 @@ def api_send_one(bl_id):
 
     batch = db.get_batch(bl["batch_id"])
     batch_name = batch["name"] if batch else "—"
+    if batch:
+        _exclude_horgos_stays(batch)
+        if _bl_stays_at_horgos(bl):
+            return jsonify({"error": (f"{bl['code']} остался на складе Хоргоса (horgos skladda qoladigan "
+                                      f"yuklar) — трекинг «{batch_name}» ему не положен")}), 400
     success, error_msg = send_bl_package(
         bl,
         batch_name,
