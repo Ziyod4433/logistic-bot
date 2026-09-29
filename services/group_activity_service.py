@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import database as db
 
@@ -74,6 +74,32 @@ def _batch_day(name, created_at) -> date | None:
 
 def _ago(day: date | None, today: date) -> int | None:
     return (today - day).days if day else None
+
+
+def _members_clock_shift(conn) -> timedelta:
+    """telegram_chat_members.last_seen_at пишется datetime('now','localtime')
+    сервера — на Railway это UTC, а requested_at журнала — по Ташкенту.
+    Сдвиг, переводящий первое во второе (на проде +5 ч). Без него ответ
+    сотрудника через 10 минут выглядел «раньше» вопроса клиента, и 84 группы
+    из 95 ложно числились «ждут ответа» (30.09.2026)."""
+    try:
+        row = conn.execute("SELECT datetime('now','localtime') AS t").fetchone()
+        sqlite_now = datetime.strptime(str(row["t"]), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, KeyError, IndexError):
+        return timedelta(0)
+    tash_now = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
+    return timedelta(minutes=round((tash_now - sqlite_now).total_seconds() / 900) * 15)
+
+
+def _to_tashkent(value, shift: timedelta) -> str:
+    """Отметка last_seen_at во времени Ташкента («YYYY-MM-DD HH:MM:SS»)."""
+    text = str(value or "").strip()[:19]
+    if not text or not shift:
+        return text
+    try:
+        return (datetime.strptime(text, "%Y-%m-%d %H:%M:%S") + shift).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return text
 
 
 def _excluded_chat_ids() -> set:
@@ -146,6 +172,7 @@ def analyze_all(today: date | None = None) -> dict:
     iso = lambda o: date.fromordinal(o).isoformat()
     conn = db.get_conn()
     try:
+        shift = _members_clock_shift(conn)
         staff = staff_directory(conn)
         staff_sql, staff_args = _in_clause(staff)
         chats = [dict(r) for r in conn.execute(
@@ -171,14 +198,22 @@ def analyze_all(today: date | None = None) -> dict:
             WHERE request_user_id NOT IN {staff_sql}
             GROUP BY chat_id
             """, (iso(d30), iso(d60), iso(d30), iso(d90), *staff_args)).fetchall()}
-        seen = {str(r["chat_id"]): dict(r) for r in conn.execute(
-            f"SELECT chat_id, MAX(last_seen_at) AS last_at, COUNT(*) AS people FROM telegram_chat_members "
-            f"WHERE user_id NOT IN {staff_sql} GROUP BY chat_id", staff_args).fetchall()}
+        # last_seen_at — в часах сервера: сразу переводим во время Ташкента,
+        # иначе сравнение с requested_at (Ташкент) врёт на 5 часов
+        seen = {}
+        for r in conn.execute(
+                f"SELECT chat_id, MAX(last_seen_at) AS last_at, COUNT(*) AS people FROM telegram_chat_members "
+                f"WHERE user_id NOT IN {staff_sql} GROUP BY chat_id", staff_args).fetchall():
+            item = dict(r)
+            item["last_at"] = _to_tashkent(item.get("last_at"), shift)
+            seen[str(r["chat_id"])] = item
         ours: dict = {}
         for r in conn.execute(
             f"SELECT chat_id, user_id, display_name, username, last_seen_at FROM telegram_chat_members "
             f"WHERE user_id IN {staff_sql}", staff_args).fetchall():
-            ours.setdefault(str(r["chat_id"]), []).append(dict(r))
+            item = dict(r)
+            item["last_seen_at"] = _to_tashkent(item.get("last_seen_at"), shift)
+            ours.setdefault(str(r["chat_id"]), []).append(item)
         sent = {str(r["chat_id"]): dict(r) for r in conn.execute(
             "SELECT chat_id, MAX(sent_at) AS last_at, COUNT(*) AS n FROM send_logs "
             "WHERE success = 1 GROUP BY chat_id").fetchall()}
@@ -325,6 +360,7 @@ def group_detail(chat_id: str, messages_limit: int = 12, today: date | None = No
     limit = max(1, min(int(messages_limit or 12), 40))
     conn = db.get_conn()
     try:
+        shift = _members_clock_shift(conn)
         staff = staff_directory(conn)
         staff_sql, staff_args = _in_clause(staff)
         shipments = [dict(r) for r in conn.execute(
@@ -379,7 +415,7 @@ def group_detail(chat_id: str, messages_limit: int = 12, today: date | None = No
     clients, team = [], []
     for p in people:
         item = {"name": p["display_name"] or p["username"] or p["user_id"], "username": p["username"],
-                "last_seen": str(p["last_seen_at"] or "")[:10]}
+                "last_seen": _to_tashkent(p["last_seen_at"], shift)[:10]}
         (team if str(p["user_id"]) in staff else clients).append(item)
     return {
         "overview": overview,
