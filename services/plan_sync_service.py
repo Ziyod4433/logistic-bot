@@ -133,7 +133,12 @@ def aggregate_block(block: dict) -> dict:
         key = normalize_mark(code)
         if not key or key == "TOTAL":
             continue
-        entry = agg.setdefault(key, {"code": code, "ctn": 0.0, "cbm": 0.0, "kg": 0.0, "parts": []})
+        entry = agg.setdefault(key, {"code": code, "ctn": 0.0, "cbm": 0.0, "kg": 0.0, "parts": [],
+                                     "partiya": []})
+        # колонка PARTIYA казахского плана: из какой партии этот груз
+        pkey = date_key(item.get("partiya"))
+        if pkey and pkey not in entry["partiya"]:
+            entry["partiya"].append(pkey)
         ctn = float(item.get("ctn") or 0)
         entry["ctn"] += ctn
         entry["cbm"] += float(item.get("cbm") or 0)
@@ -161,32 +166,73 @@ def is_sheet_header_mark(code) -> bool:
     return key in _HEADER_MARKS or bool(re.search(r"HORGOS\w*QOL", key))
 
 
+def own_sheet_keys(batch: dict, blocks: list) -> set | None:
+    """Коды, которые шитс хоть где-то относит к ЭТОЙ партии: все китайские
+    планы её даты (в любой колонке). None — китайского плана её даты в шитсе
+    нет, и доказать «этого груза у партии не было» нечем."""
+    dkey = date_key(batch.get("name"))
+    if not dkey:
+        return None
+    keys, found = set(), False
+    for b in blocks:
+        if b.get("kind") == "china" and date_key(b.get("date")) == dkey:
+            found = True
+            keys |= set(aggregate_block(b).keys())
+    return keys if found else None
+
+
 def applied_kazakh_holder(key: str, block: dict, blocks: list, others: list, codes_of,
+                          batch: dict | None = None, places=None, own_keys: set | None = None,
                           window_days: int = 21):
-    """Незакрытая партия (не прибывшая), чей ПРИМЕНЁННЫЙ казахский план
-    содержит этот код и в которой этот груз уже числится, в пределах
-    ±window_days от даты блока. Для «лишних» строк: груз мог уехать фурой
-    партии с БОЛЕЕ РАННЕЙ датой (кейс 17.09 → 13.09 YIWU), а
-    extra_destination смотрит только вперёд по датам."""
+    """(партия, довод) — другая незакрытая партия с ПРИМЕНЁННЫМ казахским
+    планом, где уже числится ЭТОТ ЖЕ груз, что и наша «лишняя» строка.
+    Нужен для груза, уехавшего фурой партии с БОЛЕЕ РАННЕЙ датой (кейс 17.09
+    → 13.09 YIWU): extra_destination смотрит только вперёд по датам.
+
+    Код клиента сам по себе ничего не доказывает: постоянные клиенты (DREAM,
+    WIZERA, LK…) едут почти в каждой фуре, и слить строку 22.09 со строкой
+    17.09 по одному коду — значит склеить два разных груза. Поэтому нужен
+    довод из шитса:
+      «partiya» — в казахском плане той партии у строк этого кода в колонке
+                  PARTIYA стоит НАША партия: наш груз едет её фурой;
+      «phantom» — код не значится ни в одном китайском плане нашей даты
+                  (строку когда-то создал ошибочный разбор листа), а у той
+                  партии в плане или в остатках этот код с ТЕМ ЖЕ числом мест.
+    Без довода — (None, "")."""
     try:
         base = datetime.strptime(date_key(block.get("date")), "%d%m%Y").date()
     except ValueError:
-        return None
+        return None, ""
+    ours = date_key((batch or {}).get("name"))
+    try:
+        our_places = float(places) if places is not None else None
+    except (TypeError, ValueError):
+        our_places = None
     for other in others:
         if (other.get("plan_kind") or "") != "kazakh" or is_arrived(other):
             continue
         if key not in codes_of(other):
             continue
         other_block = resolve_ref_block(other, blocks, "kazakh", codes_of(other))
-        if other_block is None or other_block is block or key not in aggregate_block(other_block):
+        if other_block is None or other_block is block:
             continue
         try:
             odate = datetime.strptime(date_key(other_block.get("date")), "%d%m%Y").date()
         except ValueError:
             continue
-        if abs((odate - base).days) <= window_days:
-            return other
-    return None
+        if abs((odate - base).days) > window_days:
+            continue
+        entry = aggregate_block(other_block).get(key)
+        # партия-соседка той же даты (YIWU и ZH одного дня): PARTIYA «BL13092026»
+        # их не различает — такой довод ничего не доказывает
+        if entry and ours and ours in entry.get("partiya", []) and date_key(other.get("name")) != ours:
+            return other, "partiya"
+        if own_keys is None or key in own_keys or our_places is None:
+            continue
+        evidence = [entry, stays_at_horgos(other_block, blocks).get(key)]
+        if any(e and abs(float(e.get("ctn") or 0) - our_places) <= CTN_EPS for e in evidence):
+            return other, "phantom"
+    return None, ""
 
 
 def stays_at_horgos(block: dict | None, blocks: list | None = None) -> dict:
@@ -196,7 +242,8 @@ def stays_at_horgos(block: dict | None, blocks: list | None = None) -> dict:
 
     Таблица стоит под последним блоком колонки: пока казахского плана нет —
     под китайским, потом под казахским. Поэтому к своим остаткам блока
-    добавляем остатки блоков той же колонки той же вкладки."""
+    добавляем остатки блоков той же колонки той же вкладки и ТОЙ ЖЕ даты
+    (в старых вкладках в одной колонке бывает несколько фур)."""
     if not block:
         return {}
     items = list(block.get("stays") or [])
@@ -207,7 +254,8 @@ def stays_at_horgos(block: dict | None, blocks: list | None = None) -> dict:
         if other is block or not other.get("stays"):
             continue
         if other.get("tab") == block.get("tab") and other.get("col") is not None \
-                and other.get("col") == block.get("col"):
+                and other.get("col") == block.get("col") \
+                and date_key(other.get("date")) == date_key(block.get("date")):
             for x in other["stays"]:
                 row = x.get("table_row")
                 if row is not None and row in seen:

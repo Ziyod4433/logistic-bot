@@ -8241,6 +8241,17 @@ def _lift_bot_exclusion(bl_id) -> None:
         app.logger.exception("plan apply: lift exclusion bl_id=%s failed", bl_id)
 
 
+def _settle_moved_row(bl_id, entry: dict | None = None) -> None:
+    """Строка переехала в партию, в плане которой её груз ЕСТЬ: бот-исключение
+    из старой партии снимаем, цифры (если известны) — по плану новой фуры."""
+    _lift_bot_exclusion(bl_id)
+    if entry:
+        try:
+            db.update_bl_figures(bl_id, entry["ctn"], entry.get("breakdown", ""), entry["cbm"], entry["kg"])
+        except Exception:
+            app.logger.exception("plan apply: figures after move failed for bl_id=%s", bl_id)
+
+
 def _safe_move_bl(bl_id, target_batch_id) -> bool:
     """Перенос BL между партиями (db.move_bl_to_batch бросает ValueError
     при дубле кода в целевой партии и т.п. — для синхронизации это
@@ -8911,6 +8922,9 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
     # прибывшие партии донорами не считает)
     source_arrived = pss.is_arrived(batch)
     junk: list = []
+    # коды, которые шитс относит к этой партии (китайские планы её даты):
+    # строка вне них — кандидат в «фантомы» старого разбора листа
+    own_keys = pss.own_sheet_keys(batch, blocks)
     for key, bl in list(have.items()):
         if key in plan or source_arrived:
             continue
@@ -8924,12 +8938,17 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
                 continue
             except Exception:
                 app.logger.exception("plan apply: junk row bl_id=%s delete failed", bl.get("id"))
-        # груз уже едет фурой другой партии, чей казахский план применён, —
-        # в т.ч. с БОЛЕЕ РАННЕЙ датой (17.09 → 13.09 YIWU): наша строка —
-        # лишний дубль, трекинг нашей фуры ему слать нельзя. Если шитс
-        # оставляет груз на складе под НАШИМ планом — решает таблица остатков.
+        # тот же груз уже числится в другой партии с применённым казахским
+        # планом — в т.ч. с БОЛЕЕ РАННЕЙ датой (17.09 → 13.09 YIWU): наша
+        # строка — лишний дубль, трекинг нашей фуры ему слать нельзя. Только
+        # с доводом из шитса (PARTIYA или строка-фантом с тем же числом мест):
+        # по одному коду постоянного клиента склеились бы разные рейсы.
+        # Если шитс оставляет груз на складе под НАШИМ планом — решают остатки.
         if key not in stays:
-            holder = pss.applied_kazakh_holder(key, block, blocks, others, codes_of)
+            holder, why = pss.applied_kazakh_holder(
+                key, block, blocks, others, codes_of,
+                batch=batch, places=bl.get("quantity_places"), own_keys=own_keys,
+            )
             holder_row = next(
                 (x for x in db.get_bl_by_batch(holder["id"]) if pss.normalize_mark(x.get("code")) == key),
                 None,
@@ -8937,7 +8956,14 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
             if holder_row is not None:
                 outcome = _merge_duplicate_into(holder_row, bl, holder["id"])
                 if outcome in ("moved", "dropped"):
-                    moved_away.append(f"{code_html} (едет фурой «{html.escape(holder['name'])}», дубль сведён)")
+                    if outcome == "moved":
+                        # наша строка (с файлами) теперь в той партии
+                        holder_entry = pss.aggregate_block(
+                            pss.resolve_ref_block(holder, blocks, "kazakh", codes_of(holder)) or {}
+                        ).get(key)
+                        _settle_moved_row(bl["id"], holder_entry)
+                    note = "едет её фурой" if why == "partiya" else "ошибочная строка, груз там"
+                    moved_away.append(f"{code_html} (→ «{html.escape(holder['name'])}», {note}, дубль сведён)")
                     continue
                 _exclude_from_sends(bl)
                 kept_dups.append(f"{code_html} (и в «{html.escape(holder['name'])}»)")
@@ -8956,6 +8982,8 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
                 # цель уже держит этот груз — у нас лишний дубль
                 outcome = _merge_duplicate_into(target_have[key], bl, target["id"])
                 if outcome in ("moved", "dropped"):
+                    if outcome == "moved":
+                        _settle_moved_row(bl["id"])     # в плане цели груз есть
                     moved_away.append(f"{html.escape(str(bl.get('code')))} (→ «{html.escape(target['name'])}», дубль сведён)")
                     continue
                 if key in stays:
@@ -8970,6 +8998,7 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
                 kept_dups.append(f"{html.escape(str(bl.get('code')))} (и в «{html.escape(target['name'])}»)")
                 continue
             elif _safe_move_bl(bl["id"], target["id"]):
+                _settle_moved_row(bl["id"])             # в плане цели груз есть
                 moved_away.append(f"{html.escape(str(bl.get('code')))} (→ «{html.escape(target['name'])}»)")
                 continue
         if in_block is not None:

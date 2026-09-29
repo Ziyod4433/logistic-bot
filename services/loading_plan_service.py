@@ -152,6 +152,25 @@ def _is_kazakh_title(title) -> bool:
     return compact.startswith("HORGOS") or ("HORGOS" in compact and "TO HORGOS" not in compact)
 
 
+def _partiya_offset(grid: list, r: int, j: int):
+    """Смещение колонки PARTIYA (из какой партии груз) от колонки марок в
+    шапке таблицы (строка r) — или None, если такой колонки нет."""
+    row = grid[r] if 0 <= r < len(grid) else []
+    for c in range(j, min(len(row), j + 11)):
+        v = row[c]
+        if isinstance(v, str) and re.search(r"PART|ПАРТ", v.strip().upper()):
+            return c - j
+    return None
+
+
+def _partiya(grid: list, k: int, j: int, off):
+    """Значение PARTIYA строки k («12.09.2026 ZH», «BL17092026», «KHORGOS»)."""
+    if off is None or not (0 <= k < len(grid)) or j + off >= len(grid[k]):
+        return ""
+    v = grid[k][j + off]
+    return _fmt_date(v) if v is not None else ""
+
+
 def _parse_stays(grid: list, j: int, after: int) -> list:
     """Строки таблицы «остаётся на складе Хоргоса» под блоком в колонке j.
     Ищем заголовок ниже строки `after`; новый блок в этой колонке — стоп.
@@ -174,7 +193,9 @@ def _parse_stays(grid: list, j: int, after: int) -> list:
         return []
     k = head + 1
     first = cell(k)
-    if isinstance(first, str) and first.strip().upper().startswith("SHIPPING MARK"):
+    off = None
+    if _is_table_header(first):
+        off = _partiya_offset(grid, k, j)
         k += 1
     out = []
     while k < n_rows:
@@ -187,6 +208,7 @@ def _parse_stays(grid: list, j: int, after: int) -> list:
             "ctn": _num(cell(k, j + 1)),
             "cbm": _num(cell(k, j + 2)),
             "kg": _num(cell(k, j + 3)),
+            "partiya": _partiya(grid, k, j, off),
             # строка заголовка таблицы: одну и ту же таблицу могут увидеть
             # два блока колонки (китайский и казахский) — считать её раз
             "table_row": head,
@@ -195,7 +217,7 @@ def _parse_stays(grid: list, j: int, after: int) -> list:
     return out
 
 
-def _read_rows(grid: list, j: int, start: int) -> tuple:
+def _read_rows(grid: list, j: int, start: int, partiya_off=None) -> tuple:
     """Строки груза таблицы в колонке j, начиная со строки start.
     → (items, строка, с которой продолжать поиск ниже таблицы).
 
@@ -222,6 +244,12 @@ def _read_rows(grid: list, j: int, start: int) -> tuple:
             # остатков — её строки НЕ состав фуры
             break
         if _is_table_header(mark_cell):
+            if not items:
+                # шапка своей таблицы (под заголовком бывает пустая строка)
+                if partiya_off is None:
+                    partiya_off = _partiya_offset(grid, k, j)
+                k += 1
+                continue
             break
         if _is_title(mark_cell) and re.search(r"HORGOS|TASHKENT|\bTO\b", mark.upper()):
             # заголовок следующей таблицы без даты («HORGOS TO TASHKENT …»):
@@ -253,6 +281,7 @@ def _read_rows(grid: list, j: int, start: int) -> tuple:
             "cbm": _num(cval(2)),
             "kg": _num(cval(3)),
             "arrive": arrive,
+            "partiya": _partiya(grid, k, j, partiya_off),
         })
         k += 1
     return items, k
@@ -271,12 +300,7 @@ _UNTITLED_SCAN_ROWS = 25
 
 
 def _header_has_partiya(grid: list, r: int, j: int) -> bool:
-    row = grid[r] if 0 <= r < len(grid) else []
-    for c in range(j, min(len(row), j + 11)):
-        v = row[c]
-        if isinstance(v, str) and re.search(r"PART|ПАРТ", v.strip().upper()):
-            return True
-    return False
+    return _partiya_offset(grid, r, j) is not None
 
 
 def _find_untitled_table(grid: list, j: int, after: int):
@@ -363,9 +387,11 @@ def _parse_tab(grid: list) -> list:
             # пропускаем (в казахских блоках её может не быть)
             start = i + 2
             first = grid[start][j] if start < n_rows and j < len(grid[start]) else None
+            off = None
             if _is_table_header(first):
+                off = _partiya_offset(grid, start, j)
                 start += 1
-            items, k = _read_rows(grid, j, start)
+            items, k = _read_rows(grid, j, start, off)
             if not items:
                 continue
             upper_title = title.upper()
@@ -380,7 +406,7 @@ def _parse_tab(grid: list) -> list:
             if found is None:
                 continue
             header_row, written_title = found
-            kz_items, kz_end = _read_rows(grid, j, header_row + 1)
+            kz_items, kz_end = _read_rows(grid, j, header_row + 1, _partiya_offset(grid, header_row, j))
             if not kz_items:
                 continue
             kz = _block(cell, written_title or _implicit_kazakh_title(warehouses), "kazakh",
