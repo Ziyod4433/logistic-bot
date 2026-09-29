@@ -25,7 +25,7 @@ SEGMENT_LABELS = {
     "active": "🟢 активен",
     "fading": "🟡 затихает",
     "asleep": "🔴 заснул",
-    "new": "⚪ новая группа, груза ещё не было",
+    "new": "⚪ бот в группе недавно — истории ещё нет",
     "no_cargo": "⚫ груз в системе не виден (BL не привязан или так и не отгрузил)",
 }
 
@@ -121,7 +121,8 @@ def _classify(rec: dict, t: dict) -> tuple[str, str]:
     d_cargo, d_msg = rec["days_since_cargo"], rec["days_since_client_message"]
     if rec["batches"] == 0:
         if (rec["group_age_days"] or 0) < t["new_group_days"]:
-            return "new", "группа моложе полутора месяцев, груза ещё не было"
+            return "new", (f"бот видит группу {rec['group_age_days']} дн., груз к ней ещё не привязан — "
+                           "это не «новый клиент», а короткая история")
         voice = "клиент никогда не писал" if d_msg is None else f"клиент писал {d_msg} дн. назад"
         return "no_cargo", f"ни одного груза в системе; {voice}"
     if rec["cargo_in_transit"]:
@@ -165,7 +166,6 @@ def analyze_all(today: date | None = None) -> dict:
                    SUM(CASE WHEN requested_at >= ? THEN 1 ELSE 0 END) AS n30,
                    SUM(CASE WHEN requested_at >= ? AND requested_at < ? THEN 1 ELSE 0 END) AS prev30,
                    SUM(CASE WHEN requested_at >= ? THEN 1 ELSE 0 END) AS n90,
-                   SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS unanswered,
                    AVG(CASE WHEN response_seconds > 0 THEN response_seconds END) AS avg_resp
             FROM moderator_response_requests
             WHERE request_user_id NOT IN {staff_sql}
@@ -213,6 +213,12 @@ def analyze_all(today: date | None = None) -> dict:
         v, s = voice.get(cid, {}), seen.get(cid, {})
         last_voice = max([d for d in (_day(v.get("last_at")), _day(s.get("last_at"))) if d], default=None)
         team = sorted(ours.get(cid, []), key=lambda m: str(m.get("last_seen_at") or ""), reverse=True)
+        # «последнее слово за клиентом»: он написал, и после этого никто из наших
+        # в группе не появлялся. Поле status журнала для этого не годится — оно
+        # почти никогда не закрывается (на проде «answered» у 111 строк из 29 559)
+        voice_ts = max(str(v.get("last_at") or ""), str(s.get("last_at") or ""))
+        team_ts = str(team[0].get("last_seen_at") or "") if team else ""
+        waiting = bool(voice_ts) and voice_ts > team_ts
         sales = staff.get(str(c.get("sales_manager_tg_id") or "").strip(), "")
         if not sales:
             sales = next((m["display_name"] or m["username"] for m in team
@@ -237,7 +243,8 @@ def analyze_all(today: date | None = None) -> dict:
             "client_msgs_90d": int(v.get("n90") or 0),
             "client_msgs_total": int(v.get("total") or 0),
             "client_people": int(s.get("people") or 0),
-            "unanswered_client_msgs": int(v.get("unanswered") or 0),
+            "client_spoke_last": waiting,
+            "days_waiting_for_us": _ago(last_voice, today) if waiting else None,
             "avg_reply_minutes": round(float(v["avg_resp"]) / 60) if v.get("avg_resp") else None,
             "last_staff_seen": (team[0].get("last_seen_at") or "")[:10] if team else "",
             "sales_manager": sales,
@@ -259,7 +266,7 @@ def analyze_all(today: date | None = None) -> dict:
         # кого будить первым: ценность (сколько возил) × свежесть потери × наши долги
         rec["wake_priority"] = (
             rec["batches"] * 10 + min(rec["client_msgs_total"], 40)
-            + (20 if rec["dropped"] else 0) + (15 if rec["unanswered_client_msgs"] else 0)
+            + (20 if rec["dropped"] else 0) + (15 if rec["client_spoke_last"] else 0)
             + (10 if rec["problems_open"] else 0)
             + (10 if (rec["last_rating"] or {}).get("score", 5) <= 3 else 0)
         )
@@ -278,7 +285,7 @@ def analyze_all(today: date | None = None) -> dict:
             "inactive_groups": other["inactive"],
             "by_segment": counts,
             "dropped_sharply": sum(1 for g in groups if g["dropped"]),
-            "with_unanswered_client_msgs": sum(1 for g in groups if g["unanswered_client_msgs"]),
+            "client_spoke_last": sum(1 for g in groups if g["client_spoke_last"]),
         },
         "groups": groups,
     }
@@ -334,8 +341,7 @@ def group_detail(chat_id: str, messages_limit: int = 12, today: date | None = No
             s["cargo_date"] = day.isoformat() if day else ""
         monthly = [dict(r) for r in conn.execute(
             f"""
-            SELECT SUBSTR(requested_at, 1, 7) AS month, COUNT(*) AS client_msgs,
-                   SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS unanswered
+            SELECT SUBSTR(requested_at, 1, 7) AS month, COUNT(*) AS client_msgs
             FROM moderator_response_requests
             WHERE chat_id = ? AND request_user_id NOT IN {staff_sql}
             GROUP BY month ORDER BY month DESC LIMIT 8
@@ -343,7 +349,7 @@ def group_detail(chat_id: str, messages_limit: int = 12, today: date | None = No
         messages = [dict(r) for r in conn.execute(
             f"""
             SELECT requested_at AS at, request_user_name AS who, SUBSTR(request_text, 1, 240) AS text,
-                   status, responder_name AS answered_by, SUBSTR(response_text, 1, 160) AS answer,
+                   responder_name AS answered_by, SUBSTR(response_text, 1, 160) AS answer,
                    response_seconds
             FROM moderator_response_requests
             WHERE chat_id = ? AND request_user_id NOT IN {staff_sql}

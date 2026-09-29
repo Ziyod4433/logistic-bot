@@ -5224,7 +5224,7 @@ def api_dev_overview():
 @editor_required
 def api_groups_activity():
     """Активность клиентских групп — те же данные, что видит ассистент:
-    ?segment=asleep|fading|dropped|unanswered|active|new|no_cargo|all,
+    ?segment=asleep|fading|dropped|waiting|active|new|no_cargo|all,
     ?chat=<chat_id | название | BL> — карточка одной группы."""
     from services import ai_assistant
 
