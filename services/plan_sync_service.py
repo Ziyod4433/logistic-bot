@@ -537,6 +537,16 @@ def find_block_for_batch(batch: dict, blocks: list, batch_codes: set, batches: l
                       else "китайского плана на эту дату нет")
     if stage == "china" and len(candidates) == 1:
         return candidates[0], "по дате"
+    if stage == "kazakh" and (batch.get("plan_kind") or "") == "china" and batch_has_ref(batch):
+        # таблица без заголовка ПОД китайским планом этой партии — её казахский
+        # план по положению (правило владельца, 30.09.2026), даже если
+        # составы почти не пересекаются: фуры 22.09 и 23.09 поменялись грузом,
+        # и план 23.09 совпал с её партией лишь по одному коду
+        under = [b for b in candidates
+                 if b.get("untitled") and ref_base(b.get("china_title")) == ref_base(batch.get("plan_title"))]
+        if under:
+            best = max(under, key=lambda b: len(set(aggregate_block(b).keys()) & batch_codes))
+            return best, "таблица под китайским планом партии"
     best, best_hits = None, 0
     for block in candidates:
         hits = len(set(aggregate_block(block).keys()) & batch_codes)
