@@ -303,11 +303,34 @@ def _header_has_partiya(grid: list, r: int, j: int) -> bool:
     return _partiya_offset(grid, r, j) is not None
 
 
+# значение колонки PARTIYA: «BL07102026», «12.09.2026 ZH», «03.09.2026 YW», «KHORGOS»
+_PARTIYA_VALUE_RE = re.compile(
+    r"^(BL\s?\d{8}|\d{1,2}[.\-/]\d{1,2}[.\-/](\d{4}|\d{2})\s*[A-Z]{1,6}|K?HORGOS)$"
+)
+
+
+def _looks_like_partiya(v) -> bool:
+    return isinstance(v, str) and bool(_PARTIYA_VALUE_RE.match(v.strip().upper()))
+
+
+def _guess_partiya_offset(grid: list, r: int, j: int):
+    """Таблица без шапки: колонку PARTIYA угадываем по значению в строке r
+    (обычно 7-я колонка от марки)."""
+    row = grid[r] if 0 <= r < len(grid) else []
+    for off in (6, 7, 8):
+        if j + off < len(row) and _looks_like_partiya(row[j + off]):
+            return off
+    return None
+
+
 def _find_untitled_table(grid: list, j: int, after: int):
     """Таблица без даты/заголовка под китайским планом в колонке j.
-    → (строка шапки SHIPPING MARK, заголовок, если он всё-таки написан
-    без даты, иначе "") или None. Без заголовка таблица должна иметь
-    колонку PARTIYA — иначе это не казахский план."""
+    → {"start": первая строка груза, "header": строка шапки или None,
+    "title": заголовок, если написан без даты, "partiya_off": смещение
+    колонки PARTIYA} или None. Без заголовка таблица должна иметь колонку
+    PARTIYA — иначе это не казахский план. Шапки SHIPPING MARK может не
+    быть вовсе (07.10.2026 YIWU): тогда PARTIYA узнаём по значениям
+    «BL07102026» в двух первых строках."""
     n_rows = len(grid)
 
     def cell(r):
@@ -325,9 +348,10 @@ def _find_untitled_table(grid: list, j: int, after: int):
         if _is_stays_heading(v):
             return None          # сразу таблица остатков — казахского плана нет
         if _is_table_header(v):
-            if not title and not _header_has_partiya(grid, r, j):
+            off = _partiya_offset(grid, r, j)
+            if not title and off is None:
                 return None      # не казахская таблица (копия, расчёт цен…)
-            return r, title
+            return {"start": r + 1, "header": r, "title": title, "partiya_off": off}
         preamble += 1
         if preamble > 2:
             return None          # что-то своё — не угадываем
@@ -336,6 +360,11 @@ def _find_untitled_table(grid: list, j: int, after: int):
         if _is_title(v) and _is_kazakh_title(text):
             title = text         # заголовок без даты
             continue
+        # строка груза без шапки над ней: казахская таблица, если в ней
+        # (и в следующей строке) стоит PARTIYA
+        off = _guess_partiya_offset(grid, r, j)
+        if off is not None and _guess_partiya_offset(grid, r + 1, j) == off:
+            return {"start": r, "header": None, "title": title, "partiya_off": off}
         return None
     return None
 
@@ -405,15 +434,18 @@ def _parse_tab(grid: list) -> list:
             found = _find_untitled_table(grid, j, k)
             if found is None:
                 continue
-            header_row, written_title = found
-            kz_items, kz_end = _read_rows(grid, j, header_row + 1, _partiya_offset(grid, header_row, j))
+            written_title = found["title"]
+            kz_items, kz_end = _read_rows(grid, j, found["start"], found["partiya_off"])
             if not kz_items:
                 continue
             kz = _block(cell, written_title or _implicit_kazakh_title(warehouses), "kazakh",
                         list(warehouses), kz_items, _parse_stays(grid, j, kz_end), j)
             # логисты не написали «HORGOS TO TASHKENT» — бот предупредит их
             kz["untitled"] = not written_title
-            kz["header_row"] = header_row + 1          # номер строки в листе (с 1)
+            # нет и шапки SHIPPING MARK — таблица узнана по колонке PARTIYA
+            kz["no_header"] = found["header"] is None
+            # номер строки в листе (с 1): шапка, а без неё — первая строка груза
+            kz["header_row"] = (found["header"] if found["header"] is not None else found["start"]) + 1
             # под каким китайским планом стоит таблица: по положению это
             # казахский план ТОЙ ЖЕ партии, даже если составы почти не
             # пересекаются (фуры 22.09 и 23.09 поменялись грузом)

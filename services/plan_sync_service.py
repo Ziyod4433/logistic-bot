@@ -163,7 +163,9 @@ def is_sheet_header_mark(code) -> bool:
     MARK», «TOTAL», «horgos skladda qoladigan yuklar») — старый разбор
     принимал такие строки за груз, когда таблицы стояли вплотную (17.09)."""
     key = normalize_mark(code)
-    return key in _HEADER_MARKS or bool(re.search(r"HORGOS\w*QOL", key))
+    # «BL23092026» — значение колонки PARTIYA (номер партии), не клиент
+    return (key in _HEADER_MARKS or bool(re.search(r"HORGOS\w*QOL", key))
+            or bool(re.fullmatch(r"BL\d{8}", key)))
 
 
 def own_sheet_keys(batch: dict, blocks: list) -> set | None:
