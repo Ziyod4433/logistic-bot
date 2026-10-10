@@ -88,6 +88,18 @@ _PROVIDER_PRESETS = {
         "key_envs": ("GEMINI_API_KEY", "AI_API_KEY"),
         "key_hint": "GEMINI_API_KEY (aistudio.google.com → API keys)",
     },
+    # Anthropic Claude: свой протокол (Messages API через их SDK), см.
+    # _anthropic_completion. Ключ ANTHROPIC_API_KEY на Railway уже стоит.
+    "anthropic": {
+        "base": "https://api.anthropic.com",
+        "model": "claude-sonnet-5-5",
+        "smart_model": "claude-sonnet-5-5",
+        "fallback_model": "claude-haiku-5-5",
+        "key_envs": ("ANTHROPIC_API_KEY", "AI_API_KEY"),
+        "key_hint": "ANTHROPIC_API_KEY (platform.claude.com → Settings → API keys)",
+        "protocol": "anthropic",
+        "effort": "low",
+    },
 }
 
 
@@ -146,9 +158,10 @@ def _model() -> str:
 
 def _protocol() -> str:
     """chat — OpenAI-совместимые chat/completions (DeepSeek, Gemini, Hermes);
-    responses — OpenAI Responses API. AI_PROTOCOL перекрывает пресет."""
+    responses — OpenAI Responses API; anthropic — Claude Messages API.
+    AI_PROTOCOL перекрывает пресет."""
     value = (os.getenv("AI_PROTOCOL") or _provider().get("protocol") or "chat").strip().lower()
-    return value if value in ("chat", "responses") else "chat"
+    return value if value in ("chat", "responses", "anthropic") else "chat"
 
 
 def _effort() -> str:
@@ -3100,6 +3113,8 @@ def _chat_completion(messages, use_model=None, tools=None, smart=False, temperat
     model = use_model or (_smart_model() if smart and smart_available() else _model())
     if _protocol() == "responses":
         return _responses_completion(messages, model, tools, _model_retry=_model_retry)
+    if _protocol() == "anthropic":
+        return _anthropic_completion(messages, model, tools, _model_retry=_model_retry)
     payload = {
         "model": model,
         "messages": messages,
@@ -3282,6 +3297,151 @@ def _responses_completion(messages, model, tools=None, _model_retry=False):
         response.raise_for_status()
         return _from_responses_output(response.json())
     raise DeepSeekBusy(str(last_status or "timeout"))
+
+
+# ── Anthropic Messages API (Claude) ────────────────────────────────
+# Тот же приём, что и для Responses: цикл инструментов говорит на
+# chat/completions, переводчик — здесь. system уходит отдельным полем,
+# assistant.tool_calls → блоки tool_use, tool → блоки tool_result в ОДНОМ
+# user-сообщении (результаты параллельных вызовов Claude ждёт разом).
+# Блоки рассуждения (thinking) Claude требует вернуть без изменений при
+# продолжении хода, поэтому исходное содержимое ответа с tool_use
+# запоминается по id первого вызова и подкладывается в следующем раунде.
+# Кэш промпта: cache_control на запросе целиком — весь префикс
+# (инструменты + системный промпт + история) читается из кэша.
+_ANTHROPIC_TURNS: dict = {}
+_ANTHROPIC_TURNS_LIMIT = 400
+_ANTHROPIC_MAX_TOKENS = 16000
+_ANTHROPIC_BLOCK_KEYS = {
+    "thinking": ("type", "thinking", "signature"),
+    "redacted_thinking": ("type", "data"),
+    "text": ("type", "text"),
+    "tool_use": ("type", "id", "name", "input"),
+}
+
+
+def _anthropic_client():
+    import anthropic   # ленивый импорт: пакет нужен только при AI_PROVIDER=anthropic
+    return anthropic.Anthropic(api_key=_api_key(), base_url=_base_url(),
+                               timeout=REQUEST_TIMEOUT, max_retries=3)
+
+
+def _to_anthropic_tools(tools) -> list:
+    out = []
+    for t in tools or []:
+        fn = t.get("function") or {}
+        out.append({"name": fn.get("name"), "description": fn.get("description") or "",
+                    "input_schema": fn.get("parameters") or {"type": "object", "properties": {}}})
+    return out
+
+
+def _to_anthropic_messages(messages) -> tuple:
+    """(system, messages) в форме Messages API."""
+    system, out = [], []
+    for m in messages:
+        role = m.get("role")
+        if role == "system":
+            system.append(m.get("content") or "")
+        elif role == "tool":
+            block = {"type": "tool_result", "tool_use_id": str(m.get("tool_call_id") or ""),
+                     "content": m.get("content") or ""}
+            if out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], list):
+                out[-1]["content"].append(block)
+            else:
+                out.append({"role": "user", "content": [block]})
+        elif role == "assistant":
+            calls = m.get("tool_calls") or []
+            content = _ANTHROPIC_TURNS.get(calls[0].get("id")) if calls else None
+            if not content:
+                content = []
+                if m.get("content"):
+                    content.append({"type": "text", "text": m["content"]})
+                for tc in calls:
+                    fn = tc.get("function") or {}
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except Exception:
+                        args = {}
+                    content.append({"type": "tool_use", "id": tc.get("id"), "name": fn.get("name"), "input": args})
+            if content:   # пустой ход ассистента Claude отвергает
+                out.append({"role": "assistant", "content": content})
+        else:
+            text = m.get("content") or ""
+            if text:
+                out.append({"role": "user", "content": text})
+    return "\n\n".join(system), out
+
+
+def _from_anthropic_response(response) -> dict:
+    """Ответ Messages API → форма chat/completions (choices[0].message + usage)."""
+    data = response.model_dump(exclude_none=True) if hasattr(response, "model_dump") else dict(response)
+    text, tool_calls, kept = [], [], []
+    for block in data.get("content") or []:
+        kind = block.get("type")
+        if kind == "text":
+            text.append(block.get("text") or "")
+        elif kind == "tool_use":
+            tool_calls.append({"id": block.get("id"), "type": "function",
+                               "function": {"name": block.get("name"),
+                                            "arguments": json.dumps(block.get("input") or {}, ensure_ascii=False)}})
+        if kind in _ANTHROPIC_BLOCK_KEYS:
+            kept.append({k: block.get(k) for k in _ANTHROPIC_BLOCK_KEYS[kind] if k in block})
+    if data.get("stop_reason") == "refusal" and not text and not tool_calls:
+        text.append("⚠️ Модель отклонила запрос по правилам безопасности провайдера — переформулируйте вопрос.")
+    if tool_calls:
+        if len(_ANTHROPIC_TURNS) >= _ANTHROPIC_TURNS_LIMIT:
+            _ANTHROPIC_TURNS.pop(next(iter(_ANTHROPIC_TURNS)))
+        _ANTHROPIC_TURNS[tool_calls[0]["id"]] = kept
+    message = {"role": "assistant", "content": "\n".join(text)}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    usage = data.get("usage") or {}
+    cached = usage.get("cache_read_input_tokens") or 0
+    written = usage.get("cache_creation_input_tokens") or 0
+    return {
+        "choices": [{"message": message}],
+        "usage": {
+            "prompt_tokens": (usage.get("input_tokens") or 0) + cached + written,
+            "completion_tokens": usage.get("output_tokens"),
+            "prompt_tokens_details": {"cached_tokens": cached, "cache_write_tokens": written},
+        },
+    }
+
+
+def _anthropic_completion(messages, model, tools=None, _model_retry=False):
+    import anthropic
+    system, a_messages = _to_anthropic_messages(messages)
+    effective_tools = tools if tools is not None else TOOLS
+    kwargs = {
+        "model": model,
+        "max_tokens": _ANTHROPIC_MAX_TOKENS,
+        "messages": a_messages,
+        # рассуждение у Claude 5.5 включено всегда (adaptive); глубина — effort
+        "output_config": {"effort": _effort()},
+        "cache_control": {"type": "ephemeral"},
+    }
+    if system:
+        kwargs["system"] = system
+    if effective_tools:
+        kwargs["tools"] = _to_anthropic_tools(effective_tools)
+    try:
+        response = _anthropic_client().messages.create(**kwargs)
+    except anthropic.BadRequestError as exc:
+        # имя модели не принято — один повтор на другой ступени, как у остальных
+        if not _model_retry and "model" in str(exc).lower():
+            alt = _model() if model != _model() else _fallback_model()
+            if alt and alt != model:
+                return _anthropic_completion(messages, alt, tools, _model_retry=True)
+        raise
+    except anthropic.RateLimitError as exc:
+        raise DeepSeekBusy("429") from exc
+    except anthropic.APIStatusError as exc:
+        if exc.status_code in _RETRY_STATUSES:
+            raise DeepSeekBusy(str(exc.status_code)) from exc
+        raise
+    except anthropic.APIConnectionError as exc:   # сюда же входит таймаут
+        raise DeepSeekBusy("timeout") from exc
+    return _from_anthropic_response(response)
 
 
 ANNOUNCE_PROMPT = """Ты редактор объявлений компании BURAQ Logistics — карго из Китая в Узбекистан \
