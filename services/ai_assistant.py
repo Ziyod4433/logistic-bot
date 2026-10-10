@@ -65,6 +65,29 @@ _PROVIDER_PRESETS = {
         "key_envs": ("OPENROUTER_API_KEY", "AI_API_KEY"),
         "key_hint": "OPENROUTER_API_KEY (openrouter.ai → Keys)",
     },
+    # OpenAI GPT-6: с рассуждением function tools принимает только Responses
+    # API (chat/completions отвечает 400), поэтому протокол другой — см.
+    # _responses_completion. Проверено на ключе прода 10.10.2026: gpt-6.1-sol
+    # отвечал на наши вопросы за 7–19 с против 5–66 с у DeepSeek.
+    "openai": {
+        "base": "https://api.openai.com/v1",
+        "model": "gpt-6.1-sol",
+        "smart_model": "gpt-6.1-sol",
+        "fallback_model": "gpt-6-luna",
+        "key_envs": ("OPENAI_API_KEY", "AI_API_KEY"),
+        "key_hint": "OPENAI_API_KEY (platform.openai.com → API keys)",
+        "protocol": "responses",
+        "effort": "low",            # глубина рассуждения: low/medium/high, AI_EFFORT перекрывает
+    },
+    # Google Gemini через их OpenAI-совместимый адрес (тот же ключ, что у ASR)
+    "gemini": {
+        "base": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "model": "gemini-3.6-flash",
+        "smart_model": "gemini-3.1-pro-preview",
+        "fallback_model": "gemini-3.1-flash-lite",
+        "key_envs": ("GEMINI_API_KEY", "AI_API_KEY"),
+        "key_hint": "GEMINI_API_KEY (aistudio.google.com → API keys)",
+    },
 }
 
 
@@ -119,6 +142,19 @@ def _model() -> str:
     p = _provider()
     legacy = os.getenv(p.get("model_env") or "") if p.get("model_env") else ""
     return (os.getenv("AI_MODEL") or legacy or p["model"]).strip()
+
+
+def _protocol() -> str:
+    """chat — OpenAI-совместимые chat/completions (DeepSeek, Gemini, Hermes);
+    responses — OpenAI Responses API. AI_PROTOCOL перекрывает пресет."""
+    value = (os.getenv("AI_PROTOCOL") or _provider().get("protocol") or "chat").strip().lower()
+    return value if value in ("chat", "responses") else "chat"
+
+
+def _effort() -> str:
+    """Глубина рассуждения для Responses API (low/medium/high)."""
+    value = (os.getenv("AI_EFFORT") or _provider().get("effort") or "low").strip().lower()
+    return value if value in ("low", "medium", "high") else "low"
 
 
 # ── РОЛИ: env — стартовое значение, БД (консоль /dev) — переопределение ──
@@ -370,6 +406,7 @@ def get_runtime_status() -> dict:
         "ai_provider": provider_name(),
         "ai_model": _model(),
         "ai_base_url": _base_url(),
+        "ai_protocol": _protocol(),
         "smart_router": smart_available(),
         "smart_model": _smart_model() if smart_available() else "",
         # старые ключи оставлены — их читает панель/мониторинг
@@ -3061,6 +3098,8 @@ def _wants_smart(text: str) -> bool:
 def _chat_completion(messages, use_model=None, tools=None, smart=False, temperature=0.1,
                      _model_retry=False):
     model = use_model or (_smart_model() if smart and smart_available() else _model())
+    if _protocol() == "responses":
+        return _responses_completion(messages, model, tools, _model_retry=_model_retry)
     payload = {
         "model": model,
         "messages": messages,
@@ -3111,6 +3150,137 @@ def _chat_completion(messages, use_model=None, tools=None, smart=False, temperat
             raise DeepSeekBusy(str(last_status))
         response.raise_for_status()
         return response.json()
+    raise DeepSeekBusy(str(last_status or "timeout"))
+
+
+# ── OpenAI Responses API ───────────────────────────────────────────
+# Весь ассистент говорит на языке chat/completions (messages с ролями
+# system/user/assistant/tool, tool_calls, choices[0].message). Чтобы не
+# переписывать цикл инструментов, Responses API спрятан за переводчиком:
+# на входе — те же messages и TOOLS, на выходе — ответ в форме chat.
+# Рассуждение модели между вызовами инструментов сохраняется: Responses
+# возвращает его зашифрованным item'ом, мы запоминаем его по call_id и
+# подкладываем перед соответствующим function_call в следующем раунде
+# (store=false — OpenAI ничего не хранит на своей стороне).
+_RESPONSES_REASONING: dict = {}
+_RESPONSES_REASONING_LIMIT = 400
+
+
+def _to_responses_tools(tools) -> list:
+    out = []
+    for t in tools or []:
+        fn = t.get("function") or {}
+        out.append({
+            "type": "function",
+            "name": fn.get("name"),
+            "description": fn.get("description") or "",
+            "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+        })
+    return out
+
+
+def _to_responses_input(messages) -> tuple:
+    """(instructions, input items): system → instructions, остальное —
+    в items; assistant.tool_calls → function_call, tool → function_call_output."""
+    instructions, items = [], []
+    for m in messages:
+        role = m.get("role")
+        if role == "system":
+            instructions.append(m.get("content") or "")
+        elif role == "user":
+            items.append({"role": "user", "content": m.get("content") or ""})
+        elif role == "assistant":
+            if m.get("content"):
+                items.append({"role": "assistant", "content": m["content"]})
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                reasoning = _RESPONSES_REASONING.get(tc.get("id"))
+                if reasoning:
+                    items.append(reasoning)
+                items.append({"type": "function_call", "call_id": tc.get("id"),
+                              "name": fn.get("name"), "arguments": fn.get("arguments") or "{}"})
+        elif role == "tool":
+            items.append({"type": "function_call_output", "call_id": m.get("tool_call_id"),
+                          "output": m.get("content") or ""})
+    return "\n\n".join(instructions), items
+
+
+def _from_responses_output(data: dict) -> dict:
+    """Ответ Responses → форма chat/completions (choices[0].message + usage)."""
+    text, tool_calls, pending_reasoning = [], [], None
+    for item in data.get("output") or []:
+        kind = item.get("type")
+        if kind == "reasoning":
+            pending_reasoning = item
+        elif kind == "function_call":
+            call_id = item.get("call_id")
+            if pending_reasoning and call_id:
+                if len(_RESPONSES_REASONING) >= _RESPONSES_REASONING_LIMIT:
+                    _RESPONSES_REASONING.pop(next(iter(_RESPONSES_REASONING)))
+                _RESPONSES_REASONING[call_id] = pending_reasoning
+                pending_reasoning = None
+            tool_calls.append({"id": call_id, "type": "function",
+                               "function": {"name": item.get("name"),
+                                            "arguments": item.get("arguments") or "{}"}})
+        elif kind == "message":
+            for part in item.get("content") or []:
+                if part.get("type") == "output_text":
+                    text.append(part.get("text") or "")
+    message = {"role": "assistant", "content": "\n".join(text)}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    usage = data.get("usage") or {}
+    return {
+        "choices": [{"message": message}],
+        "usage": {
+            "prompt_tokens": usage.get("input_tokens"),
+            "completion_tokens": usage.get("output_tokens"),
+            "prompt_tokens_details": {
+                "cached_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens")},
+        },
+    }
+
+
+def _responses_completion(messages, model, tools=None, _model_retry=False):
+    instructions, items = _to_responses_input(messages)
+    payload = {
+        "model": model,
+        "instructions": instructions,
+        "input": items,
+        "store": False,
+        "reasoning": {"effort": _effort()},
+        "include": ["reasoning.encrypted_content"],
+    }
+    effective_tools = tools if tools is not None else TOOLS
+    if effective_tools:
+        payload["tools"] = _to_responses_tools(effective_tools)
+    body_json = json.dumps(payload)
+    last_status = None
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        try:
+            response = req.post(
+                f"{_base_url()}/responses",
+                headers={"Authorization": f"Bearer {_api_key()}", "Content-Type": "application/json"},
+                data=body_json,
+                timeout=REQUEST_TIMEOUT,
+            )
+        except (req.Timeout, req.ConnectionError):
+            if attempt >= len(_RETRY_DELAYS):
+                raise
+            time.sleep(_RETRY_DELAYS[attempt] + random.uniform(0, 1))
+            continue
+        if response.status_code == 400 and not _model_retry and "model" in (response.text or "").lower():
+            alt = _model() if model != _model() else _fallback_model()
+            if alt and alt != model:
+                return _responses_completion(messages, alt, tools, _model_retry=True)
+        if response.status_code in _RETRY_STATUSES:
+            last_status = response.status_code
+            if attempt < len(_RETRY_DELAYS):
+                time.sleep(_RETRY_DELAYS[attempt] + random.uniform(0, 1))
+                continue
+            raise DeepSeekBusy(str(last_status))
+        response.raise_for_status()
+        return _from_responses_output(response.json())
     raise DeepSeekBusy(str(last_status or "timeout"))
 
 
