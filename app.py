@@ -3570,11 +3570,66 @@ def _exclude_china_plan_extras(batch: dict, blocks: list | None = None) -> dict:
     return out
 
 
-def _presend_plan_guard(batch: dict) -> None:
-    """Всё, что бот сверяет с шитсом прямо перед отправкой трекинга:
-    остатки склада Хоргоса и строки, которых нет в китайском плане партии."""
-    _exclude_horgos_stays(batch)
-    _exclude_china_plan_extras(batch)
+def _presend_sync_with_sheet(batch: dict) -> tuple:
+    """Перед отправкой трекинга: шитс скачивается ЗАНОВО (кэш в 2 минуты не
+    годится — логисты правят план во время погрузки), и партия на китайской
+    стадии сверяется со своим планом тем же кодом, что и регулярная сверка
+    (дописать новые строки, обновить цифры, лишние — без трекинга). О
+    найденных изменениях — строка в управляющую группу.
+    → (партия заново из базы, blocks или None, заметка о недоступном шитсе)."""
+    from services import ai_assistant, plan_sync_service as pss
+
+    try:
+        blocks = pss.all_blocks(force=True)
+    except Exception:
+        app.logger.exception("Pre-send sync: sheet unavailable for batch %s", batch.get("id"))
+        return batch, None, "шитс планов недоступен — отправка по данным последней сверки"
+    try:
+        if pss.stage_for_status(batch.get("status")) == "china" and not pss.is_arrived(batch):
+            batches_all = db.get_batches()
+            cache: dict = {}
+
+            def codes_of(b) -> set:
+                if b["id"] not in cache:
+                    cache[b["id"]] = _plan_batch_codes(b["id"])
+                return cache[b["id"]]
+
+            block, _why = pss.find_block_for_batch(batch, blocks, codes_of(batch), batches=batches_all)
+            if block is not None and block.get("kind") == "china":
+                line, unlinked = _sync_china_batch(batch, block, batches_all, codes_of,
+                                                   _build_chat_code_lookup(), _known_chat_id_set())
+                if line or unlinked:
+                    text = "🔄 <b>Перед отправкой трекинга сверил с шитсом</b>\n" + (line or "")
+                    if unlinked:
+                        codes = ", ".join(html.escape(c) for c in sorted(set(unlinked))[:20])
+                        text += "\n\n" + _unlinked_bl_request(codes)
+                    try:
+                        _send_long_message(ai_assistant.control_group_id(), text)
+                    except Exception:
+                        app.logger.exception("Pre-send sync notify failed for batch %s", batch.get("id"))
+                batch = db.get_batch(batch["id"]) or batch
+    except Exception:
+        app.logger.exception("Pre-send sync failed for batch %s", batch.get("id"))
+    return batch, blocks, ""
+
+
+def _presend_plan_guard(batch: dict, blocks: list | None = None, fresh: bool = True) -> dict:
+    """Всё, что бот сверяет с шитсом прямо перед отправкой трекинга: свежий
+    шитс и сверка с планом (fresh), остатки склада Хоргоса и строки,
+    которых нет в китайском плане партии. Возвращает партию заново из базы."""
+    note = ""
+    if fresh:
+        batch, blocks, note = _presend_sync_with_sheet(batch)
+    _exclude_horgos_stays(batch, blocks)
+    _exclude_china_plan_extras(batch, blocks)
+    if note:
+        try:
+            from services import ai_assistant
+            telegram_send_message(ai_assistant.control_group_id(),
+                                  f"⚠️ «{html.escape(batch['name'])}»: {note}")
+        except Exception:
+            pass
+    return batch
 
 
 def _bot_exclusion_reason(bl: dict) -> str:
@@ -3665,14 +3720,14 @@ def verify_batch_against_plan(batch: dict, blocks: list | None = None) -> dict:
     return out
 
 
-def ensure_kazakh_plan_before_send(batch: dict):
+def ensure_kazakh_plan_before_send(batch: dict, blocks: list | None = None):
     """«Перешла ли партия к казахскому плану» перед отправкой трекинга.
     Если партия уже за Хоргосом, план не применён, НО в шитсе он есть —
     переводим её на него (легаси-партиям привязку никогда не проставляли),
     сообщаем в управляющую группу и пересверяем. Возвращает (batch, verdict)."""
     from services import ai_assistant
 
-    verdict = verify_batch_against_plan(batch)
+    verdict = verify_batch_against_plan(batch, blocks)
     if not (verdict.get("block_send") and verdict.get("plan_available")):
         return batch, verdict
     batch_id = batch["id"]
@@ -3692,7 +3747,7 @@ def ensure_kazakh_plan_before_send(batch: dict):
         app.logger.exception("Pre-send apply notify failed for batch %s", batch_id)
     if ok_apply:
         batch = db.get_batch(batch_id) or batch
-        verdict = verify_batch_against_plan(batch)
+        verdict = verify_batch_against_plan(batch, blocks)
     return batch, verdict
 
 
@@ -3708,10 +3763,18 @@ def _execute_tracking_broadcast(batch_id: int, actor: str = "", filled_by: str =
         return False, "Партия не найдена"
 
     # ── СВЕРКА С ШИТСОМ ПЕРЕД ОТПРАВКОЙ (правило владельца 24.08.2026) ──
-    # Партия за Хоргосом без применённого казахского плана — не отправляем:
-    # состав ещё китайский, часть груза могла уехать другой фурой.
-    # Применённый план пересверяем: BL могли перенести или дописать.
-    batch, verdict = ensure_kazakh_plan_before_send(batch)
+    # Сначала свежий шитс и сверка состава (владелец, 13.10.2026: «сперва
+    # сверяет с шитсом, потом отправляет»). Партия за Хоргосом без
+    # применённого казахского плана — не отправляем: состав ещё китайский,
+    # часть груза могла уехать другой фурой. Применённый план пересверяем.
+    batch, fresh_blocks, sheet_note = _presend_sync_with_sheet(batch)
+    if sheet_note:
+        try:
+            telegram_send_message(ai_assistant.control_group_id(),
+                                  f"⚠️ «{html.escape(batch['name'])}»: {sheet_note}")
+        except Exception:
+            pass
+    batch, verdict = ensure_kazakh_plan_before_send(batch, blocks=fresh_blocks)
     if verdict.get("block_send"):
         warn = (
             f"🛑 <b>Трекинг НЕ отправлен</b> — «{html.escape(batch['name'])}»: {html.escape(verdict['reason'])}\n"
@@ -3743,8 +3806,8 @@ def _execute_tracking_broadcast(batch_id: int, actor: str = "", filled_by: str =
     # цифры BL — к плану, прямо перед отправкой (иначе уйдут устаревшие)
     _refresh_batch_figures_from_plan(batch)
     # остаткам склада Хоргоса и строкам вне китайского плана трекинг этой
-    # фуры не положен — снимаем их прямо перед отправкой
-    _presend_plan_guard(batch)
+    # фуры не положен — снимаем их прямо перед отправкой (шитс уже свежий)
+    batch = _presend_plan_guard(batch, blocks=fresh_blocks, fresh=False)
 
     # ── разбираем ВСЕХ BL партии: кто едет, кто и ПОЧЕМУ пропущен ──
     # Молчаливый пропуск скрывал ошибки: 02.09 BL-547 (группа привязана,
@@ -8322,7 +8385,8 @@ def _repair_copy_batch(dup: dict, base: dict, blocks: list, batches_all: list, c
         db.delete_batch(dup["id"])
     except Exception as exc:
         return False, f"⚠️ <b>{name}</b> слита в «{base_name}», но удалить пустую не вышло: {html.escape(str(exc))}"
-    if block is not None and (base.get("plan_kind") or "") != "china":
+    if (block is not None and (base.get("plan_kind") or "") != "china"
+            and pss.stage_for_status(base.get("status")) == "china"):
         db.set_batch_plan_ref(base["id"], block["tab"], pss.ref_title(block), block["date"], "china")
     parts = [f"🧹 Дубль <b>{name}</b> убран, партия «{base_name}» восстановлена"]
     if returned:
@@ -8523,6 +8587,58 @@ def _merge_duplicate_into(target_bl: dict, donor_bl: dict, target_batch_id) -> s
     return "kept"  # у обеих строк есть файлы/история — пусть решит человек
 
 
+def _sync_china_batch(batch: dict, block: dict, batches_all: list, codes_of,
+                      chat_lookup, known_chat_ids) -> tuple:
+    """Привести партию на китайской стадии к её китайскому плану: дописать
+    новые строки плана (кроме уехавших в сестринскую партию), обновить
+    цифры, строки вне плана оставить без трекинга этой фуры. Один код для
+    регулярной сверки и для проверки перед отправкой трекинга.
+    → (строка отчёта или '', коды без группы)."""
+    from services import plan_sync_service as pss
+
+    db.set_batch_plan_ref(batch["id"], block["tab"], pss.ref_title(block), block["date"], block["kind"])
+    plan = pss.aggregate_block(block)
+    diff = pss.diff_against_plan(db.get_bl_by_batch(batch["id"]), plan)
+    # грузы, которые дедубликатор уже увёз в сестринскую партию той же
+    # даты (перегрузка в Хоргосе прошла) — обратно не добавляем
+    moved_to_sibling: set = set()
+    for sibling in batches_all:   # и уже закрытые сестры тоже
+        if sibling["id"] == batch["id"] or (sibling.get("plan_kind") or "") != "kazakh":
+            continue
+        if pss.date_key(sibling.get("name")) != pss.date_key(batch.get("name")):
+            continue
+        moved_to_sibling |= codes_of(sibling)
+    added, unlinked = [], []
+    for entry in diff["add"]:
+        if pss.normalize_mark(entry["code"]) in moved_to_sibling:
+            continue
+        if _plan_add_bl(batch["id"], entry, chat_lookup, known_chat_ids, unlinked):
+            added.append(entry["code"])
+    for upd in diff["update"]:
+        entry = upd["plan"]
+        db.update_bl_figures(upd["bl"]["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
+    # строки, которых в плане больше нет (STELLA: груз перенесли в
+    # другую фуру) — без трекинга этой фуры; вернутся в план — вернём
+    cleanup = _reconcile_china_extras(batch, plan)
+    if not (added or diff["update"] or any(cleanup.values())):
+        return "", unlinked
+    lines = [f"📝 <b>{html.escape(batch['name'])}</b> · китайский план {html.escape(str(block['date']))}"]
+    if added:
+        lines.append("   ➕ добавлены: " + ", ".join(html.escape(c) for c in added[:12]))
+    if diff["update"]:
+        lines.append(f"   📐 обновлены цифры: {len(diff['update'])} BL")
+    if cleanup["gone"]:
+        lines.append("   ➖ больше нет в плане, без трекинга этой фуры: "
+                     + ", ".join(html.escape(c) for c in cleanup["gone"][:12]))
+    if cleanup["restored"]:
+        lines.append("   🔔 снова в плане, вернул в рассылку: "
+                     + ", ".join(html.escape(c) for c in cleanup["restored"][:12]))
+    if cleanup["junk"]:
+        lines.append("   🗑 удалены строки-шапки таблицы, принятые за груз: "
+                     + ", ".join(html.escape(c) for c in cleanup["junk"][:12]))
+    return "\n".join(lines), unlinked
+
+
 def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
     """Сверка партий с планами погрузки.
 
@@ -8720,47 +8836,10 @@ def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
             block, _why = pss.find_block_for_batch(batch, blocks, codes_of(batch), batches=batches_all)
             if block is None:
                 continue
-            db.set_batch_plan_ref(batch["id"], block["tab"], pss.ref_title(block), block["date"], block["kind"])
-            plan = pss.aggregate_block(block)
-            diff = pss.diff_against_plan(db.get_bl_by_batch(batch["id"]), plan)
-            # грузы, которые дедубликатор уже увёз в сестринскую партию той же
-            # даты (перегрузка в Хоргосе прошла) — обратно не добавляем
-            moved_to_sibling: set = set()
-            for sibling in batches_all:   # и уже закрытые сестры тоже
-                if sibling["id"] == batch["id"] or (sibling.get("plan_kind") or "") != "kazakh":
-                    continue
-                if pss.date_key(sibling.get("name")) != pss.date_key(batch.get("name")):
-                    continue
-                moved_to_sibling |= codes_of(sibling)
-            added, unlinked = [], []
-            for entry in diff["add"]:
-                if pss.normalize_mark(entry["code"]) in moved_to_sibling:
-                    continue
-                if _plan_add_bl(batch["id"], entry, chat_lookup, known_chat_ids, unlinked):
-                    added.append(entry["code"])
-            for upd in diff["update"]:
-                entry = upd["plan"]
-                db.update_bl_figures(upd["bl"]["id"], entry["ctn"], entry["breakdown"], entry["cbm"], entry["kg"])
-            # строки, которых в плане больше нет (STELLA: груз перенесли в
-            # другую фуру) — без трекинга этой фуры; вернутся в план — вернём
-            cleanup = _reconcile_china_extras(batch, plan)
+            line, unlinked = _sync_china_batch(batch, block, batches_all, codes_of, chat_lookup, known_chat_ids)
             codes_cache.pop(batch["id"], None)
-            if added or diff["update"] or any(cleanup.values()):
-                lines = [f"📝 <b>{html.escape(batch['name'])}</b> · китайский план {html.escape(str(block['date']))}"]
-                if added:
-                    lines.append("   ➕ добавлены: " + ", ".join(html.escape(c) for c in added[:12]))
-                if diff["update"]:
-                    lines.append(f"   📐 обновлены цифры: {len(diff['update'])} BL")
-                if cleanup["gone"]:
-                    lines.append("   ➖ больше нет в плане, без трекинга этой фуры: "
-                                 + ", ".join(html.escape(c) for c in cleanup["gone"][:12]))
-                if cleanup["restored"]:
-                    lines.append("   🔔 снова в плане, вернул в рассылку: "
-                                 + ", ".join(html.escape(c) for c in cleanup["restored"][:12]))
-                if cleanup["junk"]:
-                    lines.append("   🗑 удалены строки-шапки таблицы, принятые за груз: "
-                                 + ", ".join(html.escape(c) for c in cleanup["junk"][:12]))
-                report.append("\n".join(lines))
+            if line:
+                report.append(line)
             unlinked_all.extend(unlinked)
         except Exception:
             app.logger.exception("Plan sync: batch %s sync failed", batch.get("name"))
@@ -8788,7 +8867,7 @@ def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
 # отправкой мало: изменение приходит ПОСЛЕ того, как трекинг уже ушёл.
 # Поэтому состав пересверяется регулярно, а о переездах бот сообщает
 # отдельно и с отметкой ответственных (владелец, 27.08.2026).
-PLAN_WATCH_HOURS = float(os.getenv("PLAN_WATCH_HOURS", "3") or 3)
+PLAN_WATCH_HOURS = float(os.getenv("PLAN_WATCH_HOURS", "1") or 1)   # владелец, 13.10.2026: каждый час
 _PLAN_WATCH_SETTING = "plan_watch_last"
 _PLAN_WATCH_REPORT_SETTING = "plan_watch_last_report"
 # длинные пояснения печатаем ОДИН раз внизу отчёта, а не в каждой строке
@@ -8969,6 +9048,12 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
             _codes_cache[b["id"]] = _plan_batch_codes(b["id"])
         return _codes_cache[b["id"]]
 
+    if standalone and pss.stage_for_status(batch.get("status")) == "china":
+        # владелец, 13.10.2026: до статуса «Horgos» вторая таблица (казахский
+        # план под китайским) не используется — её ещё правят; пересборка
+        # партии под казахскую фуру начинается с перехода трекинга в Хоргос
+        return False, (f"«{batch['name']}» ещё в Китае (статус «{batch.get('status')}»): казахский план "
+                       "применяется после перехода в статус Horgos — бот сам спросит и применит"), False
     if standalone:
         # владелец, 13.10.2026: заявка применила казахский план к КОПИИ
         # («09.10.2026 ZH 2») — дедубликатор увёз в неё грузы настоящей
@@ -11617,9 +11702,22 @@ def api_send_batch(batch_id):
                 continue
     include_related_batches = False
 
-    # остаткам склада Хоргоса и строкам вне плана трекинг этой фуры не
-    # положен — даже если их выбрали вручную (владелец, 30.09.2026)
-    _presend_plan_guard(batch)
+    # повторный запрос, пока рассылка этой партии уже идёт — отвечаем сразу,
+    # без повторной сверки с шитсом (она бы спорила с идущей рассылкой за базу)
+    with _send_jobs_lock:
+        for existing in _send_jobs.values():
+            if existing["batch_id"] == batch_id and not existing["finished"]:
+                return jsonify({
+                    "ok": True,
+                    "job_id": existing["job_id"],
+                    "total": existing["total"],
+                    "already_running": True,
+                })
+
+    # сверка с шитсом (свежий лист), остаткам склада Хоргоса и строкам вне
+    # плана трекинг этой фуры не положен — даже если их выбрали вручную
+    # (владелец, 30.09.2026 и 13.10.2026)
+    batch = _presend_plan_guard(batch)
     bot_excluded = {bl_id: src for bl_id, src in (db.get_batch_send_exclusion_sources(batch_id) or {}).items()
                     if src in ("stays", "plan")}
     bl_rows = db.get_bl_by_batch(batch_id)

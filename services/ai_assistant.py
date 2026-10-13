@@ -702,6 +702,8 @@ def _system_prompt() -> str:
   применить план (propose_action apply_kazakh_plan), а не «отправляю». Перед каждой рассылкой состав
   пересверяется с шитсом — BL могли перенести в другую партию или дописать.
 • «примени казахский план / перегрузи сейчас» → get_batch_plan_status (покажи предпросмотр) → propose_action apply_kazakh_plan.
+  ТОЛЬКО для партии в статусе Horgos и дальше: пока партия в Китае, вторая таблица под китайским планом не
+  используется (владелец, 13.10.2026) — так и скажи и заявку не предлагай.
 • «запусти сверку сейчас» → propose_action run_plan_sync (или watch_plans — он ещё и доложит о переездах).
 • «поменяй дату партии / переименуй партию / поправь срок» → propose_action update_batch
   (batch_id + name / eta / eta_destination). ТЫ ЭТО УМЕЕШЬ — не отвечай «не могу изменить партию».
@@ -1831,8 +1833,9 @@ def _tool_get_batch_plan_status(args: dict) -> dict:
         "kazakh_preview": preview,
         "kazakh_asks": [dict(a) for a in asks],
         "automation_hint": (
-            "После статуса «Horgos» бот сам спросит Hoji dodam и применит казахский план "
-            "(через 60 мин, если не ответят). Вручную сейчас — propose_action kind='apply_kazakh_plan'."
+            "Партия ещё в Китае: казахская таблица под китайским планом до статуса «Horgos» НЕ используется "
+            "(логисты её ещё правят). После статуса «Horgos» бот сам спросит Hoji dodam и применит план "
+            "(через 60 мин, если не ответят). Вручную до Horgos применить нельзя."
             if stage == "china" else
             ("Казахский план применён; каждое утро досверяется." if kz_applied else
              "Партия за Хоргосом, план ещё не применён — смотри kazakh_asks / предложи apply_kazakh_plan.")
@@ -2682,6 +2685,12 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
         batch = db.get_batch(int(params.get("batch_id") or 0))
         if not batch:
             return {"error": "batch_id не найден"}
+        from services import plan_sync_service as _pss
+        if _pss.stage_for_status(batch.get("status")) == "china":
+            # владелец, 13.10.2026: до статуса Horgos вторая таблица не используется
+            return {"error": (f"«{batch['name']}» ещё в Китае (статус «{batch.get('status')}»): казахский план "
+                              "применяется только после перехода в статус Horgos — тогда бот сам спросит "
+                              "Hoji dodam и применит. Сейчас заявку не создаю.")}
         status = _tool_get_batch_plan_status({"batch": str(batch["id"])})
         kz = status.get("kazakh_plan") or {}
         if not kz.get("found"):

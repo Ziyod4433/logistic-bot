@@ -582,8 +582,8 @@ def copy_duplicates(batches: list, codes_of, max_age_days: int = 14, now=None, p
         base = by_name.get(m.group(1).upper())
         if base is None or base.get("id") == dup.get("id"):
             continue
-        if stage_for_status(dup.get("status")) != "china" or stage_for_status(base.get("status")) != "china":
-            continue
+        if stage_for_status(dup.get("status")) != stage_for_status(base.get("status")):
+            continue          # разные стадии — не копия одной фуры
         if not batch_has_ref(dup) or not batch_has_ref(base):
             continue
         if date_key(dup.get("plan_date")) != date_key(base.get("plan_date")):
