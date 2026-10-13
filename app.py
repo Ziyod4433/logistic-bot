@@ -8274,7 +8274,10 @@ def _repair_copy_batch(dup: dict, base: dict, blocks: list, batches_all: list, c
     если по копии уже уходил трекинг. → (ok, строка отчёта)."""
     from services import plan_sync_service as pss
     name, base_name = html.escape(dup["name"]), html.escape(base["name"])
-    if db.batch_has_successful_sends(dup["id"], dup.get("name") or ""):
+    # рассылки смотрим ПО ИМЕНИ копии: строки, приехавшие в неё из настоящей
+    # партии, несут свои старые рассылки (под именем настоящей) — это не
+    # повод оставлять копию (13.10.2026: так репарация пропустила «09.10.2026 ZH 2»)
+    if db.batch_has_successful_sends(dup["id"], dup.get("name") or "", by_rows=False):
         return False, (f"⚠️ <b>{name}</b> — копия партии «{base_name}» (тот же план, состав повторяется), "
                        "но по ней уже уходил трекинг — сама не трогаю, объедините вручную.")
     block = pss.resolve_ref_block(base, blocks, "china", codes_of(base)) if pss.batch_has_ref(base) else None

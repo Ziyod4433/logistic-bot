@@ -7574,20 +7574,28 @@ def ai_list_pending_actions(kind=None) -> list:
     return [dict(r) for r in rows]
 
 
-def batch_has_successful_sends(batch_id, batch_name="") -> bool:
-    """Уходил ли по партии хоть один трекинг (по id её BL или по имени —
-    журнал хранит имя текстом и после удаления строк)."""
+def batch_has_successful_sends(batch_id, batch_name="", by_rows: bool = True) -> bool:
+    """Уходил ли по партии хоть один трекинг: по имени партии (журнал хранит
+    имя текстом и после удаления строк) и, при by_rows, по id её BL.
+    by_rows=False — только по имени: строки могли приехать из другой партии
+    вместе со своими старыми рассылками."""
     conn = get_conn()
     try:
-        row = conn.execute(
-            """
-            SELECT COUNT(*) FROM send_logs
-            WHERE success = 1
-              AND (bl_id IN (SELECT id FROM bl_codes WHERE batch_id = ?)
-                   OR (? <> '' AND batch_name = ?))
-            """,
-            (int(batch_id), str(batch_name or ""), str(batch_name or "")),
-        ).fetchone()
+        if by_rows:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) FROM send_logs
+                WHERE success = 1
+                  AND (bl_id IN (SELECT id FROM bl_codes WHERE batch_id = ?)
+                       OR (? <> '' AND batch_name = ?))
+                """,
+                (int(batch_id), str(batch_name or ""), str(batch_name or "")),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM send_logs WHERE success = 1 AND ? <> '' AND batch_name = ?",
+                (str(batch_name or ""), str(batch_name or "")),
+            ).fetchone()
     finally:
         conn.close()
     return bool(row and row[0])
