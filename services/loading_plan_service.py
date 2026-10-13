@@ -369,6 +369,18 @@ def _find_untitled_table(grid: list, j: int, after: int):
     return None
 
 
+def _has_partiya_values(items: list, min_rows: int = 2) -> bool:
+    """В строках груза заполнена колонка PARTIYA хотя бы min_rows раз —
+    признак казахской таблицы (у китайского плана такой колонки нет)."""
+    n = 0
+    for item in items or []:
+        if _looks_like_partiya(item.get("partiya")):
+            n += 1
+            if n >= min_rows:
+                return True
+    return False
+
+
 def _implicit_kazakh_title(warehouses: list) -> str:
     """Название для неподписанного казахского плана — так, как логисты
     обычно пишут сами: когда они допишут заголовок, привязка партии не
@@ -428,6 +440,19 @@ def _parse_tab(grid: list) -> list:
             warehouses = [w for w in ("YIWU", "ZHONGSHAN") if w in upper_title]
             if kind == "kazakh" and ("ZH" in upper_title and "ZHONGSHAN" not in warehouses):
                 warehouses.append("ZHONGSHAN")
+            if kind == "china" and off is not None and _has_partiya_values(items):
+                # подписана как китайский план (логисты скопировали блок с
+                # датой и заголовком), но в ней колонка PARTIYA — это
+                # казахская таблица под планом, а не вторая фура (12.10.2026:
+                # такая копия открыла дубль «09.10.2026 ZH 2»)
+                kz = _block(cell, _implicit_kazakh_title(warehouses), "kazakh", list(warehouses),
+                            items, _parse_stays(grid, j, k), j)
+                kz["untitled"] = True
+                kz["mistitled"] = title
+                kz["header_row"] = start      # шапка SHIPPING MARK (с 1)
+                kz["china_title"] = title
+                blocks.append(kz)
+                continue
             blocks.append(_block(cell, title, kind, warehouses, items, _parse_stays(grid, j, k), j))
             if kind != "china":
                 continue

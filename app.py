@@ -8265,6 +8265,26 @@ def _plan_batch_codes(batch_id) -> set:
     return {pss.normalize_mark(bl.get("code")) for bl in db.get_bl_by_batch(batch_id)}
 
 
+def _copy_batch_blocker(dup: dict, batches_all: list, codes_of) -> str:
+    """Почему партию-копию НЕЛЬЗЯ удалить молча: по ней уходил трекинг,
+    к ней прикреплены файлы или в ней есть грузы, которых нет ни в одной
+    другой активной партии. Пустая строка — удалять безопасно."""
+    if db.batch_has_successful_sends(dup["id"], dup.get("name") or ""):
+        return "по ней уже уходил трекинг"
+    rows = db.get_bl_by_batch(dup["id"])
+    if any(int(r.get("file_count") or 0) for r in rows):
+        return "к её грузам прикреплены файлы"
+    elsewhere: set = set()
+    for b in batches_all:
+        if b.get("id") == dup["id"] or (b.get("client_delivery_date") or "").strip():
+            continue
+        elsewhere |= codes_of(b)
+    own_only = sorted(codes_of(dup) - elsewhere)
+    if own_only:
+        return "в ней есть грузы, которых нет в других партиях: " + html.escape(", ".join(own_only[:8]))
+    return ""
+
+
 def _plan_add_bl(batch_id, entry, chat_lookup, known_chat_ids, unlinked: list) -> bool:
     """Добавить BL из плана с авто-привязкой группы (цепочка как при
     ручном импорте: название группы → постоянная история связок)."""
@@ -8493,6 +8513,59 @@ def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
             codes_cache[bid] = _plan_batch_codes(bid)
         return codes_cache[bid]
 
+    # ── 0. партии-копии, открытые по скопированному блоку ──
+    # Логисты копируют китайский блок целиком (дата, заголовок, строки) и
+    # переделывают копию на месте в следующий план или казахскую таблицу;
+    # пока копия стояла с той же датой, сверка принимала её за вторую фуру
+    # дня (12.10.2026: «09.10.2026 ZH 2» из черновика плана 13.10). Такую
+    # копию удаляем сами, если у неё нет ничего своего: все грузы лежат в
+    # других партиях, рассылок и файлов не было.
+    for dup, base in pss.copy_duplicates(batches_all, codes_of, now=now):
+        try:
+            blocker = _copy_batch_blocker(dup, batches_all, codes_of)
+            if blocker:
+                report.append(
+                    f"⚠️ <b>{html.escape(dup['name'])}</b> похожа на копию партии "
+                    f"«{html.escape(base['name'])}» (тот же план, состав повторяется), но {blocker} — "
+                    "сама не удаляю, проверьте и объедините вручную."
+                )
+                continue
+            dup_codes = codes_of(dup)
+            holders = sorted({str(b.get("name") or "") for b in batches_all
+                              if b.get("id") != dup["id"] and codes_of(b) & dup_codes})
+            for action in db.ai_list_pending_actions("apply_kazakh_plan"):
+                try:
+                    if int(json.loads(action.get("params_json") or "{}").get("batch_id") or 0) == dup["id"]:
+                        db.ai_finish_pending_action(action["id"], "rejected", "партия-копия удалена сверкой")
+                except Exception:
+                    pass
+            db.delete_batch(dup["id"])
+            batches_all = [b for b in batches_all if b.get("id") != dup["id"]]
+            active = [b for b in active if b.get("id") != dup["id"]]
+            codes_cache.pop(dup["id"], None)
+            report.append(
+                f"🧹 Удалён дубль <b>{html.escape(dup['name'])}</b>: партия была открыта по копии плана "
+                f"«{html.escape(str(base.get('plan_title') or ''))}» ({html.escape(str(base.get('plan_date') or ''))}) "
+                f"под партией «{html.escape(base['name'])}». Все её {len(dup_codes)} грузов уже есть в партиях "
+                f"{html.escape(', '.join(holders[:6]))}; рассылок и файлов у неё не было."
+            )
+        except Exception:
+            app.logger.exception("Plan sync: copy cleanup failed for %s", dup.get("name"))
+
+    # копии блоков, которые all_blocks отбросил: логистам — что это черновик,
+    # а не вторая фура (только свежие даты, старые месяцы не трогаем)
+    fresh_keys = {pss.date_key(b.get("date")) for b in pss.fresh_china_blocks(blocks, now.date())}
+    for copy in pss.LAST_COPIES:
+        if pss.date_key(copy.get("date")) not in fresh_keys:
+            continue
+        report.append(
+            f"⚠️ В шитсе («{html.escape(str(copy['tab']))}») под планом «{html.escape(str(copy['title']))}» "
+            f"({html.escape(str(copy['date']))}) стоит второй блок с той же датой и названием: "
+            f"{copy['marks']} марок, {copy['shared']} общих с планом — это копия, а не вторая фура, "
+            f"партию по ней не открываю. {_untitled_plan_mentions()}: если это казахский план — "
+            "подпишите «HORGOS TO TASHKENT», если следующая фура — поставьте её дату."
+        )
+
     # ── 1. авто-открытие партий по новым китайским планам ──
     # владельца ищем среди ВСЕХ партий (и закрытых тоже): план доставленной
     # партии не должен открыть «зомби»-дубликат
@@ -8533,6 +8606,18 @@ def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
                             f"{html.escape(old_ref_date)} → {html.escape(str(block['date']))}"
                             f" («{html.escape(str(block['title']))[:60]}»){renamed}. Дубль не открыт."
                         )
+                continue
+            # блок повторяет состав партии того же дня — это копия плана или
+            # казахская таблица под ним, а не вторая фура: не открываем
+            twin, hits = pss.copy_twin_for_block(block, batches_all, codes_of)
+            if twin is not None:
+                report.append(
+                    f"⚠️ Под планом «{html.escape(str(block['title']))}» ({html.escape(str(block['date']))}) "
+                    f"ещё один блок с той же датой и названием повторяет состав партии "
+                    f"<b>{html.escape(twin['name'])}</b> ({hits} из {len(codes_of(twin))} BL) — это копия или "
+                    f"казахская таблица, новую партию не открываю. {_untitled_plan_mentions()}: если это "
+                    "казахский план — подпишите «HORGOS TO TASHKENT», если следующая фура — поставьте её дату."
+                )
                 continue
             name = pss.batch_name_for_block(block)
             # второй перевозчик с того же склада в тот же день → «… YIWU 2»
@@ -9139,6 +9224,8 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
         # логисты не подписали казахский план — бот принял его по правилу
         # «таблица под китайским планом = казахский план» (владелец, 30.09.2026)
         gap = ("нет заголовка «HORGOS TO TASHKENT» и шапки SHIPPING MARK" if block.get("no_header")
+               else f"вместо «HORGOS TO TASHKENT» стоит заголовок китайского плана «{html.escape(str(block['mistitled']))}», "
+                    "но есть колонка PARTIYA" if block.get("mistitled")
                else "нет заголовка «HORGOS TO TASHKENT»")
         parts.append(
             f"   ⚠️ в шитсе у таблицы {gap} ({_sheet_place(block)}) — принята как казахский план. "
@@ -9486,6 +9573,9 @@ def check_kazakh_plan_asks():
                 f"<b>«HORGOS TO TASHKENT»</b> yozilmagan ({where}).\n"
                 + ("Shapka (SHIPPING MARK) ham yo'q — jadvalni PARTIYA ustuni bo'yicha tanidim.\n"
                    if block.get("no_header") else "")
+                + (f"Jadval ustida xitoy planining sarlavhasi «{html.escape(str(block['mistitled']))}» turibdi, "
+                   "lekin PARTIYA ustuni bor — bu qozoq jadvali, ikkinchi fura emas.\n"
+                   if block.get("mistitled") else "")
                 + f"Qoida bo'yicha bu jadvalni qozoq plani deb hisoblayman: {len(plan_keys)} BL, "
                 f"{float(block.get('total_ctn') or 0):g} joy.\n"
                 + stay_line

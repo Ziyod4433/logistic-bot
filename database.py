@@ -7556,6 +7556,43 @@ def ai_cancel_scheduled_task(task_id) -> bool:
         conn.close()
 
 
+def ai_list_pending_actions(kind=None) -> list:
+    """Все PENDING-заявки (при kind — только этого вида)."""
+    conn = get_conn()
+    try:
+        if kind:
+            rows = conn.execute(
+                "SELECT * FROM ai_pending_actions WHERE status = 'pending' AND kind = ? ORDER BY id",
+                (str(kind),),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM ai_pending_actions WHERE status = 'pending' ORDER BY id"
+            ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def batch_has_successful_sends(batch_id, batch_name="") -> bool:
+    """Уходил ли по партии хоть один трекинг (по id её BL или по имени —
+    журнал хранит имя текстом и после удаления строк)."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM send_logs
+            WHERE success = 1
+              AND (bl_id IN (SELECT id FROM bl_codes WHERE batch_id = ?)
+                   OR (? <> '' AND batch_name = ?))
+            """,
+            (int(batch_id), str(batch_name or ""), str(batch_name or "")),
+        ).fetchone()
+    finally:
+        conn.close()
+    return bool(row and row[0])
+
+
 def ai_find_pending_action(tg_user_id, kind):
     """Последняя PENDING-заявка данного вида для данного ключа (корзина
     множественного подтверждения трекинга)."""

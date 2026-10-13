@@ -313,6 +313,11 @@ def _block_marks(block: dict) -> frozenset:
     )
 
 
+# копии китайских блоков, отброшенные последним all_blocks(): сверка
+# предупреждает о них логистов, а партию по ним не открывает
+LAST_COPIES: list = []
+
+
 def all_blocks(force: bool = False) -> list:
     """Все блоки планов всей книги: [{tab, date, title, kind, ordinal, items…}].
 
@@ -327,6 +332,7 @@ def all_blocks(force: bool = False) -> list:
     data = lps._get_parsed(force=force)
     groups: dict = {}
     order: list = []
+    LAST_COPIES.clear()
     for tab, tab_blocks in data.items():
         if not is_plan_tab(tab):
             continue  # SKLAD, CRM, REPORT, … — не планы погрузки
@@ -349,9 +355,25 @@ def all_blocks(force: bool = False) -> list:
                 inter = len(em & marks)
                 union = len(em | marks) or 1
                 same_tab = existing["tab"] == tab
-                # вложенность считаем копией ТОЛЬКО между вкладками: в одной
-                # вкладке маленькая «добивочная» фура с частью тех же клиентов —
-                # это отдельная фура, а не копия
+                if same_tab and block.get("kind") == "china" and inter and (
+                        inter / union >= 0.5 or (em <= marks and len(em) >= 3)):
+                    # В ОДНОЙ вкладке второй блок с той же датой и названием,
+                    # повторяющий первый (или содержащий его целиком), — копия:
+                    # логисты копируют блок с датой и заголовком и переделывают
+                    # копию на месте в следующий план или казахскую таблицу
+                    # (12.10.2026: так открылся дубль «09.10.2026 ZH 2»). План
+                    # правят в самом блоке, а не копией под ним, поэтому
+                    # настоящий — верхний; копию убираем и запоминаем для отчёта.
+                    # Маленькая «добивочная» фура с частью тех же клиентов сюда
+                    # не попадает: у неё меньше половины общих марок.
+                    LAST_COPIES.append({
+                        "tab": tab, "title": title, "date": block.get("date"),
+                        "marks": len(marks), "shared": inter, "kept_marks": len(em),
+                    })
+                    merged = True
+                    break
+                # между вкладками вложенность — копия (блок перенесли в
+                # следующий месяц); берётся копия из более поздней вкладки
                 is_copy = inter and (inter / union >= 0.5 or (not same_tab and (em <= marks or marks <= em)))
                 if is_copy:
                     if (_tab_rank(tab), len(marks)) > (_tab_rank(existing["tab"]), len(em)):
@@ -483,6 +505,95 @@ def batch_name_for_block(block: dict) -> str:
     ordinal = int(block.get("ordinal") or 1)
     name = f"{date} {suffix}".strip()
     return name if ordinal <= 1 else f"{name} {ordinal}"
+
+
+def block_has_partiya(block: dict, min_rows: int = 2) -> bool:
+    """В таблице есть колонка PARTIYA со значениями («BL09102026»,
+    «12.09.2026 ZH») хотя бы в min_rows строках. Такая колонка бывает
+    только у казахских таблиц и остатков — китайский план её не содержит."""
+    n = 0
+    for item in block.get("items") or []:
+        if date_key(item.get("partiya")):
+            n += 1
+            if n >= min_rows:
+                return True
+    return False
+
+
+def copy_twin_for_block(block: dict, batches: list, codes_of, min_share: float = 0.7) -> tuple:
+    """Активная партия той же даты, чей состав этот блок почти целиком
+    повторяет (≥ min_share её кодов). Тогда блок — не вторая фура того же
+    дня, а копия плана или казахская таблица под ним: логисты копируют
+    блок целиком, с датой и заголовком, и переделывают его на месте
+    (кейс 12.10.2026 — так открылась «09.10.2026 ZH 2» из черновика плана
+    13.10). У настоящей второй фуры состав другой. → (batch, hits)."""
+    keys = set(aggregate_block(block).keys())
+    if not keys:
+        return None, 0
+    key = date_key(block.get("date"))
+    best, best_hits = None, 0
+    for batch in batches:
+        if (batch.get("client_delivery_date") or "").strip():
+            continue
+        if date_key(batch.get("name")) != key and date_key(batch.get("plan_date")) != key:
+            continue
+        codes = codes_of(batch)
+        if len(codes) < 3:
+            continue
+        hits = len(codes & keys)
+        if hits >= min_share * len(codes) and hits > best_hits:
+            best, best_hits = batch, hits
+    return best, best_hits
+
+
+_COPY_NAME_RE = re.compile(r"^(.*\S)\s+(\d+)$")
+
+
+def _created_at(batch: dict):
+    raw = str(batch.get("created_at") or "").strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw[:19], fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def copy_duplicates(batches: list, codes_of, max_age_days: int = 14, now=None) -> list:
+    """Уже открытые партии-копии: «ИМЯ N» рядом с активной «ИМЯ» под тем
+    же планом (та же дата и название), обе ещё до Хоргоса, и весь состав
+    «ИМЯ» лежит в копии. У настоящей второй фуры дня состав свой, поэтому
+    она сюда не попадает. Рассылки/файлы копии проверяет вызывающий код.
+    → [(dup, base)]."""
+    now = now or datetime.now(db.TASHKENT_TZ)
+    now_naive = now.replace(tzinfo=None)
+    by_name = {str(b.get("name") or "").strip().upper(): b for b in batches
+               if not (b.get("client_delivery_date") or "").strip()}
+    out = []
+    for dup in batches:
+        if (dup.get("client_delivery_date") or "").strip():
+            continue
+        m = _COPY_NAME_RE.match(str(dup.get("name") or "").strip())
+        if not m or int(m.group(2)) < 2:
+            continue
+        base = by_name.get(m.group(1).upper())
+        if base is None or base.get("id") == dup.get("id"):
+            continue
+        if stage_for_status(dup.get("status")) != "china" or stage_for_status(base.get("status")) != "china":
+            continue
+        if not batch_has_ref(dup) or not batch_has_ref(base):
+            continue
+        if (ref_base(dup.get("plan_title")) != ref_base(base.get("plan_title"))
+                or date_key(dup.get("plan_date")) != date_key(base.get("plan_date"))):
+            continue
+        created = _created_at(dup)
+        if created and (now_naive - created).days > max_age_days:
+            continue
+        base_codes, dup_codes = codes_of(base), codes_of(dup)
+        if len(base_codes) < 3 or not base_codes <= dup_codes:
+            continue
+        out.append((dup, base))
+    return out
 
 
 def fresh_china_blocks(blocks: list, today=None, days_back: int = 10, days_forward: int = 45) -> list:
