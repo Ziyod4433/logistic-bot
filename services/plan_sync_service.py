@@ -559,12 +559,15 @@ def _created_at(batch: dict):
     return None
 
 
-def copy_duplicates(batches: list, codes_of, max_age_days: int = 14, now=None) -> list:
-    """Уже открытые партии-копии: «ИМЯ N» рядом с активной «ИМЯ» под тем
-    же планом (та же дата и название), обе ещё до Хоргоса, и весь состав
-    «ИМЯ» лежит в копии. У настоящей второй фуры дня состав свой, поэтому
-    она сюда не попадает. Рассылки/файлы копии проверяет вызывающий код.
-    → [(dup, base)]."""
+def copy_duplicates(batches: list, codes_of, max_age_days: int = 14, now=None, plan_keys_of=None) -> list:
+    """Уже открытые партии-копии: «ИМЯ N» рядом с активной «ИМЯ» на ту же
+    дату плана, обе ещё до Хоргоса. Копия узнаётся по составу: либо она
+    проглотила весь состав «ИМЯ» (так бывает после ошибочного применения
+    казахского плана к копии — дубли «сводятся» в неё), либо держит ≥ 70%
+    марок китайского плана «ИМЯ» (plan_keys_of(base) → ключи плана).
+    У настоящей второй фуры дня состав свой — она сюда не попадает.
+    → [(dup, base)]; что с копией делать (слить обратно или только
+    предупредить), решает вызывающий код."""
     now = now or datetime.now(db.TASHKENT_TZ)
     now_naive = now.replace(tzinfo=None)
     by_name = {str(b.get("name") or "").strip().upper(): b for b in batches
@@ -583,14 +586,19 @@ def copy_duplicates(batches: list, codes_of, max_age_days: int = 14, now=None) -
             continue
         if not batch_has_ref(dup) or not batch_has_ref(base):
             continue
-        if (ref_base(dup.get("plan_title")) != ref_base(base.get("plan_title"))
-                or date_key(dup.get("plan_date")) != date_key(base.get("plan_date"))):
+        if date_key(dup.get("plan_date")) != date_key(base.get("plan_date")):
+            continue
+        same_plan = ref_base(dup.get("plan_title")) == ref_base(base.get("plan_title"))
+        if not same_plan and (dup.get("plan_kind") or "") != "kazakh":
             continue
         created = _created_at(dup)
         if created and (now_naive - created).days > max_age_days:
             continue
         base_codes, dup_codes = codes_of(base), codes_of(dup)
-        if len(base_codes) < 3 or not base_codes <= dup_codes:
+        swallowed = len(base_codes) >= 3 and base_codes <= dup_codes
+        plan_keys = set(plan_keys_of(base) or ()) if plan_keys_of else set()
+        holds_plan = len(plan_keys) >= 3 and len(plan_keys & dup_codes) >= 0.7 * len(plan_keys)
+        if not (swallowed or holds_plan):
             continue
         out.append((dup, base))
     return out

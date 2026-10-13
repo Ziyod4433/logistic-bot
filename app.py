@@ -8265,24 +8265,75 @@ def _plan_batch_codes(batch_id) -> set:
     return {pss.normalize_mark(bl.get("code")) for bl in db.get_bl_by_batch(batch_id)}
 
 
-def _copy_batch_blocker(dup: dict, batches_all: list, codes_of) -> str:
-    """Почему партию-копию НЕЛЬЗЯ удалить молча: по ней уходил трекинг,
-    к ней прикреплены файлы или в ней есть грузы, которых нет ни в одной
-    другой активной партии. Пустая строка — удалять безопасно."""
+def _repair_copy_batch(dup: dict, base: dict, blocks: list, batches_all: list, codes_of) -> tuple:
+    """Слить партию-копию обратно в настоящую: строки её китайского плана
+    возвращаются (с файлами и группой), одинаковые коды сводятся в одну
+    строку, копии чужих строк (груз лежит в другой партии, файлов нет)
+    удаляются, своё неизвестное — переезжает в настоящую. Пустая копия
+    удаляется, настоящая партия остаётся на китайском плане. Не трогаем,
+    если по копии уже уходил трекинг. → (ok, строка отчёта)."""
+    from services import plan_sync_service as pss
+    name, base_name = html.escape(dup["name"]), html.escape(base["name"])
     if db.batch_has_successful_sends(dup["id"], dup.get("name") or ""):
-        return "по ней уже уходил трекинг"
-    rows = db.get_bl_by_batch(dup["id"])
-    if any(int(r.get("file_count") or 0) for r in rows):
-        return "к её грузам прикреплены файлы"
+        return False, (f"⚠️ <b>{name}</b> — копия партии «{base_name}» (тот же план, состав повторяется), "
+                       "но по ней уже уходил трекинг — сама не трогаю, объедините вручную.")
+    block = pss.resolve_ref_block(base, blocks, "china", codes_of(base)) if pss.batch_has_ref(base) else None
+    plan_keys = set(pss.aggregate_block(block).keys()) if block else set()
     elsewhere: set = set()
     for b in batches_all:
-        if b.get("id") == dup["id"] or (b.get("client_delivery_date") or "").strip():
+        if b.get("id") in (dup["id"], base["id"]) or (b.get("client_delivery_date") or "").strip():
             continue
         elsewhere |= codes_of(b)
-    own_only = sorted(codes_of(dup) - elsewhere)
-    if own_only:
-        return "в ней есть грузы, которых нет в других партиях: " + html.escape(", ".join(own_only[:8]))
-    return ""
+    base_by_code = {pss.normalize_mark(b.get("code")): b for b in db.get_bl_by_batch(base["id"])}
+    returned, merged, dropped, own, stuck = [], [], [], [], []
+    for bl in db.get_bl_by_batch(dup["id"]):
+        code = str(bl.get("code") or "")
+        key = pss.normalize_mark(code)
+        twin = base_by_code.get(key)
+        if twin is not None:
+            res = _merge_duplicate_into(twin, bl, base["id"])
+            if res == "kept":
+                # файлы у обеих строк — не выбираем сами, строка переезжает рядом
+                (returned if _safe_move_bl(bl["id"], base["id"]) else stuck).append(code)
+            else:
+                merged.append(code)
+            continue
+        if key in plan_keys:
+            (returned if _safe_move_bl(bl["id"], base["id"]) else stuck).append(code)
+        elif key in elsewhere and _bl_is_bare(bl):
+            # копия чужой строки: груз живёт в другой партии, у копии ни файлов, ни истории
+            try:
+                db.delete_bl(bl["id"])
+                dropped.append(code)
+            except Exception:
+                app.logger.exception("copy repair: delete bl %s failed", bl.get("id"))
+                stuck.append(code)
+        else:
+            (own if _safe_move_bl(bl["id"], base["id"]) else stuck).append(code)
+    left = db.get_bl_by_batch(dup["id"])
+    if left:
+        return False, (f"⚠️ <b>{name}</b> — копия партии «{base_name}»: вернул {len(returned)}, сведено {len(merged)}, "
+                       f"но не смог перенести {len(left)} ({html.escape(', '.join(str(x.get('code')) for x in left[:6]))}) — "
+                       "доделайте вручную.")
+    try:
+        db.delete_batch(dup["id"])
+    except Exception as exc:
+        return False, f"⚠️ <b>{name}</b> слита в «{base_name}», но удалить пустую не вышло: {html.escape(str(exc))}"
+    if block is not None and (base.get("plan_kind") or "") != "china":
+        db.set_batch_plan_ref(base["id"], block["tab"], pss.ref_title(block), block["date"], "china")
+    parts = [f"🧹 Дубль <b>{name}</b> убран, партия «{base_name}» восстановлена"]
+    if returned:
+        parts.append(f"вернул {len(returned)} грузов с файлами и группами")
+    if merged:
+        parts.append(f"сведено {len(merged)} дублей")
+    if dropped:
+        parts.append(f"удалено {len(dropped)} копий чужих строк ({html.escape(', '.join(dropped[:8]))}"
+                     + (" …" if len(dropped) > 8 else "") + ")")
+    if own:
+        parts.append(f"перенёс в партию её собственный груз: {html.escape(', '.join(own[:6]))}")
+    tail = ("; рассылок у дубля не было, партия снова на китайском плане — казахский план "
+            "применится после прибытия в Хоргос.")
+    return True, ": ".join([parts[0], ", ".join(parts[1:])]) + tail if len(parts) > 1 else parts[0] + tail
 
 
 def _plan_add_bl(batch_id, entry, chat_lookup, known_chat_ids, unlinked: list) -> bool:
@@ -8520,35 +8571,31 @@ def run_morning_plan_sync(force: bool = False, mark_day: bool = True):
     # дня (12.10.2026: «09.10.2026 ZH 2» из черновика плана 13.10). Такую
     # копию удаляем сами, если у неё нет ничего своего: все грузы лежат в
     # других партиях, рассылок и файлов не было.
-    for dup, base in pss.copy_duplicates(batches_all, codes_of, now=now):
+    def plan_keys_of(batch) -> set:
+        block_ = pss.resolve_ref_block(batch, blocks, "china", codes_of(batch)) if pss.batch_has_ref(batch) else None
+        return set(pss.aggregate_block(block_).keys()) if block_ else set()
+
+    for dup, base in pss.copy_duplicates(batches_all, codes_of, now=now, plan_keys_of=plan_keys_of):
         try:
-            blocker = _copy_batch_blocker(dup, batches_all, codes_of)
-            if blocker:
-                report.append(
-                    f"⚠️ <b>{html.escape(dup['name'])}</b> похожа на копию партии "
-                    f"«{html.escape(base['name'])}» (тот же план, состав повторяется), но {blocker} — "
-                    "сама не удаляю, проверьте и объедините вручную."
-                )
-                continue
-            dup_codes = codes_of(dup)
-            holders = sorted({str(b.get("name") or "") for b in batches_all
-                              if b.get("id") != dup["id"] and codes_of(b) & dup_codes})
-            for action in db.ai_list_pending_actions("apply_kazakh_plan"):
-                try:
-                    if int(json.loads(action.get("params_json") or "{}").get("batch_id") or 0) == dup["id"]:
-                        db.ai_finish_pending_action(action["id"], "rejected", "партия-копия удалена сверкой")
-                except Exception:
-                    pass
-            db.delete_batch(dup["id"])
-            batches_all = [b for b in batches_all if b.get("id") != dup["id"]]
-            active = [b for b in active if b.get("id") != dup["id"]]
-            codes_cache.pop(dup["id"], None)
-            report.append(
-                f"🧹 Удалён дубль <b>{html.escape(dup['name'])}</b>: партия была открыта по копии плана "
-                f"«{html.escape(str(base.get('plan_title') or ''))}» ({html.escape(str(base.get('plan_date') or ''))}) "
-                f"под партией «{html.escape(base['name'])}». Все её {len(dup_codes)} грузов уже есть в партиях "
-                f"{html.escape(', '.join(holders[:6]))}; рассылок и файлов у неё не было."
-            )
+            ok_repair, line = _repair_copy_batch(dup, base, blocks, batches_all, codes_of)
+            report.append(line)
+            if ok_repair:
+                for action in db.ai_list_pending_actions("apply_kazakh_plan"):
+                    try:
+                        if int(json.loads(action.get("params_json") or "{}").get("batch_id") or 0) == dup["id"]:
+                            db.ai_finish_pending_action(action["id"], "rejected", "партия-копия слита обратно сверкой")
+                    except Exception:
+                        pass
+                batches_all = [b for b in batches_all if b.get("id") != dup["id"]]
+                active = [b for b in active if b.get("id") != dup["id"]]
+                codes_cache.pop(dup["id"], None)
+                codes_cache.pop(base["id"], None)
+                fresh_base = db.get_batch(base["id"])
+                if fresh_base:
+                    for lst in (batches_all, active):
+                        for i, b in enumerate(lst):
+                            if b.get("id") == base["id"]:
+                                lst[i] = fresh_base
         except Exception:
             app.logger.exception("Plan sync: copy cleanup failed for %s", dup.get("name"))
 
@@ -8918,6 +8965,22 @@ def _apply_kazakh_plan_impl(params: dict, blocks: list | None = None,
         if b["id"] not in _codes_cache:
             _codes_cache[b["id"]] = _plan_batch_codes(b["id"])
         return _codes_cache[b["id"]]
+
+    if standalone:
+        # владелец, 13.10.2026: заявка применила казахский план к КОПИИ
+        # («09.10.2026 ZH 2») — дедубликатор увёз в неё грузы настоящей
+        # партии. К партии, которую сверка считает копией другой, план не
+        # применяем: сначала копия сливается обратно (сверка делает сама)
+
+        def _plan_keys_of(b) -> set:
+            blk = pss.resolve_ref_block(b, blocks, "china", codes_of(b)) if pss.batch_has_ref(b) else None
+            return set(pss.aggregate_block(blk).keys()) if blk else set()
+
+        for dup, base in pss.copy_duplicates(batches, codes_of, plan_keys_of=_plan_keys_of):
+            if dup["id"] == batch["id"]:
+                return False, (f"«{batch['name']}» — копия партии «{base['name']}» (тот же план "
+                               f"{base.get('plan_date') or ''}): казахский план к копии не применяю. "
+                               "Ближайшая сверка сольёт её обратно; потом примените план к настоящей партии"), False
 
     block = None
     is_kz_ref = (batch.get("plan_kind") or "") == "kazakh"
