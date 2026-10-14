@@ -44,6 +44,12 @@
   .item.lock .x{display:none}
   .item.lock{border-color:var(--acc)}
   .add{display:flex;gap:8px;flex-wrap:wrap}
+  .err{color:var(--bad);font-size:13px;margin-top:6px}
+  .okmsg{color:var(--acc);font-size:13px;margin-top:6px}
+  .sugg{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 12px}
+  .sugg .item button{background:none;border:1px solid var(--line);color:var(--ink);border-radius:6px;
+        padding:1px 6px;cursor:pointer;font-size:12px}
+  .sugg .item button.client{color:var(--warn)}
   input{background:var(--bg);border:1px solid var(--line);color:var(--ink);
         border-radius:8px;padding:6px 10px;font-size:13px}
   button.act{background:var(--acc);border:none;color:#0c1512;border-radius:8px;
@@ -84,6 +90,7 @@
       <button class="act" onclick="saveRoles()">💾 Сохранить права</button>
       <span id="saveMsg"></span>
     </div>
+    <section class="role" id="staffRoot"><p class="hint">Загрузка списка сотрудников…</p></section>
   </div>
 </main>
 
@@ -172,7 +179,14 @@ async function loadRoles(){
 
 function addItem(key){
   const v = (document.getElementById('add_'+key).value||'').trim();
-  if(!v) return;
+  if(!v) return true;
+  // Telegram ID — только цифры: ник или телефон сервер молча выбросил бы (жалоба 14.10.2026)
+  if(key!=='admin_usernames' && !/^\d{3,15}$/.test(v)){
+    document.getElementById('saveMsg').innerHTML =
+      '<span class="err">❌ «'+esc(v)+'» — не Telegram ID. Нужны только цифры: человек пишет боту /chatid и получает свой ID.</span>';
+    document.getElementById('add_'+key).focus();
+    return false;
+  }
   if(key==='sales'){
     const name = (document.getElementById('add_sales_name').value||'').trim() || v;
     ROLES.sales[v] = name;
@@ -182,6 +196,7 @@ function addItem(key){
     if(!ROLES[key].includes(v)) ROLES[key].push(v);
   }
   renderRoles();
+  return true;
 }
 
 function removeItem(key, id){
@@ -192,6 +207,11 @@ function removeItem(key, id){
 
 async function saveRoles(){
   const msg = document.getElementById('saveMsg');
+  // текст, вписанный, но не добавленный кнопкой «+ добавить», не теряем
+  for(const key of ['admins','operators','readonly','sales','admin_usernames']){
+    const el = document.getElementById('add_'+key);
+    if(el && el.value.trim() && !addItem(key)) return;
+  }
   msg.textContent = 'Сохраняю…';
   const r = await fetch('/api/dev/roles', {method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -202,7 +222,56 @@ async function saveRoles(){
   else { msg.textContent = '❌ Ошибка сохранения'; }
 }
 
-loadOverview(); loadLog(); loadRoles();
+let STAFF = null;
+function staffChip(p, actions){
+  const label = esc(p.name || p.username || p.id) + (p.username ? ' · @'+esc(p.username) : '') + (p.groups ? ' · '+p.groups+' гр.' : '');
+  return `<span class="item">${label}${actions}</span>`;
+}
+function renderStaff(){
+  const s = STAFF; if(!s) return;
+  const reg = (s.registry||[]).map(p=>staffChip(p,
+    ` <span class="x" onclick="staffAction('remove','${esc(p.id||p.username)}')">✕</span>`)).join('') || '<span class="hint">пусто — пока работает догадка «в 3 и более группах»</span>';
+  const guess = (s.counted_by_guess||[]).map(p=>staffChip(p,
+    ` <button onclick="staffAction('add','${esc(p.user_id)}')">✓ сотрудник</button><button class="client" onclick="staffAction('mark_client','${esc(p.user_id)}')">клиент</button>`)).join('') || '<span class="hint">нет</span>';
+  const looks = (s.looks_like_staff_not_counted||[]).map(p=>staffChip(p,
+    ` <button onclick="staffAction('add','${esc(p.user_id)}')">✓ сотрудник</button>`)).join('') || '<span class="hint">нет</span>';
+  const clients = (s.confirmed_clients||[]).map(id=>`<span class="item">${esc(id)} <span class="x" onclick="staffAction('unmark_client','${esc(id)}')">✕</span></span>`).join('') || '<span class="hint">нет</span>';
+  document.getElementById('staffRoot').innerHTML = `<h3>👥 Сотрудники — фильтр «наши ≠ клиенты»</h3>
+    <p class="hint">По этому списку бот отделяет наших людей от клиентов в группах (список клиентов, «уснувшие» группы). Действует сразу. Можно вводить id, @ник или имя — по одному или через запятую.</p>
+    <div class="items">${reg}</div>
+    <div class="add"><input id="staffAdd" placeholder="id, @ник или имя"><button class="mini" onclick="staffAdd()">+ добавить</button></div>
+    <div id="staffMsg"></div>
+    <p class="hint" style="margin-top:14px">Считаются сотрудниками по догадке (есть в 3+ группах) — подтвердите:</p><div class="sugg">${guess}</div>
+    <p class="hint">Похожи на сотрудников по подписи, но не учтены:</p><div class="sugg">${looks}</div>
+    <p class="hint">Подтверждённые клиенты (во многих группах, но не сотрудники):</p><div class="items">${clients}</div>`;
+}
+async function loadStaff(){
+  const r = await fetch('/api/dev/staff'); STAFF = await r.json(); renderStaff();
+}
+async function staffAction(action, who){
+  const list = Array.isArray(who) ? who : [who];
+  const r = await fetch('/api/dev/staff', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({[action]: list})});
+  const d = await r.json();
+  await loadStaff();
+  const msg = document.getElementById('staffMsg');
+  if(!msg) return;
+  const parts = [];
+  if(d.added && d.added.length) parts.push('<span class="okmsg">✅ добавлено: '+d.added.map(x=>esc(x.name||x.username||x.id)).join(', ')+'</span>');
+  if(d.removed && d.removed.length) parts.push('<span class="okmsg">убрано: '+d.removed.length+'</span>');
+  if(d.marked_client && d.marked_client.length) parts.push('<span class="okmsg">отмечены клиентами: '+d.marked_client.length+'</span>');
+  if(d.unresolved && d.unresolved.length) parts.push('<div class="err">не нашёл среди участников групп: '+d.unresolved.map(esc).join(', ')+' — укажите @ник или id</div>');
+  if(d.ambiguous && d.ambiguous.length) parts.push('<div class="err">неоднозначно: '+d.ambiguous.map(a=>esc(a.entry)+' → '+a.candidates.map(c=>esc(c.name)+(c.username?' @'+esc(c.username):'')+' ('+esc(c.id)+')').join(' / ')).join('; ')+' — укажите id</div>');
+  if(d.error) parts.push('<div class="err">'+esc(d.error)+'</div>');
+  msg.innerHTML = parts.join(' ');
+}
+function staffAdd(){
+  const el = document.getElementById('staffAdd');
+  const items = (el.value||'').split(/[,;\n]/).map(x=>x.trim()).filter(Boolean);
+  if(items.length) staffAction('add', items);
+}
+
+loadOverview(); loadLog(); loadRoles(); loadStaff();
 setInterval(()=>{loadOverview(); loadLog();}, 10000);
 </script>
 </body>

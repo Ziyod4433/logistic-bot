@@ -8,11 +8,25 @@
 Источники: bl_codes+batches (груз), moderator_response_requests (каждое
 сообщение клиента и ответ на него), telegram_chat_members (кто и когда был
 в группе), send_logs (рассылки), communication_ratings (оценки), problems.
+
+СОН = клиент перестал давать груз (владелец, 14.10.2026). Решает ГРУЗ и
+личный ритм клиента: возивший раз в неделю и пропавший на месяц уже
+затихает, возивший раз в квартал и молчащий 100 дней — ещё нет. Переписка
+— отдельный признак («пишет, но не грузит»), активным она группу больше
+не делает. Клиент, чей код теперь едет через другую группу, — не спящий,
+а «переехал».
+
+КЛИЕНТЫ И СОТРУДНИКИ. Bot API не отдаёт список участников группы: бот знает
+тех, кто писал, кому отвечали, и админов (getChatAdministrators), плюс общее
+число участников (getChatMemberCount). Сотрудник — из списка сотрудников
+владельца (staff_registry), из ролей бота, участник Tracking gruppa или
+человек, которого бот видит в ≥3 группах (кроме подтверждённых клиентов).
 """
 from __future__ import annotations
 
 import os
 import re
+import time
 from datetime import date, datetime, timedelta
 
 import database as db
@@ -25,9 +39,17 @@ SEGMENT_LABELS = {
     "active": "🟢 активен",
     "fading": "🟡 затихает",
     "asleep": "🔴 заснул",
+    "lost": "⚫ потерян (груза нет полгода и больше)",
+    "moved": "🔀 возит через другую группу",
     "new": "⚪ бот в группе недавно — истории ещё нет",
-    "no_cargo": "⚫ груз в системе не виден (BL не привязан или так и не отгрузил)",
+    "no_cargo": "◻️ груз в системе не виден (BL не привязан или так и не отгрузил)",
 }
+STAFF_REGISTRY_KEY = "staff_registry"              # [{id, username, name}] — список владельца
+CONFIRMED_CLIENTS_KEY = "staff_confirmed_clients"  # [user_id] — «это клиент, хоть и во многих группах»
+# подписи наших людей в Telegram: «Buraq Logistics Sales Manager», «…_Logist»
+_STAFF_NAME_HINT = re.compile(
+    r"buraq|logist|sales.?manager|head.?of.?sales|moderator|retention|tracking.?manager|customs|collector",
+    re.IGNORECASE)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -38,13 +60,36 @@ def _env_int(name: str, default: int) -> int:
 
 
 def thresholds() -> dict:
+    """Пороги «сна». Без ритма (меньше 3 партий) — фиксированные дни; с
+    ритмом — кратные обычного перерыва клиента, но не меньше «полов»."""
     return {
-        "active_cargo_days": _env_int("ACTIVITY_ACTIVE_CARGO_DAYS", 45),
-        "active_msg_days": _env_int("ACTIVITY_ACTIVE_MSG_DAYS", 21),
-        "asleep_cargo_days": _env_int("ACTIVITY_ASLEEP_CARGO_DAYS", 90),
-        "asleep_msg_days": _env_int("ACTIVITY_ASLEEP_MSG_DAYS", 60),
+        "active_cargo_days": _env_int("ACTIVITY_ACTIVE_CARGO_DAYS", 45),    # затихает после, если ритма нет
+        "asleep_cargo_days": _env_int("ACTIVITY_ASLEEP_CARGO_DAYS", 90),    # заснул после, если ритма нет
+        "lost_cargo_days": _env_int("ACTIVITY_LOST_CARGO_DAYS", 180),       # потерян после (и пол для ритма)
+        "fade_floor_days": _env_int("ACTIVITY_FADE_FLOOR_DAYS", 30),
+        "asleep_floor_days": _env_int("ACTIVITY_ASLEEP_FLOOR_DAYS", 60),
+        "fade_x_gap": 2, "asleep_x_gap": 3, "lost_x_gap": 6,
+        "rhythm_min_batches": 3,
+        "active_msg_days": _env_int("ACTIVITY_ACTIVE_MSG_DAYS", 21),        # «пишет, но не грузит»
+        "moved_window_days": _env_int("ACTIVITY_MOVED_WINDOW_DAYS", 60),
         "new_group_days": _env_int("ACTIVITY_NEW_GROUP_DAYS", 45),
     }
+
+
+def rhythm_limits(gap: int | None, shipments: int, t: dict) -> dict:
+    """{fade, asleep, lost, basis}: через сколько дней без груза клиент затихает / заснул / потерян."""
+    if gap and shipments >= t["rhythm_min_batches"]:
+        # кратные ритма, но в разумной вилке: редкий клиент (раз в полгода)
+        # не должен годами числиться активным
+        clamp = lambda v, lo, hi: max(lo, min(v, hi))  # noqa: E731
+        return {
+            "fade": clamp(t["fade_x_gap"] * gap, t["fade_floor_days"], 120),
+            "asleep": clamp(t["asleep_x_gap"] * gap, t["asleep_floor_days"], 180),
+            "lost": clamp(t["lost_x_gap"] * gap, t["lost_cargo_days"], 365),
+            "basis": f"обычно возит раз в {gap} дн.",
+        }
+    return {"fade": t["active_cargo_days"], "asleep": t["asleep_cargo_days"], "lost": t["lost_cargo_days"],
+            "basis": "ритма ещё нет (меньше 3 отгрузок)"}
 
 
 def _today() -> date:
@@ -73,7 +118,73 @@ def _batch_day(name, created_at) -> date | None:
 
 
 def _ago(day: date | None, today: date) -> int | None:
-    return (today - day).days if day else None
+    return max(0, (today - day).days) if day else None
+
+
+# ── ИСТОРИЯ ГРУЗОВ ИЗ ШИТСА ───────────────────────────────────────────
+# База помнит партии с апреля 2026, а бота добавили во многие группы только
+# в сентябре: для них «груза нет», хотя клиент возил годами. Китайские планы
+# всех месячных вкладок шитса (с мая 2024) — вторая история: марка клиента
+# по датам фур. Код берём из BL группы и из её названия («PIMAK (BL-139)»).
+SHEET_CACHE_SECONDS = 3600
+_SHEET_CACHE: dict = {"at": 0.0, "index": None, "error": ""}
+_TITLE_BL_RE = re.compile(r"\bBL\s*[-–]?\s*(\d{1,5})\b", re.IGNORECASE)
+_TITLE_NOISE = {"BURAQ", "BURAQLOGISTICS", "LOGISTICS", "GROUP", "GURUH"}
+SHIPMENT_MERGE_DAYS = 5     # две фуры одного клиента за несколько дней — одна отгрузка
+
+
+def _norm_mark(value) -> str:
+    text = str(value or "").strip().upper()
+    text = re.sub(r"\.0+$", "", text)
+    return re.sub(r"[\s\-_.()\[\]]+", "", text)
+
+
+def title_codes(title) -> set:
+    """«PIMAK (BL-139) & BURAQ LOGISTICS» → {«BL139», «PIMAK»}."""
+    head = re.split(r"&", str(title or ""), maxsplit=1)[0]
+    codes = {"BL" + m.group(1) for m in _TITLE_BL_RE.finditer(head)}
+    brand = _norm_mark(_TITLE_BL_RE.sub(" ", head))
+    if len(brand) >= 3 and brand not in _TITLE_NOISE:
+        codes.add(brand)
+    return codes
+
+
+def sheet_cargo_index(force: bool = False) -> tuple:
+    """({марка: {даты фур}}, ошибка) из китайских планов шитса; кэш на час."""
+    now = time.time()
+    if not force and _SHEET_CACHE["index"] is not None and now - _SHEET_CACHE["at"] < SHEET_CACHE_SECONDS:
+        return _SHEET_CACHE["index"], _SHEET_CACHE["error"]
+    try:
+        from services import plan_sync_service as pss
+
+        index: dict = {}
+        for block in pss.all_blocks():
+            if block.get("kind") != "china":
+                continue
+            try:
+                day = datetime.strptime(pss.date_key(block.get("date")), "%d%m%Y").date()
+            except ValueError:
+                continue
+            for item in block.get("items") or []:
+                mark = _norm_mark(item.get("mark"))
+                if mark:
+                    index.setdefault(mark, set()).add(day)
+        error = ""
+    except Exception as exc:  # шитс недоступен — анализ идёт по базе
+        index, error = (_SHEET_CACHE["index"] or {}), f"шитс недоступен: {exc}"[:200]
+    _SHEET_CACHE.update(at=now, index=index, error=error)
+    return index, error
+
+
+def _merge_days(days: list) -> list:
+    """Отгрузки клиента: даты фур, где соседние ближе SHIPMENT_MERGE_DAYS, — одна."""
+    out = []
+    for d in sorted(days):
+        if out and (d - out[-1]).days < SHIPMENT_MERGE_DAYS:
+            out[-1] = d
+        else:
+            out.append(d)
+    return out
 
 
 def _members_clock_shift(conn) -> timedelta:
@@ -112,22 +223,226 @@ def _excluded_chat_ids() -> set:
     return out
 
 
-def staff_directory(conn) -> dict:
-    """{user_id: имя} наших людей: админы/операторы + все, кто виден в ≥3 группах."""
+def _json_setting(key: str, default):
+    import json
+    raw = db.get_setting(key, None)
+    if raw is None:
+        return default
+    try:
+        value = json.loads(raw)
+        return value if isinstance(value, type(default)) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def staff_registry() -> list:
+    """Список сотрудников владельца: [{id, username, name}] (id может быть пустым,
+    пока человек с таким ником не встретился боту)."""
+    out = []
+    for item in _json_setting(STAFF_REGISTRY_KEY, []):
+        if isinstance(item, dict):
+            out.append({"id": str(item.get("id") or "").strip(),
+                        "username": str(item.get("username") or "").strip().lstrip("@").lower(),
+                        "name": str(item.get("name") or "").strip()})
+    return [x for x in out if x["id"] or x["username"]]
+
+
+def confirmed_clients() -> set:
+    return {str(x).strip() for x in _json_setting(CONFIRMED_CLIENTS_KEY, []) if str(x).strip()}
+
+
+def _role_ids() -> dict:
+    """{user_id: роль} — все, у кого есть роль в боте."""
     from services import ai_assistant
 
-    rows = conn.execute(
+    out = {}
+    for uid in ai_assistant.admin_ids():
+        out[str(uid)] = "админ бота"
+    for uid in ai_assistant.operator_ids():
+        out.setdefault(str(uid), "оператор бота")
+    for uid in ai_assistant.readonly_ids():
+        out.setdefault(str(uid), "доступ «только чтение»")
+    for uid, nick in ai_assistant.sales_users().items():
+        out.setdefault(str(uid), f"продавец ({nick})")
+    for env, label in (("HOJI_DODAM_TG_ID", "Hoji dodam"), ("PACKING_RESPONSIBLE_TG_ID", "Jigar")):
+        default = {"HOJI_DODAM_TG_ID": "1514716826", "PACKING_RESPONSIBLE_TG_ID": "8526226966"}[env]
+        uid = (os.getenv(env, default) or "").strip()
+        if uid:
+            out.setdefault(uid, label)
+    return out
+
+
+def staff_breakdown(conn) -> dict:
+    """{user_id: {name, username, why, groups}} — кто считается сотрудником и почему."""
+    from services import ai_assistant
+
+    members = {}
+    for r in conn.execute(
         """
-        SELECT user_id, MAX(display_name) AS display_name, MAX(username) AS username
-        FROM telegram_chat_members
-        GROUP BY user_id HAVING COUNT(DISTINCT chat_id) >= ?
-        """,
-        (STAFF_MIN_GROUPS,),
-    ).fetchall()
-    staff = {str(r["user_id"]): (r["display_name"] or r["username"] or str(r["user_id"])) for r in rows}
-    for uid in set(ai_assistant.admin_ids()) | set(ai_assistant.operator_ids()):
-        staff.setdefault(str(uid), str(uid))
+        SELECT user_id, MAX(display_name) AS display_name, MAX(username) AS username,
+               COUNT(DISTINCT chat_id) AS groups
+        FROM telegram_chat_members GROUP BY user_id
+        """).fetchall():
+        members[str(r["user_id"])] = {"name": r["display_name"] or r["username"] or str(r["user_id"]),
+                                      "username": (r["username"] or "").lower(), "groups": int(r["groups"] or 0)}
+    control = str(ai_assistant.control_group_id() or "").strip()
+    in_control = {str(r["user_id"]) for r in conn.execute(
+        "SELECT user_id FROM telegram_chat_members WHERE chat_id = ?", (control,)).fetchall()} if control else set()
+    clients_ok = confirmed_clients()
+    staff = {}
+
+    def put(uid, why):
+        uid = str(uid).strip()
+        if not uid or uid in staff:
+            return
+        info = members.get(uid, {"name": uid, "username": "", "groups": 0})
+        staff[uid] = {"name": info["name"], "username": info["username"], "groups": info["groups"], "why": why}
+
+    for item in staff_registry():
+        if item["id"]:
+            put(item["id"], "в списке сотрудников")
+        if item["username"]:
+            for uid, info in members.items():
+                if info["username"] == item["username"]:
+                    put(uid, "в списке сотрудников")
+    for uid, role in _role_ids().items():
+        put(uid, role)
+    for uid in in_control:
+        put(uid, "участник Tracking gruppa")
+    for uid, info in members.items():
+        if info["username"].endswith("bot"):
+            put(uid, "бот")
+        elif info["groups"] >= STAFF_MIN_GROUPS and uid not in clients_ok:
+            put(uid, f"есть в {info['groups']} группах")
     return staff
+
+
+def staff_directory(conn) -> dict:
+    """{user_id: имя} наших людей (см. staff_breakdown)."""
+    return {uid: info["name"] for uid, info in staff_breakdown(conn).items()}
+
+
+def staff_review(conn) -> dict:
+    """Для проверки владельцем: кого бот считает сотрудником только по догадке
+    (много групп), и похожих на сотрудников по подписи, но пока не учтённых."""
+    staff = staff_breakdown(conn)
+    by_guess = [{"user_id": uid, **info} for uid, info in staff.items() if info["why"].startswith("есть в ")]
+    hinted = []
+    for r in conn.execute(
+        """
+        SELECT user_id, MAX(display_name) AS display_name, MAX(username) AS username,
+               COUNT(DISTINCT chat_id) AS groups
+        FROM telegram_chat_members GROUP BY user_id
+        """).fetchall():
+        uid = str(r["user_id"])
+        label = f"{r['display_name'] or ''} {r['username'] or ''}"
+        if uid not in staff and uid not in confirmed_clients() and _STAFF_NAME_HINT.search(label):
+            hinted.append({"user_id": uid, "name": r["display_name"] or r["username"] or uid,
+                           "username": r["username"] or "", "groups": int(r["groups"] or 0)})
+    by_guess.sort(key=lambda x: -x["groups"])
+    hinted.sort(key=lambda x: -x["groups"])
+    return {"counted_by_guess": by_guess, "looks_like_staff_not_counted": hinted}
+
+
+def resolve_people(entries, conn=None) -> dict:
+    """Строки владельца («7588682119», «@JAHONGIR_moderator», «Mirziyod») → люди,
+    которых бот видел в группах. → {resolved, unresolved, ambiguous}."""
+    own = conn is None
+    conn = conn or db.get_conn()
+    try:
+        people = [dict(r) for r in conn.execute(
+            """
+            SELECT user_id, MAX(display_name) AS display_name, MAX(username) AS username,
+                   COUNT(DISTINCT chat_id) AS groups
+            FROM telegram_chat_members GROUP BY user_id
+            """).fetchall()]
+    finally:
+        if own:
+            conn.close()
+    out = {"resolved": [], "unresolved": [], "ambiguous": []}
+    for raw in entries or []:
+        entry = str(raw or "").strip()
+        if not entry:
+            continue
+        low = entry.lstrip("@").lower()
+        if entry.isdigit():
+            hit = [p for p in people if str(p["user_id"]) == entry]
+            p = hit[0] if hit else {"user_id": entry, "display_name": "", "username": "", "groups": 0}
+            out["resolved"].append({"id": entry, "name": p["display_name"] or p["username"] or entry,
+                                    "username": (p["username"] or "").lower(), "groups": p["groups"], "seen": bool(hit)})
+            continue
+        hit = [p for p in people if (p["username"] or "").lower() == low]
+        if not hit and not entry.startswith("@"):
+            hit = [p for p in people if low in (p["display_name"] or "").lower()
+                   or (len(low) >= 4 and low in (p["username"] or "").lower())]
+        if len(hit) == 1:
+            p = hit[0]
+            out["resolved"].append({"id": str(p["user_id"]), "name": p["display_name"] or p["username"],
+                                    "username": (p["username"] or "").lower(), "groups": p["groups"], "seen": True})
+        elif hit:
+            hit.sort(key=lambda p: -int(p["groups"] or 0))
+            out["ambiguous"].append({"entry": entry, "candidates": [
+                {"id": str(p["user_id"]), "name": p["display_name"], "username": p["username"],
+                 "groups": p["groups"]} for p in hit[:8]]})
+        elif re.fullmatch(r"@?[A-Za-z][A-Za-z0-9_]{4,31}", entry):
+            # ник, которого бот ещё не встречал: запомним ником, id подставится сам
+            out["resolved"].append({"id": "", "name": entry.lstrip("@"), "username": low, "groups": 0, "seen": False})
+        else:
+            out["unresolved"].append(entry)
+    return out
+
+
+def update_staff(add=(), remove=(), mark_client=(), unmark_client=()) -> dict:
+    """Правка списка сотрудников и подтверждённых клиентов. → что сделано."""
+    import json
+
+    registry = staff_registry()
+    clients_ok = confirmed_clients()
+    report = {"added": [], "removed": [], "marked_client": [], "unmarked_client": [],
+              "unresolved": [], "ambiguous": []}
+
+    def key(item):
+        return item["id"] or "@" + item["username"]
+
+    if add:
+        res = resolve_people(add)
+        report["unresolved"] += res["unresolved"]
+        report["ambiguous"] += res["ambiguous"]
+        have = {key(x) for x in registry}
+        for p in res["resolved"]:
+            item = {"id": p["id"], "username": p["username"], "name": p["name"]}
+            if key(item) not in have:
+                registry.append(item)
+                have.add(key(item))
+                report["added"].append(item)
+            clients_ok.discard(p["id"])
+    if remove:
+        wanted = {str(x).strip().lstrip("@").lower() for x in remove if str(x).strip()}
+        keep = []
+        for item in registry:
+            if {item["id"], item["username"], item["name"].lower()} & wanted:
+                report["removed"].append(item)
+            else:
+                keep.append(item)
+        registry = keep
+    if mark_client:
+        res = resolve_people(mark_client)
+        report["unresolved"] += res["unresolved"]
+        report["ambiguous"] += res["ambiguous"]
+        for p in res["resolved"]:
+            if p["id"]:
+                clients_ok.add(p["id"])
+                registry = [x for x in registry if x["id"] != p["id"]]
+                report["marked_client"].append(p)
+    for raw in unmark_client or ():
+        uid = str(raw).strip()
+        if uid in clients_ok:
+            clients_ok.discard(uid)
+            report["unmarked_client"].append(uid)
+    db.set_setting(STAFF_REGISTRY_KEY, json.dumps(registry, ensure_ascii=False))
+    db.set_setting(CONFIRMED_CLIENTS_KEY, json.dumps(sorted(clients_ok)))
+    report["registry_size"] = len(registry)
+    return report
 
 
 def _in_clause(ids) -> tuple[str, list]:
@@ -144,23 +459,30 @@ def _median(values: list) -> int | None:
 
 
 def _classify(rec: dict, t: dict) -> tuple[str, str]:
+    """Сегмент по ГРУЗУ и личному ритму клиента (владелец, 14.10.2026:
+    «уснул — перестал давать нам груз»). Переписка в сегмент не входит."""
     d_cargo, d_msg = rec["days_since_cargo"], rec["days_since_client_message"]
-    if rec["batches"] == 0:
+    voice = "клиент никогда не писал" if d_msg is None else f"клиент писал {d_msg} дн. назад"
+    if rec["shipments"] == 0:
         if (rec["group_age_days"] or 0) < t["new_group_days"]:
-            return "new", (f"бот видит группу {rec['group_age_days']} дн., груз к ней ещё не привязан — "
-                           "это не «новый клиент», а короткая история")
-        voice = "клиент никогда не писал" if d_msg is None else f"клиент писал {d_msg} дн. назад"
-        return "no_cargo", f"ни одного груза в системе; {voice}"
+            return "new", (f"бот видит группу {rec['group_age_days']} дн., груза ни в базе, ни в шитсе по "
+                           "кодам группы нет — похоже на нового клиента")
+        return "no_cargo", f"ни одного груза ни в базе, ни в шитсе по кодам группы; {voice}"
     if rec["cargo_in_transit"]:
         return "active", f"груз сейчас в пути ({rec['cargo_in_transit']} BL)"
-    if d_cargo is not None and d_cargo <= t["active_cargo_days"]:
-        return "active", f"последний груз {d_cargo} дн. назад"
-    if d_msg is not None and d_msg <= t["active_msg_days"]:
-        return "active", f"клиент писал {d_msg} дн. назад"
-    silent = "клиент ни разу не писал" if d_msg is None else f"клиент молчит {d_msg} дн."
-    if (d_cargo is None or d_cargo > t["asleep_cargo_days"]) and (d_msg is None or d_msg > t["asleep_msg_days"]):
-        return "asleep", f"груза нет {d_cargo} дн., {silent}"
-    return "fading", f"груз {d_cargo} дн. назад, {silent}"
+    lim = rhythm_limits(rec["usual_gap_days"], rec["shipments"], t)
+    rec["limits"] = {k: lim[k] for k in ("fade", "asleep", "lost")}
+    src = "" if rec["cargo_source"] == "база" else f" (по {rec['cargo_source']})"
+    base = f"последний груз {d_cargo} дн. назад{src}, {lim['basis']}"
+    if rec.get("moved_to") and d_cargo is not None and d_cargo > lim["fade"]:
+        return "moved", f"{base}; его коды теперь едут через «{rec['moved_to']}» — это не сон"
+    if d_cargo is None or d_cargo <= lim["fade"]:
+        return "active", base
+    if d_cargo <= lim["asleep"]:
+        return "fading", f"{base} — затихает после {lim['fade']} дн.; {voice}"
+    if d_cargo <= lim["lost"]:
+        return "asleep", f"{base} — спит после {lim['asleep']} дн.; {voice}"
+    return "lost", f"{base} — потерян после {lim['lost']} дн.; {voice}"
 
 
 def analyze_all(today: date | None = None) -> dict:
@@ -168,6 +490,7 @@ def analyze_all(today: date | None = None) -> dict:
     today = today or _today()
     t = thresholds()
     skip = _excluded_chat_ids()
+    sheet_index, sheet_error = sheet_cargo_index()
     d30, d60, d90 = (today.toordinal() - n for n in (30, 60, 90))
     iso = lambda o: date.fromordinal(o).isoformat()
     conn = db.get_conn()
@@ -198,15 +521,14 @@ def analyze_all(today: date | None = None) -> dict:
             WHERE request_user_id NOT IN {staff_sql}
             GROUP BY chat_id
             """, (iso(d30), iso(d60), iso(d30), iso(d90), *staff_args)).fetchall()}
-        # last_seen_at — в часах сервера: сразу переводим во время Ташкента,
-        # иначе сравнение с requested_at (Ташкент) врёт на 5 часов
+        # голос клиента — только его собственные сообщения: last_spoke_at (Ташкент).
+        # last_seen_at клиентам не годится: его освежают список админов и чужие reply
         seen = {}
         for r in conn.execute(
-                f"SELECT chat_id, MAX(last_seen_at) AS last_at, COUNT(*) AS people FROM telegram_chat_members "
-                f"WHERE user_id NOT IN {staff_sql} GROUP BY chat_id", staff_args).fetchall():
-            item = dict(r)
-            item["last_at"] = _to_tashkent(item.get("last_at"), shift)
-            seen[str(r["chat_id"])] = item
+                f"SELECT chat_id, MAX(NULLIF(last_spoke_at, '')) AS last_at, COUNT(*) AS people "
+                f"FROM telegram_chat_members WHERE user_id NOT IN {staff_sql} GROUP BY chat_id",
+                staff_args).fetchall():
+            seen[str(r["chat_id"])] = dict(r)
         ours: dict = {}
         for r in conn.execute(
             f"SELECT chat_id, user_id, display_name, username, last_seen_at FROM telegram_chat_members "
@@ -231,6 +553,16 @@ def analyze_all(today: date | None = None) -> dict:
     finally:
         conn.close()
 
+    # где каждый код ехал недавно: клиент мог перейти в другую группу
+    titles = {str(c["chat_id"]).strip(): c.get("title") or str(c["chat_id"]) for c in chats}
+    recent_by_code: dict = {}
+    window_start = today - timedelta(days=t["moved_window_days"])
+    for cid_, rows_ in cargo.items():
+        for r in rows_:
+            day = _batch_day(r["name"], r["created_at"])
+            if day and day >= window_start:
+                recent_by_code.setdefault(str(r["code"]).strip().upper(), set()).add(cid_)
+
     groups, other = [], {"inactive": 0, "internal": 0}
     for c in chats:
         cid = str(c["chat_id"]).strip()
@@ -241,10 +573,18 @@ def analyze_all(today: date | None = None) -> dict:
             other["inactive"] += 1
             continue
         if not rows and not db.is_client_group_title(c.get("title")):
+            # группа без BL и не похожая на клиентскую — служебная
             other["internal"] += 1
             continue
-        days = sorted({d for d in (_batch_day(r["name"], r["created_at"]) for r in rows) if d})
+        db_days = {d for d in (_batch_day(r["name"], r["created_at"]) for r in rows) if d}
+        codes_used = {_norm_mark(r["code"]) for r in rows if str(r["code"]).strip()} | title_codes(c.get("title"))
+        sheet_days = set()
+        for code in codes_used:
+            sheet_days |= sheet_index.get(code, set())
+        days = _merge_days([d for d in (db_days | sheet_days) if d <= today + timedelta(days=30)])
         gaps = [(b - a).days for a, b in zip(days, days[1:]) if (b - a).days > 0]
+        source = ("база+шитс" if db_days and sheet_days - db_days else "база" if db_days
+                  else "шитс" if sheet_days else "")
         v, s = voice.get(cid, {}), seen.get(cid, {})
         last_voice = max([d for d in (_day(v.get("last_at")), _day(s.get("last_at"))) if d], default=None)
         team = sorted(ours.get(cid, []), key=lambda m: str(m.get("last_seen_at") or ""), reverse=True)
@@ -262,7 +602,11 @@ def analyze_all(today: date | None = None) -> dict:
             "chat_id": cid,
             "title": c.get("title") or cid,
             "bl_codes": sorted({str(r["code"]) for r in rows})[:8],
+            "bl_codes_all": sorted({str(r["code"]).strip() for r in rows if str(r["code"]).strip()}),
             "batches": len({r["batch_id"] for r in rows}),
+            "shipments": len(days),
+            "cargo_source": source,
+            "codes_used": sorted(codes_used),
             "first_cargo": days[0].isoformat() if days else "",
             "last_cargo": days[-1].isoformat() if days else "",
             "days_since_cargo": _ago(days[-1] if days else None, today),
@@ -289,7 +633,15 @@ def analyze_all(today: date | None = None) -> dict:
             "problems_open": int((problems.get(cid) or {}).get("open_now") or 0),
             "group_age_days": _ago(_day(c.get("created_at")), today),
         }
+        moved = set()
+        for code in rec["bl_codes_all"]:
+            moved |= {x for x in recent_by_code.get(code.upper(), set()) if x != cid and x not in skip}
+        rec["moved_to"] = ", ".join(sorted(titles.get(x, x) for x in moved))[:200]
         rec["segment"], rec["why"] = _classify(rec, t)
+        # переписка — отдельный признак: пишет, но груза давно нет (тёплый — спросить, что мешает)
+        rec["talking"] = (rec["segment"] in ("fading", "asleep", "lost")
+                          and rec["days_since_client_message"] is not None
+                          and rec["days_since_client_message"] <= t["active_msg_days"])
         rec["segment_label"] = SEGMENT_LABELS[rec["segment"]]
         # «резко замолчал»: месяц назад писал много, сейчас почти ноль
         rec["dropped"] = rec["client_msgs_prev_30d"] >= 6 and rec["client_msgs_30d"] <= rec["client_msgs_prev_30d"] // 3
@@ -300,8 +652,9 @@ def analyze_all(today: date | None = None) -> dict:
         )
         # кого будить первым: ценность (сколько возил) × свежесть потери × наши долги
         rec["wake_priority"] = (
-            rec["batches"] * 10 + min(rec["client_msgs_total"], 40)
+            min(rec["shipments"], 30) * 10 + min(rec["client_msgs_total"], 40)
             + (20 if rec["dropped"] else 0) + (15 if rec["client_spoke_last"] else 0)
+            + (15 if rec["talking"] else 0)
             + (10 if rec["problems_open"] else 0)
             + (10 if (rec["last_rating"] or {}).get("score", 5) <= 3 else 0)
         )
@@ -320,9 +673,11 @@ def analyze_all(today: date | None = None) -> dict:
             "inactive_groups": other["inactive"],
             "by_segment": counts,
             "dropped_sharply": sum(1 for g in groups if g["dropped"]),
+            "talking_no_cargo": sum(1 for g in groups if g["talking"]),
             "client_spoke_last": sum(1 for g in groups if g["client_spoke_last"]),
         },
         "groups": groups,
+        "sheet_history": {"marks": len(sheet_index), "error": sheet_error},
     }
 
 
@@ -428,3 +783,221 @@ def group_detail(chat_id: str, messages_limit: int = 12, today: date | None = No
         "ratings": ratings,
         "problems": problems,
     }
+
+
+# ── КЛИЕНТЫ В ГРУППАХ ─────────────────────────────────────────────────
+def group_clients(query: str = "", today: date | None = None) -> dict:
+    """Кто клиент в каждой клиентской группе: люди, которых бот видел (писали,
+    им отвечали, админы), за вычетом сотрудников; имена клиентов из BL;
+    сколько всего участников по Telegram и скольких бот не видел."""
+    today = today or _today()
+    analysis = analyze_all(today)
+    by_chat = {g["chat_id"]: g for g in analysis["groups"]}
+    if query:
+        wanted = {r["chat_id"] for r in resolve_chat(query)}
+        by_chat = {k: v for k, v in by_chat.items() if k in wanted}
+    conn = db.get_conn()
+    try:
+        shift = _members_clock_shift(conn)
+        staff = staff_breakdown(conn)
+        ids_sql, ids_args = _in_clause(by_chat)
+        members = [dict(r) for r in conn.execute(
+            f"SELECT chat_id, user_id, display_name, username, is_admin, first_seen_at, last_seen_at, "
+            f"COALESCE(last_spoke_at, '') AS last_spoke_at "
+            f"FROM telegram_chat_members WHERE chat_id IN {ids_sql}", ids_args).fetchall()]
+        msgs = {(str(r["chat_id"]), str(r["request_user_id"])): (int(r["n"]), str(r["last_at"] or ""))
+                for r in conn.execute(
+                    f"SELECT chat_id, request_user_id, COUNT(*) AS n, MAX(requested_at) AS last_at "
+                    f"FROM moderator_response_requests WHERE chat_id IN {ids_sql} "
+                    f"GROUP BY chat_id, request_user_id", ids_args).fetchall()}
+        counts = {str(r["chat_id"]): (int(r["member_count"] or 0), str(r["members_checked_at"] or ""))
+                  for r in conn.execute(
+                      f"SELECT chat_id, member_count, members_checked_at FROM telegram_chats "
+                      f"WHERE chat_id IN {ids_sql}", ids_args).fetchall()}
+        names = {}
+        for r in conn.execute(
+            f"SELECT chat_id, client_name FROM bl_codes WHERE TRIM(COALESCE(client_name,'')) != '' "
+            f"AND chat_id IN {ids_sql}", ids_args).fetchall():
+            names.setdefault(str(r["chat_id"]).strip(), set()).add(str(r["client_name"]).strip())
+    finally:
+        conn.close()
+    people_by_chat: dict = {}
+    for m in members:
+        people_by_chat.setdefault(str(m["chat_id"]), []).append(m)
+    groups = []
+    totals = {"groups": 0, "client_people": 0, "groups_without_known_client": 0, "unseen_people": 0}
+    for cid, g in sorted(by_chat.items(), key=lambda kv: str(kv[1]["title"]).lower()):
+        clients, team = [], []
+        for m in people_by_chat.get(cid, []):
+            uid = str(m["user_id"])
+            n, last_msg = msgs.get((cid, uid), (0, ""))
+            person = {"user_id": uid, "name": m["display_name"] or m["username"] or uid,
+                      "username": m["username"] or "", "admin": bool(m["is_admin"]),
+                      "last_seen": _to_tashkent(m["last_seen_at"], shift)[:10], "messages": n,
+                      # когда сам писал: журнал вопросов + его собственные сообщения (в т.ч. админа)
+                      "last_wrote": max(str(last_msg or ""), str(m["last_spoke_at"] or ""))[:10]}
+            if uid in staff:
+                team.append(person["name"])
+            else:
+                clients.append(person)
+        clients.sort(key=lambda p: (-p["messages"], p["name"]))
+        member_count, checked = counts.get(cid, (0, ""))
+        known = len(clients) + len(team)
+        rec = {
+            "chat_id": cid, "title": g["title"], "bl_codes": g["bl_codes_all"],
+            "client_names_in_bl": sorted(names.get(cid, set())),
+            "segment": g["segment"], "segment_label": g["segment_label"], "last_cargo": g["last_cargo"],
+            "batches": g["batches"], "shipments": g["shipments"], "cargo_source": g["cargo_source"],
+            "sales_manager": g["sales_manager"],
+            "clients": clients, "our_people": sorted(set(team)),
+            "member_count": member_count or None, "members_checked_at": checked[:16],
+            "unseen_people": max(0, member_count - known) if member_count else None,
+        }
+        groups.append(rec)
+        totals["groups"] += 1
+        totals["client_people"] += len(clients)
+        totals["groups_without_known_client"] += 0 if clients else 1
+        totals["unseen_people"] += rec["unseen_people"] or 0
+    return {"today": today.isoformat(), "totals": totals, "groups": groups}
+
+
+def clients_xlsx(data: dict) -> bytes:
+    """Excel: лист «Клиенты» (человек на строку) и лист «Группы»."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Klientlar"
+    head = ["Guruh", "BL kodlar", "Mijoz (Telegram)", "@username", "User ID", "Admin", "Xabarlar",
+            "Oxirgi ko'rilgan", "Holat", "Oxirgi yuk", "Sotuvchi"]
+    ws.append(head)
+    for g in data["groups"]:
+        rows = g["clients"] or [None]
+        for p in rows:
+            ws.append([
+                g["title"], ", ".join(g["bl_codes"]),
+                p["name"] if p else "— (bot ko'rmagan)", ("@" + p["username"]) if p and p["username"] else "",
+                p["user_id"] if p else "", "ha" if p and p["admin"] else "", p["messages"] if p else "",
+                p["last_seen"] if p else "", g["segment_label"], g["last_cargo"], g["sales_manager"],
+            ])
+    ws2 = wb.create_sheet("Guruhlar")
+    ws2.append(["Guruh", "BL kodlar", "BL dagi mijoz nomi", "Holat", "Jo'natmalar", "Oxirgi yuk",
+                "Mijozlar (bot ko'rgan)", "A'zolar (Telegram)", "Bot ko'rmagan", "Bizning xodimlar", "Sotuvchi"])
+    for g in data["groups"]:
+        ws2.append([g["title"], ", ".join(g["bl_codes"]), ", ".join(g["client_names_in_bl"]), g["segment_label"],
+                    g["shipments"], g["last_cargo"], len(g["clients"]), g["member_count"] or "",
+                    "" if g["unseen_people"] is None else g["unseen_people"], ", ".join(g["our_people"]),
+                    g["sales_manager"]])
+    for sheet in (ws, ws2):
+        for cell in sheet[1]:
+            cell.font = Font(bold=True)
+        sheet.freeze_panes = "A2"
+        for i, col in enumerate(sheet.columns, 1):
+            width = max(len(str(c.value or "")) for c in col)
+            sheet.column_dimensions[get_column_letter(i)].width = min(max(10, width + 2), 48)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# ── МОНИТОРИНГ: снимки и сводка изменений ─────────────────────────────
+_ASLEEP_SET = {"asleep", "lost"}
+
+
+def take_snapshot(today: date | None = None) -> int:
+    today = today or _today()
+    groups = analyze_all(today)["groups"]
+    return db.save_activity_snapshot(today.isoformat(), [
+        {"chat_id": g["chat_id"], "segment": g["segment"], "days_since_cargo": g["days_since_cargo"],
+         "batches": g["shipments"]} for g in groups])
+
+
+def changes(days: int = 7, today: date | None = None) -> dict:
+    """Что изменилось за N дней: сравнение текущего разбора со снимком N дней назад."""
+    today = today or _today()
+    days = max(1, min(int(days or 7), 90))
+    now = analyze_all(today)
+    prev_day, prev = db.get_activity_snapshot((today - timedelta(days=days)).isoformat())
+    out = {"today": today.isoformat(), "compared_with": prev_day, "days": days,
+           "fell_asleep": [], "started_fading": [], "woke_up": [], "lost": [], "moved": [], "new_cargo_groups": [],
+           "talking": [{"title": g["title"], "wake_priority": g["wake_priority"]}
+                       for g in sorted(now["groups"], key=lambda g: -g["wake_priority"]) if g.get("talking")]}
+    if not prev_day:
+        out["note"] = ("Снимков за этот срок ещё нет: бот сохраняет сегменты каждый день, сравнение "
+                       "появится, когда накопится история.")
+        out["summary"] = now["summary"]
+        return out
+    for g in now["groups"]:
+        before = (prev.get(g["chat_id"]) or {}).get("segment")
+        item = {"title": g["title"], "bl_codes": g["bl_codes"], "was": before, "now": g["segment"],
+                "why": g["why"], "shipments": g["shipments"], "wake_priority": g["wake_priority"],
+                "days_since_cargo": g["days_since_cargo"], "usual_gap_days": g["usual_gap_days"],
+                "moved_to": g.get("moved_to") or ""}
+        if before is None:
+            if g["shipments"]:
+                out["new_cargo_groups"].append(item)
+            continue
+        if before == g["segment"]:
+            continue
+        if g["segment"] == "lost":
+            out["lost"].append(item)
+        elif g["segment"] == "asleep" and before not in _ASLEEP_SET:
+            out["fell_asleep"].append(item)
+        elif g["segment"] == "fading" and before == "active":
+            out["started_fading"].append(item)
+        elif g["segment"] == "active" and before in ("fading", "asleep", "lost", "moved"):
+            out["woke_up"].append(item)
+        elif g["segment"] == "moved":
+            out["moved"].append(item)
+    for key in ("fell_asleep", "started_fading", "woke_up", "lost", "moved", "new_cargo_groups"):
+        out[key].sort(key=lambda x: -x["wake_priority"])
+    out["summary"] = now["summary"]
+    return out
+
+
+def digest_text(days: int = 7, today: date | None = None) -> str:
+    """Короткая сводка для Telegram (HTML)."""
+    from html import escape
+
+    today = today or _today()
+    ch = changes(days, today)
+    seg = ch["summary"]["by_segment"]
+    lines = [f"📊 <b>Faollik — mijoz guruhlari</b> · {today.strftime('%d.%m')}",
+             f"Hozir: 🟢 {seg.get('active', 0)} · 🟡 {seg.get('fading', 0)} · 🔴 {seg.get('asleep', 0)} · "
+             f"⚫ {seg.get('lost', 0)} · 🔀 {seg.get('moved', 0)}"]
+    if not ch["compared_with"]:
+        lines.append("Taqqoslash uchun tarix hali yig'ilmoqda — keyingi hisobotda o'zgarishlar ko'rinadi.")
+    else:
+        lines.append(f"{ch['days']} kunda: uxlab qoldi {len(ch['fell_asleep'])} · susaydi {len(ch['started_fading'])} · "
+                     f"uyg'ondi {len(ch['woke_up'])} · yo'qotildi {len(ch['lost'])}")
+
+        def reason(it):
+            # обрезаем ДО экранирования: срез «&amp;» → «&am» Telegram отвергает целиком
+            if it.get("moved_to"):
+                return "endi " + escape(str(it["moved_to"])[:60]) + " orqali"
+            d, gap = it.get("days_since_cargo"), it.get("usual_gap_days")
+            if d is None:
+                return "yuk ko'rinmaydi"
+            return f"oxirgi yuk {d} kun oldin" + (f", odatda har {gap} kunda" if gap else "")
+
+        def block(icon, title, items):
+            if not items:
+                return
+            lines.append(f"\n{icon} <b>{title}</b>")
+            for it in items[:8]:
+                lines.append(f"• {escape(str(it['title'])[:60])} — {reason(it)}")
+            if len(items) > 8:
+                lines.append(f"…yana {len(items) - 8}")
+        block("🔴", "Uxlab qoldi", ch["fell_asleep"])
+        block("🟡", "Susaymoqda", ch["started_fading"])
+        block("🟢", "Uyg'ondi", ch["woke_up"])
+        block("⚫", "Yo'qotildi", ch["lost"])
+        block("🔀", "Boshqa guruh orqali yuk beryapti", ch["moved"])
+    talking = ch.get("talking") or []
+    if talking:
+        lines.append(f"\n💬 <b>Yozadi, lekin yuk bermayapti</b> ({len(talking)}): "
+                     + ", ".join(escape(str(g["title"])[:40]) for g in talking[:6]))
+    return "\n".join(lines)

@@ -679,6 +679,7 @@ def get_chat_admin_ids(chat_id):
                     telegram_user_name(user),
                     user.get("username") or "",
                     is_admin=True,
+                    touch=False,  # список админов — не активность человека
                 )
     except Exception:
         if cached:
@@ -764,6 +765,7 @@ def track_moderator_response_metrics(message: dict):
         telegram_user_name(sender),
         sender.get("username") or "",
         is_admin=is_admin_sender,
+        spoke_at=telegram_unix_to_local(message.get("date")),
     )
     reply_to = message.get("reply_to_message") or {}
     reply_sender = reply_to.get("from") or {}
@@ -776,6 +778,8 @@ def track_moderator_response_metrics(message: dict):
             telegram_user_name(reply_sender),
             reply_sender.get("username") or "",
             is_admin=reply_sender_id_str in admin_ids if admin_ids else False,
+            touch=False,  # ответили ему — это не он сейчас писал
+            spoke_at=telegram_unix_to_local(reply_to.get("date")),
         )
 
     linked_bl = db.find_latest_active_bl_by_chat(chat_id) or db.find_latest_bl_by_chat(chat_id)
@@ -5185,6 +5189,83 @@ def send_packing_list_reminder(force: bool = False):
     return True, f"{len(missing)} BL without packing list"
 
 
+# ── УЧАСТНИКИ ГРУПП И МОНИТОРИНГ АКТИВНОСТИ (владелец, 14.10.2026) ────
+# Bot API не отдаёт список участников группы. Раз в сутки (и по просьбе
+# ассистента) бот опрашивает каждую группу: админы (getChatAdministrators)
+# и общее число участников (getChatMemberCount). Конфиденциальную группу
+# не трогаем вовсе.
+_MEMBERS_SCAN_SETTING = "members_scan_last"
+_MEMBERS_SCAN_RESULT = "members_scan_result"
+_MEMBERS_SCAN_HOURS = 6
+_ACTIVITY_SNAPSHOT_SETTING = "activity_snapshot_day"
+_members_scan_lock = threading.Lock()
+
+
+def scan_group_members() -> dict:
+    """Синхронный опрос всех активных групп. → {groups, admins, counted, failed}."""
+    from services import ai_assistant
+
+    skip = set(ai_assistant.confidential_chat_ids())
+    chats = [c for c in db.get_telegram_chats(include_inactive=False) or []
+             if str(c.get("chat_type") or "") in ("group", "supergroup") and str(c.get("chat_id")) not in skip]
+    out = {"groups": len(chats), "admins": 0, "counted": 0, "failed": 0}
+    for chat in chats:
+        cid = str(chat.get("chat_id"))
+        try:
+            count = (telegram_api("getChatMemberCount", json={"chat_id": cid}) or {}).get("result")
+            if isinstance(count, int):
+                db.set_chat_member_count(cid, count)
+                out["counted"] += 1
+            CHAT_ADMIN_CACHE.pop(cid, None)          # свежие админы, не из кэша
+            out["admins"] += len(get_chat_admin_ids(cid))
+        except Exception:
+            out["failed"] += 1
+        time.sleep(0.12)                            # ~16 запросов/с — ниже лимитов Telegram
+    return out
+
+
+def start_group_members_refresh(force: bool = False) -> dict:
+    """Запустить опрос в фоне (раз в _MEMBERS_SCAN_HOURS часов; владелец — когда угодно)."""
+    now_ts = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
+    last = _parse_local_ts(db.get_setting(_MEMBERS_SCAN_SETTING))
+    if not force and last and (now_ts - last) < timedelta(hours=_MEMBERS_SCAN_HOURS):
+        return {"ok": False, "throttled": True, "last_scan": last.strftime("%d.%m %H:%M"),
+                "last_result": db.get_setting(_MEMBERS_SCAN_RESULT, ""),
+                "note": f"Опрос был недавно; повторить можно через {_MEMBERS_SCAN_HOURS} ч. после прошлого."}
+    if not _members_scan_lock.acquire(blocking=False):
+        return {"ok": True, "running": True, "note": "Опрос уже идёт — подожди 2–3 минуты."}
+    db.set_setting(_MEMBERS_SCAN_SETTING, now_ts.strftime("%Y-%m-%d %H:%M:%S"))
+
+    def _worker():
+        try:
+            res = scan_group_members()
+            db.set_setting(_MEMBERS_SCAN_RESULT, json.dumps(res, ensure_ascii=False))
+            app.logger.info("Group members scan: %s", res)
+        except Exception:
+            app.logger.exception("Group members scan failed")
+        finally:
+            _members_scan_lock.release()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return {"ok": True, "started": True,
+            "note": "Опрос всех групп запущен в фоне, займёт 2–3 минуты; потом спроси список клиентов заново."}
+
+
+def run_daily_activity_jobs(force: bool = False) -> tuple:
+    """Раз в день после 04:00: снимок сегментов (для «кто заснул за неделю») и
+    ночной опрос участников групп."""
+    from services import group_activity_service as gas
+
+    now = datetime.now(db.TASHKENT_TZ)
+    today = now.date().isoformat()
+    if not force and (now.hour < 4 or db.get_setting(_ACTIVITY_SNAPSHOT_SETTING) == today):
+        return False, "skip"
+    db.set_setting(_ACTIVITY_SNAPSHOT_SETTING, today)
+    saved = gas.take_snapshot()
+    scan = start_group_members_refresh(force=False)
+    return True, f"snapshot {saved} groups; members scan: {scan.get('note') or scan}"
+
+
 def _run_due_ai_tasks():
     """Исполнение запланированных задач ассистента (владельческий режим):
     отправка сообщений/упоминаний и опросов по расписанию."""
@@ -5206,6 +5287,9 @@ def _run_due_ai_tasks():
                     label = html_escape(str(params.get("mention_label") or "👤"))
                     text = f'<a href="tg://user?id={mention_id}">{label}</a>, {text}'
                 telegram_send_message(chat_id, text)
+            elif task["kind"] == "activity_report":
+                from services import group_activity_service as _gas
+                telegram_send_message(chat_id, _gas.digest_text(int(params.get("days") or 7)))
             elif task["kind"] == "send_poll":
                 telegram_api("sendPoll", json={
                     "chat_id": chat_id,
@@ -5218,16 +5302,17 @@ def _run_due_ai_tasks():
         except Exception:
             ok = False
             app.logger.exception("Scheduled AI task %s failed", task["id"])
-        if ok and task.get("recurrence") == "daily":
+        if ok and task.get("recurrence") in ("daily", "weekly"):
             try:
                 from datetime import timedelta
 
-                next_dt = datetime.strptime(task["run_at"], "%Y-%m-%d %H:%M") + timedelta(days=1)
-                # если бот долго не работал — не «догоняем» по дню за тик,
+                step = timedelta(days=7 if task.get("recurrence") == "weekly" else 1)
+                next_dt = datetime.strptime(task["run_at"], "%Y-%m-%d %H:%M") + step
+                # если бот долго не работал — не «догоняем» по шагу за тик,
                 # а сразу перематываем на ближайшее будущее время
                 now_naive = datetime.now(db.TASHKENT_TZ).replace(tzinfo=None)
                 while next_dt <= now_naive:
-                    next_dt += timedelta(days=1)
+                    next_dt += step
                 db.ai_mark_scheduled_task(task["id"], "pending", next_dt.strftime("%Y-%m-%d %H:%M"))
             except Exception:
                 db.ai_mark_scheduled_task(task["id"], "failed")
@@ -5479,6 +5564,34 @@ def api_dev_roles_get():
     })
 
 
+@app.route("/api/dev/staff", methods=["GET"])
+@editor_required
+def api_dev_staff_get():
+    """Список сотрудников (фильтр «наши ≠ клиенты») и подсказки для подтверждения."""
+    from services import group_activity_service as gas
+
+    conn = db.get_conn()
+    try:
+        review = gas.staff_review(conn)
+    finally:
+        conn.close()
+    return jsonify({"registry": gas.staff_registry(), "confirmed_clients": sorted(gas.confirmed_clients()),
+                    **review})
+
+
+@app.route("/api/dev/staff", methods=["POST"])
+@editor_required
+def api_dev_staff_save():
+    from services import group_activity_service as gas
+
+    data = request.json or {}
+    lists = {k: [str(x).strip() for x in (data.get(k) or []) if str(x).strip()][:200]
+             for k in ("add", "remove", "mark_client", "unmark_client")}
+    if not any(lists.values()):
+        return jsonify({"error": "Пустой запрос"}), 400
+    return jsonify(gas.update_staff(**lists))
+
+
 @app.route("/api/dev/roles", methods=["POST"])
 @editor_required
 def api_dev_roles_save():
@@ -5568,7 +5681,14 @@ def _packing_reminder_scheduler():
                     app.logger.info("DB backup: %s", binfo)
             except Exception:
                 app.logger.exception("DB backup tick failed")
-            # запланированные задачи ассистента (сообщения/опросы)
+            # снимок активности групп и ночной опрос участников (день-guard внутри)
+            try:
+                done_a, ainfo = run_daily_activity_jobs()
+                if done_a:
+                    app.logger.info("Activity daily: %s", ainfo)
+            except Exception:
+                app.logger.exception("Activity daily tick failed")
+            # запланированные задачи ассистента (сообщения/опросы/отчёты)
             _run_due_ai_tasks()
         except Exception:
             app.logger.exception("Morning scheduler tick failed")
@@ -13684,6 +13804,7 @@ def _wire_ai_assistant_hooks():
 
     _ai.direct_send_message = lambda chat_id, text: telegram_send_message(chat_id, text)
     _ai.eta_update_request_hook = _ai_eta_update_request
+    _ai.group_members_refresh_hook = start_group_members_refresh
     _ai.direct_send_document = lambda chat_id, data, filename, caption="": telegram_api(
         "sendDocument",
         timeout=120,

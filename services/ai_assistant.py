@@ -659,9 +659,30 @@ def _system_prompt() -> str:
 • «есть ли план (китайский/казахский) на дату» → get_loading_plans (смотри ОБА вида и summary) → при нужде get_plan_marks.
 • «что с казахским планом партии / применился ли / что изменится / почему не перегрузил» → get_batch_plan_status.
 • «кто не привязан к группе / почему клиент не получил трекинг» → get_unlinked_bls, затем find_group и, если просят, propose_action link_bl_group.
+• КЛИЕНТЫ В ГРУППАХ: «составь список клиентов / кто клиент в группе X / mijozlar ro'yxati» → list_group_clients
+  (query — одна группа или код; as_file=true — Excel по ВСЕМ группам: лист «Klientlar» по человеку на строку и
+  лист «Guruhlar»; для полного списка всегда давай файл, в чат — цифры и пару примеров). Клиент — человек в
+  группе, который НЕ сотрудник. Сотрудник = список сотрудников владельца (manage_staff) + роли бота + участники
+  Tracking gruppa + кто есть в 3 и более группах (кроме тех, кого владелец назвал клиентом). ГРАНИЦА ДАННЫХ:
+  Telegram не отдаёт боту список участников — он знает писавших, тех, кому отвечали, и админов групп;
+  member_count и unseen_people показывают, скольких людей бот не видел. Нужно точнее → refresh_group_members
+  (подтянет админов и число участников всех групп, ~2–3 минуты). Говори об этой границе прямо.
+• «вот наши сотрудники / X — сотрудник / X не сотрудник, а клиент» → manage_staff (add / remove / mark_client;
+  имя, @ник или id). Неоднозначные имена — покажи кандидатов (группы, ник) и переспроси. «кого ты считаешь
+  сотрудниками» → manage_staff action=list (там же «по догадке» и «похожи на сотрудников» — предложи владельцу
+  подтвердить).
+• МЕТОДИКА СНА (владелец, 14.10.2026): уснул = ПЕРЕСТАЛ ДАВАТЬ ГРУЗ. Даты отгрузок — из базы (партии с апреля
+  2026) и из шитса (китайские планы с мая 2024) по кодам группы: BL из системы + код и бренд из названия группы;
+  фуры одного клиента в пределах 5 дней — одна отгрузка. Личный ритм = медиана перерыва (от 3 отгрузок).
+  Затихает после 2× ритма (30–120 дн.), спит после 3× (60–180), потерян после 6× (180–365); без ритма — 45 / 90 /
+  180 дн. Груз в пути = активен. Его коды недавно ехали через другую группу = «переехал», это не сон.
+  Переписка в сегмент НЕ входит: talking = пишет, но не грузит — самые тёплые, их будить первыми. new — груза
+  нет ни в базе, ни в шитсе (вероятно, новый клиент). В why всегда есть расчёт — пересказывай его, не выдумывай.
 • «кто заснул / kim uxlab qoldi / кого будить / кто перестал возить / проанализируй активность групп» →
   analyze_group_activity (он сам проходит по ВСЕМ группам бота; сначала назови цифры summary по сегментам, потом
-  список). Для конкретного клиента и перед любым «будящим» сообщением → get_group_activity: там видно, ПОЧЕМУ
+  список; потерянных — segment=lost, «пишет, но не грузит» — segment=talking). «что изменилось за неделю / кто
+  заснул или проснулся» → group_activity_changes. «присылай каждую неделю» → schedule_task kind=activity_report
+  (daily=false + when на понедельник, либо daily=true). Для конкретного клиента и перед любым «будящим» сообщением → get_group_activity: там видно, ПОЧЕМУ
   он замолчал (последнее слово осталось за клиентом, проблема с грузом, низкая оценка). Разбудить = личное короткое сообщение на
   языке клиента через propose_action kind='send_group_message' — по одной заявке на группу, только после ✅;
   массовую одинаковую рассылку спящим не предлагай, если прямо не попросили.
@@ -1094,8 +1115,11 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "segment": {"type": "string",
-                                "enum": ["asleep", "fading", "dropped", "waiting", "active", "new", "no_cargo", "all"],
-                                "description": "Кого показать списком (по умолчанию asleep). dropped — резко "
+                                "enum": ["asleep", "lost", "fading", "talking", "moved", "dropped", "waiting", "active",
+                                         "new", "no_cargo", "all"],
+                                "description": "Кого показать списком (по умолчанию asleep). lost — потерянные "
+                                               "(груза нет полгода и больше); talking — пишет, но не грузит; "
+                                               "moved — коды едут через другую группу; dropped — резко "
                                                "замолчали; waiting — последнее слово за клиентом, наши после "
                                                "него в группе не появлялись."},
                     "min_batches": {"type": "integer",
@@ -1103,6 +1127,78 @@ TOOLS = [
                     "sales_manager": {"type": "string", "description": "Часть имени продажника — только его клиенты"},
                     "limit": {"type": "integer", "description": "Сколько групп в списке (по умолчанию 40, максимум 150)"},
                 },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_group_clients",
+            "description": (
+                "КЛИЕНТЫ В ГРУППАХ: по каждой клиентской группе — люди-клиенты (не сотрудники): имя, @ник, id, "
+                "админ ли, сколько писал, когда видели; имена клиентов из BL; BL-коды; сегмент активности и "
+                "последний груз; сколько всего участников по Telegram и скольких бот не видел; кто из наших в "
+                "группе. as_file=true — Excel со ВСЕМИ группами прямо в этот чат."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Одна группа: chat_id, часть названия или код BL"},
+                    "segment": {"type": "string", "description": "Только сегмент: active/fading/asleep/lost/moved/new/no_cargo"},
+                    "only_unknown": {"type": "boolean", "description": "Только группы, где бот ещё не видел ни одного клиента"},
+                    "as_file": {"type": "boolean", "description": "Прислать Excel со всем списком"},
+                    "limit": {"type": "integer", "description": "Сколько групп показать в ответе (20, максимум 60)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_staff",
+            "description": (
+                "СПИСОК СОТРУДНИКОВ — фильтр «наши ≠ клиенты» для анализа групп. action: list — кто считается "
+                "сотрудником и почему (+ кого бот записал по догадке и кто похож на сотрудника); add / remove — "
+                "добавить или убрать сотрудников; mark_client — человек во многих группах, но это КЛИЕНТ; "
+                "unmark_client — снять отметку. people — имена, @ники или Telegram id. Менять может только "
+                "владелец/оператор."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "add", "remove", "mark_client", "unmark_client"]},
+                    "people": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "refresh_group_members",
+            "description": (
+                "Обновить участников всех групп из Telegram: админы каждой группы и общее число участников. "
+                "Идёт в фоне 2–3 минуты, раз в 6 часов. Вызывай, когда для списка клиентов не хватает людей "
+                "(unseen_people большой) или владелец просит обновить."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "group_activity_changes",
+            "description": (
+                "МОНИТОРИНГ: что изменилось за N дней — кто заснул, кто затихает, кто проснулся, кто потерян, "
+                "кто переехал в другую группу, у каких групп появился первый груз. Сравнивает с ежедневным "
+                "снимком, который бот сохраняет сам."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"days": {"type": "integer", "description": "За сколько дней (7 по умолчанию, до 90)"}},
                 "required": [],
             },
         },
@@ -2011,7 +2107,8 @@ def _tool_get_bl_files(args: dict) -> dict:
 
 
 _ACTIVITY_LIST_FIELDS = (
-    "chat_id", "title", "bl_codes", "segment_label", "why", "batches", "last_cargo", "days_since_cargo",
+    "chat_id", "title", "bl_codes", "segment_label", "why", "batches", "shipments", "cargo_source", "moved_to",
+    "talking", "last_cargo", "days_since_cargo",
     "usual_gap_days", "overdue_vs_usual", "total_places", "total_kg", "cargo_in_transit",
     "last_client_message", "days_since_client_message", "client_msgs_30d", "client_msgs_prev_30d",
     "client_msgs_total", "dropped", "client_spoke_last", "days_waiting_for_us", "avg_reply_minutes",
@@ -2040,6 +2137,8 @@ def _tool_analyze_group_activity(args: dict) -> dict:
         picked = [g for g in groups if g["dropped"]]
     elif segment == "waiting":
         picked = [g for g in groups if g["client_spoke_last"]]
+    elif segment == "talking":
+        picked = [g for g in groups if g.get("talking")]
     elif segment == "all":
         picked = list(groups)
     elif segment in gas.SEGMENT_LABELS:
@@ -2060,15 +2159,128 @@ def _tool_analyze_group_activity(args: dict) -> dict:
         "оценка). client_spoke_last — клиент написал последним, и после этого никто из наших в группе не "
         "появлялся; это повод проверить переписку, а не доказательство, что вопрос проигнорирован. «new» — "
         "НЕ новый клиент: бота добавили в группу недавно, истории ещё нет. "
-        "История ведётся с 18.04.2026 — «первый груз» раньше этой даты не виден. «no_cargo» — чаще всего "
+        "История грузов: партии в базе (с 18.04.2026) + китайские планы в шитсе (с мая 2024) по кодам группы "
+        "и марке из названия; cargo_source показывает откуда. «lost» — молчит дольше 6 своих перерывов; "
+        "«moved» — его коды недавно ехали через другую группу (moved_to); talking=true — пишет, но не грузит. "
+        "«no_cargo» — чаще всего "
         "НЕ спящий клиент, а группа без привязанного BL: груз может идти прямо сейчас (см. get_unlinked_bls). "
         "Молчание между отгрузками — не сон: смотри usual_gap_days и overdue_vs_usual (во сколько раз клиент "
         "превысил свой обычный перерыв). Перед тем как писать клиенту — get_group_activity по его группе."
     )
+    sheet = data.get("sheet_history") or {}
+    if sheet.get("error"):
+        note += (f" ВНИМАНИЕ: шитс сейчас недоступен ({sheet['error']}) — история только из базы с 18.04.2026, "
+                 "у редких клиентов ритм может быть неточен; скажи об этом владельцу.")
     if len(shown) < len(picked):
         note += f" Показано {len(shown)} из {len(picked)} — для остальных увеличь limit или сузь фильтр."
     return {"today": data["today"], "thresholds": data["thresholds"], "summary": data["summary"],
             "segment": segment, "matched": len(picked), "shown": len(shown), "groups": shown, "note": note}
+
+
+_CLIENT_LIST_FIELDS = ("chat_id", "title", "bl_codes", "client_names_in_bl", "segment_label", "last_cargo",
+                       "shipments", "clients", "our_people", "member_count", "unseen_people", "sales_manager")
+
+
+def _tool_list_group_clients(args: dict, tg_user_id: str) -> dict:
+    from services import group_activity_service as gas
+
+    args = args or {}
+    query = str(args.get("query") or "").strip()
+    if query and query in confidential_chat_ids():
+        return {"error": "Эта группа строго конфиденциальна."}
+    data = gas.group_clients(query)
+    groups = data["groups"]
+    segment = str(args.get("segment") or "").strip().lower()
+    if segment:
+        groups = [g for g in groups if g["segment"] == segment]
+    if args.get("only_unknown"):
+        groups = [g for g in groups if not g["clients"]]
+    try:
+        limit = max(1, min(int(args.get("limit") or 20), 60))
+    except (TypeError, ValueError):
+        limit = 20
+    out = {"today": data["today"], "totals": data["totals"], "matched": len(groups)}
+    if args.get("as_file"):
+        if not callable(direct_send_document):
+            return {"error": "direct_send_document hook is not wired"}
+        chat_id = _reply_chat_for(tg_user_id)
+        xlsx = gas.clients_xlsx({"groups": groups})
+        fname = f"mijozlar_{data['today']}.xlsx"
+        direct_send_document(chat_id, xlsx, fname,
+                             f"👥 Mijozlar: {len(groups)} guruh, {sum(len(g['clients']) for g in groups)} kishi")
+        out["sent_file"] = fname
+    shown = []
+    for g in groups[:limit]:
+        item = {k: g.get(k) for k in _CLIENT_LIST_FIELDS}
+        item["chat_id"] = _mask_chat_id(item["chat_id"])
+        item["clients"] = item["clients"][:6]
+        shown.append(item)
+    out["groups"] = shown
+    out["note"] = (
+        "clients — люди, которых бот видел в группе (писали, им отвечали, админы), без сотрудников. "
+        "unseen_people — сколько участников по Telegram бот не видел (null — число ещё не проверяли: "
+        "refresh_group_members). Пустой clients не значит, что клиента нет — значит, бот его не видел."
+        + (f" Показано {len(shown)} из {len(groups)}." if len(shown) < len(groups) else "")
+    )
+    return out
+
+
+def _tool_manage_staff(args: dict, tg_user_id: str, readonly: bool = False) -> dict:
+    from services import group_activity_service as gas
+
+    args = args or {}
+    action = str(args.get("action") or "list").strip()
+    people = [str(x).strip() for x in (args.get("people") or []) if str(x).strip()]
+    if action != "list":
+        # readonly — просмотровый доступ, продавец или участник группы без прав
+        if readonly or (not str(tg_user_id).startswith("group:") and not can_change(str(tg_user_id))):
+            return {"error": "Менять список сотрудников может только владелец или оператор."}
+        if not people:
+            return {"error": "Нужен список people: имена, @ники или Telegram id"}
+        kw = {"add": {"add": people}, "remove": {"remove": people}, "mark_client": {"mark_client": people},
+              "unmark_client": {"unmark_client": people}}.get(action)
+        if kw is None:
+            return {"error": f"Неизвестное действие «{action}»"}
+        result = gas.update_staff(**kw)
+        result["note"] = ("added/removed — что изменено; unresolved — бот таких не встречал (уточни @ник или id; "
+                          "человек должен хоть раз написать в группе или быть её админом); ambiguous — несколько "
+                          "похожих, спроси владельца, кого из кандидатов он имел в виду.")
+        return result
+    conn = db.get_conn()
+    try:
+        staff = gas.staff_breakdown(conn)
+        review = gas.staff_review(conn)
+    finally:
+        conn.close()
+    return {
+        "registry": gas.staff_registry(),
+        "staff_now": sorted(({"user_id": k, **v} for k, v in staff.items()), key=lambda x: -x["groups"]),
+        "counted_by_guess": review["counted_by_guess"],
+        "looks_like_staff_not_counted": review["looks_like_staff_not_counted"][:20],
+        "confirmed_clients": sorted(gas.confirmed_clients()),
+    }
+
+
+group_members_refresh_hook = None   # fn(force: bool) -> dict  (app.py, фоновый опрос Telegram)
+
+
+def _tool_refresh_group_members(args: dict, tg_user_id: str) -> dict:
+    if not callable(group_members_refresh_hook):
+        return {"error": "group_members_refresh_hook is not wired"}
+    return group_members_refresh_hook(bool(is_admin(str(tg_user_id))))
+
+
+def _tool_group_activity_changes(args: dict) -> dict:
+    from services import group_activity_service as gas
+
+    try:
+        days = int((args or {}).get("days") or 7)
+    except (TypeError, ValueError):
+        days = 7
+    out = gas.changes(days)
+    for key in ("fell_asleep", "started_fading", "woke_up", "lost", "moved", "new_cargo_groups"):
+        out[key] = out[key][:25]
+    return out
 
 
 def _tool_get_group_activity(args: dict) -> dict:
@@ -2319,15 +2531,18 @@ OWNER_DIRECT_TOOLS = [
             "description": (
                 "Запланировать отправку сообщения или опроса на время (Ташкент). "
                 "when: 'HH:MM' (сегодня; если время прошло — завтра) или 'YYYY-MM-DD HH:MM' или 'DD.MM.YYYY HH:MM'. "
-                "daily=true — повторять каждый день. kind: 'send_message' (нужен text, опц. mention_user_id/mention_label) "
-                "или 'send_poll' (нужны question и options)."
+                "daily=true — повторять каждый день. kind: 'send_message' (нужен text, опц. mention_user_id/mention_label), "
+                "'send_poll' (нужны question и options) или 'activity_report' — сводка активности клиентских групп "
+                "(кто заснул/проснулся за days дней, по умолчанию 7); weekly=true — повторять раз в неделю."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "when": {"type": "string"},
                     "daily": {"type": "boolean"},
-                    "kind": {"type": "string", "enum": ["send_message", "send_poll"]},
+                    "weekly": {"type": "boolean"},
+                    "days": {"type": "integer"},
+                    "kind": {"type": "string", "enum": ["send_message", "send_poll", "activity_report"]},
                     "chat_id": {"type": "string"},
                     "text": {"type": "string"},
                     "mention_user_id": {"type": "string"},
@@ -2455,8 +2670,8 @@ def _tool_schedule_task(args: dict, tg_user_id: str) -> dict:
     if err:
         return {"error": err}
     kind = str(args.get("kind") or "").strip()
-    if kind not in {"send_message", "send_poll"}:
-        return {"error": "kind должен быть send_message или send_poll"}
+    if kind not in {"send_message", "send_poll", "activity_report"}:
+        return {"error": "kind должен быть send_message, send_poll или activity_report"}
     when = _parse_when(str(args.get("when") or ""))
     if not when:
         return {"error": "Не понял время. Форматы: 'HH:MM', 'YYYY-MM-DD HH:MM', 'DD.MM.YYYY HH:MM'"}
@@ -2469,6 +2684,11 @@ def _tool_schedule_task(args: dict, tg_user_id: str) -> dict:
         if str(args.get("mention_user_id") or "").strip():
             params["mention_user_id"] = str(args.get("mention_user_id")).strip()
             params["mention_label"] = str(args.get("mention_label") or "").strip()
+    elif kind == "activity_report":
+        try:
+            params["days"] = max(1, min(int(args.get("days") or 7), 90))
+        except (TypeError, ValueError):
+            params["days"] = 7
     else:
         question = str(args.get("question") or "").strip()
         options = [str(o).strip() for o in (args.get("options") or []) if str(o).strip()]
@@ -2476,7 +2696,7 @@ def _tool_schedule_task(args: dict, tg_user_id: str) -> dict:
             return {"error": "Для send_poll нужны question и минимум 2 options"}
         params["question"] = question
         params["options"] = options[:10]
-    recurrence = "daily" if args.get("daily") else "once"
+    recurrence = "weekly" if args.get("weekly") else "daily" if args.get("daily") else "once"
     task_id = db.ai_create_scheduled_task(
         tg_user_id, when.strftime("%Y-%m-%d %H:%M"), recurrence, kind,
         json.dumps(params, ensure_ascii=False),
@@ -3027,6 +3247,14 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_find_group(args)
         if name == "analyze_group_activity":
             return _tool_analyze_group_activity(args)
+        if name == "list_group_clients":
+            return _tool_list_group_clients(args, tg_user_id)
+        if name == "manage_staff":
+            return _tool_manage_staff(args, tg_user_id, readonly=readonly)
+        if name == "refresh_group_members":
+            return _tool_refresh_group_members(args, tg_user_id)
+        if name == "group_activity_changes":
+            return _tool_group_activity_changes(args)
         if name == "get_group_activity":
             return _tool_get_group_activity(args)
         if name == "get_automation_status":

@@ -1065,6 +1065,17 @@ def init_db():
             PRIMARY KEY(chat_id, user_id)
         );
 
+        -- ежедневный снимок сегмента активности каждой клиентской группы:
+        -- из него видно, кто заснул / проснулся / пропал за неделю
+        CREATE TABLE IF NOT EXISTS group_activity_snapshots (
+            day TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            segment TEXT NOT NULL,
+            days_since_cargo INTEGER,
+            batches INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(day, chat_id)
+        );
+
         CREATE TABLE IF NOT EXISTS problems (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
@@ -1581,10 +1592,19 @@ def init_db():
         ("sales_manager_tg_id", "TEXT DEFAULT ''"),
         ("ai_enabled", "INTEGER NOT NULL DEFAULT 0"),
         ("updated_at", "TEXT DEFAULT ''"),
+        # сколько людей в группе по данным Telegram (getChatMemberCount) и когда
+        # проверяли: бот видит только писавших и админов, остальных — нет
+        ("member_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("members_checked_at", "TEXT DEFAULT ''"),
     ]
     for column_name, column_def in telegram_chat_columns:
         if not _table_has_column(conn, "telegram_chats", column_name):
             conn.execute(f"ALTER TABLE telegram_chats ADD COLUMN {column_name} {column_def}")
+    # когда человек САМ писал в группе (время Ташкента из даты сообщения);
+    # last_seen_at освежается и списком админов, и чужими reply — для «клиент
+    # пишет / молчит» он не годится (владелец, 14.10.2026)
+    if not _table_has_column(conn, "telegram_chat_members", "last_spoke_at"):
+        conn.execute("ALTER TABLE telegram_chat_members ADD COLUMN last_spoke_at TEXT DEFAULT ''")
 
     shipment_columns = [
         ("places_breakdown", "TEXT DEFAULT ''"),
@@ -5732,19 +5752,74 @@ def get_announcement_batches():
         conn.close()
 
 
-def remember_chat_member(chat_id, user_id, display_name="", username="", is_admin=False):
+def set_chat_member_count(chat_id, count):
+    """Число участников группы по Telegram (getChatMemberCount)."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE telegram_chats SET member_count = ?, members_checked_at = ? WHERE chat_id = ?",
+            (int(count or 0), current_ts(), str(chat_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_activity_snapshot(day: str, rows: list) -> int:
+    """rows: [{chat_id, segment, days_since_cargo, batches}] — перезаписывает день."""
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM group_activity_snapshots WHERE day = ?", (str(day),))
+        conn.executemany(
+            "INSERT INTO group_activity_snapshots(day, chat_id, segment, days_since_cargo, batches) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(str(day), str(r["chat_id"]), str(r["segment"]), r.get("days_since_cargo"),
+              int(r.get("batches") or 0)) for r in rows],
+        )
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def get_activity_snapshot(on_or_before: str) -> tuple:
+    """(день, {chat_id: {segment, days_since_cargo, batches}}) — ближайший снимок не позже даты."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT MAX(day) AS day FROM group_activity_snapshots WHERE day <= ?", (str(on_or_before),)
+        ).fetchone()
+        day = row["day"] if row else None
+        if not day:
+            return None, {}
+        rows = conn.execute(
+            "SELECT chat_id, segment, days_since_cargo, batches FROM group_activity_snapshots WHERE day = ?",
+            (day,),
+        ).fetchall()
+        return day, {str(r["chat_id"]): dict(r) for r in rows}
+    finally:
+        conn.close()
+
+
+def remember_chat_member(chat_id, user_id, display_name="", username="", is_admin=False,
+                         touch=True, spoke_at=""):
+    """touch=False — человек не проявлял активности (бот лишь узнал, что он
+    админ): last_seen_at существующей строки не трогаем. spoke_at — время его
+    собственного сообщения (Ташкент, «YYYY-MM-DD HH:MM:SS»): last_spoke_at
+    берёт более позднее из старого и нового."""
     chat_value = str(chat_id or "").strip()
     user_value = str(user_id or "").strip()
     if not chat_value or not user_value:
         return
+    spoke_value = str(spoke_at or "").strip()[:19]
     conn = get_conn()
     try:
         conn.execute(
             """
             INSERT INTO telegram_chat_members(
-                chat_id, user_id, display_name, username, is_admin, first_seen_at, last_seen_at
+                chat_id, user_id, display_name, username, is_admin, first_seen_at, last_seen_at, last_spoke_at
             )
-            VALUES (?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'))
+            VALUES (?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'), ?)
             ON CONFLICT(chat_id, user_id) DO UPDATE SET
                 display_name = CASE
                     WHEN excluded.display_name != '' THEN excluded.display_name
@@ -5758,7 +5833,15 @@ def remember_chat_member(chat_id, user_id, display_name="", username="", is_admi
                     WHEN excluded.is_admin = 1 THEN 1
                     ELSE telegram_chat_members.is_admin
                 END,
-                last_seen_at = datetime('now','localtime')
+                last_seen_at = CASE
+                    WHEN ? THEN datetime('now','localtime')
+                    ELSE telegram_chat_members.last_seen_at
+                END,
+                last_spoke_at = CASE
+                    WHEN excluded.last_spoke_at > COALESCE(telegram_chat_members.last_spoke_at, '')
+                    THEN excluded.last_spoke_at
+                    ELSE telegram_chat_members.last_spoke_at
+                END
             """,
             (
                 chat_value,
@@ -5766,6 +5849,8 @@ def remember_chat_member(chat_id, user_id, display_name="", username="", is_admi
                 (display_name or "").strip(),
                 (username or "").strip().lstrip("@"),
                 1 if is_admin else 0,
+                spoke_value,
+                1 if touch else 0,
             ),
         )
         conn.commit()
