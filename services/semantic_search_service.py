@@ -63,7 +63,11 @@ def enabled() -> bool:
 
 
 def _key() -> str:
-    value = os.getenv("GEMINI_API_KEY") if provider() == "gemini" else os.getenv("OPENAI_API_KEY")
+    # отдельный платный ключ Gemini для поиска (владелец, 15.10.2026); распознавание речи — на своём
+    if provider() == "gemini":
+        value = os.getenv("SEMANTIC_GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+    else:
+        value = os.getenv("OPENAI_API_KEY")
     return (value or "").strip()
 
 
@@ -141,12 +145,12 @@ class EmbeddingError(RuntimeError):
 def _embed_remote(texts: list, for_query: bool) -> list:
     """Отдельная функция — точка подмены в тестах. → [вектор] в том же порядке."""
     if provider() == "gemini":
-        url = (f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:batchEmbedContents"
-               f"?key={_key()}")
+        # ключ — в заголовке, не в адресе: адреса попадают в логи
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:batchEmbedContents"
         task = "RETRIEVAL_QUERY" if for_query else "RETRIEVAL_DOCUMENT"
         body = {"requests": [{"model": f"models/{GEMINI_MODEL}", "content": {"parts": [{"text": t}]},
                               "taskType": task, "outputDimensionality": dims()} for t in texts]}
-        resp = requests.post(url, json=body, timeout=60)
+        resp = requests.post(url, json=body, headers={"x-goog-api-key": _key()}, timeout=60)
         if resp.status_code == 429:
             raise EmbeddingError("лимит запросов Gemini (429)")
         resp.raise_for_status()

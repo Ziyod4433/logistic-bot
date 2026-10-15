@@ -467,6 +467,7 @@ def get_runtime_status() -> dict:
         "smart_router": smart_available(),
         "smart_model": _smart_model() if smart_available() else "",
         "smart_provider": smart_provider_name(),
+        "semantic_search": _semantic_status(),
         # старые ключи оставлены — их читает панель/мониторинг
         "deepseek_api_key_present": bool(_api_key()),
         "deepseek_model": _model(),
@@ -2428,6 +2429,15 @@ def _tool_analyze_client_chat(args: dict, tg_user_id: str, readonly: bool = Fals
     result.pop("tokens", None)
     result["note"] = note
     return result
+
+
+def _semantic_status() -> dict:
+    try:
+        from services import semantic_search_service as ss
+
+        return ss.stats()
+    except Exception as exc:
+        return {"enabled": False, "error": str(exc)[:120]}
 
 
 def _tool_search_client_messages(args: dict) -> dict:

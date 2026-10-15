@@ -5624,6 +5624,25 @@ def api_dev_roles_get():
     })
 
 
+@app.route("/api/dev/semantic", methods=["GET"])
+@editor_required
+def api_dev_semantic():
+    """Служебная проверка поиска по смыслу: состояние индекса и пробный поиск (?q=…&group=…)."""
+    from services import ai_assistant as _ai
+    from services import semantic_search_service as ss
+
+    q = (request.args.get("q") or "").strip()
+    out = {"stats": ss.stats()}
+    if q:
+        args = {"query": q, "limit": int(request.args.get("limit") or 10)}
+        if request.args.get("group"):
+            args["group"] = request.args.get("group")
+        if request.args.get("all") == "1":
+            args["only_clients"] = False
+        out["result"] = _ai._tool_search_client_messages(args)
+    return jsonify(out)
+
+
 @app.route("/api/dev/staff", methods=["GET"])
 @editor_required
 def api_dev_staff_get():
@@ -5696,6 +5715,13 @@ def _packing_reminder_scheduler():
     """Morning tick (every 5 min): packing-list ask + tracking digest.
     Both are self-guarded by per-day settings keys."""
     _repair_migrated_chats_once()   # группы, ставшие супергруппами до этой версии (раз при старте)
+    try:                            # поиск по смыслу: догнать индекс новых сообщений (фон)
+        from services import semantic_search_service as _ss
+
+        if _ss.enabled():
+            _ss.start_indexing()
+    except Exception:
+        app.logger.exception("Semantic index start failed")
     while True:
         try:
             now = datetime.now(db.TASHKENT_TZ)
