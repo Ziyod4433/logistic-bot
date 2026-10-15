@@ -748,6 +748,10 @@ def _system_prompt() -> str:
   тексты сообщений админов групп — с 15.10.2026; голосовые и файлы не расшифрованы. Об этой границе говори
   ТОЛЬКО если вывод о причине зависит от недостающих текстов — не вставляй её в каждый ответ. Сам разбор
   клиентам ничего не пишет.
+• «найди, где клиенты жаловались на … / когда обсуждали цену / были ли повреждения у X / shikoyatlarni top»
+  → search_client_messages: поиск ПО СМЫСЛУ во всей сохранённой переписке (находит и другими словами, и на
+  другом языке). query — 2–3 фразы через « | » на русском и узбекском латиницей; group — если про одну группу.
+  Результат — кандидаты со score: прочитай, отбери подходящие, цитируй дословно с датой, группой и автором.
 • «где никто не пишет / тихие группы / N kundan beri yozilmagan guruhlar» → analyze_group_activity
   segment=silent (silent_days=N, по умолчанию 30): last_activity — последнее сообщение в группе от ЛЮБОГО
   автора (клиент, сотрудник, админ) с момента, как бот в группе; граница 15.10 к этому НЕ относится. Не
@@ -1290,6 +1294,31 @@ TOOLS = [
                 "properties": {
                     "query": {"type": "string", "description": "chat_id, часть названия группы или код BL"},
                     "refresh": {"type": "boolean", "description": "Разобрать заново, даже если переписка не менялась"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_client_messages",
+            "description": (
+                "ПОИСК ПО СМЫСЛУ во всей сохранённой переписке клиентских групп: находит обсуждения задержек, цены, "
+                "повреждений, потерь, документов и т.п., даже если клиент писал другими словами или на другом "
+                "языке. Возвращает похожие сообщения (группа, дата, автор, роль, текст, score — сходство 0–1). "
+                "Это кандидаты: прочитай и отбери подходящие, не выдавай всё подряд за жалобы."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string",
+                              "description": "2–3 фразы через « | » на русском и узбекском (латиница), напр. "
+                                             "«груз повреждён | yuk shikastlangan, singan»"},
+                    "group": {"type": "string", "description": "Только одна группа: часть названия, код BL или chat_id"},
+                    "days": {"type": "integer", "description": "Только за последние N дней"},
+                    "only_clients": {"type": "boolean", "description": "Только сообщения клиентов (по умолчанию true)"},
+                    "limit": {"type": "integer", "description": "Сколько сообщений (15, максимум 40)"},
                 },
                 "required": ["query"],
             },
@@ -2401,6 +2430,65 @@ def _tool_analyze_client_chat(args: dict, tg_user_id: str, readonly: bool = Fals
     return result
 
 
+def _tool_search_client_messages(args: dict) -> dict:
+    from datetime import datetime as _dt, timedelta as _td
+
+    from services import group_activity_service as gas
+    from services import semantic_search_service as ss
+
+    args = args or {}
+    if not ss.enabled():
+        return {"error": "Поиск по смыслу пока не включён (SEMANTIC_PROVIDER не задан) — скажи владельцу; "
+                         "пока ищи через analyze_client_chat / get_group_activity."}
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"error": "Нужен query: что искать (2–3 фразы через « | »)"}
+    try:
+        limit = max(1, min(int(args.get("limit") or 15), 40))
+    except (TypeError, ValueError):
+        limit = 15
+    chat_ids = None
+    group = str(args.get("group") or "").strip()
+    if group:
+        if group in confidential_chat_ids():
+            return {"error": "Эта группа строго конфиденциальна."}
+        found = gas.resolve_chat(group)
+        if not found:
+            return {"error": f"Группа по «{group}» не найдена"}
+        chat_ids = sorted({cid for g in found[:5] for cid in gas.history_chat_ids(g["chat_id"])})
+    since = ""
+    if args.get("days"):
+        try:
+            since = (_dt.now(db.TASHKENT_TZ) - _td(days=int(args["days"]))).strftime("%Y-%m-%d")
+        except (TypeError, ValueError):
+            since = ""
+    only_clients = args.get("only_clients") is not False
+    try:
+        hits = ss.search(query, chat_ids=chat_ids, since=since, limit=limit * 3 if only_clients else limit)
+    except Exception as exc:
+        return {"error": f"Поиск не удался: {exc}"[:200]}
+    conn = db.get_conn()
+    try:
+        staff = set(gas.staff_directory(conn))
+        titles = {str(r["chat_id"]): r["title"] for r in conn.execute("SELECT chat_id, title FROM telegram_chats")}
+    finally:
+        conn.close()
+    migrations = db.chat_migrations()
+    out = []
+    for h in hits:
+        role = "our" if h["user_id"] in staff else "client"
+        if only_clients and role != "client":
+            continue
+        cid = migrations.get(h["chat_id"], h["chat_id"])
+        out.append({"group": titles.get(cid) or titles.get(h["chat_id"]) or _mask_chat_id(cid),
+                    "date": h["sent_at"][:16], "who": h["user_name"], "role": role,
+                    "text": h["text"][:400], "score": h["score"]})
+        if len(out) >= limit:
+            break
+    return {"matched": len(out), "hits": out, "index": ss.stats(),
+            "note": "score — сходство по смыслу (0–1); выше ~0.6 обычно по теме. Это кандидаты: проверь текст."}
+
+
 def _tool_client_insights_report(args: dict, tg_user_id: str, readonly: bool = False) -> dict:
     from services import client_insights_service as cis
 
@@ -3488,6 +3576,8 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_analyze_client_chat(args, tg_user_id, readonly=readonly)
         if name == "client_insights_report":
             return _tool_client_insights_report(args, tg_user_id, readonly=readonly)
+        if name == "search_client_messages":
+            return _tool_search_client_messages(args)
         if name == "get_automation_status":
             return _tool_get_automation_status(args)
         if name == "get_missing_packing_lists":

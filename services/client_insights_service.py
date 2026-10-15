@@ -315,6 +315,26 @@ def build_input(rec: dict, staff: set, today: date | None = None) -> dict:
         since = (today - timedelta(days=180)).isoformat()
     msgs = collect_messages(rec["chat_id"], staff, since=since,
                             max_messages=_int_env("INSIGHTS_MAX_MESSAGES", MAX_MESSAGES))
+    # поиск по смыслу: старые сообщения группы (до окна) о задержках, цене, повреждениях,
+    # потерях, сервисе — даже другими словами и на другом языке; номера продолжают окно
+    earlier = []
+    if msgs:
+        try:
+            from services import group_activity_service as gas
+            from services import semantic_search_service as ss
+
+            in_window = {(m["at"][:16], _norm(m["text"])[:120]) for m in msgs}
+            for h in ss.topic_hits(gas.history_chat_ids(rec["chat_id"]), until=msgs[0]["at"]):
+                if (h["sent_at"][:16], _norm(h["text"])[:120]) in in_window:
+                    continue
+                earlier.append({"msg_id": h["key"], "user_id": h["user_id"], "who": (h["user_name"] or "?")[:60],
+                                "text": h["text"][:MESSAGE_CHARS], "at": h["sent_at"][:19], "edited": False,
+                                "role": "our" if h["user_id"] in staff else "client", "topic": h["topic"]})
+        except Exception:
+            earlier = []
+        earlier.sort(key=lambda x: x["at"])
+        for n, item in enumerate(earlier, len(msgs) + 1):
+            item["n"] = n
     lines = [f"M{m['n']} [{m['at'][:16]}] {'КЛИЕНТ' if m['role'] == 'client' else 'НАШ'} {m['who']}"
              f"{' (изменено)' if m['edited'] else ''}: {m['text']}" for m in msgs]
     header = (f"ГРУППА: {rec.get('title')}\nФАКТЫ (база + шитс):\n" + "\n".join(_facts(rec, today)))
@@ -323,14 +343,19 @@ def build_input(rec: dict, staff: set, today: date | None = None) -> dict:
                  + "\n".join(lines))
     else:
         convo = "\n\nПЕРЕПИСКА: сохранённых сообщений нет."
+    if earlier:
+        convo += ("\n\nРАНЬШЕ ПО ТЕМАМ (найдено поиском по смыслу в более старой переписке группы; цитировать "
+                  "можно так же, по номеру):\n" + "\n".join(
+                      f"M{m['n']} [{m['at'][:16]}] {'КЛИЕНТ' if m['role'] == 'client' else 'НАШ'} {m['who']} "
+                      f"(тема {m['topic']}): {m['text']}" for m in earlier))
     digest_src = json.dumps({
         "v": PROMPT_VERSION,
         "facts": [rec.get("segment"), last, rec.get("cargo_in_transit"), rec.get("moved_to")],
-        "msgs": [(m["at"], m["user_id"], m["role"], m["text"]) for m in msgs],
+        "msgs": [(m["at"], m["user_id"], m["role"], m["text"]) for m in msgs + earlier],
     }, ensure_ascii=False, sort_keys=True)
     return {
-        "messages": msgs,
-        "by_number": {m["n"]: {"text": m["text"], "role": m["role"]} for m in msgs},
+        "messages": msgs + earlier,
+        "by_number": {m["n"]: {"text": m["text"], "role": m["role"]} for m in msgs + earlier},
         "prompt": [{"role": "system", "content": SYSTEM_PROMPT},
                    {"role": "user", "content": header + convo}],
         "hash": hashlib.sha1(digest_src.encode("utf-8")).hexdigest(),
@@ -467,8 +492,8 @@ def analyze_group(chat_id, force: bool = False, rec: dict | None = None, staff: 
     msgs = inp["messages"]
     row = {"chat_id": cid, "analyzed_at": datetime.now(db.TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S"),
            "prompt_version": PROMPT_VERSION, "input_hash": inp["hash"], "segment": rec.get("segment") or "",
-           "messages_count": len(msgs), "messages_from": msgs[0]["at"] if msgs else "",
-           "messages_upto": msgs[-1]["at"] if msgs else "", "run_trigger": trigger}
+           "messages_count": len(msgs), "messages_from": min(m["at"] for m in msgs) if msgs else "",
+           "messages_upto": max(m["at"] for m in msgs) if msgs else "", "run_trigger": trigger}
     started = time.time()
     if not msgs:
         result, tin, tout, model = _no_messages_result(), 0, 0, "-"

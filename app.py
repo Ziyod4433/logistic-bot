@@ -5306,6 +5306,14 @@ def run_daily_activity_jobs(force: bool = False) -> tuple:
     db.set_setting(_ACTIVITY_SNAPSHOT_SETTING, today)
     saved = gas.take_snapshot()
     scan = start_group_members_refresh(force=False)
+    # поиск по смыслу: отпечатки новых сообщений (фон; первый раз — вся история)
+    try:
+        from services import semantic_search_service as _ss
+
+        if _ss.enabled():
+            _ss.start_indexing()
+    except Exception:
+        app.logger.exception("Semantic index start failed")
     # разбор переписки групп зоны риска, у которых что-то изменилось (фон, лимит в день)
     try:
         from services import client_insights_service as cis
