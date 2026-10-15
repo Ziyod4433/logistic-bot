@@ -689,6 +689,16 @@ def _system_prompt() -> str:
   он замолчал (последнее слово осталось за клиентом, проблема с грузом, низкая оценка). Разбудить = личное короткое сообщение на
   языке клиента через propose_action kind='send_group_message' — по одной заявке на группу, только после ✅;
   массовую одинаковую рассылку спящим не предлагай, если прямо не попросили.
+• ПОЧЕМУ ПЕРЕСТАЛ ВОЗИТЬ / НЕДОВОЛЕН ЛИ / НА ЧТО ЖАЛУЕТСЯ клиент («nega yuk bermayapti», «norozimi»,
+  «shikoyatlari bormi») → analyze_client_chat (одна группа: ИИ читает переписку и отвечает строгой формой,
+  каждая цитата проверена по исходному сообщению; ~10–30 с) или client_insights_report (много групп: причины,
+  недовольство, открытые жалобы; разборов ещё нет → run_missing=true и скажи, что разбор идёт в фоне;
+  Excel — as_file=true). Причину называй РОВНО с уверенностью из инструмента: fact — «клиент прямо сказал»,
+  likely — «вероятно, судя по переписке» + альтернативы, unknown — «причина не установлена, нужно спросить
+  клиента». Цитаты — только из evidence, дословно, с датой и автором. cargo_hints — повод проверить, не ехал
+  ли груз без привязки к группе (get_unlinked_bls). Границы данных: переписка сохранена с 18.04.2026;
+  сообщения клиентов-админов групп и наши обычные сообщения — только с 15.10.2026; голосовые и файлы не
+  расшифрованы. Мало переписки — говори прямо. Сам разбор клиентам ничего не пишет.
 • «поменяй язык клиенту / пиши этой группе по-русски / tilni o'zgartir» → find_bl или find_group, затем
   propose_action kind='update_language' (language: uz_latn | uz_cyrl | ru | en). ТЫ ЭТО УМЕЕШЬ — не отправляй
   человека в панель. Язык ставится всей группе клиента; «только этому BL» — only_this_bl=true.
@@ -1202,6 +1212,58 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {"days": {"type": "integer", "description": "За сколько дней (7 по умолчанию, до 90)"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_client_chat",
+            "description": (
+                "РАЗБОР ПЕРЕПИСКИ ОДНОЙ ГРУППЫ ИИ: недоволен ли клиент (none/mild/strong), жалобы по категориям "
+                "(задержка, тарифы, связь, повреждение, потеря, документы, трекинг, сервис, конкурент, пауза) с "
+                "ДОСЛОВНЫМИ цитатами и статусом (открыта/в работе/решена), возможная причина спада отгрузок с "
+                "уверенностью fact/likely/unknown и альтернативами, угроза ухода, сообщения о грузе, которого "
+                "может не быть в данных, и что делать менеджеру. Рядом — факты: последний груз, ритм, сегмент. "
+                "Результат кэшируется до новых сообщений; refresh=true — разобрать заново (только владелец/оператор)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "chat_id, часть названия группы или код BL"},
+                    "refresh": {"type": "boolean", "description": "Разобрать заново, даже если переписка не менялась"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "client_insights_report",
+            "description": (
+                "СВОДКА РАЗБОРОВ ПЕРЕПИСКИ по многим группам: почему клиенты перестали возить (по причинам), кто "
+                "недоволен, у кого открытые жалобы, кто грозит уйти; по каждой группе — последний груз, причина с "
+                "уверенностью, главная цитата, что делать менеджеру. segment=at_risk (затихают/уснули/потеряны + "
+                "«пишет, но не грузит») по умолчанию. run_missing=true — разобрать в фоне группы без разбора или "
+                "с новой перепиской (до 40 за раз; только владелец/оператор). as_file=true — Excel в этот чат."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "segment": {"type": "string",
+                                "enum": ["at_risk", "fading", "asleep", "lost", "talking", "active", "all"]},
+                    "reason": {"type": "string",
+                               "enum": ["DELAY", "PRICE", "COMMUNICATION", "DAMAGE", "LOSS", "DOCUMENTS", "TRACKING",
+                                        "SERVICE", "COMPETITOR", "PAUSE", "OTHER", "UNKNOWN"],
+                               "description": "Только группы с этой причиной"},
+                    "only_dissatisfied": {"type": "boolean", "description": "Только недовольные клиенты"},
+                    "only_open_issues": {"type": "boolean", "description": "Только с нерешёнными жалобами"},
+                    "run_missing": {"type": "boolean", "description": "Запустить фоновый разбор неразобранных"},
+                    "as_file": {"type": "boolean", "description": "Прислать Excel"},
+                    "limit": {"type": "integer", "description": "Сколько групп в ответе (20, максимум 60)"},
+                },
                 "required": [],
             },
         },
@@ -2225,6 +2287,101 @@ def _tool_list_group_clients(args: dict, tg_user_id: str) -> dict:
         "refresh_group_members). Пустой clients не значит, что клиента нет — значит, бот его не видел."
         + (f" Показано {len(shown)} из {len(groups)}." if len(shown) < len(groups) else "")
     )
+    return out
+
+
+def _may_spend_ai(tg_user_id, readonly: bool) -> bool:
+    """Платные запуски разбора (пересчёт, фоновый пакет) — владелец/оператор или управляющая группа."""
+    if readonly:
+        return False
+    return str(tg_user_id).startswith("group:") or can_change(str(tg_user_id))
+
+
+_INSIGHT_NOTE = (
+    "Разбор сделан ИИ по сохранённой переписке; каждая цитата проверена по исходному сообщению. reason_certainty: "
+    "fact — клиент прямо сказал; likely — вероятно, прямо не сказано; unknown — не установлена. from_cache=true — "
+    "переписка с прошлого разбора не менялась. Голосовые и файлы не расшифрованы. Сообщения клиентов-админов "
+    "групп сохраняются только с 15.10.2026."
+)
+
+
+def _tool_analyze_client_chat(args: dict, tg_user_id: str, readonly: bool = False) -> dict:
+    from services import client_insights_service as cis
+    from services import group_activity_service as gas
+
+    args = args or {}
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return {"error": "Нужен query: часть названия группы, chat_id или код BL"}
+    if query in confidential_chat_ids():
+        return {"error": "Эта группа строго конфиденциальна."}
+    found = gas.resolve_chat(query)
+    if not found:
+        return {"error": f"Группа по «{query}» не найдена — уточни название или код (find_group)."}
+    if len(found) > 1:
+        return {"error": "Подходит несколько групп — уточни, какую разобрать.",
+                "candidates": [{"chat_id": _mask_chat_id(x["chat_id"]), "title": x["title"]} for x in found[:10]]}
+    refresh = bool(args.get("refresh"))
+    note = _INSIGHT_NOTE
+    if refresh and not _may_spend_ai(tg_user_id, readonly):
+        refresh = False
+        note += " Пересчёт по запросу доступен владельцу/оператору — показан последний разбор."
+    result = cis.analyze_group(found[0]["chat_id"], force=refresh)
+    if result.get("chat_id"):
+        result["chat_id"] = _mask_chat_id(result["chat_id"])
+    result.pop("tokens", None)
+    result["note"] = note
+    return result
+
+
+def _tool_client_insights_report(args: dict, tg_user_id: str, readonly: bool = False) -> dict:
+    from services import client_insights_service as cis
+
+    args = args or {}
+    segment = str(args.get("segment") or "at_risk").strip().lower()
+    reason = str(args.get("reason") or "").strip().upper()
+    try:
+        limit = max(1, min(int(args.get("limit") or 20), 60))
+    except (TypeError, ValueError):
+        limit = 20
+    out = {}
+    if args.get("run_missing"):
+        if not _may_spend_ai(tg_user_id, readonly):
+            out["run"] = {"error": "Запустить разбор может владелец или оператор."}
+        else:
+            segs = cis.AT_RISK if segment in ("at_risk", "talking", "all") else (segment,)
+            out["run"] = cis.start_batch(segments=segs)
+    data = cis.report(segment, reason, bool(args.get("only_dissatisfied")), bool(args.get("only_open_issues")))
+    if args.get("as_file"):
+        if not callable(direct_send_document):
+            return {"error": "direct_send_document hook is not wired"}
+        fname = f"mijozlar_sabablari_{data['today']}.xlsx"
+        direct_send_document(_reply_chat_for(tg_user_id), cis.report_xlsx(data), fname,
+                             f"🧭 Sabablar: {data['matched']} guruh (tahlil qilingan {data['analyzed']} / "
+                             f"{data['in_selection']})")
+        out["sent_file"] = fname
+    groups = []
+    for g in data["groups"][:limit]:
+        top = (g["reason_evidence"] or [{}])[0]
+        groups.append({
+            "title": g["title"], "segment_label": g["segment_label"], "last_cargo": g["last_cargo"],
+            "days_since_cargo": g["days_since_cargo"], "dissatisfaction": g["dissatisfaction"],
+            "churn_reason_label": g["churn_reason_label"], "reason_certainty_label": g["reason_certainty_label"],
+            "reason_explanation": g["reason_explanation"], "open_issues": g["open_issues"],
+            "complaints": [f"{i['category_label']} ({i['status']})" for i in g["incidents"] if i["from_client"]],
+            "key_quote": ({"date": top.get("date"), "who": top.get("who"), "quote": top.get("quote")}
+                          if top else None),
+            "leaving_signal": g["leaving_signal"], "manager_action": g["manager_action"],
+            "analyzed_at": g["analyzed_at"],
+        })
+    out.update({k: data[k] for k in ("today", "in_selection", "analyzed", "not_analyzed", "matched",
+                                     "dissatisfied", "with_open_issues", "leaving_signals", "by_reason",
+                                     "complaints_by_category", "batch")})
+    out["groups"] = groups
+    out["note"] = _INSIGHT_NOTE + (
+        f" Показано {len(groups)} из {data['matched']}." if len(groups) < data["matched"] else "") + (
+        " not_analyzed — группы выборки без разбора: run_missing=true запустит их в фоне."
+        if data["not_analyzed"] else "")
     return out
 
 
@@ -3260,6 +3417,10 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_group_activity_changes(args)
         if name == "get_group_activity":
             return _tool_get_group_activity(args)
+        if name == "analyze_client_chat":
+            return _tool_analyze_client_chat(args, tg_user_id, readonly=readonly)
+        if name == "client_insights_report":
+            return _tool_client_insights_report(args, tg_user_id, readonly=readonly)
         if name == "get_automation_status":
             return _tool_get_automation_status(args)
         if name == "get_missing_packing_lists":

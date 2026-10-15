@@ -996,6 +996,12 @@ def digest_text(days: int = 7, today: date | None = None) -> str:
         block("🟢", "Uyg'ondi", ch["woke_up"])
         block("⚫", "Yo'qotildi", ch["lost"])
         block("🔀", "Boshqa guruh orqali yuk beryapti", ch["moved"])
+    try:  # разборы переписки (instructor): недовольные за период; сбой не ломает сводку
+        from services import client_insights_service as cis
+
+        lines += cis.digest_lines(ch.get("days") or days, today)
+    except Exception:
+        pass
     talking = ch.get("talking") or []
     if talking:
         lines.append(f"\n💬 <b>Yozadi, lekin yuk bermayapti</b> ({len(talking)}): "

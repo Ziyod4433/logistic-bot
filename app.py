@@ -740,6 +740,27 @@ def get_responsible_response_role(assignments: dict | None, sender_id: str, admi
     return ""
 
 
+def _log_group_message(chat_id, message: dict, sender: dict, text: str, reply_to: dict):
+    """Сообщение группы → group_messages. Конфиденциальный и управляющий чаты не пишутся."""
+    from services import ai_assistant
+
+    cid = str(chat_id)
+    if (cid in ai_assistant.confidential_chat_ids() or cid in CONFIDENTIAL_CHAT_IDS
+            or ai_assistant.is_control_chat(cid)):
+        return
+    db.log_group_message(
+        cid,
+        message.get("message_id"),
+        user_id=sender.get("id"),
+        user_name=telegram_user_name(sender),
+        username=sender.get("username") or "",
+        text=text,
+        sent_at=telegram_unix_to_local(message.get("date")),
+        reply_to_message_id=(reply_to or {}).get("message_id") or "",
+        edited_at=telegram_unix_to_local(message["edit_date"]) if message.get("edit_date") else "",
+    )
+
+
 def track_moderator_response_metrics(message: dict):
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
@@ -799,6 +820,12 @@ def track_moderator_response_metrics(message: dict):
         return
     if re.match(r"^/([A-Za-z0-9_]+)(?:@\w+)?$", normalized_text):
         return
+    # журнал переписки для анализа клиентов (client_insights_service): все
+    # авторы, включая клиентов-админов. Сбой журнала обработку не прерывает.
+    try:
+        _log_group_message(chat_id, message, sender, text, reply_to)
+    except Exception:
+        app.logger.exception("Group message log failed")
 
     if reply_to and reply_sender_id_str and reply_sender_id_str != sender_id_str and not reply_sender.get("is_bot"):
         db.record_moderator_request(
@@ -5263,7 +5290,16 @@ def run_daily_activity_jobs(force: bool = False) -> tuple:
     db.set_setting(_ACTIVITY_SNAPSHOT_SETTING, today)
     saved = gas.take_snapshot()
     scan = start_group_members_refresh(force=False)
-    return True, f"snapshot {saved} groups; members scan: {scan.get('note') or scan}"
+    # разбор переписки групп зоны риска, у которых что-то изменилось (фон, лимит в день)
+    try:
+        from services import client_insights_service as cis
+
+        insights = cis.daily_refresh()
+    except Exception as exc:
+        app.logger.exception("Client insights daily refresh failed")
+        insights = {"note": f"failed: {exc}"}
+    return True, (f"snapshot {saved} groups; members scan: {scan.get('note') or scan}; "
+                  f"insights: {insights.get('note') or insights}")
 
 
 def _run_due_ai_tasks():

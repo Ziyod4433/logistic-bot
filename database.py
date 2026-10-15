@@ -1076,6 +1076,46 @@ def init_db():
             PRIMARY KEY(day, chat_id)
         );
 
+        -- журнал сообщений клиентских групп для анализа переписки (ТЗ M01):
+        -- все авторы, включая клиентов-админов и наших сотрудников; правка
+        -- сообщения обновляет текст и edited_at. Конфиденциальный и
+        -- управляющий чаты сюда не пишутся.
+        CREATE TABLE IF NOT EXISTS group_messages (
+            chat_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            user_id TEXT NOT NULL DEFAULT '',
+            user_name TEXT NOT NULL DEFAULT '',
+            username TEXT NOT NULL DEFAULT '',
+            text TEXT NOT NULL DEFAULT '',
+            sent_at TEXT NOT NULL DEFAULT '',
+            reply_to_message_id TEXT NOT NULL DEFAULT '',
+            edited_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY(chat_id, message_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_group_messages_chat_time ON group_messages(chat_id, sent_at);
+
+        -- разбор переписки моделью (instructor): каждая версия вывода
+        -- сохраняется (история), последняя успешная — текущая
+        CREATE TABLE IF NOT EXISTS client_insights (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            analyzed_at TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            prompt_version TEXT NOT NULL DEFAULT '',
+            input_hash TEXT NOT NULL DEFAULT '',
+            segment TEXT NOT NULL DEFAULT '',
+            messages_count INTEGER NOT NULL DEFAULT 0,
+            messages_from TEXT NOT NULL DEFAULT '',
+            messages_upto TEXT NOT NULL DEFAULT '',
+            result_json TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            tokens_in INTEGER NOT NULL DEFAULT 0,
+            tokens_out INTEGER NOT NULL DEFAULT 0,
+            seconds REAL NOT NULL DEFAULT 0,
+            run_trigger TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_client_insights_chat ON client_insights(chat_id, id);
+
         CREATE TABLE IF NOT EXISTS problems (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             bl_id INTEGER NOT NULL REFERENCES bl_codes(id) ON DELETE CASCADE,
@@ -5778,6 +5818,88 @@ def save_activity_snapshot(day: str, rows: list) -> int:
         )
         conn.commit()
         return len(rows)
+    finally:
+        conn.close()
+
+
+def log_group_message(chat_id, message_id, user_id="", user_name="", username="", text="",
+                      sent_at="", reply_to_message_id="", edited_at=""):
+    """Журнал сообщений группы (анализ переписки). Повтор того же сообщения
+    (повторная доставка Telegram) не дублируется; правка обновляет текст."""
+    chat_value, msg_value = str(chat_id or "").strip(), str(message_id or "").strip()
+    if not chat_value or not msg_value:
+        return
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO group_messages(chat_id, message_id, user_id, user_name, username, text, sent_at,
+                                       reply_to_message_id, edited_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(chat_id, message_id) DO UPDATE SET
+                text = excluded.text,
+                edited_at = CASE WHEN excluded.edited_at != '' THEN excluded.edited_at
+                                 ELSE group_messages.edited_at END,
+                user_name = CASE WHEN excluded.user_name != '' THEN excluded.user_name
+                                 ELSE group_messages.user_name END
+            """,
+            (chat_value, msg_value, str(user_id or "").strip(), str(user_name or "").strip()[:120],
+             str(username or "").strip().lstrip("@")[:64], str(text or "")[:4000], str(sent_at or "")[:19],
+             str(reply_to_message_id or "").strip(), str(edited_at or "")[:19]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def insights_save(row: dict) -> int:
+    cols = ("chat_id", "analyzed_at", "model", "prompt_version", "input_hash", "segment", "messages_count",
+            "messages_from", "messages_upto", "result_json", "error", "tokens_in", "tokens_out", "seconds",
+            "run_trigger")
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            f"INSERT INTO client_insights({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})",
+            [row.get(c) if row.get(c) is not None else ("" if c not in ("messages_count", "tokens_in",
+                                                                         "tokens_out", "seconds") else 0)
+             for c in cols],
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+    finally:
+        conn.close()
+
+
+def insights_latest(chat_id, ok_only: bool = True) -> dict | None:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM client_insights WHERE chat_id = ? " + ("AND error = '' " if ok_only else "")
+            + "ORDER BY id DESC LIMIT 1", (str(chat_id),)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def insights_latest_all() -> dict:
+    """{chat_id: последний УСПЕШНЫЙ разбор}."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM client_insights WHERE id IN "
+            "(SELECT MAX(id) FROM client_insights WHERE error = '' GROUP BY chat_id)").fetchall()
+        return {str(r["chat_id"]): dict(r) for r in rows}
+    finally:
+        conn.close()
+
+
+def insights_history(chat_id, limit: int = 10) -> list:
+    conn = get_conn()
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT id, analyzed_at, model, prompt_version, segment, messages_count, error, result_json "
+            "FROM client_insights WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
+            (str(chat_id), int(limit))).fetchall()]
     finally:
         conn.close()
 
