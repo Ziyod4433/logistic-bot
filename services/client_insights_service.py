@@ -291,6 +291,9 @@ def _facts(rec: dict, today: date) -> list:
         lines.append("- грузов в базе и шитсе по кодам группы не найдено")
     if rec.get("cargo_in_transit"):
         lines.append(f"- груз сейчас в пути: {rec['cargo_in_transit']} BL")
+    if rec.get("intake_last") or rec.get("cargo_in_hand"):
+        lines.append(f"- шитс статусов (поступление груза на наш склад): последний приход {rec.get('intake_last') or '—'}; "
+                     f"сейчас на складе {rec.get('in_warehouse', 0)}, в фуре {rec.get('in_truck', 0)}")
     if rec.get("moved_to"):
         lines.append(f"- коды клиента недавно ехали через другую группу: {rec['moved_to']}")
     rating = rec.get("last_rating") or {}

@@ -176,6 +176,85 @@ def sheet_cargo_index(force: bool = False) -> tuple:
     return index, error
 
 
+# ── ШИТС СТАТУСОВ «Logist sborka BL»: КОГДА КЛИЕНТ ДАЛ ГРУЗ ─────────────
+# Строка груза переезжает Ombor (склад) → Ortilgan furalar (в фуре) → Yetib
+# keldi (прибыл). DATE OF ARRIVE — день поступления груза к нам на склад, то
+# есть когда клиент передал его нам (на 3–6 дней раньше фуры). Груз на складе
+# или в фуре — клиент сейчас с нами. Владелец 15.10.2026.
+STATUS_CACHE_SECONDS = 1800
+_STATUS_CACHE: dict = {"at": 0.0, "rows": None, "error": ""}
+STAGE_LABELS = {"ombor": "на складе", "transit": "в фуре", "arrived": "прибыл"}
+_FAMILY_RE = re.compile(r"^\s*([A-Z0-9][A-Z0-9 &'.]*?[A-Z][A-Z0-9 &'.]*?)\s*[-_/ ]\s*\d{1,4}\s*$")
+
+
+def code_family(raw) -> str:
+    """Семья марки: «SSS-2», «SSS-10», «SSS» → «SSS». Чисто числовые и BL-коды
+    семьи не образуют (каждый — отдельный клиент)."""
+    text = str(raw or "").strip().upper()
+    m = _FAMILY_RE.match(text)
+    fam = _norm_mark(m.group(1) if m else text)
+    if len(fam) < 3 or fam in _TITLE_NOISE or re.fullmatch(r"BL\d*", fam) or not re.search(r"[A-Z]", fam):
+        return ""
+    return fam
+
+
+def _furthest_stage(stages: list) -> list:
+    """Строка, уже скопированная в следующую вкладку, но не удалённая из прошлой,
+    считается один раз — на самой дальней стадии (как в анализе опозданий)."""
+    from collections import Counter
+
+    def key3(r):
+        return (_norm_mark(r["brand"]), _norm_mark(r.get("reys")), r["arrive"].isoformat())
+
+    data = dict(stages)
+    arrived = data.get("arrived") or []
+    transit_left, ombor_left = [], []
+    akeys = Counter(key3(r) for r in arrived)
+    for r in data.get("transit") or []:
+        if akeys.get(key3(r), 0) > 0:
+            akeys[key3(r)] -= 1
+            continue
+        transit_left.append(r)
+    # склад сверяем со ВСЕМИ следующими вкладками: копия могла уже доехать до «Yetib keldi»
+    later = Counter((_norm_mark(r["brand"]), r["arrive"].isoformat())
+                    for r in (data.get("transit") or []) + list(arrived))
+    for r in data.get("ombor") or []:
+        k = (_norm_mark(r["brand"]), r["arrive"].isoformat())
+        if later.get(k, 0) > 0:
+            later[k] -= 1
+            continue
+        ombor_left.append(r)
+    today = _today()
+    out = []
+    for stage, rows in (("ombor", ombor_left), ("transit", transit_left), ("arrived", arrived)):
+        for r in rows:
+            day = r["arrive"]
+            if day.year < 2024 or day > today + timedelta(days=7):      # опечатки вида 0206-06-09
+                continue
+            out.append({"brand": str(r["brand"]).strip(), "mark": _norm_mark(r["brand"]),
+                        "family": code_family(r["brand"]), "arrive": day, "stage": stage,
+                        "reys": str(r.get("reys") or "").strip(), "sklad": str(r.get("sklad") or "").strip()})
+    return out
+
+
+def status_sheet_rows(force: bool = False) -> tuple:
+    """(строки груза со стадией, ошибка) из шитса статусов; кэш на 30 минут."""
+    now = time.time()
+    if not force and _STATUS_CACHE["rows"] is not None and now - _STATUS_CACHE["at"] < STATUS_CACHE_SECONDS:
+        return _STATUS_CACHE["rows"], _STATUS_CACHE["error"]
+    try:
+        from services import late_cargo_service as lc
+
+        rows = _furthest_stage([("ombor", lc._read_stage(lc.SHEET_OMBOR)),
+                                ("transit", lc._read_stage(lc.SHEET_TRANSIT)),
+                                ("arrived", lc._read_stage(lc.SHEET_ARRIVED))])
+        error = ""
+    except Exception as exc:  # шитс недоступен — анализ идёт по базе и планам
+        rows, error = (_STATUS_CACHE["rows"] or []), f"шитс статусов недоступен: {exc}"[:200]
+    _STATUS_CACHE.update(at=now, rows=rows, error=error)
+    return rows, error
+
+
 def _merge_days(days: list) -> list:
     """Отгрузки клиента: даты фур, где соседние ближе SHIPMENT_MERGE_DAYS, — одна."""
     out = []
@@ -468,6 +547,13 @@ def _classify(rec: dict, t: dict) -> tuple[str, str]:
             return "new", (f"бот видит группу {rec['group_age_days']} дн., груза ни в базе, ни в шитсе по "
                            "кодам группы нет — похоже на нового клиента")
         return "no_cargo", f"ни одного груза ни в базе, ни в шитсе по кодам группы; {voice}"
+    if rec.get("cargo_in_hand"):
+        parts = []
+        if rec.get("in_warehouse"):
+            parts.append(f"на складе {rec['in_warehouse']}")
+        if rec.get("in_truck"):
+            parts.append(f"в фуре {rec['in_truck']}")
+        return "active", f"груз у нас сейчас ({', '.join(parts)} по шитсу статусов), поступил {rec.get('intake_last')}"
     if rec["cargo_in_transit"]:
         return "active", f"груз сейчас в пути ({rec['cargo_in_transit']} BL)"
     lim = rhythm_limits(rec["usual_gap_days"], rec["shipments"], t)
@@ -526,6 +612,13 @@ def analyze_all(today: date | None = None) -> dict:
     t = thresholds()
     skip = _excluded_chat_ids()
     sheet_index, sheet_error = sheet_cargo_index()
+    status_rows, status_error = status_sheet_rows()
+    status_by_mark: dict = {}
+    status_by_family: dict = {}
+    for r in status_rows:
+        status_by_mark.setdefault(r["mark"], []).append(r)
+        if r["family"]:
+            status_by_family.setdefault(r["family"], []).append(r)
     d30, d60, d90 = (today.toordinal() - n for n in (30, 60, 90))
     iso = lambda o: date.fromordinal(o).isoformat()
     conn = db.get_conn()
@@ -604,6 +697,19 @@ def analyze_all(today: date | None = None) -> dict:
             if day and day >= window_start:
                 recent_by_code.setdefault(str(r["code"]).strip().upper(), set()).add(cid_)
 
+    # семья марки засчитывается группе, только если она есть ровно у одной активной группы
+    family_owner: dict = {}
+    for c in chats:
+        cid_ = str(c["chat_id"]).strip()
+        if cid_ in skip or cid_ in migrations or not c.get("is_active"):
+            continue
+        rows_ = cargo.get(cid_, [])
+        if not rows_ and not db.is_client_group_title(c.get("title")):
+            continue
+        fams = {code_family(r["code"]) for r in rows_} | {code_family(x) for x in title_codes(c.get("title"))}
+        for f in fams - {""}:
+            family_owner.setdefault(f, set()).add(cid_)
+
     groups, other = [], {"inactive": 0, "internal": 0, "merged": 0}
     for c in chats:
         cid = str(c["chat_id"]).strip()
@@ -625,10 +731,32 @@ def analyze_all(today: date | None = None) -> dict:
         sheet_days = set()
         for code in codes_used:
             sheet_days |= sheet_index.get(code, set())
-        days = _merge_days([d for d in (db_days | sheet_days) if d <= today + timedelta(days=30)])
+        # шитс статусов: точные марки группы + семья марки, если она только у этой группы
+        st_rows, st_seen = [], set()
+        for code in codes_used:
+            for r in status_by_mark.get(code, []):
+                if id(r) not in st_seen:
+                    st_seen.add(id(r))
+                    st_rows.append(r)
+        own_fams = ({code_family(r["code"]) for r in rows} | {code_family(x) for x in title_codes(c.get("title"))}) - {""}
+        for fam in own_fams:
+            if family_owner.get(fam) == {cid}:
+                for r in status_by_family.get(fam, []):
+                    if id(r) not in st_seen:
+                        st_seen.add(id(r))
+                        st_rows.append(r)
+        intake_days = {r["arrive"] for r in st_rows}
+        # дата фуры через 0–12 дней после поступления на склад — тот же груз
+        other_days = {d for d in (db_days | sheet_days)
+                      if not any(0 <= (d - i).days <= 12 for i in intake_days)}
+        days = _merge_days([d for d in (other_days | intake_days) if d <= today + timedelta(days=30)])
         gaps = [(b - a).days for a, b in zip(days, days[1:]) if (b - a).days > 0]
         source = ("база+шитс" if db_days and sheet_days - db_days else "база" if db_days
                   else "шитс" if sheet_days else "")
+        if intake_days:
+            source = "склад" + (f"+{source}" if other_days else "")
+        in_ombor = sum(1 for r in st_rows if r["stage"] == "ombor")
+        in_truck = sum(1 for r in st_rows if r["stage"] == "transit")
         v, s = voice.get(cid, {}), seen.get(cid, {})
         last_voice = max([d for d in (_day(v.get("last_at")), _day(s.get("last_at"))) if d], default=None)
         team = sorted(ours.get(cid, []), key=lambda m: str(m.get("last_seen_at") or ""), reverse=True)
@@ -655,6 +783,14 @@ def analyze_all(today: date | None = None) -> dict:
             "last_cargo": days[-1].isoformat() if days else "",
             "days_since_cargo": _ago(days[-1] if days else None, today),
             "cargo_in_transit": sum(1 for r in rows if not r["delivered"]),
+            "cargo_in_hand": in_ombor + in_truck,
+            "in_warehouse": in_ombor,
+            "in_truck": in_truck,
+            "intake_last": max(intake_days).isoformat() if intake_days else "",
+            "status_cargo": [
+                {"date": r["arrive"].isoformat(), "stage": STAGE_LABELS[r["stage"]], "brand": r["brand"],
+                 "reys": r["reys"], "sklad": r["sklad"]}
+                for r in sorted(st_rows, key=lambda x: x["arrive"], reverse=True)[:20]],
             "total_places": int(sum(float(r["quantity_places"] or 0) for r in rows)),
             "total_kg": round(sum(float(r["weight_kg"] or 0) for r in rows), 1),
             "total_cbm": round(sum(float(r["volume_cbm"] or 0) for r in rows), 2),
@@ -735,6 +871,7 @@ def analyze_all(today: date | None = None) -> dict:
         },
         "groups": groups,
         "sheet_history": {"marks": len(sheet_index), "error": sheet_error},
+        "status_sheet": {"rows": len(status_rows), "error": status_error},
     }
 
 
