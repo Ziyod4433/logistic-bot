@@ -16,6 +16,8 @@ Only Telegram user ids listed in AI_ASSISTANT_ADMIN_IDS may talk to it
 (default: the owner, 303114354).
 """
 
+import contextlib
+import contextvars
 import json
 import os
 import random
@@ -103,18 +105,56 @@ _PROVIDER_PRESETS = {
 }
 
 
-def _provider() -> dict:
-    name = (os.getenv("AI_PROVIDER") or "deepseek").strip().lower()
-    return _PROVIDER_PRESETS.get(name, _PROVIDER_PRESETS["deepseek"])
+# Сложная ступень может жить у ДРУГОГО поставщика (AI_SMART_PROVIDER, владелец
+# 15.10.2026: простые — gpt-6.1-sol, сложные — claude-opus-5-5). На время её
+# вызова поставщик подменяется: ключ, адрес, протокол и глубина берутся из
+# пресета этого поставщика, а общие перекрытия AI_* (они про основную
+# модель) не применяются.
+_PROVIDER_OVERRIDE: contextvars.ContextVar = contextvars.ContextVar("ai_provider_override", default="")
 
 
-def provider_name() -> str:
+def _overridden() -> bool:
+    return bool(_PROVIDER_OVERRIDE.get())
+
+
+@contextlib.contextmanager
+def _use_provider(name: str):
+    token = _PROVIDER_OVERRIDE.set(str(name or ""))
+    try:
+        yield
+    finally:
+        _PROVIDER_OVERRIDE.reset(token)
+
+
+def _main_provider_name() -> str:
     name = (os.getenv("AI_PROVIDER") or "deepseek").strip().lower()
     return name if name in _PROVIDER_PRESETS else "deepseek"
 
 
+def _provider() -> dict:
+    name = _PROVIDER_OVERRIDE.get() or (os.getenv("AI_PROVIDER") or "deepseek").strip().lower()
+    return _PROVIDER_PRESETS.get(name, _PROVIDER_PRESETS["deepseek"])
+
+
+def provider_name() -> str:
+    over = _PROVIDER_OVERRIDE.get()
+    if over in _PROVIDER_PRESETS:
+        return over
+    return _main_provider_name()
+
+
+def smart_provider_name() -> str:
+    """Поставщик сложной ступени, если он ОТЛИЧАЕТСЯ от основного; иначе ''."""
+    name = (os.getenv("AI_SMART_PROVIDER") or "").strip().lower()
+    if not name or name not in _PROVIDER_PRESETS or name == _main_provider_name():
+        return ""
+    return name
+
+
 def _base_url() -> str:
     p = _provider()
+    if _overridden():
+        return p["base"].rstrip("/")
     legacy = os.getenv(p.get("base_env") or "") if p.get("base_env") else ""
     return (os.getenv("AI_API_BASE_URL") or legacy or p["base"]).rstrip("/")
 
@@ -140,7 +180,7 @@ _history_lock = threading.Lock()
 
 
 def _api_key() -> str:
-    override = (os.getenv("AI_API_KEY") or "").strip()
+    override = "" if _overridden() else (os.getenv("AI_API_KEY") or "").strip()
     if override:
         return override
     for env in _provider()["key_envs"]:
@@ -152,6 +192,8 @@ def _api_key() -> str:
 
 def _model() -> str:
     p = _provider()
+    if _overridden():
+        return p["model"].strip()
     legacy = os.getenv(p.get("model_env") or "") if p.get("model_env") else ""
     return (os.getenv("AI_MODEL") or legacy or p["model"]).strip()
 
@@ -160,13 +202,15 @@ def _protocol() -> str:
     """chat — OpenAI-совместимые chat/completions (DeepSeek, Gemini, Hermes);
     responses — OpenAI Responses API; anthropic — Claude Messages API.
     AI_PROTOCOL перекрывает пресет."""
-    value = (os.getenv("AI_PROTOCOL") or _provider().get("protocol") or "chat").strip().lower()
+    env = "" if _overridden() else os.getenv("AI_PROTOCOL")
+    value = (env or _provider().get("protocol") or "chat").strip().lower()
     return value if value in ("chat", "responses", "anthropic") else "chat"
 
 
 def _effort() -> str:
     """Глубина рассуждения для Responses API (low/medium/high)."""
-    value = (os.getenv("AI_EFFORT") or _provider().get("effort") or "low").strip().lower()
+    env = os.getenv("AI_SMART_EFFORT") if _overridden() else os.getenv("AI_EFFORT")
+    value = (env or _provider().get("effort") or "low").strip().lower()
     return value if value in ("low", "medium", "high") else "low"
 
 
@@ -422,6 +466,7 @@ def get_runtime_status() -> dict:
         "ai_protocol": _protocol(),
         "smart_router": smart_available(),
         "smart_model": _smart_model() if smart_available() else "",
+        "smart_provider": smart_provider_name(),
         # старые ключи оставлены — их читает панель/мониторинг
         "deepseek_api_key_present": bool(_api_key()),
         "deepseek_model": _model(),
@@ -3491,26 +3536,112 @@ _SMART_RE = re.compile(
 
 
 def _smart_model() -> str:
+    sp = smart_provider_name()
+    if sp:
+        preset = _PROVIDER_PRESETS[sp]
+        return (os.getenv("AI_SMART_MODEL") or preset.get("smart_model") or preset["model"]).strip()
     return (os.getenv("AI_SMART_MODEL") or _provider().get("smart_model") or _model()).strip()
 
 
 def smart_available() -> bool:
     """Есть отдельная ступень для сложных вопросов: её модель задана и не
-    совпадает с моделью лёгких. AI_SMART_DISABLE=1 — всё на лёгкую."""
+    совпадает с моделью лёгких (или живёт у другого поставщика и у него есть
+    ключ). AI_SMART_DISABLE=1 — всё на лёгкую."""
     if (os.getenv("AI_SMART_DISABLE") or "").strip().lower() in ("1", "true", "yes"):
         return False
+    sp = smart_provider_name()
+    if sp:
+        with _use_provider(sp):
+            return bool(_api_key())
     smart = _smart_model()
     return bool(smart) and smart != _model()
 
 
-def _wants_smart(text: str) -> bool:
-    """Сложный вопрос? Ключевые слова (ru/uz) или большой текст."""
+class SmartTierFailed(Exception):
+    """Сложная ступень у ДРУГОГО поставщика не ответила (баланс, сбой, перегрузка).
+    Вызывающий код переходит на основную модель — человек ответ получает."""
+
+
+# Ответ на сообщение бота приходит с обёрткой (цитата его прошлого ответа):
+# для роутера важен только текст человека, иначе длинная цитата и слова
+# «xato/ошибка» из неё делали простой вопрос «сложным» (6 из 8 срабатываний
+# на проде 10–15.10.2026 были ложными).
+_REPLY_WRAP_END = "[Конец твоего сообщения. Ниже — его уточнение:]"
+
+
+def _own_text(text: str) -> str:
     t = str(text or "")
+    if _REPLY_WRAP_END in t:
+        t = t.split(_REPLY_WRAP_END, 1)[1]
+    return t.strip()
+
+
+def _wants_smart(text: str) -> bool:
+    """Сложный вопрос? Ключевые слова (ru/uz) или большой текст — по словам САМОГО человека."""
+    t = _own_text(text)
     return bool(_SMART_RE.search(t)) or len(t) > 350
+
+
+# «Ничего не нашла» после поиска → тот же вопрос заново решает сложная ступень
+_NOT_FOUND_RE = re.compile(
+    r"topilmadi|topa\s*olmadim|не\s+найден|не\s+наш[её]л|не\s+удалось\s+найти|not\s+found",
+    re.IGNORECASE)
+_SEARCH_TOOLS = {"find_bl", "find_group", "get_plan_marks", "get_bl_files", "get_unlinked_bls"}
+_NOT_FOUND_HINT = (
+    "\n\nПРЕДЫДУЩИЙ ПОИСК НИЧЕГО НЕ НАШЁЛ. Ищи шире, прежде чем отвечать: другие написания кода "
+    "(BL-139 / BL 139 / 139 / BL139), бренд из названия группы (find_group), китайские и казахские планы "
+    "(get_plan_marks), разбивку мест внутри партий, похожие названия клиентов. Не нашёл и так — честно "
+    "перечисли, где искал."
+)
+
+
+def _looks_not_found(reply: str, used_tools: list) -> bool:
+    return bool(reply) and bool(_SEARCH_TOOLS & set(used_tools or [])) and bool(_NOT_FOUND_RE.search(reply))
+
+
+_FINAL_PROMPT = (
+    "Инструменты больше не доступны. Ответь СЕЙЧАС на языке вопроса, "
+    "используя только уже полученные выше данные. Если чего-то не хватает — "
+    "скажи, какого именно факта нет и где его посмотреть, но ответь по существу "
+    "тем, что есть. Не проси переформулировать вопрос."
+)
+
+
+def _flatten_for_final(messages: list, limit: int = 60000) -> list:
+    """Переписка с вызовами инструментов → обычный текст. Модель ДРУГОГО поставщика
+    не примет чужие tool-вызовы и их рассуждения, а собранные данные терять нельзя."""
+    system = next((m.get("content") or "" for m in messages if m.get("role") == "system"), "")
+    parts = []
+    for m in messages:
+        role = m.get("role")
+        if role == "user":
+            parts.append("СООБЩЕНИЕ:\n" + str(m.get("content") or ""))
+        elif role == "assistant":
+            if m.get("content"):
+                parts.append("ТВОЙ ПРОМЕЖУТОЧНЫЙ ТЕКСТ:\n" + str(m["content"]))
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                parts.append(f"ВЫЗОВ {fn.get('name')}({str(fn.get('arguments') or '')[:300]})")
+        elif role == "tool":
+            parts.append("РЕЗУЛЬТАТ:\n" + str(m.get("content") or "")[:8000])
+    body = "\n\n".join(parts)
+    if len(body) > limit:
+        body = "…[начало обрезано]\n" + body[-limit:]
+    return [{"role": "system", "content": system},
+            {"role": "user", "content": body + "\n\n" + _FINAL_PROMPT}]
 
 
 def _chat_completion(messages, use_model=None, tools=None, smart=False, temperature=0.1,
                      _model_retry=False):
+    sp = smart_provider_name() if (smart and not _overridden()) else ""
+    if sp and smart_available():
+        smart_model = use_model or _smart_model()
+        with _use_provider(sp):
+            try:
+                return _chat_completion(messages, use_model=smart_model, tools=tools, smart=False,
+                                        temperature=temperature, _model_retry=_model_retry)
+            except Exception as exc:
+                raise SmartTierFailed(f"{type(exc).__name__}: {exc}"[:300]) from exc
     model = use_model or (_smart_model() if smart and smart_available() else _model())
     if _protocol() == "responses":
         return _responses_completion(messages, model, tools, _model_retry=_model_retry)
@@ -3919,7 +4050,11 @@ def compose_announcement_variants(text: str, photo_count: int = 0, instruction: 
     t0 = time.time()
     variants, error = [], ""
     try:
-        data = _chat_completion(messages, tools=[], smart=smart, temperature=0.7)
+        try:
+            data = _chat_completion(messages, tools=[], smart=smart, temperature=0.7)
+        except SmartTierFailed:
+            smart = False
+            data = _chat_completion(messages, tools=[], smart=False, temperature=0.7)
         content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
         variants = _parse_announce_variants(content)
         if not variants:
@@ -4079,36 +4214,40 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
             "• Язык — язык вопроса; в этой группе почти всегда узбекский латиницей."
         )
 
-    # ── роутер моделей: сложные разборы — deepseek-v4-pro, остальное — flash ──
+    # ── две ступени: простые — основная модель, сложные — smart (может быть у
+    # другого поставщика: тогда вопрос целиком решается ею, а не с середины) ──
     smart = smart_available() and _wants_smart(text)
     _t0 = time.time()
     _used_tools: list = []
     _rounds_done = 0
-    _escalated = False
-    if smart:
-        system_prompt += (
-            "\n\nРЕЖИМ ГЛУБОКОГО РАЗБОРА: вопрос сложный. Сначала мысленно составь план "
-            "из 2–5 шагов (какие инструменты и зачем), затем выполни его по порядку. "
-            "В ответе: первой строкой итог, дальше краткое обоснование строго по фактам "
-            "из инструментов этого диалога. Ничего не выдумывай и не додумывай причин."
-        )
-
-    messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(history)
-    messages.append({"role": "user", "content": text})
-
+    _path: list = []          # кто отвечал: [(поставщик, модель)] — для журнала
+    deep_mode = (
+        "\n\nРЕЖИМ ГЛУБОКОГО РАЗБОРА: вопрос сложный. Сначала мысленно составь план "
+        "из 2–5 шагов (какие инструменты и зачем), затем выполни его по порядку. "
+        "В ответе: первой строкой итог, дальше краткое обоснование строго по фактам "
+        "из инструментов этого диалога. Ничего не выдумывай и не додумывай причин."
+    )
     created_actions: list = []
-    reply_text = ""
-    try:
+
+    def _tier(use_smart: bool) -> tuple:
+        if use_smart and smart_provider_name():
+            return smart_provider_name(), _smart_model()
+        return provider_name(), (_smart_model() if use_smart and smart_available() else _model())
+
+    def _attempt(use_smart: bool, hint: str = "") -> str:
+        nonlocal _rounds_done
+        _path.append(_tier(use_smart))
+        messages = [{"role": "system", "content": system_prompt + (deep_mode if use_smart else "") + hint}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": text})
         for _round in range(MAX_TOOL_ROUNDS):
-            _rounds_done = _round + 1
-            data = _chat_completion(messages, tools=tools, smart=smart)
+            _rounds_done += 1
+            data = _chat_completion(messages, tools=tools, smart=use_smart)
             choice = (data.get("choices") or [{}])[0]
             msg = choice.get("message") or {}
             tool_calls = msg.get("tool_calls") or []
             if not tool_calls:
-                reply_text = (msg.get("content") or "").strip()
-                break
+                return (msg.get("content") or "").strip()
             # Append the assistant tool-call turn, then each tool result.
             messages.append({
                 "role": "assistant",
@@ -4140,36 +4279,58 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
                     "tool_call_id": call.get("id"),
                     "content": payload,
                 })
-        else:
-            # Раунды кончились, но данные уже собраны — не выбрасываем их.
-            # Просим модель ответить ТЕМ, ЧТО ЕСТЬ, без инструментов:
-            # пустой отказ вместо ответа человеку бесполезен.
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Инструменты больше не доступны. Ответь СЕЙЧАС на языке вопроса, "
-                    "используя только уже полученные выше данные. Если чего-то не хватает — "
-                    "скажи, какого именно факта нет и где его посмотреть, но ответь по существу "
-                    "тем, что есть. Не проси переформулировать вопрос."
-                ),
-            })
-            try:
-                # добор ответа по собранным данным — ступенью для сложных
-                # (deepseek-v4-pro): связать разрозненные факты ей удаётся лучше
-                _escalated = (not smart) and smart_available()
+        # Раунды кончились, но данные уже собраны — не выбрасываем их.
+        # Просим модель ответить ТЕМ, ЧТО ЕСТЬ, без инструментов:
+        # пустой отказ вместо ответа человеку бесполезен.
+        reply = ""
+        try:
+            if smart_provider_name() and smart_available():
+                # сложная ступень у другого поставщика: собранное — простым текстом
+                flat = _flatten_for_final(messages)
+                if not use_smart:
+                    _path.append(_tier(True))
+                try:
+                    data = _chat_completion(flat, tools=[], smart=True)
+                except SmartTierFailed:
+                    data = _chat_completion(flat, tools=[], smart=False)
+            else:
+                # добор ответа по собранным данным — ступенью для сложных:
+                # связать разрозненные факты ей удаётся лучше
+                if not use_smart and smart_available():
+                    _path.append(_tier(True))
+                messages.append({"role": "user", "content": _FINAL_PROMPT})
                 data = _chat_completion(messages, tools=[], smart=smart_available())
-                reply_text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-                reply_text = reply_text.strip()
-            except DeepSeekBusy:
-                raise
-            except Exception:
-                reply_text = ""
-            if not reply_text:
-                reply_text = (
-                    "⚠️ Сходу собрать ответ не получилось — уточни вопрос "
-                    "(конкретная партия, BL или дата), и я отвечу.\n"
-                    "⚠️ Savolni aniqroq yozing (partiya, BL yoki sana) — shunda javob beraman."
-                )
+            reply = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        except DeepSeekBusy:
+            raise
+        except Exception:
+            reply = ""
+        return reply or (
+            "⚠️ Сходу собрать ответ не получилось — уточни вопрос "
+            "(конкретная партия, BL или дата), и я отвечу.\n"
+            "⚠️ Savolni aniqroq yozing (partiya, BL yoki sana) — shunda javob beraman."
+        )
+
+    reply_text = ""
+    _smart_down = False
+    try:
+        try:
+            reply_text = _attempt(smart)
+        except SmartTierFailed:
+            # сложная ступень недоступна (баланс, сбой) — отвечает основная модель
+            smart = False
+            _smart_down = True
+            reply_text = "" if created_actions else _attempt(False)
+        # основная модель после поиска ничего не нашла → тот же вопрос целиком
+        # решает сложная ступень (владелец, 15.10.2026: BL-139 / BL-731)
+        if (not smart and not _smart_down and smart_available() and not created_actions
+                and _looks_not_found(reply_text, _used_tools)):
+            try:
+                second = _attempt(True, hint=_NOT_FOUND_HINT)
+                if second:
+                    reply_text = second
+            except (SmartTierFailed, DeepSeekBusy):
+                pass          # остаётся ответ основной модели
     except DeepSeekBusy:
         reply_text = (
             "⏳ Сервер ИИ-модели сейчас перегружен — это на стороне провайдера, "
@@ -4199,9 +4360,14 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
 
     # журнал для консоли /dev: какой вопрос → какая модель (best-effort)
     try:
-        prov, mdl = provider_name(), (_smart_model() if smart else _model())
-        if _escalated:
-            mdl += f"→{_smart_model()}"
+        path = _path or [_tier(smart)]
+        provs = []
+        for pr, _m in path:
+            if pr not in provs:
+                provs.append(pr)
+        prov = "→".join(provs)
+        mdl = "→".join(m for _p, m in path)
+        smart = smart or len(path) > 1
         label = (f"продавец {sales_name}" if sales_name
                  else f"{speaker.get('name') or speaker.get('id')} · {speaker_label}" if speaker_label
                  else "владелец" if is_admin(tg_user_id)
