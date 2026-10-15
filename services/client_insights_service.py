@@ -230,16 +230,19 @@ def collect_messages(chat_id: str, staff: set, since: str = "", max_messages: in
     """Переписка группы по времени: журнал group_messages (все авторы, с 15.10.2026) +
     журнал вопросов moderator_response_requests (с 18.04.2026; без сообщений админов
     групп) + ответы reply'ем. Повторы одного сообщения из двух журналов склеиваются."""
-    cid = str(chat_id)
+    from services import group_activity_service as gas
+
+    ids = gas.history_chat_ids(chat_id)          # + старые id до перехода в супергруппу
+    marks = ",".join("?" for _ in ids)
     conn = db.get_conn()
     try:
         logged = conn.execute(
-            "SELECT message_id, user_id, user_name, text, sent_at, edited_at FROM group_messages "
-            "WHERE chat_id = ? ORDER BY sent_at DESC LIMIT 800", (cid,)).fetchall()
+            "SELECT chat_id, message_id, user_id, user_name, text, sent_at, edited_at FROM group_messages "
+            f"WHERE chat_id IN ({marks}) ORDER BY sent_at DESC LIMIT 800", ids).fetchall()
         asked = conn.execute(
-            "SELECT id, request_message_id, request_user_id, request_user_name, request_text, requested_at, "
+            "SELECT chat_id, id, request_message_id, request_user_id, request_user_name, request_text, requested_at, "
             "responder_user_id, responder_name, response_text, responded_at FROM moderator_response_requests "
-            "WHERE chat_id = ? ORDER BY requested_at DESC LIMIT 800", (cid,)).fetchall()
+            f"WHERE chat_id IN ({marks}) ORDER BY requested_at DESC LIMIT 800", ids).fetchall()
     finally:
         conn.close()
     items, seen_ids, seen_text = [], set(), set()
@@ -260,10 +263,11 @@ def collect_messages(chat_id: str, staff: set, since: str = "", max_messages: in
                       "role": "our" if str(uid) in staff else "client"})
 
     for r in logged:
-        add(f"m{r['message_id']}", r["user_id"], r["user_name"], r["text"], r["sent_at"], r["edited_at"])
+        add(f"{r['chat_id']}:{r['message_id']}", r["user_id"], r["user_name"], r["text"], r["sent_at"],
+            r["edited_at"])
     for r in asked:
-        add(f"m{r['request_message_id']}", r["request_user_id"], r["request_user_name"], r["request_text"],
-            r["requested_at"])
+        add(f"{r['chat_id']}:{r['request_message_id']}", r["request_user_id"], r["request_user_name"],
+            r["request_text"], r["requested_at"])
         if str(r["response_text"] or "").strip():
             add("", r["responder_user_id"], r["responder_name"], r["response_text"], r["responded_at"])
     items.sort(key=lambda x: (x["at"], x["msg_id"]))

@@ -2633,6 +2633,14 @@ def handle_telegram_message(message: dict):
     text = (message.get("text") or "").strip()
 
     remember_group_chat(chat, is_active=True)
+    # группа стала супергруппой (новый id): старую запись выключаем, история склеится в анализе
+    try:
+        if message.get("migrate_to_chat_id"):
+            db.mark_chat_migrated(chat_id, message.get("migrate_to_chat_id"))
+        elif message.get("migrate_from_chat_id"):
+            db.mark_chat_migrated(message.get("migrate_from_chat_id"), chat_id)
+    except Exception:
+        app.logger.exception("Chat migration mark failed")
 
     # админ по нику (@kozimjohn): первое сообщение закрепляет доступ за id,
     # чужой id под тем же ником — тревога
@@ -5233,9 +5241,12 @@ def scan_group_members() -> dict:
     from services import ai_assistant
 
     skip = set(ai_assistant.confidential_chat_ids())
+    repaired = [r for r in db.repair_migrated_chats() if r.get("ok")]
+    skip |= {r["old"] for r in repaired}
     chats = [c for c in db.get_telegram_chats(include_inactive=False) or []
              if str(c.get("chat_type") or "") in ("group", "supergroup") and str(c.get("chat_id")) not in skip]
-    out = {"groups": len(chats), "admins": 0, "counted": 0, "failed": 0}
+    out = {"groups": len(chats), "admins": 0, "counted": 0, "failed": 0, "migrated": len(repaired),
+           "deactivated": 0}
     for chat in chats:
         cid = str(chat.get("chat_id"))
         try:
@@ -5245,8 +5256,13 @@ def scan_group_members() -> dict:
                 out["counted"] += 1
             CHAT_ADMIN_CACHE.pop(cid, None)          # свежие админы, не из кэша
             out["admins"] += len(get_chat_admin_ids(cid))
-        except Exception:
+        except Exception as exc:
             out["failed"] += 1
+            # бота в группе больше нет — запись не должна считаться клиентской группой
+            low = str(exc).lower()
+            if any(k in low for k in ("chat not found", "bot was kicked", "bot is not a member",
+                                      "group chat was deactivated")) and db.deactivate_chat_if_free(cid):
+                out["deactivated"] += 1
         time.sleep(0.12)                            # ~16 запросов/с — ниже лимитов Telegram
     return out
 
@@ -5659,9 +5675,19 @@ def api_dev_roles_save():
                     "admin_usernames": sorted(ai.admin_usernames())})
 
 
+def _repair_migrated_chats_once():
+    try:
+        fixed = [r for r in db.repair_migrated_chats() if r.get("ok")]
+        if fixed:
+            app.logger.info("Migrated groups repaired: %s", fixed)
+    except Exception:
+        app.logger.exception("Migrated groups repair failed")
+
+
 def _packing_reminder_scheduler():
     """Morning tick (every 5 min): packing-list ask + tracking digest.
     Both are self-guarded by per-day settings keys."""
+    _repair_migrated_chats_once()   # группы, ставшие супергруппами до этой версии (раз при старте)
     while True:
         try:
             now = datetime.now(db.TASHKENT_TZ)

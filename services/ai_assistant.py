@@ -741,9 +741,15 @@ def _system_prompt() -> str:
   Excel — as_file=true). Причину называй РОВНО с уверенностью из инструмента: fact — «клиент прямо сказал»,
   likely — «вероятно, судя по переписке» + альтернативы, unknown — «причина не установлена, нужно спросить
   клиента». Цитаты — только из evidence, дословно, с датой и автором. cargo_hints — повод проверить, не ехал
-  ли груз без привязки к группе (get_unlinked_bls). Границы данных: переписка сохранена с 18.04.2026;
-  сообщения клиентов-админов групп и наши обычные сообщения — только с 15.10.2026; голосовые и файлы не
-  расшифрованы. Мало переписки — говори прямо. Сам разбор клиентам ничего не пишет.
+  ли груз без привязки к группе (get_unlinked_bls). Тексты сообщений клиентов сохранены с 18.04.2026;
+  тексты сообщений админов групп — с 15.10.2026; голосовые и файлы не расшифрованы. Об этой границе говори
+  ТОЛЬКО если вывод о причине зависит от недостающих текстов — не вставляй её в каждый ответ. Сам разбор
+  клиентам ничего не пишет.
+• «где никто не пишет / тихие группы / N kundan beri yozilmagan guruhlar» → analyze_group_activity
+  segment=silent (silent_days=N, по умолчанию 30): last_activity — последнее сообщение в группе от ЛЮБОГО
+  автора (клиент, сотрудник, админ) с момента, как бот в группе; граница 15.10 к этому НЕ относится. Не
+  собирай это сам через query_database. Группы, перешедшие в супергруппу (новый id), уже склеены со старой
+  записью — двух одинаковых названий в ответе быть не должно.
 • «поменяй язык клиенту / пиши этой группе по-русски / tilni o'zgartir» → find_bl или find_group, затем
   propose_action kind='update_language' (language: uz_latn | uz_cyrl | ru | en). ТЫ ЭТО УМЕЕШЬ — не отправляй
   человека в панель. Язык ставится всей группе клиента; «только этому BL» — only_this_bl=true.
@@ -1174,12 +1180,15 @@ TOOLS = [
                 "properties": {
                     "segment": {"type": "string",
                                 "enum": ["asleep", "lost", "fading", "talking", "moved", "dropped", "waiting", "active",
-                                         "new", "no_cargo", "all"],
+                                         "new", "no_cargo", "silent", "all"],
                                 "description": "Кого показать списком (по умолчанию asleep). lost — потерянные "
                                                "(груза нет полгода и больше); talking — пишет, но не грузит; "
                                                "moved — коды едут через другую группу; dropped — резко "
                                                "замолчали; waiting — последнее слово за клиентом, наши после "
-                                               "него в группе не появлялись."},
+                                               "него в группе не появлялись; silent — в группе НИКТО не "
+                                               "писал silent_days дней (клиенты, сотрудники, админы)."},
+                    "silent_days": {"type": "integer",
+                                    "description": "Для segment=silent: сколько дней тишины (по умолчанию 30)"},
                     "min_batches": {"type": "integer",
                                     "description": "Только клиенты, возившие не меньше N партий (ценные)"},
                     "sales_manager": {"type": "string", "description": "Часть имени продажника — только его клиенты"},
@@ -2222,7 +2231,7 @@ _ACTIVITY_LIST_FIELDS = (
     "usual_gap_days", "overdue_vs_usual", "total_places", "total_kg", "cargo_in_transit",
     "last_client_message", "days_since_client_message", "client_msgs_30d", "client_msgs_prev_30d",
     "client_msgs_total", "dropped", "client_spoke_last", "days_waiting_for_us", "avg_reply_minutes",
-    "last_tracking_sent",
+    "last_tracking_sent", "last_activity", "days_silent",
     "last_rating", "problems_open", "sales_manager", "wake_priority",
 )
 
@@ -2249,6 +2258,12 @@ def _tool_analyze_group_activity(args: dict) -> dict:
         picked = [g for g in groups if g["client_spoke_last"]]
     elif segment == "talking":
         picked = [g for g in groups if g.get("talking")]
+    elif segment == "silent":
+        try:
+            silent_days = max(1, int(args.get("silent_days") or 30))
+        except (TypeError, ValueError):
+            silent_days = 30
+        picked = [g for g in groups if g.get("days_silent") is not None and g["days_silent"] >= silent_days]
     elif segment == "all":
         picked = list(groups)
     elif segment in gas.SEGMENT_LABELS:
@@ -2259,7 +2274,10 @@ def _tool_analyze_group_activity(args: dict) -> dict:
         picked = [g for g in picked if g["batches"] >= min_batches]
     if manager:
         picked = [g for g in picked if manager in str(g.get("sales_manager") or "").lower()]
-    picked.sort(key=lambda g: (-g["wake_priority"], -(g["days_since_cargo"] or 0)))
+    if segment == "silent":
+        picked.sort(key=lambda g: -(g["days_silent"] or 0))
+    else:
+        picked.sort(key=lambda g: (-g["wake_priority"], -(g["days_since_cargo"] or 0)))
     shown = [{k: g.get(k) for k in _ACTIVITY_LIST_FIELDS} for g in picked[:limit]]
     for item in shown:
         item["chat_id"] = _mask_chat_id(item["chat_id"])
@@ -2345,8 +2363,8 @@ def _may_spend_ai(tg_user_id, readonly: bool) -> bool:
 _INSIGHT_NOTE = (
     "Разбор сделан ИИ по сохранённой переписке; каждая цитата проверена по исходному сообщению. reason_certainty: "
     "fact — клиент прямо сказал; likely — вероятно, прямо не сказано; unknown — не установлена. from_cache=true — "
-    "переписка с прошлого разбора не менялась. Голосовые и файлы не расшифрованы. Сообщения клиентов-админов "
-    "групп сохраняются только с 15.10.2026."
+    "переписка с прошлого разбора не менялась. Голосовые и файлы не расшифрованы. Тексты сообщений админов групп "
+    "есть с 15.10.2026 — упоминай это, только если вывод от них зависит."
 )
 
 

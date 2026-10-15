@@ -5822,6 +5822,116 @@ def save_activity_snapshot(day: str, rows: list) -> int:
         conn.close()
 
 
+# ── ПЕРЕЕЗД ГРУПП: обычная группа → супергруппа (новый chat_id) ──────────
+# Telegram при апгрейде даёт группе новый id; старая запись оставалась
+# «активной», и анализ видел два клиента вместо одного (MILANO & ARTE,
+# WIZERA, GERONIMA — владелец 15.10.2026). Старую запись выключаем, связь
+# старый→новый храним: анализ склеивает историю. Привязки BL не трогаем.
+CHAT_MIGRATIONS_KEY = "chat_migrations"
+
+
+def chat_migrations() -> dict:
+    """{старый chat_id: новый chat_id}, цепочки разрешены до конца."""
+    try:
+        raw = json.loads(get_setting(CHAT_MIGRATIONS_KEY, "") or "{}")
+    except (TypeError, ValueError):
+        raw = {}
+    out = {}
+    for old in raw:
+        new, seen = raw[old], {old}
+        while new in raw and new not in seen:
+            seen.add(new)
+            new = raw[new]
+        out[str(old)] = str(new)
+    return out
+
+
+def _open_batch_bl_count(conn, chat_id: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM bl_codes bl JOIN batches b ON b.id = bl.batch_id "
+        "WHERE TRIM(bl.chat_id) = ? AND COALESCE(b.client_delivery_date, '') = ''", (str(chat_id),)).fetchone()
+    return int(row[0] or 0)
+
+
+def mark_chat_migrated(old_id, new_id) -> dict:
+    """Старая группа переехала в новую. Выключаем старую запись, если к ней не
+    привязан груз в пути (трекинг не трогаем); связь записываем всегда."""
+    old, new = str(old_id or "").strip(), str(new_id or "").strip()
+    if not old or not new or old == new:
+        return {"ok": False}
+    raw = {}
+    try:
+        raw = json.loads(get_setting(CHAT_MIGRATIONS_KEY, "") or "{}")
+    except (TypeError, ValueError):
+        raw = {}
+    raw[old] = new
+    set_setting(CHAT_MIGRATIONS_KEY, json.dumps(raw))
+    conn = get_conn()
+    try:
+        busy = _open_batch_bl_count(conn, old)
+        if not busy:
+            conn.execute("UPDATE telegram_chats SET is_active = 0, updated_at = datetime('now','localtime') "
+                         "WHERE chat_id = ?", (old,))
+            conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "old": old, "new": new, "deactivated": not busy, "open_bl_on_old": busy}
+
+
+def repair_migrated_chats() -> list:
+    """Найти уже случившиеся переезды: у активной обычной группы есть активная
+    супергруппа с тем же названием, созданная в момент последнего события старой
+    (Telegram шлёт сообщение о переезде в обе сразу). → [mark_chat_migrated(...)]"""
+    from datetime import datetime as _dt
+
+    def _ts(value):
+        try:
+            return _dt.strptime(str(value or "")[:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+
+    done = chat_migrations()
+    conn = get_conn()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT chat_id, title, chat_type, created_at, last_seen_at FROM telegram_chats "
+            "WHERE is_active = 1 AND chat_type IN ('group','supergroup')").fetchall()]
+    finally:
+        conn.close()
+    supers: dict = {}
+    for r in rows:
+        if r["chat_type"] == "supergroup":
+            supers.setdefault(str(r["title"] or "").strip(), []).append(r)
+    out = []
+    for r in rows:
+        if r["chat_type"] != "group" or str(r["chat_id"]) in done:
+            continue
+        last = _ts(r["last_seen_at"])
+        if not last:
+            continue
+        hits = [s for s in supers.get(str(r["title"] or "").strip(), [])
+                if _ts(s["created_at"]) and abs((_ts(s["created_at"]) - last).total_seconds()) <= 10]
+        if len(hits) == 1:
+            out.append(mark_chat_migrated(r["chat_id"], hits[0]["chat_id"]))
+    return out
+
+
+def deactivate_chat_if_free(chat_id) -> bool:
+    """Бот больше не в группе (Telegram: chat not found / kicked): выключить запись,
+    если к ней не привязан груз в пути — иначе трекинг решает сам."""
+    cid = str(chat_id or "").strip()
+    conn = get_conn()
+    try:
+        if not cid or _open_batch_bl_count(conn, cid):
+            return False
+        conn.execute("UPDATE telegram_chats SET is_active = 0, updated_at = datetime('now','localtime') "
+                     "WHERE chat_id = ?", (cid,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 def log_group_message(chat_id, message_id, user_id="", user_name="", username="", text="",
                       sent_at="", reply_to_message_id="", edited_at=""):
     """Журнал сообщений группы (анализ переписки). Повтор того же сообщения

@@ -485,6 +485,41 @@ def _classify(rec: dict, t: dict) -> tuple[str, str]:
     return "lost", f"{base} — потерян после {lim['lost']} дн.; {voice}"
 
 
+def history_chat_ids(chat_id) -> list:
+    """Группа и все её старые id (до перехода в супергруппу)."""
+    cid = str(chat_id)
+    return [cid] + sorted(old for old, new in db.chat_migrations().items() if new == cid)
+
+
+def _merge_migrated(migrations: dict, cargo, voice, seen, ours, sent, rating, problems, logged_last) -> None:
+    def _sum(dst, src, keys):
+        for k in keys:
+            dst[k] = int(dst.get(k) or 0) + int(src.get(k) or 0)
+
+    for old, new in migrations.items():
+        if old in cargo:
+            cargo.setdefault(new, []).extend(cargo.pop(old))
+        if old in ours:
+            ours.setdefault(new, []).extend(ours.pop(old))
+        for agg, counters in ((voice, ("total", "n30", "prev30", "n90")), (seen, ("people",)),
+                              (sent, ("n",)), (problems, ("total", "open_now"))):
+            src = agg.pop(old, None)
+            if not src:
+                continue
+            dst = agg.get(new)
+            if not dst:
+                agg[new] = src
+                continue
+            _sum(dst, src, counters)
+            if "last_at" in src or "last_at" in dst:
+                dst["last_at"] = max(str(dst.get("last_at") or ""), str(src.get("last_at") or "")) or None
+        if old in rating:
+            rating.setdefault(new, rating[old])
+            rating.pop(old, None)
+        if old in logged_last:
+            logged_last[new] = max(logged_last.get(new, ""), logged_last.pop(old))
+
+
 def analyze_all(today: date | None = None) -> dict:
     """Разбор ВСЕХ групп, где состоит бот. → {summary, groups:[…]}"""
     today = today or _today()
@@ -499,8 +534,11 @@ def analyze_all(today: date | None = None) -> dict:
         staff = staff_directory(conn)
         staff_sql, staff_args = _in_clause(staff)
         chats = [dict(r) for r in conn.execute(
-            "SELECT chat_id, title, is_active, created_at, sales_manager_tg_id, moderator_tg_id "
+            "SELECT chat_id, title, is_active, created_at, last_seen_at, sales_manager_tg_id, moderator_tg_id "
             "FROM telegram_chats WHERE chat_type IN ('group','supergroup')").fetchall()]
+        # последнее сообщение в журнале групп (все авторы, с 15.10.2026; время Ташкента)
+        logged_last = {str(r["chat_id"]): str(r["last_at"] or "") for r in conn.execute(
+            "SELECT chat_id, MAX(sent_at) AS last_at FROM group_messages GROUP BY chat_id").fetchall()}
         cargo: dict = {}
         for r in conn.execute(
             """
@@ -553,6 +591,9 @@ def analyze_all(today: date | None = None) -> dict:
     finally:
         conn.close()
 
+    # группа стала супергруппой: история старой записи — это история новой
+    migrations = db.chat_migrations()
+    _merge_migrated(migrations, cargo, voice, seen, ours, sent, rating, problems, logged_last)
     # где каждый код ехал недавно: клиент мог перейти в другую группу
     titles = {str(c["chat_id"]).strip(): c.get("title") or str(c["chat_id"]) for c in chats}
     recent_by_code: dict = {}
@@ -563,10 +604,13 @@ def analyze_all(today: date | None = None) -> dict:
             if day and day >= window_start:
                 recent_by_code.setdefault(str(r["code"]).strip().upper(), set()).add(cid_)
 
-    groups, other = [], {"inactive": 0, "internal": 0}
+    groups, other = [], {"inactive": 0, "internal": 0, "merged": 0}
     for c in chats:
         cid = str(c["chat_id"]).strip()
         if cid in skip:
+            continue
+        if cid in migrations:          # старая запись переехавшей группы — учтена в новой
+            other["merged"] += 1
             continue
         rows = cargo.get(cid, [])
         if not c.get("is_active"):
@@ -658,6 +702,17 @@ def analyze_all(today: date | None = None) -> dict:
             + (10 if rec["problems_open"] else 0)
             + (10 if (rec["last_rating"] or {}).get("score", 5) <= 3 else 0)
         )
+        # тишина в группе: последнее событие в чате от ЛЮБОГО автора (клиент, сотрудник,
+        # админ — telegram_chats.last_seen_at обновляется на каждое сообщение с момента,
+        # как бот в группе), журнал сообщений и рассылки трекинга
+        last_any = max(
+            _to_tashkent(c.get("last_seen_at"), shift)[:19],
+            str(logged_last.get(cid) or "")[:19],
+            str((v or {}).get("last_at") or "")[:19],
+            str((sent.get(cid) or {}).get("last_at") or "")[:19],
+        )
+        rec["last_activity"] = last_any[:16]
+        rec["days_silent"] = _ago(_day(last_any), today)
         groups.append(rec)
 
     counts = {k: 0 for k in SEGMENT_LABELS}
@@ -675,6 +730,8 @@ def analyze_all(today: date | None = None) -> dict:
             "dropped_sharply": sum(1 for g in groups if g["dropped"]),
             "talking_no_cargo": sum(1 for g in groups if g["talking"]),
             "client_spoke_last": sum(1 for g in groups if g["client_spoke_last"]),
+            "silent_30d": sum(1 for g in groups if (g["days_silent"] or 0) >= 30),
+            "merged_old_group_records": other["merged"],
         },
         "groups": groups,
         "sheet_history": {"marks": len(sheet_index), "error": sheet_error},
