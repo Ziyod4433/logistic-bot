@@ -769,6 +769,22 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_ai_assistant_messages_user
             ON ai_assistant_messages(tg_user_id, id);
 
+        -- файлы, присланные ассистенту в личку: текст держим отдельно от
+        -- истории, чтобы не гонять его в каждом следующем ходе
+        CREATE TABLE IF NOT EXISTS ai_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tg_user_id TEXT NOT NULL,
+            filename TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT '',
+            content TEXT NOT NULL DEFAULT '',
+            chars INTEGER NOT NULL DEFAULT 0,
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ai_attachments_user
+            ON ai_attachments(tg_user_id, id);
+
         CREATE TABLE IF NOT EXISTS ai_scheduled_tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             created_by TEXT NOT NULL DEFAULT '',
@@ -7708,6 +7724,66 @@ def ai_get_history(tg_user_id, limit=AI_HISTORY_LIMIT):
     finally:
         conn.close()
     return [dict(r) for r in reversed(rows)]
+
+
+AI_ATTACHMENTS_KEEP = 10
+
+
+def ai_attachment_save(tg_user_id, filename, kind, content, chars=0, note="") -> int:
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO ai_attachments (tg_user_id, filename, kind, content, chars, note) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(tg_user_id), str(filename or ""), str(kind or ""), str(content or ""),
+             int(chars or len(content or "")), str(note or "")),
+        )
+        new_id = cur.lastrowid
+        conn.execute(
+            """
+            DELETE FROM ai_attachments
+            WHERE tg_user_id = ?
+              AND id NOT IN (SELECT id FROM ai_attachments WHERE tg_user_id = ? ORDER BY id DESC LIMIT ?)
+            """,
+            (str(tg_user_id), str(tg_user_id), AI_ATTACHMENTS_KEEP),
+        )
+        conn.commit()
+        return new_id
+    finally:
+        conn.close()
+
+
+def ai_attachment_list(tg_user_id, limit=AI_ATTACHMENTS_KEEP):
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, filename, kind, chars, note, created_at FROM ai_attachments
+            WHERE tg_user_id = ? ORDER BY id DESC LIMIT ?
+            """,
+            (str(tg_user_id), int(limit)),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def ai_attachment_get(tg_user_id, attachment_id=None):
+    """Вложение этого человека: по id или самое свежее. Чужие недоступны."""
+    conn = get_conn()
+    try:
+        if attachment_id:
+            row = conn.execute(
+                "SELECT * FROM ai_attachments WHERE tg_user_id = ? AND id = ?",
+                (str(tg_user_id), int(attachment_id)),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM ai_attachments WHERE tg_user_id = ? ORDER BY id DESC LIMIT 1",
+                (str(tg_user_id),),
+            ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
 
 
 def ai_clear_history(tg_user_id):

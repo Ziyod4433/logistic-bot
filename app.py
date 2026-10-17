@@ -2667,6 +2667,11 @@ def handle_telegram_message(message: dict):
     if chat_type == "private" and message.get("photo") and maybe_handle_announce_media(message):
         return
 
+    # Файл в личке ассистенту (html, xlsx, pdf, docx…) — читаем и разбираем.
+    # У документа нет text (подпись лежит в caption), поэтому ДО text-чека.
+    if chat_type == "private" and message.get("document") and maybe_handle_private_document(message):
+        return
+
     if not chat_id or not text:
         return
 
@@ -2768,6 +2773,9 @@ def handle_telegram_message(message: dict):
     if chat_type == "private":
         from services import ai_assistant
 
+        # ответ текстом на сообщение с файлом («изучи этот файл») — тот же файл
+        if (message.get("reply_to_message") or {}).get("document") and maybe_handle_private_document(message):
+            return
         if (ai_assistant.can_change(sender_id)
                 or ai_assistant.is_readonly_user(sender_id)
                 or ai_assistant.is_sales_user(sender_id)):
@@ -2959,7 +2967,91 @@ def handle_private_voice_message(chat_id, sender_id, voice: dict):
     threading.Thread(target=_worker, daemon=True).start()
 
 
-def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
+_PRIVATE_DOC_QUESTION = "Изучи этот файл: коротко перескажи главное."
+
+
+def _private_document_target(message: dict):
+    """(документ, вопрос): сам файл с подписью или ответ текстом на сообщение
+    с файлом. Иначе (None, "")."""
+    doc = message.get("document")
+    if doc:
+        return doc, (message.get("caption") or "").strip()
+    reply = message.get("reply_to_message") or {}
+    text = (message.get("text") or "").strip()
+    if reply.get("document") and text and not text.startswith("/"):
+        return reply["document"], text
+    return None, ""
+
+
+def maybe_handle_private_document(message: dict) -> bool:
+    """Файл в личке от того, кому доступен ассистент → прочитать и разобрать.
+    Раньше такой файл молча пропадал: у документа нет text."""
+    from services import ai_assistant
+
+    chat = message.get("chat") or {}
+    if chat.get("type") != "private" or message.get("edit_date"):
+        return False
+    doc, question = _private_document_target(message)
+    if not doc:
+        return False
+    sender_id = (message.get("from") or {}).get("id")
+    if not sender_id or not (ai_assistant.can_change(sender_id)
+                             or ai_assistant.is_readonly_user(sender_id)
+                             or ai_assistant.is_sales_user(sender_id)):
+        return False
+    threading.Thread(
+        target=_private_document_worker, args=(chat.get("id"), sender_id, doc, question), daemon=True,
+    ).start()
+    return True
+
+
+def _private_document_worker(chat_id, sender_id, doc: dict, question: str):
+    from services import attachment_reader as ar
+
+    name = str(doc.get("file_name") or "fayl")
+    mime = str(doc.get("mime_type") or "")
+    safe = html.escape(name)
+    try:
+        if not ar.kind_of(name, mime):
+            telegram_send_message(
+                chat_id,
+                f"📎 «{safe}»: такой формат я пока не читаю. Пришлите {ar.SUPPORTED_HINT}.\n"
+                f"📎 Bu formatni o'qiy olmayman — {ar.SUPPORTED_HINT} yuboring.",
+            )
+            return
+        if int(doc.get("file_size") or 0) > ar.MAX_FILE_BYTES:
+            telegram_send_message(
+                chat_id,
+                "📎 Файл больше 20 МБ — Telegram не даёт боту скачать такой. Сожмите его или пришлите частями.\n"
+                "📎 Fayl 20 MB dan katta — bot yuklab ololmaydi.",
+            )
+            return
+        with TypingIndicator(chat_id):
+            info = telegram_api("getFile", json={"file_id": doc.get("file_id")}) or {}
+            tg_path = ((info.get("result") or {}).get("file_path")) or ""
+            if not tg_path:
+                telegram_send_message(chat_id, "📎 Не получилось скачать файл — пришлите ещё раз.")
+                return
+            data = req.get(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{tg_path}", timeout=120).content
+            got = ar.extract(data, name, mime)
+    except Exception:
+        app.logger.exception("Private document read failed")
+        try:
+            telegram_send_message(chat_id, "📎 Не получилось прочитать файл — пришлите ещё раз.")
+        except Exception:
+            pass
+        return
+    if not got.get("ok"):
+        telegram_send_message(chat_id, f"📎 «{safe}»: {html.escape(str(got.get('error') or 'не читается'))}.")
+        return
+    handle_ai_assistant_private_message(
+        chat_id, sender_id, question or _PRIVATE_DOC_QUESTION,
+        attachment={"filename": name, "kind": got["kind"], "text": got["text"],
+                    "chars": got["chars"], "note": got.get("note") or ""},
+    )
+
+
+def handle_ai_assistant_private_message(chat_id, sender_id, text: str, attachment: dict | None = None):
     """Route one owner message to the assistant on a worker thread."""
     from services import ai_assistant
 
@@ -2995,7 +3087,7 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str):
             with TypingIndicator(chat_id):
                 result = ai_assistant.handle_owner_message(
                     sender_id, text, readonly=readonly, owner_direct=owner_direct,
-                    sales_name=sales_name)
+                    sales_name=sales_name, attachment=attachment)
         except Exception as exc:
             app.logger.exception("AI assistant failure")
             try:
