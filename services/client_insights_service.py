@@ -389,7 +389,8 @@ def _llm() -> tuple:
     key = ai._api_key()
     if not key:
         raise InsightsUnavailable("не задан ключ модели")
-    model = (os.getenv("AI_INSIGHTS_MODEL") or "").strip() or ai._model()
+    # у запасного поставщика (подмена) — его собственная модель, AI_INSIGHTS_MODEL про основного
+    model = ("" if ai._overridden() else (os.getenv("AI_INSIGHTS_MODEL") or "").strip()) or ai._model()
     proto = ai._protocol()
     if proto == "anthropic":
         return (instructor.from_anthropic(_anthropic_client(key), mode=instructor.Mode.ANTHROPIC_TOOLS),
@@ -414,7 +415,27 @@ def _usage(raw) -> tuple:
 
 
 def _structured_call(prompt: list, context: dict) -> tuple:
-    """→ (ClientAnalysis, tokens_in, tokens_out, model)."""
+    """→ (ClientAnalysis, tokens_in, tokens_out, model). На счёте основного поставщика
+    пусто → тот же разбор делает запасной (как у ассистента, владелец 17.10.2026)."""
+    from services import ai_assistant as ai
+
+    main, backup = ai.provider_name(), ai.backup_provider()
+    if backup and ai.credits_out(main):
+        with ai._use_provider(backup):
+            return _structured_call_once(prompt, context)
+    try:
+        return _structured_call_once(prompt, context)
+    except Exception as exc:
+        if not ai.is_no_credits_error(exc):
+            raise
+        ai.mark_credits_out(main, str(exc))
+        if not backup:
+            raise
+        with ai._use_provider(backup):
+            return _structured_call_once(prompt, context)
+
+
+def _structured_call_once(prompt: list, context: dict) -> tuple:
     client, model, extra = _llm()
     result, raw = client.create_with_completion(
         model=model, response_model=ClientAnalysis, messages=prompt, context=context,

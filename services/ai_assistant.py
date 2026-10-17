@@ -3731,6 +3731,134 @@ class DeepSeekBusy(Exception):
     провайдера, повторы не помогли. Имя историческое, ловится всюду."""
 
 
+class ProviderOutOfCredits(DeepSeekBusy):
+    """На счёте поставщика кончились деньги: OpenAI отвечает 429 insufficient_quota
+    (тем же кодом, что и перегрузка — 17.10.2026 бот полдня писал «сервер
+    перегружен»), DeepSeek — 402, Anthropic — «credit balance is too low».
+    Повторы бессмысленны; основную модель сразу подменяет запасной поставщик.
+    Наследник DeepSeekBusy — старые обработчики его тоже ловят."""
+
+    def __init__(self, provider: str, detail: str = ""):
+        super().__init__(f"{provider}: на счёте нет денег ({str(detail)[:160]})")
+        self.provider = provider
+
+
+# ── ЗАПАСНОЙ ПОСТАВЩИК: кончились деньги у основного → сразу отвечает другой ──
+# Владелец, 17.10.2026: «когда у OpenAI закончатся деньги, пока не пополнят,
+# пусть DeepSeek сразу заменяет». AI_BACKUP_PROVIDER (по умолчанию deepseek,
+# off — выключить). Через CREDITS_RECHECK_SECONDS основной пробуется снова:
+# ответ «нет денег» приходит мгновенно, проверка почти ничего не стоит.
+_NO_CREDITS_RE = re.compile(
+    r"insufficient_quota|credit_balance|credit balance|insufficient balance|no credits|billing_hard_limit",
+    re.IGNORECASE)
+CREDITS_RECHECK_SECONDS = 600
+_CREDITS_OUT: dict = {}          # поставщик → time.time(), когда увидели «нет денег»
+_LAST_SERVED: contextvars.ContextVar = contextvars.ContextVar("ai_last_served", default=None)
+_BILLING_URLS = {
+    "openai": "https://platform.openai.com/settings/organization/billing/",
+    "anthropic": "https://platform.claude.com/settings/billing",
+    "deepseek": "https://platform.deepseek.com/top_up",
+    "gemini": "https://aistudio.google.com/",
+}
+_PROVIDER_TITLES = {"openai": "OpenAI", "anthropic": "Anthropic (Claude)", "deepseek": "DeepSeek",
+                    "gemini": "Google Gemini", "hermes": "Nous (Hermes)", "openrouter": "OpenRouter"}
+
+
+def _no_credits(status: int, body: str) -> bool:
+    return status == 402 or (status in (400, 403, 429) and bool(_NO_CREDITS_RE.search(body or "")))
+
+
+def _response_no_credits(response) -> bool:
+    """HTTP-ответ поставщика про пустой счёт? Тело читаем только у подходящих кодов."""
+    status = getattr(response, "status_code", 0)
+    if status not in (400, 402, 403, 429):
+        return False
+    return _no_credits(status, str(getattr(response, "text", "") or ""))
+
+
+def is_no_credits_error(exc: BaseException) -> bool:
+    """Ошибка SDK (или обёртка instructor) про пустой счёт — по всей цепочке причин."""
+    seen = 0
+    while exc is not None and seen < 6:
+        if isinstance(exc, ProviderOutOfCredits):
+            return True
+        if getattr(exc, "status_code", None) == 402 or _NO_CREDITS_RE.search(str(exc)):
+            return True
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
+    return False
+
+
+def backup_provider() -> str:
+    """Запасной поставщик основной ступени: задан, не совпадает с основным и у него есть ключ."""
+    name = (os.getenv("AI_BACKUP_PROVIDER") or "deepseek").strip().lower()
+    if name in ("", "0", "off", "none", "no") or name not in _PROVIDER_PRESETS or name == _main_provider_name():
+        return ""
+    with _use_provider(name):
+        return name if _api_key() else ""
+
+
+def credits_out(provider: str) -> bool:
+    ts = _CREDITS_OUT.get(provider)
+    return bool(ts) and time.time() - ts < CREDITS_RECHECK_SECONDS
+
+
+def _credits_alert(provider: str, out: bool) -> None:
+    """Одно сообщение владельцу на каждую смену состояния (в БД — чтобы несколько
+    процессов и перезапуски не повторяли его)."""
+    key = f"ai_credits_state_{provider}"
+    state = "out" if out else "ok"
+    try:
+        if (db.get_setting(key, "ok") or "ok") == state:
+            return
+        db.set_setting(key, state)
+    except Exception:
+        return
+    if not callable(direct_send_message) or not owner_id():
+        return
+    title = _PROVIDER_TITLES.get(provider, provider)
+    preset = _PROVIDER_PRESETS.get(provider) or {}
+    if out:
+        backup = backup_provider() if provider == _main_provider_name() else ""
+        if backup:
+            then = (f"Пока счёт не пополнен, на обычные вопросы отвечает {_PROVIDER_TITLES.get(backup, backup)} "
+                    f"({_PROVIDER_PRESETS[backup]['model']}) — бот работает.")
+        elif provider == smart_provider_name():
+            then = "Сложные вопросы пока решает основная модель."
+        elif provider == backup_provider():
+            main = _PROVIDER_TITLES.get(_main_provider_name(), _main_provider_name())
+            then = (f"Это запасная модель: она подменяет {main}, когда там кончаются деньги. "
+                    "Пока оба счёта пусты, бот не ответит.")
+        else:
+            then = "Запасной модели нет — бот не ответит, пока счёт не пополнен."
+        text = (f"💳 <b>На счёте {title} закончились деньги</b> — модель не отвечает.\n{then}\n"
+                f"Пополнить: {_BILLING_URLS.get(provider, '')}\n"
+                "После пополнения бот вернётся на неё сам (проверка раз в 10 минут).")
+    else:
+        text = f"✅ {title} снова отвечает — бот вернулся на {preset.get('model') or 'основную модель'}."
+    try:
+        direct_send_message(owner_id(), text)
+    except Exception:
+        pass
+
+
+def mark_credits_out(provider: str, detail: str = "") -> None:
+    _CREDITS_OUT[provider] = time.time()
+    _credits_alert(provider, out=True)
+
+
+def _mark_credits_back(provider: str) -> None:
+    if _CREDITS_OUT.pop(provider, None) is not None:
+        _credits_alert(provider, out=False)
+
+
+def no_credits_reply(provider: str) -> str:
+    title = _PROVIDER_TITLES.get(provider, provider)
+    return (f"💳 На счёте {title} закончились деньги, поэтому модель сейчас не отвечает — это не сбой "
+            "бота и не перегрузка. Владельцу я уже написал; после пополнения просто повторите вопрос.\n"
+            f"💳 {title} hisobida mablag' tugadi — to'ldirilgach savolni qayta yuboring.")
+
+
 # ── MODEL ROUTER: лёгкие вопросы — deepseek-flash, сложные — deepseek-v4-pro ──
 # Владелец, 10.09.2026: Claude Sonnet 5 убран, обе ступени — DeepSeek.
 # Роутер — обычный код (не LLM): лишний LLM-хоп на каждое сообщение
@@ -3762,6 +3890,8 @@ def smart_available() -> bool:
         return False
     sp = smart_provider_name()
     if sp:
+        if credits_out(sp):
+            return False          # на счёте сложной ступени пусто — пока всё на основной
         with _use_provider(sp):
             return bool(_api_key())
     smart = _smart_model()
@@ -3849,10 +3979,48 @@ def _chat_completion(messages, use_model=None, tools=None, smart=False, temperat
         smart_model = use_model or _smart_model()
         with _use_provider(sp):
             try:
-                return _chat_completion(messages, use_model=smart_model, tools=tools, smart=False,
+                data = _chat_completion(messages, use_model=smart_model, tools=tools, smart=False,
                                         temperature=temperature, _model_retry=_model_retry)
             except Exception as exc:
+                if is_no_credits_error(exc):
+                    mark_credits_out(sp, str(exc))
                 raise SmartTierFailed(f"{type(exc).__name__}: {exc}"[:300]) from exc
+        _mark_credits_back(sp)
+        return data
+    if _overridden():
+        return _completion_on_current(messages, use_model, tools, smart, temperature, _model_retry)
+    # основная ступень: на счёте пусто → сразу запасной поставщик, без 25 секунд повторов
+    main, backup = provider_name(), backup_provider()
+    if backup and credits_out(main):
+        return _completion_on_backup(backup, messages, tools, smart, temperature)
+    try:
+        data = _completion_on_current(messages, use_model, tools, smart, temperature, _model_retry)
+    except ProviderOutOfCredits as exc:
+        mark_credits_out(main, str(exc))
+        if not backup:
+            raise
+        return _completion_on_backup(backup, messages, tools, smart, temperature)
+    _mark_credits_back(main)
+    return data
+
+
+def _completion_on_backup(backup: str, messages, tools, smart, temperature):
+    """Тот же запрос — запасному поставщику. Переписка в общем chat-формате, поэтому
+    подменить можно и посреди цепочки инструментов (DeepSeek так и работал до 10.10)."""
+    preset = _PROVIDER_PRESETS[backup]
+    model = preset["smart_model"] if smart else preset["model"]
+    _LAST_SERVED.set((backup, model))
+    with _use_provider(backup):
+        try:
+            return _completion_on_current(messages, model, tools, False, temperature, False)
+        except ProviderOutOfCredits as exc:
+            mark_credits_out(backup, str(exc))
+            raise
+
+
+def _completion_on_current(messages, use_model=None, tools=None, smart=False, temperature=0.1,
+                           _model_retry=False):
+    """Один запрос к текущему (возможно, подменённому) поставщику."""
     model = use_model or (_smart_model() if smart and smart_available() else _model())
     if _protocol() == "responses":
         return _responses_completion(messages, model, tools, _model_retry=_model_retry)
@@ -3889,6 +4057,8 @@ def _chat_completion(messages, use_model=None, tools=None, smart=False, temperat
                 raise
             time.sleep(_RETRY_DELAYS[attempt] + random.uniform(0, 1))
             continue
+        if _response_no_credits(response):
+            raise ProviderOutOfCredits(provider_name(), getattr(response, "text", "") or "")
         if response.status_code == 400 and not _model_retry:
             # имя модели не принято (переименовали, нет на аккаунте) — один
             # повтор на другой ступени, чтобы ответ человеку не потерялся
@@ -4027,6 +4197,8 @@ def _responses_completion(messages, model, tools=None, _model_retry=False):
                 raise
             time.sleep(_RETRY_DELAYS[attempt] + random.uniform(0, 1))
             continue
+        if _response_no_credits(response):
+            raise ProviderOutOfCredits(provider_name(), getattr(response, "text", "") or "")
         if response.status_code == 400 and not _model_retry and "model" in (response.text or "").lower():
             alt = _model() if model != _model() else _fallback_model()
             if alt and alt != model:
@@ -4170,6 +4342,8 @@ def _anthropic_completion(messages, model, tools=None, _model_retry=False):
     try:
         response = _anthropic_client().messages.create(**kwargs)
     except anthropic.BadRequestError as exc:
+        if _NO_CREDITS_RE.search(str(exc)):
+            raise ProviderOutOfCredits("anthropic", str(exc)) from exc
         # имя модели не принято — один повтор на другой ступени, как у остальных
         if not _model_retry and "model" in str(exc).lower():
             alt = _model() if model != _model() else _fallback_model()
@@ -4179,6 +4353,8 @@ def _anthropic_completion(messages, model, tools=None, _model_retry=False):
     except anthropic.RateLimitError as exc:
         raise DeepSeekBusy("429") from exc
     except anthropic.APIStatusError as exc:
+        if exc.status_code == 402 or _NO_CREDITS_RE.search(str(exc)):
+            raise ProviderOutOfCredits("anthropic", str(exc)) from exc
         if exc.status_code in _RETRY_STATUSES:
             raise DeepSeekBusy(str(exc.status_code)) from exc
         raise
@@ -4270,6 +4446,8 @@ def compose_announcement_variants(text: str, photo_count: int = 0, instruction: 
         variants = _parse_announce_variants(content)
         if not variants:
             error = "модель вернула ответ не в том формате"
+    except ProviderOutOfCredits as exc:
+        error = f"на счёте {_PROVIDER_TITLES.get(exc.provider, exc.provider)} закончились деньги — владельцу написал"
     except DeepSeekBusy:
         error = "модель перегружена, попробуйте через минуту"
     except Exception as exc:
@@ -4454,7 +4632,14 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
     def _tier(use_smart: bool) -> tuple:
         if use_smart and smart_provider_name():
             return smart_provider_name(), _smart_model()
+        backup = backup_provider()
+        if backup and credits_out(provider_name()):
+            # на счёте основного пусто — вопрос сразу решает запасной поставщик
+            preset = _PROVIDER_PRESETS[backup]
+            return backup, (preset["smart_model"] if use_smart and smart_available() else preset["model"])
         return provider_name(), (_smart_model() if use_smart and smart_available() else _model())
+
+    _LAST_SERVED.set(None)
 
     def _attempt(use_smart: bool, hint: str = "") -> str:
         nonlocal _rounds_done
@@ -4553,6 +4738,9 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
                     reply_text = second
             except (SmartTierFailed, DeepSeekBusy):
                 pass          # остаётся ответ основной модели
+    except ProviderOutOfCredits as exc:
+        # пусто и у основного, и у запасного (или запасного нет) — честно, без «перегрузки»
+        reply_text = no_credits_reply(exc.provider)
     except DeepSeekBusy:
         reply_text = (
             "⏳ Сервер ИИ-модели сейчас перегружен — это на стороне провайдера, "
@@ -4582,7 +4770,10 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
 
     # журнал для консоли /dev: какой вопрос → какая модель (best-effort)
     try:
-        path = _path or [_tier(smart)]
+        path = list(_path or [_tier(smart)])
+        served = _LAST_SERVED.get()
+        if served and tuple(served) not in path:
+            path.append(tuple(served))      # основной упал на пустом счёте — ответил запасной
         provs = []
         for pr, _m in path:
             if pr not in provs:
@@ -4596,7 +4787,7 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
                  else "оператор" if is_operator(tg_user_id)
                  else "companion" if companion
                  else "readonly" if readonly else "staff")
-        ok_flag = not reply_text.startswith(("⚠️", "⏳"))
+        ok_flag = not reply_text.startswith(("⚠️", "⏳", "💳"))
         db.add_ai_request_log(
             channel="control-group" if tg_user_id.startswith("group:") else "dm",
             user_id=tg_user_id, user_label=label,
