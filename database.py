@@ -785,6 +785,23 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_ai_attachments_user
             ON ai_attachments(tg_user_id, id);
 
+        -- фото, присланные в Tracking gruppa: ассистент сам снимок не видит,
+        -- но может приложить его к объявлению (владелец, 20.10.2026)
+        CREATE TABLE IF NOT EXISTS control_photos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            message_id INTEGER NOT NULL DEFAULT 0,
+            file_id TEXT NOT NULL,
+            sender_id TEXT NOT NULL DEFAULT '',
+            sender_name TEXT NOT NULL DEFAULT '',
+            caption TEXT NOT NULL DEFAULT '',
+            media_group_id TEXT NOT NULL DEFAULT '',
+            created_ts REAL NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_control_photos_chat
+            ON control_photos(chat_id, id);
+
         CREATE TABLE IF NOT EXISTS ai_scheduled_tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             created_by TEXT NOT NULL DEFAULT '',
@@ -7724,6 +7741,78 @@ def ai_get_history(tg_user_id, limit=AI_HISTORY_LIMIT):
     finally:
         conn.close()
     return [dict(r) for r in reversed(rows)]
+
+
+CONTROL_PHOTOS_KEEP_SECONDS = 2 * 86400
+
+
+def control_photo_add(chat_id, message_id, file_id, sender_id="", sender_name="", caption="",
+                      media_group_id="", ts=None) -> None:
+    """Запомнить фото из управляющей группы; старше двух суток — удаляются."""
+    now = float(ts if ts is not None else time.time())
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO control_photos (chat_id, message_id, file_id, sender_id, sender_name, caption,
+                                        media_group_id, created_ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (str(chat_id), int(message_id or 0), str(file_id), str(sender_id or ""), str(sender_name or ""),
+             str(caption or "")[:1000], str(media_group_id or ""), now),
+        )
+        conn.execute("DELETE FROM control_photos WHERE created_ts < ?", (now - CONTROL_PHOTOS_KEEP_SECONDS,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _control_photo_album(conn, chat_id: str, row) -> list:
+    """Фото и, если это альбом, все его снимки по порядку."""
+    if not row:
+        return []
+    if row["media_group_id"]:
+        rows = conn.execute(
+            "SELECT * FROM control_photos WHERE chat_id = ? AND media_group_id = ? ORDER BY message_id, id",
+            (chat_id, row["media_group_id"]),
+        ).fetchall()
+        seen, out = set(), []
+        for r in rows:
+            if r["message_id"] not in seen:
+                seen.add(r["message_id"])
+                out.append(dict(r))
+        return out
+    return [dict(row)]
+
+
+def control_photos_by_message(chat_id, message_id) -> list:
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM control_photos WHERE chat_id = ? AND message_id = ? ORDER BY id DESC LIMIT 1",
+            (str(chat_id), int(message_id or 0)),
+        ).fetchone()
+        return _control_photo_album(conn, str(chat_id), row)
+    finally:
+        conn.close()
+
+
+def control_photos_recent(chat_id, sender_id, max_age_seconds=3600, now=None) -> list:
+    """Последнее фото (или альбом) этого человека в чате за последний час."""
+    now = float(now if now is not None else time.time())
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT * FROM control_photos
+            WHERE chat_id = ? AND sender_id = ? AND created_ts >= ?
+            ORDER BY message_id DESC, id DESC LIMIT 1
+            """,
+            (str(chat_id), str(sender_id or ""), now - max_age_seconds),
+        ).fetchone()
+        return _control_photo_album(conn, str(chat_id), row)
+    finally:
+        conn.close()
 
 
 AI_ATTACHMENTS_KEEP = 10

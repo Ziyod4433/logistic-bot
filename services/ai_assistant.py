@@ -830,6 +830,14 @@ def _system_prompt() -> str:
   перескажи суть, выдели главное (цифры, сроки, решения, риски) и спроси, что с ним сделать. Цифры из файла
   сверяй с базой инструментами, только если человек просит сравнить. Блока нет и в истории файла нет —
   попроси прислать файл ДОКУМЕНТОМ (скрепка → «Файл») прямо в личку бота.
+• ОБЪЯВЛЕНИЕ КЛИЕНТАМ из разговора («e'lon tashla / yubor», «объявление разошли», «mijozlarga xabar», с фото или
+  без) → когда текст и получатели понятны, вызови prepare_announcement: text — окончательный текст (обычный текст,
+  без HTML), audience='batches' + batches (точные имена партий) + exclude_bl («кроме BL-567 и ASMEX»), либо
+  'all' / 'cargo' / 'groups'; use_photo=true, если человек прислал фото (блок [ФОТО К ЭТОМУ СООБЩЕНИЮ] или «📷»
+  в истории). Бот сам покажет превью и карточку с кнопкой ✅ — без нажатия владельца или Jahongir ничего не уйдёт.
+  Не обещай «ariza tayyorlayman / yuboraman», не вызвав инструмент. Фото ты глазами не видишь, но оно есть у бота:
+  никогда не отвечай «rasm ko'rinmayapti», если блок фото есть. Фото нет — попроси прислать его В ЭТОТ ЧАТ и
+  ответить на него с @упоминанием бота (или подписать фото упоминанием).
 • «почему не ушло / ошибка отправки» → get_send_logs (+ get_batch_detail).
 • «КТО обновил трекинг / кто разрешил отправку / кто дал добро» → get_batch_detail (last_tracking.confirmed_by
   и filled_by) либо find_bl (last_tracking_by / last_tracking_filled_by); подробности — get_send_logs.
@@ -1351,6 +1359,38 @@ TOOLS = [
                     "find": {"type": "string", "description": "Найти фрагменты с этим словом или фразой"},
                     "list": {"type": "boolean", "description": "Показать список последних файлов"},
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "prepare_announcement",
+            "description": (
+                "ОБЪЯВЛЕНИЕ клиентским группам (текст, можно с фото, присланным в этот чат). Создаёт черновик и сразу "
+                "показывает в этом чате превью ровно так, как увидят клиенты, и карточку «Кому · сколько групп» с "
+                "кнопкой ✅ Отправить (жмут владелец или Jahongir, остальные — «На подтверждение»). САМ НИЧЕГО НЕ "
+                "РАССЫЛАЕТ. Получатели: audience='batches' + batches (имена или id партий) и, если надо, exclude_bl "
+                "(коды BL или клиенты, чьим группам НЕ слать) / include_bl (добавить группы); 'all' — все клиентские "
+                "группы; 'cargo' — группы с грузом в пути; 'groups' + groups (названия групп, коды BL или chat_id). "
+                "text — окончательный текст объявления, обычный текст без HTML."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Окончательный текст, как его получат клиенты"},
+                    "use_photo": {"type": "boolean", "description": "Приложить фото из этого разговора"},
+                    "audience": {"type": "string", "enum": ["batches", "all", "cargo", "groups"]},
+                    "batches": {"type": "array", "items": {"type": "string"},
+                                "description": "Партии: точные имена («30.09.2026 ZH») или id"},
+                    "exclude_bl": {"type": "array", "items": {"type": "string"},
+                                   "description": "Кому НЕ слать: коды BL («BL-567») или клиенты («ASMEX»)"},
+                    "include_bl": {"type": "array", "items": {"type": "string"},
+                                   "description": "Добавить группы этих BL / клиентов"},
+                    "groups": {"type": "array", "items": {"type": "string"},
+                               "description": "Для audience='groups': названия групп, коды BL или chat_id"},
+                },
+                "required": ["text", "audience"],
             },
         },
     },
@@ -2799,6 +2839,33 @@ direct_send_poll = None      # fn(chat_id, question, options, is_anonymous) -> N
 direct_send_document = None  # fn(chat_id, data_bytes, filename, caption) -> None
 # запрос «обновите срок» в Tracking gruppa с отметкой Hoji dodam
 eta_update_request_hook = None  # fn(tg_user_id, batch_id, bl_code, reason) -> dict
+# объявление из разговора: превью + карточка «Кому» с ✅ (app.py, _ai_prepare_announcement)
+announcement_prepare_hook = None  # fn(chat_id, creator: dict, text, photos: list, spec: dict) -> dict
+# кто пишет и какие фото пришли в этом ходе — для prepare_announcement
+_SPEAKER: contextvars.ContextVar = contextvars.ContextVar("ai_speaker", default=None)
+_TURN_PHOTOS: contextvars.ContextVar = contextvars.ContextVar("ai_turn_photos", default=None)
+
+
+def _tool_prepare_announcement(args: dict, tg_user_id: str) -> dict:
+    speaker = _SPEAKER.get() or {}
+    in_group = str(tg_user_id).startswith("group:")
+    uid = str(speaker.get("id") or ("" if in_group else tg_user_id) or "")
+    if not uid or not can_prepare_announcement(uid):
+        return {"error": "Объявления готовят владелец, операторы и Jahongir — у этого собеседника прав нет."}
+    if not callable(announcement_prepare_hook):
+        return {"error": "announcement_prepare_hook is not wired"}
+    photos = []
+    if args.get("use_photo"):
+        photos = [p.get("file_id") for p in (_TURN_PHOTOS.get() or []) if p.get("file_id")]
+        if not photos and in_group:
+            photos = [p["file_id"] for p in db.control_photos_recent(_reply_chat_for(tg_user_id), uid)]
+        if not photos:
+            return {"error": ("Фото в этом разговоре нет. Попроси прислать фото сюда и ответить на него с "
+                              "@упоминанием бота (или подписать фото упоминанием). В личке бота фото с "
+                              "подписью само открывает мастер объявления.")}
+    spec = {k: args.get(k) for k in ("audience", "batches", "exclude_bl", "include_bl", "groups")}
+    return announcement_prepare_hook(_reply_chat_for(tg_user_id), {"id": uid, "name": speaker.get("name") or ""},
+                                     str(args.get("text") or ""), photos, spec)
 
 
 def _reply_chat_for(tg_user_id: str) -> str:
@@ -3677,6 +3744,8 @@ def _run_tool(name: str, args: dict, tg_user_id: str, created_actions: list,
             return _tool_search_client_messages(args)
         if name == "read_attachment":
             return _tool_read_attachment(args, tg_user_id)
+        if name == "prepare_announcement":
+            return _tool_prepare_announcement(args, tg_user_id)
         if name == "get_automation_status":
             return _tool_get_automation_status(args)
         if name == "get_missing_packing_lists":
@@ -4484,7 +4553,7 @@ COMPANION_PROMPT = """
 
 def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_direct: bool = False,
                          companion: bool = False, sales_name: str = "", speaker: dict | None = None,
-                         attachment: dict | None = None) -> dict:
+                         attachment: dict | None = None, photos: list | None = None) -> dict:
     """Process one owner/staff message. Returns {"reply", "pending": [...]}.
 
     readonly=True (просмотровый доступ): все READ-инструменты доступны,
@@ -4515,6 +4584,21 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
             chars=attachment.get("chars"), note=attachment.get("note"),
         )
         model_text, stored_text = attachment_turn_text(text, att_id, attachment)
+
+    # кто пишет и какие фото пришли — для prepare_announcement
+    _SPEAKER.set({"id": speaker.get("id") or ("" if tg_user_id.startswith("group:") else tg_user_id),
+                  "name": speaker.get("name") or ""})
+    _TURN_PHOTOS.set(list(photos or []))
+    if photos:
+        p0 = photos[0]
+        when = time.strftime("%H:%M", time.gmtime(float(p0.get("created_ts") or 0) + 5 * 3600)) if p0.get("created_ts") else ""
+        cap = str(p0.get("caption") or "").strip()
+        meta = (f"{len(photos)} шт." + (f", от {p0.get('sender_name')}" if p0.get("sender_name") else "")
+                + (f", {when}" if when else "") + (f", подпись: «{cap[:200]}»" if cap else ""))
+        model_text += (f"\n\n[ФОТО К ЭТОМУ СООБЩЕНИЮ: {meta}. Сам снимок ты не видишь, но он есть у бота: "
+                       "его можно приложить к объявлению — prepare_announcement(use_photo=true). "
+                       "Не пиши, что фото не видно.]")
+        stored_text += f"\n[📷 к сообщению приложено фото: {len(photos)} шт.]"
 
     with _history_lock:
         history = db.ai_get_history(tg_user_id)

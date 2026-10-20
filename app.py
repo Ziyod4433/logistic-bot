@@ -2237,8 +2237,9 @@ def get_bot_username() -> str:
 
 def extract_bot_mention_question(message: dict) -> str | None:
     """If the bot is @mentioned in the group message, return the text
-    with the mention stripped (the actual question). None otherwise."""
-    text = message.get("text") or ""
+    with the mention stripped (the actual question). None otherwise.
+    У фото текст лежит в подписи (caption)."""
+    text = message.get("text") or message.get("caption") or ""
     username = get_bot_username()
     if not username:
         return None
@@ -2281,6 +2282,60 @@ def _reply_context_prefix(message: dict) -> str:
     )
 
 
+def _remember_control_photo(message: dict) -> None:
+    """Фото в Tracking gruppa — в память: ассистент приложит его к объявлению,
+    когда об этом попросят (ответом на фото, подписью или следующим сообщением)."""
+    photos = message.get("photo") or []
+    if not photos or message.get("edit_date"):
+        return
+    chat_id = (message.get("chat") or {}).get("id")
+    sender = message.get("from") or {}
+    try:
+        db.control_photo_add(
+            chat_id, message.get("message_id"), (photos[-1] or {}).get("file_id") or "",   # самый крупный размер
+            sender_id=sender.get("id") or "", sender_name=telegram_user_name(sender),
+            caption=message.get("caption") or "", media_group_id=message.get("media_group_id") or "",
+        )
+    except Exception:
+        app.logger.exception("Control photo remember failed")
+
+
+def _control_turn_photos(message: dict) -> list:
+    """Какие фото относятся к этому обращению: в самом сообщении, в сообщении,
+    на которое ответили, иначе — последнее фото (альбом) автора за час."""
+    chat_id = (message.get("chat") or {}).get("id")
+    reply_to = message.get("reply_to_message") or {}
+    for msg in (message, reply_to):
+        if msg.get("photo"):
+            rows = db.control_photos_by_message(chat_id, msg.get("message_id"))
+            if not rows:                       # фото старше памяти — берём из самого сообщения
+                rows = [{"file_id": (msg["photo"][-1] or {}).get("file_id") or "", "message_id": msg.get("message_id"),
+                         "sender_name": telegram_user_name(msg.get("from") or {}), "caption": msg.get("caption") or "",
+                         "created_ts": float(msg.get("date") or 0)}]
+            return [r for r in rows if r.get("file_id")]
+    sender_id = (message.get("from") or {}).get("id")
+    # «прислал фото, потом написал» — только свежее (15 минут), иначе фото
+    # прилипало бы ко всем вопросам этого человека
+    return db.control_photos_recent(chat_id, sender_id, max_age_seconds=900) if sender_id else []
+
+
+def maybe_handle_control_group_photo(message: dict) -> bool:
+    """Фото в управляющей группе: запоминаем; подпись с @ботом или ответ на
+    реплику бота — это вопрос ассистенту (раньше фото молча отсекалось: у него
+    нет text, только caption)."""
+    from services import ai_assistant
+
+    chat = message.get("chat") or {}
+    if chat.get("type") not in {"group", "supergroup"} or not message.get("photo"):
+        return False
+    if not ai_assistant.is_control_chat(chat.get("id")):
+        return False
+    _remember_control_photo(message)
+    if message.get("edit_date") or not (message.get("caption") or "").strip():
+        return True
+    return maybe_handle_group_ai_message(message) or True
+
+
 def maybe_handle_group_ai_message(message: dict) -> bool:
     chat = message.get("chat") or {}
     chat_type = chat.get("type")
@@ -2288,7 +2343,7 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
         return False
 
     chat_id = chat.get("id")
-    text = (message.get("text") or "").strip()
+    text = (message.get("text") or message.get("caption") or "").strip()
     if not chat_id or not text or text.startswith("/") or text == CANCEL_BUTTON or text in TRACK_BUTTON_TEXTS:
         return False
 
@@ -2333,6 +2388,13 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
     # Права на изменения — только владелец и операторы; остальным бот
     # отвечает как собеседник (данные показывает, менять не может).
     companion_mode = not ai_assistant.can_change(sender.get("id"))
+    # фото к обращению (в нём, в сообщении, на которое ответили, или только
+    # что присланное) — ассистент приложит его к объявлению
+    try:
+        turn_photos = _control_turn_photos(message)
+    except Exception:
+        app.logger.exception("Control turn photos lookup failed")
+        turn_photos = []
 
     def _worker():
         try:
@@ -2341,6 +2403,7 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
                     f"group:{chat_id}", assistant_input, companion=companion_mode,
                     speaker={"id": sender.get("id"), "name": sender_name,
                              "username": sender.get("username") or ""},
+                    photos=turn_photos,
                 )
         except Exception as exc:
             app.logger.exception("Control-group assistant failure")
@@ -2670,6 +2733,11 @@ def handle_telegram_message(message: dict):
     # Файл в личке ассистенту (html, xlsx, pdf, docx…) — читаем и разбираем.
     # У документа нет text (подпись лежит в caption), поэтому ДО text-чека.
     if chat_type == "private" and message.get("document") and maybe_handle_private_document(message):
+        return
+
+    # Фото в Tracking gruppa: запоминаем для объявлений; подпись с @ботом —
+    # вопрос ассистенту. Тоже ДО text-чека: у фото текст в caption.
+    if chat_type in {"group", "supergroup"} and message.get("photo") and maybe_handle_control_group_photo(message):
         return
 
     if not chat_id or not text:
@@ -5009,6 +5077,153 @@ def start_announce_command(chat_id, sender: dict):
         keyboard,
     )
     db.announce_update(ann_id, card_message_id=card_id)
+
+
+# ── объявление из разговора с ассистентом (Tracking gruppa или личка) ──
+# Владелец, 20.10.2026: текст согласовали с ботом в группе, прислали фото —
+# бот сам собирает черновик: превью как у клиентов + карточка «Кому» с ✅.
+# Рассылает по-прежнему только ✅ владельца или Jahongir.
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _announce_plain(text: str) -> str:
+    """Ответы ассистента размечены HTML, а рассылка идёт обычным текстом."""
+    return html.unescape(_HTML_TAG_RE.sub("", str(text or ""))).strip()
+
+
+def _ref_matches(ref: str, code: str = "", title: str = "", chat_id: str = "") -> bool:
+    """«BL-567», «567», «ASMEX», chat_id — совпадает с кодом BL или группой?"""
+    ref = str(ref or "").strip()
+    if not ref:
+        return False
+    if chat_id and ref == str(chat_id):
+        return True
+    nums = re.findall(r"\d{2,}", ref)
+    if nums and re.fullmatch(r"(?i)\s*(bl)?[-\s]?\d+\s*", ref):
+        have = set(re.findall(r"\d{2,}", str(code or ""))) | set(re.findall(r"(?i)BL[-\s]?(\d+)", str(title or "")))
+        return any(n in have for n in nums)
+    low = ref.lower()
+    return low == str(code or "").strip().lower() or (len(low) >= 3 and low in str(title or "").lower())
+
+
+def _resolve_announce_batches(refs) -> tuple[list, list]:
+    """Партии по id или имени («30.09.2026 ZH», «30.09»). Неоднозначно — ошибка, а не догадка."""
+    batches = db.get_batches()
+    found, problems = [], []
+    for ref in refs or []:
+        r = str(ref).strip()
+        if not r:
+            continue
+        if r.isdigit() and db.get_batch(int(r)):
+            found.append(db.get_batch(int(r)))
+            continue
+        exact = [b for b in batches if str(b.get("name") or "").strip().lower() == r.lower()]
+        if exact:
+            found.append(exact[0])
+            continue
+        part = [b for b in batches if r.lower() in str(b.get("name") or "").lower()]
+        active = [b for b in part if not (b.get("client_delivery_date") or "")]
+        cand = active or part
+        if len(cand) == 1:
+            found.append(cand[0])
+        elif cand:
+            problems.append(f"«{r}» подходит нескольким партиям: " + ", ".join(b["name"] for b in cand[:6]))
+        else:
+            problems.append(f"партия «{r}» не найдена")
+    unique, seen = [], set()
+    for b in found:
+        if b["id"] not in seen:
+            seen.add(b["id"])
+            unique.append(b)
+    return unique, problems
+
+
+def _ai_prepare_announcement(chat_id, creator: dict, text: str, photos: list, spec: dict) -> dict:
+    text = _announce_plain(text)
+    photos = [p for p in (photos or []) if p][:10]
+    if not text and not photos:
+        return {"error": "Пустое объявление: нет ни текста, ни фото"}
+    if text and len(text) > 4000:
+        return {"error": f"Текст длиннее лимита Telegram ({len(text)} из 4000 знаков) — сократи"}
+    audience = str(spec.get("audience") or "batches").strip().lower()
+    notes = []
+    if audience in ("all", "cargo"):
+        recipients, label = _announce_recipients(audience), _ANNOUNCE_AUDIENCE_LABELS[audience]
+    elif audience == "batches":
+        batches, problems = _resolve_announce_batches(spec.get("batches"))
+        if problems:
+            return {"error": "; ".join(problems) + ". Уточни партии — точные имена дают get_overview / get_batch_detail."}
+        if not batches:
+            return {"error": "Не указаны партии (batches)"}
+        recipients, seen = [], set()
+        for b in batches:
+            for r in _announce_recipients("batch", b["id"]):
+                if r["chat_id"] not in seen:
+                    seen.add(r["chat_id"])
+                    recipients.append(r)
+        label = "📦 партии " + ", ".join(b["name"] for b in batches)
+    elif audience == "groups":
+        refs = [str(x) for x in (spec.get("groups") or []) if str(x).strip()]
+        if not refs:
+            return {"error": "Не указаны группы (groups)"}
+        recipients, label = [], "👥 выбранные группы"
+    else:
+        return {"error": f"Неизвестная выборка «{audience}»: batches, all, cargo или groups"}
+
+    pool = _announce_recipients("any")                      # все активные группы без служебных
+    codes = [(str(r.get("code") or ""), str(r.get("chat_id") or "").strip())
+             for b in db.get_batches() for r in db.get_bl_by_batch(b["id"])]
+
+    def _groups_for(ref) -> list:
+        hits = {chat for code, chat in codes if chat and _ref_matches(ref, code=code)}
+        hits |= {r["chat_id"] for r in pool if _ref_matches(ref, title=r["title"], chat_id=r["chat_id"])}
+        return [r for r in pool if r["chat_id"] in hits]
+
+    added = []
+    extra_refs = (spec.get("groups") if audience == "groups" else spec.get("include_bl")) or []
+    for ref in [str(x) for x in extra_refs if str(x).strip()]:
+        found = _groups_for(ref)
+        if not found:
+            notes.append(f"«{ref}» — группа не найдена")
+        for r in found:
+            if r["chat_id"] not in {x["chat_id"] for x in recipients}:
+                recipients.append(r)
+                added.append(r["title"])
+    removed = []
+    exclude = [str(x) for x in (spec.get("exclude_bl") or []) if str(x).strip()]
+    for ref in exclude:
+        found = {r["chat_id"] for r in _groups_for(ref)}
+        if not found:
+            notes.append(f"«{ref}» — группа не найдена, никого не исключил")
+        removed += [r["title"] for r in recipients if r["chat_id"] in found]
+        recipients = [r for r in recipients if r["chat_id"] not in found]
+    if exclude:
+        label += " · без " + ", ".join(exclude)
+    if not recipients:
+        return {"error": "Получателей не осталось — проверь партии и исключения", "notes": notes}
+
+    creator_id = str(creator.get("id") or "")
+    _announce_abandon_previous(creator_id)
+    ann_id, _created = db.announce_create(creator_id, creator.get("name") or "", chat_id, status="ready",
+                                          source_text=text, photos=photos)
+    db.announce_update(ann_id, choice="0", final_text=text, final_entities=[], audience=f"ai_{audience}",
+                       audience_label=label, recipients=recipients)
+    d = db.announce_get(ann_id)
+    try:
+        _announce_deliver(chat_id, d)                      # превью ровно как у клиентов
+    except Exception as exc:
+        db.announce_update(ann_id, status="cancelled")
+        return {"error": f"Telegram не принял объявление: {_announce_short_error(exc)}"}
+    card_id = _announce_card(chat_id, 0, *_announce_final_card(d))
+    db.announce_update(ann_id, card_message_id=card_id)
+    return {
+        "ok": True, "announcement_id": ann_id, "recipients": len(recipients),
+        "groups": [r["title"] for r in recipients][:60], "excluded_groups": removed, "added_groups": added,
+        "photos": len(photos), "audience_label": label, "notes": notes,
+        "note": ("Превью и карточка «Кому» уже в чате. НИЧЕГО НЕ ОТПРАВЛЕНО: рассылку запускает кнопка ✅ "
+                 "владельца или Jahongir (остальные отправляют заявку им). Скажи коротко: сколько групп, "
+                 "кого исключили, с фото или без, и что нужно нажать кнопку."),
+    }
 
 
 def handle_announce_callback(callback_query: dict, callback_id, data: str):
@@ -13992,6 +14207,7 @@ def _wire_ai_assistant_hooks():
 
     _ai.direct_send_message = lambda chat_id, text: telegram_send_message(chat_id, text)
     _ai.eta_update_request_hook = _ai_eta_update_request
+    _ai.announcement_prepare_hook = _ai_prepare_announcement
     _ai.group_members_refresh_hook = start_group_members_refresh
     _ai.direct_send_document = lambda chat_id, data, filename, caption="": telegram_api(
         "sendDocument",
