@@ -5083,12 +5083,61 @@ def start_announce_command(chat_id, sender: dict):
 # Владелец, 20.10.2026: текст согласовали с ботом в группе, прислали фото —
 # бот сам собирает черновик: превью как у клиентов + карточка «Кому» с ✅.
 # Рассылает по-прежнему только ✅ владельца или Jahongir.
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
+from html.parser import HTMLParser as _HTMLParser
+
+# теги ассистента → оформление Telegram (рассылка идёт с entities, без parse_mode)
+_ANNOUNCE_TAG_ENTITY = {"b": "bold", "strong": "bold", "i": "italic", "em": "italic", "u": "underline",
+                        "ins": "underline", "s": "strikethrough", "strike": "strikethrough", "del": "strikethrough",
+                        "code": "code", "a": "text_link", "tg-spoiler": "spoiler", "blockquote": "blockquote"}
 
 
-def _announce_plain(text: str) -> str:
-    """Ответы ассистента размечены HTML, а рассылка идёт обычным текстом."""
-    return html.unescape(_HTML_TAG_RE.sub("", str(text or ""))).strip()
+class _AnnounceHtml(_HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.pos, self.open, self.entities = [], 0, [], []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "br":
+            self.handle_data("\n")
+        elif tag in _ANNOUNCE_TAG_ENTITY:
+            self.open.append((tag, self.pos, dict(attrs).get("href") or ""))
+
+    def handle_endtag(self, tag):
+        for i in range(len(self.open) - 1, -1, -1):
+            name, start, href = self.open[i]
+            if name != tag:
+                continue
+            del self.open[i]
+            kind = _ANNOUNCE_TAG_ENTITY[tag]
+            if self.pos > start and (kind != "text_link" or href.startswith(("http://", "https://", "tg://"))):
+                ent = {"type": kind, "offset": start, "length": self.pos - start}
+                if kind == "text_link":
+                    ent["url"] = href
+                self.entities.append(ent)
+            break
+
+    def handle_data(self, data):
+        self.parts.append(data)
+        self.pos += _tg_text_len(data)
+
+
+def _announce_html_to_entities(text: str) -> tuple[str, list]:
+    """«<b>Hurmatli</b> mijozlar» → («Hurmatli mijozlar», [bold 0..8]). Смещения — в
+    UTF-16, как требует Telegram; лишние пробелы по краям срезаются вместе с разметкой."""
+    p = _AnnounceHtml()
+    p.feed(str(text or ""))
+    p.close()
+    raw = "".join(p.parts)
+    lead = _tg_text_len(raw[:len(raw) - len(raw.lstrip())])
+    plain = raw.strip()
+    total = _tg_text_len(plain)
+    entities = []
+    for e in sorted(p.entities, key=lambda x: (x["offset"], -x["length"])):
+        start = max(0, e["offset"] - lead)
+        end = min(total, e["offset"] - lead + e["length"])
+        if end > start:
+            entities.append({**e, "offset": start, "length": end - start})
+    return plain, entities
 
 
 def _ref_matches(ref: str, code: str = "", title: str = "", chat_id: str = "") -> bool:
@@ -5139,7 +5188,7 @@ def _resolve_announce_batches(refs) -> tuple[list, list]:
 
 
 def _ai_prepare_announcement(chat_id, creator: dict, text: str, photos: list, spec: dict) -> dict:
-    text = _announce_plain(text)
+    text, entities = _announce_html_to_entities(text)
     photos = [p for p in (photos or []) if p][:10]
     if not text and not photos:
         return {"error": "Пустое объявление: нет ни текста, ни фото"}
@@ -5205,8 +5254,8 @@ def _ai_prepare_announcement(chat_id, creator: dict, text: str, photos: list, sp
     creator_id = str(creator.get("id") or "")
     _announce_abandon_previous(creator_id)
     ann_id, _created = db.announce_create(creator_id, creator.get("name") or "", chat_id, status="ready",
-                                          source_text=text, photos=photos)
-    db.announce_update(ann_id, choice="0", final_text=text, final_entities=[], audience=f"ai_{audience}",
+                                          source_text=text, source_entities=entities, photos=photos)
+    db.announce_update(ann_id, choice="0", final_text=text, final_entities=entities, audience=f"ai_{audience}",
                        audience_label=label, recipients=recipients)
     d = db.announce_get(ann_id)
     try:
