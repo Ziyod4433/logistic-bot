@@ -3448,6 +3448,22 @@ def execute_ai_action(action: dict, actor: str = ""):
         return removed, (f"🏷 Метка снята — «{html.escape(code)}» снова обычный груз"
                          if removed else f"«{html.escape(code)}» не был помечен")
 
+    if kind == "edit_announcement":
+        ann_id = int(params.get("announcement_id") or 0)
+        ann = db.announce_get(ann_id)
+        if not ann or not ann.get("sent_at"):
+            return False, "Объявление не найдено"
+        outcome = _announce_edit_worker(ann, str(params.get("text") or ""))
+        if isinstance(outcome, str):
+            return False, outcome
+        edited, errors = outcome
+        where = "группе" if edited % 10 == 1 and edited % 100 != 11 else "группах"
+        text = f"✏️ Объявление #{ann_id} исправлено в {edited} {where}"
+        if errors:
+            text += f"; не удалось в {len(errors)}: " + "; ".join(
+                f"{html.escape(str(e.get('title')))} — {html.escape(str(e.get('error')))}" for e in errors[:5])
+        return bool(edited) or not errors, text
+
     if kind == "recall_announcement":
         ann_id = int(params.get("announcement_id") or 0)
         ann = db.announce_get(ann_id)
@@ -4133,11 +4149,13 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
     # Treking forma, её по-прежнему подтверждает любой участник группы;
     # перенос казахского плана — подтверждает и Hoji dodam (его и
     # спрашивают).
-    if action.get("kind") == "recall_announcement":
-        # удаление объявления из групп — как и сама рассылка: только
+    if action.get("kind") in ("recall_announcement", "edit_announcement"):
+        # удаление и правка объявления в группах — как и сама рассылка: только
         # владелец или Jahongir (операторам это действие не положено)
         if not ai_assistant.can_approve_announcement(voter.get("id")):
-            telegram_answer_callback_query(callback_id, "Удаляют объявление только владелец и Jahongir")
+            telegram_answer_callback_query(callback_id, (
+                "Удаляют объявление только владелец и Jahongir" if action.get("kind") == "recall_announcement"
+                else "Правку объявления подтверждают только владелец и Jahongir"))
             return
     elif not ai_assistant.can_change(voter.get("id")):
         allowed = is_basket and ai_assistant.is_control_chat(origin_chat_id)
@@ -5185,6 +5203,51 @@ def _resolve_announce_batches(refs) -> tuple[list, list]:
             seen.add(b["id"])
             unique.append(b)
     return unique, problems
+
+
+def _announce_edit_worker(d: dict, new_html: str):
+    """Править разосланное объявление во всех группах, где оно ещё висит: подпись
+    к фото — editMessageCaption, отдельный текст — editMessageText. Фото не трогаем.
+    Возвращает (исправлено, ошибки) или строку-причину, почему править нельзя."""
+    from services import ai_assistant
+    text, entities = _announce_html_to_entities(new_html)
+    if not text:
+        return "Новый текст пустой"
+    photos = [p for p in (d.get("photos") or []) if p]
+    edited, errors = 0, []
+    rows = db.announce_messages(d["id"], only_live=True)
+    for idx, row in enumerate(rows, 1):
+        ids = row.get("message_ids") or []
+        if not ids:
+            continue
+        caption, limit = ai_assistant.announcement_text_slot(d, ids)
+        if _tg_text_len(text) > limit:
+            errors.append({"chat_id": row["chat_id"], "title": row.get("title") or row["chat_id"],
+                           "error": f"текст длиннее {limit} знаков (подпись к фото)"})
+            continue
+        if caption:
+            method, payload = "editMessageCaption", {"chat_id": row["chat_id"], "message_id": ids[0], "caption": text}
+            if entities:
+                payload["caption_entities"] = entities
+        else:
+            target = ids[-1] if photos else ids[0]          # текст после фото — последним сообщением
+            method, payload = "editMessageText", {"chat_id": row["chat_id"], "message_id": target, "text": text}
+            if entities:
+                payload["entities"] = entities
+        try:
+            _announce_api(method, payload)
+            edited += 1
+        except Exception as exc:
+            if "not modified" in str(exc).lower():
+                edited += 1                                # там уже этот текст
+            else:
+                errors.append({"chat_id": row["chat_id"], "title": row.get("title") or row["chat_id"],
+                               "error": _announce_short_error(exc)})
+        if ANNOUNCE_PAUSE_SECONDS and not ANNOUNCE_SYNC and idx < len(rows):
+            time.sleep(ANNOUNCE_PAUSE_SECONDS)
+    if edited:
+        db.announce_update(d["id"], final_text=text, final_entities=entities)
+    return edited, errors
 
 
 def _ai_prepare_announcement(chat_id, creator: dict, text: str, photos: list, spec: dict) -> dict:

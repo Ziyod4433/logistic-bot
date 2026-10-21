@@ -787,6 +787,12 @@ def _system_prompt() -> str:
   (по умолчанию последнее; если неясно какое — перечисли 2–3 последних с датой и началом текста и спроси) →
   propose_action kind='recall_announcement'. Бот удаляет его из всех групп, куда оно ушло. Прошло больше ~48 ч
   (hours_since_sent) — предупреди заранее: Telegram такие сообщения боту удалять не даёт.
+• «исправь / измени / отредактируй разосланное объявление», «e'lonni tahrirla / o'zgartir / xatosini to'g'irla»,
+  «сделай жирным в отправленном» → list_announcements → нужное (как выше) → propose_action kind='edit_announcement'
+  (announcement_id, text — ПОЛНЫЙ новый текст с оформлением <b>/<i>/<a>, а не только изменённый кусок; бери
+  прежний текст и меняй в нём то, что просят). Бот поправит сообщение во всех группах, где оно висит; фото
+  остаётся прежним. Подтверждают владелец или Jahongir. Не отправляй объявление заново ради правки — клиенты
+  получат дубль.
 • «отправь трекинг» → СНАЧАЛА get_batch_plan_status/get_batch_detail (tracking_readiness), потом
   партия: send_tracking_batch; один BL: find_bl → send_tracking_bl.
   ЖЕЛЕЗНОЕ ПРАВИЛО: если партия в статусе Nurjo'li, Jarkent, Almata, Taraz, Shimkent, Qonusbay, Saryagash,
@@ -1618,13 +1624,17 @@ TOOLS = [
                 "изменения плана, доложить о переездах грузов); "
                 "'recall_announcement' (params: announcement_id из list_announcements — УДАЛИТЬ разосланное "
                 "объявление из всех групп, куда оно ушло, как отзыв трекинга; создавать может и подтверждает "
-                "только владелец или Jahongir; Telegram даёт боту удалять свои сообщения ~48 часов). "
+                "только владелец или Jahongir; Telegram даёт боту удалять свои сообщения ~48 часов); "
+                "'edit_announcement' (params: announcement_id из list_announcements, text — ПОЛНЫЙ новый текст "
+                "объявления, оформление тегами <b>, <i>, <u>, <a href> — ИСПРАВИТЬ уже разосланное объявление во "
+                "всех группах, где оно висит; фото остаётся прежним; предложить может тот, кто готовит объявления, "
+                "подтверждает владелец или Jahongir; в карточке подтверждения бот сам покажет новый текст). "
                 "summary: короткое человекочитаемое описание действия по-русски."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement", "attach_pending_file", "update_language"]},
+                    "kind": {"type": "string", "enum": ["set_batch_status", "send_tracking_batch", "send_tracking_bl", "apply_kazakh_plan", "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan", "move_file", "delete_file", "update_batch", "watch_plans", "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement", "attach_pending_file", "update_language", "edit_announcement"]},
                     "params": {"type": "object", "description": "параметры действия"},
                     "summary": {"type": "string", "description": "краткое описание для карточки подтверждения"},
                 },
@@ -3278,8 +3288,38 @@ ALLOWED_ACTION_KINDS = {
     "link_bl_group", "run_plan_sync", "send_group_message", "sync_batch_from_plan",
     "move_file", "delete_file", "update_batch", "watch_plans",
     "merge_batches", "delete_batch", "mark_no_tracking", "recall_announcement",
-    "attach_pending_file", "update_language",
+    "attach_pending_file", "update_language", "edit_announcement",
 }
+
+ANNOUNCE_CAPTION_UNITS, ANNOUNCE_TEXT_UNITS = 1024, 4096
+
+
+def _actor_id(tg_user_id: str) -> str:
+    """Кто действует: в личке — сам пользователь, в управляющей группе — тот, кто пишет
+    (tg_user_id там «group:<chat_id>», по нему права не проверить)."""
+    if str(tg_user_id).startswith("group:"):
+        return str((_SPEAKER.get() or {}).get("id") or "")
+    return str(tg_user_id)
+
+
+def _utf16_units(text: str) -> int:
+    return len(str(text or "").encode("utf-16-le")) // 2
+
+
+def announcement_text_slot(ann: dict, message_ids: list | None = None) -> tuple[bool, int]:
+    """(подпись к фото?, лимит знаков) — куда при рассылке лёг текст объявления.
+    Решают сами сообщения в группе: их столько же, сколько фото, — текст в подписи;
+    на одно больше — отдельным сообщением. (Длина текста не годится: после правки
+    она уже другая.) Правка не переносит текст из подписи в отдельное сообщение."""
+    photos = [p for p in (ann.get("photos") or []) if p]
+    if not photos:
+        return False, ANNOUNCE_TEXT_UNITS
+    if message_ids:
+        caption = len(message_ids) <= len(photos)
+    else:
+        old = str(ann.get("final_text") or "")
+        caption = not old.strip() or _utf16_units(old) <= ANNOUNCE_CAPTION_UNITS
+    return caption, ANNOUNCE_CAPTION_UNITS if caption else ANNOUNCE_TEXT_UNITS
 
 # как люди называют язык → код в базе
 _LANGUAGE_ALIASES = {
@@ -3308,6 +3348,38 @@ def normalize_language_choice(value) -> str:
     return ""
 
 
+_ENTITY_TAGS = {"bold": "b", "italic": "i", "underline": "u", "strikethrough": "s", "code": "code",
+                "spoiler": "tg-spoiler", "blockquote": "blockquote"}
+
+
+def _entities_to_html(text: str, entities: list) -> str:
+    """Текст объявления + оформление Telegram (смещения UTF-16) → HTML для правки."""
+    import html as _html
+    opens, closes = {}, {}
+    for e in entities or []:
+        kind = e.get("type")
+        if kind == "text_link" and e.get("url"):
+            start, end = f'<a href="{_html.escape(str(e["url"]), quote=True)}">', "</a>"
+        elif kind in _ENTITY_TAGS:
+            start, end = f"<{_ENTITY_TAGS[kind]}>", f"</{_ENTITY_TAGS[kind]}>"
+        else:
+            continue
+        off, length = int(e.get("offset") or 0), int(e.get("length") or 0)
+        if length <= 0:
+            continue
+        opens.setdefault(off, []).append(start)
+        closes.setdefault(off + length, []).insert(0, end)
+    out, pos = [], 0
+    for ch in str(text or ""):
+        out += closes.pop(pos, [])
+        out += opens.pop(pos, [])
+        out.append(_html.escape(ch, quote=False))
+        pos += 2 if ord(ch) > 0xFFFF else 1
+    for key in sorted(closes):
+        out += closes[key]
+    return "".join(out)
+
+
 def _tool_list_announcements(args: dict) -> dict:
     """Последние разосланные объявления — чтобы по «удали объявление» агент
     выбрал нужное и создал recall_announcement."""
@@ -3326,8 +3398,11 @@ def _tool_list_announcements(args: dict) -> dict:
         except (TypeError, ValueError):
             pass
         text = str(a.get("final_text") or "").strip()
+        full = _entities_to_html(str(a.get("final_text") or ""), a.get("final_entities") or [])
         items.append({
             "announcement_id": a["id"],
+            # полный текст с оформлением — основа для edit_announcement
+            "text_html": full if len(full) <= 2500 else full[:2500] + "…[обрезано]",
             "sent_at": a["sent_at"],
             "hours_since_sent": hours,
             "prepared_by": a.get("created_by_name") or "",
@@ -3345,7 +3420,8 @@ def _tool_list_announcements(args: dict) -> dict:
         "note": ("live_groups — в скольких группах объявление ещё висит (можно удалить). Удаление — "
                  "propose_action kind='recall_announcement' с announcement_id. Telegram даёт боту удалять свои "
                  "сообщения примерно 48 часов после отправки — старше hours_since_sent≈48 удаление, скорее "
-                 "всего, не пройдёт: скажи об этом заранее."),
+                 "всего, не пройдёт: скажи об этом заранее. Исправить текст в группах — propose_action "
+                 "kind='edit_announcement': возьми text_html и поменяй в нём то, что просят."),
     }
 
 
@@ -3505,10 +3581,41 @@ def _tool_propose_action(args: dict, tg_user_id: str, created_actions: list) -> 
                 "потом пустышку удалим."
             )}
         params["batch_name"] = batch["name"]
+    elif kind == "edit_announcement":
+        # правка разосланного: предложить может тот, кто готовит объявления,
+        # подтверждает (✅) только владелец или Jahongir — как саму рассылку
+        import html as _html
+        if not can_prepare_announcement(_actor_id(tg_user_id)):
+            return {"error": "Объявления правят владелец, операторы и Jahongir — у этого собеседника прав нет."}
+        try:
+            ann = db.announce_get(int(params.get("announcement_id") or 0))
+        except (TypeError, ValueError):
+            ann = None
+        if not ann or not ann.get("sent_at"):
+            return {"error": "Объявление не найдено — возьми announcement_id из list_announcements"}
+        live_rows = db.announce_messages(ann["id"], only_live=True)
+        live = len(live_rows)
+        if not live:
+            return {"error": f"Объявления #{ann['id']} уже нет ни в одной группе — править нечего"}
+        new_html = str(params.get("text") or "").strip()
+        plain = _html.unescape(re.sub(r"<[^>]+>", "", new_html)).strip()
+        if not plain:
+            return {"error": "Новый текст пустой. Убрать текст правкой нельзя — тогда удали объявление "
+                             "(recall_announcement)."}
+        if plain == str(ann.get("final_text") or "").strip() and "<" not in new_html:
+            return {"error": "Текст не изменился — нечего править"}
+        caption, limit = announcement_text_slot(ann, live_rows[0].get("message_ids"))
+        if _utf16_units(plain) > limit:
+            where = "это подпись к фото" if caption else "это отдельное сообщение"
+            return {"error": f"Новый текст — {_utf16_units(plain)} знаков, а {where}: максимум {limit}. Сократи."}
+        params = {"announcement_id": ann["id"], "text": new_html, "groups": live}
+        shown = plain if len(plain) <= 700 else plain[:700].rstrip() + "…"
+        summary = (f"✏️ Изменить объявление #{ann['id']} в {live} группах (от {ann['sent_at'][:16]}). "
+                   f"Клиенты увидят новый текст:\n\n{shown}")
     elif kind == "recall_announcement":
         # удаление из групп — массовое действие по клиентам: как и саму
         # рассылку, его заводит и подтверждает только владелец или Jahongir
-        if not can_approve_announcement(tg_user_id):
+        if not can_approve_announcement(_actor_id(tg_user_id)):
             return {"error": ("Удалить объявление из групп можно из лички владельца или кнопкой «🗑 Удалить из "
                               "групп» в отчёте о рассылке — подтверждают только владелец или Jahongir. "
                               "Скажи это человеку.")}

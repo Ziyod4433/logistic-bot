@@ -5323,7 +5323,7 @@ def announce_recent(limit: int = 10) -> list:
         rows = conn.execute(
             """
             SELECT a.id, a.created_by_name, a.approved_by_name, a.audience_label,
-                   a.status, a.sent_count, a.failed_count, a.sent_at, a.final_text,
+                   a.status, a.sent_count, a.failed_count, a.sent_at, a.final_text, a.final_entities,
                    a.photos, a.recalled_at, a.recalled_by_name, a.recall_deleted, a.recall_failed,
                    (SELECT COUNT(*) FROM bot_announcement_messages m
                      WHERE m.announcement_id = a.id AND m.deleted_at = '') AS live_groups
@@ -5343,6 +5343,10 @@ def announce_recent(limit: int = 10) -> list:
             item["photo_count"] = len(json.loads(item.pop("photos") or "[]"))
         except (TypeError, ValueError):
             item["photo_count"] = 0
+        try:
+            item["final_entities"] = json.loads(item.get("final_entities") or "[]")
+        except (TypeError, ValueError):
+            item["final_entities"] = []
         out.append(item)
     return out
 
