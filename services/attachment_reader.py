@@ -304,6 +304,21 @@ def extract(data: bytes, filename: str, mime: str = "") -> dict:
         return {"ok": False, "error": f"формат «{filename}» не читаю — поддерживаются: {SUPPORTED_HINT}"}
     if len(data) > MAX_FILE_BYTES:
         return {"ok": False, "error": "файл больше 20 МБ"}
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    # таблицы (Excel, CSV): все строки — в базу вложения, модели — схема и первые строки;
+    # текстом тысячи строк не помещались в лимит и не считались (21.10.2026)
+    from services import attachment_tables
+    if ext in attachment_tables.TABLE_EXTS:
+        try:
+            tables = attachment_tables.extract_tables(data, filename)
+        except Exception:
+            tables = []                       # не разобралось таблицей — читаем текстом ниже
+        if tables:
+            text = attachment_tables.schema_text(tables)
+            rows = sum(len(t["rows"]) for t in tables)
+            return {"ok": True, "kind": kind, "text": text, "chars": len(text), "truncated": False,
+                    "note": f"таблица: {len(tables)} лист(ов), {rows} строк — все доступны через query_attachment",
+                    "tables": tables}
     try:
         text, note = _READERS[kind](data)
     except Exception as exc:

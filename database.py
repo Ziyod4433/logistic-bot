@@ -7845,6 +7845,14 @@ def ai_attachment_save(tg_user_id, filename, kind, content, chars=0, note="") ->
         conn.close()
 
 
+def ai_attachment_all_ids() -> list:
+    conn = get_conn()
+    try:
+        return [int(r["id"]) for r in conn.execute("SELECT id FROM ai_attachments").fetchall()]
+    finally:
+        conn.close()
+
+
 def ai_attachment_list(tg_user_id, limit=AI_ATTACHMENTS_KEEP):
     conn = get_conn()
     try:

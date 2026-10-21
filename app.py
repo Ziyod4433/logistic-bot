@@ -3115,7 +3115,7 @@ def _private_document_worker(chat_id, sender_id, doc: dict, question: str):
     handle_ai_assistant_private_message(
         chat_id, sender_id, question or _PRIVATE_DOC_QUESTION,
         attachment={"filename": name, "kind": got["kind"], "text": got["text"],
-                    "chars": got["chars"], "note": got.get("note") or ""},
+                    "chars": got["chars"], "note": got.get("note") or "", "tables": got.get("tables") or []},
     )
 
 
