@@ -6130,9 +6130,20 @@ def _repair_migrated_chats_once():
         app.logger.exception("Migrated groups repair failed")
 
 
+def _record_app_start():
+    """Метка запуска: время и коммит (Railway передаёт RAILWAY_GIT_COMMIT_SHA). По ней видно,
+    какая версия работает, даже когда Railway CLI недоступен (22.10.2026)."""
+    try:
+        sha = (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "").strip()[:7] or "unknown"
+        db.set_setting("app_last_start", f"{db.current_ts()} {sha}")
+    except Exception:
+        app.logger.exception("App start mark failed")
+
+
 def _packing_reminder_scheduler():
     """Morning tick (every 5 min): packing-list ask + tracking digest.
     Both are self-guarded by per-day settings keys."""
+    _record_app_start()
     _repair_migrated_chats_once()   # группы, ставшие супергруппами до этой версии (раз при старте)
     try:                            # поиск по смыслу: догнать индекс новых сообщений (фон)
         from services import semantic_search_service as _ss
