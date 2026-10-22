@@ -2282,6 +2282,21 @@ def _reply_context_prefix(message: dict) -> str:
     )
 
 
+# «/opus задание» — задание целиком решает сложная модель (claude-opus-5-5),
+# даже если вопрос простой (владелец, 22.10.2026). В группе — /opus@BLtrackingbot.
+_OPUS_CMD_RE = re.compile(r"^\s*/opus(?:@\w+)?(?=\s|$)", re.IGNORECASE)
+OPUS_HINT = ("🧠 Напишите задание после команды: «/opus проанализируй задержки 23.09».\n"
+             "🧠 Buyruqdan keyin vazifani yozing: «/opus 23.09 kechikishlarini tahlil qil».")
+
+
+def _split_opus(text: str) -> tuple[bool, str]:
+    """(/opus в начале?, текст без команды)."""
+    m = _OPUS_CMD_RE.match(str(text or ""))
+    if not m:
+        return False, text
+    return True, str(text)[m.end():].strip()
+
+
 def _remember_control_photo(message: dict) -> None:
     """Фото в Tracking gruppa — в память: ассистент приложит его к объявлению,
     когда об этом попросят (ответом на фото, подписью или следующим сообщением)."""
@@ -2344,7 +2359,8 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
 
     chat_id = chat.get("id")
     text = (message.get("text") or message.get("caption") or "").strip()
-    if not chat_id or not text or text.startswith("/") or text == CANCEL_BUTTON or text in TRACK_BUTTON_TEXTS:
+    is_command = text.startswith("/") and not _OPUS_CMD_RE.match(text)      # /opus — вопрос ассистенту
+    if not chat_id or not text or is_command or text == CANCEL_BUTTON or text in TRACK_BUTTON_TEXTS:
         return False
 
     from services import ai_assistant
@@ -2371,6 +2387,10 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
     # реплай на сообщение бота (с тегом или без) — даём модели тот текст,
     # который уточняют, иначе она отвечает «в пустоту»
     context_prefix = _reply_context_prefix(message) if replying_to_bot else ""
+    force_smart, question = _split_opus(question)
+    if force_smart and not question:
+        telegram_send_message(chat_id, OPUS_HINT)
+        return True
     if not question:
         # Bare @mention with no actual question — stay silent.
         return True
@@ -2403,7 +2423,7 @@ def maybe_handle_group_ai_message(message: dict) -> bool:
                     f"group:{chat_id}", assistant_input, companion=companion_mode,
                     speaker={"id": sender.get("id"), "name": sender_name,
                              "username": sender.get("username") or ""},
-                    photos=turn_photos,
+                    photos=turn_photos, force_smart=force_smart,
                 )
         except Exception as exc:
             app.logger.exception("Control-group assistant failure")
@@ -3141,6 +3161,10 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str, attachmen
             return
         send_tracking_form_button(chat_id)
         return
+    force_smart, text = _split_opus(text)
+    if force_smart and not text and not attachment:
+        telegram_send_message(chat_id, OPUS_HINT)
+        return
 
     readonly = ai_assistant.is_readonly_user(sender_id) or bool(sales_name)
     # Владельческий режим (прямые инструменты) — только личка владельца;
@@ -3155,7 +3179,7 @@ def handle_ai_assistant_private_message(chat_id, sender_id, text: str, attachmen
             with TypingIndicator(chat_id):
                 result = ai_assistant.handle_owner_message(
                     sender_id, text, readonly=readonly, owner_direct=owner_direct,
-                    sales_name=sales_name, attachment=attachment)
+                    sales_name=sales_name, attachment=attachment, force_smart=force_smart)
         except Exception as exc:
             app.logger.exception("AI assistant failure")
             try:

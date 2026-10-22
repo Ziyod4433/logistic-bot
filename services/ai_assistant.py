@@ -4720,7 +4720,8 @@ COMPANION_PROMPT = """
 
 def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_direct: bool = False,
                          companion: bool = False, sales_name: str = "", speaker: dict | None = None,
-                         attachment: dict | None = None, photos: list | None = None) -> dict:
+                         attachment: dict | None = None, photos: list | None = None,
+                         force_smart: bool = False) -> dict:
     """Process one owner/staff message. Returns {"reply", "pending": [...]}.
 
     readonly=True (просмотровый доступ): все READ-инструменты доступны,
@@ -4877,7 +4878,8 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
     # ── две ступени: простые — основная модель, сложные — smart (может быть у
     # другого поставщика: тогда вопрос целиком решается ею, а не с середины) ──
     # разбор присланного файла — работа для ступени сложных вопросов
-    smart = smart_available() and (_wants_smart(text) or bool(attachment))
+    # «/opus …» — человек сам выбрал сложную ступень, роутер не спрашиваем
+    smart = smart_available() and (force_smart or _wants_smart(text) or bool(attachment))
     _t0 = time.time()
     _used_tools: list = []
     _rounds_done = 0
@@ -5015,6 +5017,19 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
 
     if not reply_text:
         reply_text = "Готово." if created_actions else "Не смог сформировать ответ, попробуй ещё раз."
+
+    # просили /opus, а ответила основная модель — говорим это прямо
+    if force_smart and not smart and not reply_text.startswith(("💳", "⏳")):
+        sp = smart_provider_name()
+        if sp and credits_out(sp):
+            why = f"на счёте {_PROVIDER_TITLES.get(sp, sp)} закончились деньги"
+        elif _smart_down:
+            why = "сбой на стороне провайдера"
+        elif (os.getenv("AI_SMART_DISABLE") or "").strip().lower() in ("1", "true", "yes"):
+            why = "сложная модель выключена настройкой AI_SMART_DISABLE"
+        else:
+            why = "сложная модель сейчас недоступна"
+        reply_text = f"ℹ️ {_smart_model()} не ответил ({why}) — ответила основная модель {_model()}.\n\n" + reply_text
 
     # Карточка с кнопками ✅/❌ отправляется ТОЛЬКО из created_actions.
     # Если модель написала «заявка создана», а заявки нет — человек будет
