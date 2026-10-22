@@ -13,8 +13,8 @@ _FONT_DIR = Path(__file__).resolve().parent.parent / "static" / "fonts"
 
 
 class _ReportPDF(FPDF):
-    def __init__(self, title: str):
-        super().__init__(orientation="L", unit="mm", format="A4")
+    def __init__(self, title: str, orientation: str = "L"):
+        super().__init__(orientation=orientation, unit="mm", format="A4")
         self.report_title = title
         self.add_font("DejaVu", "", str(_FONT_DIR / "DejaVuSans.ttf"))
         self.add_font("DejaVu", "B", str(_FONT_DIR / "DejaVuSans-Bold.ttf"))
@@ -57,15 +57,22 @@ def _fit(pdf: FPDF, text, width: float) -> str:
 
 def _table(pdf: _ReportPDF, headers: list, widths: list, rows: list):
     row_h = 6.5
-    pdf.set_font("DejaVu", "B", 8.5)
-    pdf.set_fill_color(232, 236, 244)
-    pdf.set_text_color(20, 20, 20)
-    for title, w in zip(headers, widths):
-        pdf.cell(w, row_h, _fit(pdf, title, w), border=1, align="C", fill=True)
-    pdf.ln(row_h)
-    pdf.set_font("DejaVu", "", 8.5)
+
+    def _head():
+        pdf.set_font("DejaVu", "B", 8.5)
+        pdf.set_fill_color(232, 236, 244)
+        pdf.set_text_color(20, 20, 20)
+        for title, w in zip(headers, widths):
+            pdf.cell(w, row_h, _fit(pdf, title, w), border=1, align="C", fill=True)
+        pdf.ln(row_h)
+        pdf.set_font("DejaVu", "", 8.5)
+
+    _head()
     stripe = False
     for row in rows:
+        if pdf.get_y() + row_h > pdf.page_break_trigger:     # шапка колонок — на каждой странице
+            pdf.add_page()
+            _head()
         pdf.set_fill_color(247, 248, 251)
         for value, w in zip(row, widths):
             pdf.cell(w, row_h, _fit(pdf, value, w), border=1, fill=stripe)
@@ -227,10 +234,125 @@ def _report_send_logs(args: dict):
     return pdf, "buraq_send_logs.pdf", f"📤 Отправки трекинга: последние {len(rows)}"
 
 
+# ── свой отчёт из данных ассистента (владелец, 22.10.2026) ──────────────
+# Раньше были только пять готовых отчётов, и на «сделай PDF с анализом уснувших
+# клиентов» бот присылал отчёт по партиям. Теперь ассистент сам передаёт заголовок,
+# ключевые цифры и разделы (текст, пункты, таблицы) — оформление делает этот модуль.
+import re as _re
+
+_MAX_SECTIONS, _MAX_TABLE_ROWS, _MAX_TOTAL_ROWS = 40, 400, 1500
+_TAG_RE = _re.compile(r"<[^>]+>")
+
+
+def _clean(value) -> str:
+    """Текст для DejaVu: без HTML-тегов, эмодзи вне BMP и селекторов вариантов."""
+    import html as _html
+    text = _html.unescape(_TAG_RE.sub("", str(value if value is not None else "")))
+    return "".join(ch for ch in text if ord(ch) <= 0xFFFF and ch not in "️‍")
+
+
+def _auto_widths(pdf: FPDF, columns: list, rows: list, total: float) -> list:
+    """Ширины колонок по содержимому: длинный текст шире, цифры уже; сумма = ширине страницы."""
+    pdf.set_font("DejaVu", "", 8.5)
+    need = []
+    for i, col in enumerate(columns):
+        sample = [str(col)] + [str(r[i]) if i < len(r) else "" for r in rows[:60]]
+        widest = max(pdf.get_string_width(s) for s in sample) + 3
+        need.append(min(max(widest, 14), 90))
+    scale = total / sum(need)
+    return [w * scale for w in need]
+
+
+def _kpis(pdf: _ReportPDF, items: list):
+    items = [i for i in items if isinstance(i, dict) and (i.get("label") or i.get("value"))][:6]
+    if not items:
+        return
+    gap = 3
+    width = (pdf.w - pdf.l_margin - pdf.r_margin - gap * (len(items) - 1)) / len(items)
+    y = pdf.get_y()
+    for idx, item in enumerate(items):
+        x = pdf.l_margin + idx * (width + gap)
+        pdf.set_fill_color(238, 243, 252)
+        pdf.set_draw_color(205, 218, 240)
+        pdf.rect(x, y, width, 18, style="DF")
+        pdf.set_xy(x + 3, y + 2.5)
+        pdf.set_font("DejaVu", "B", 13)
+        pdf.set_text_color(18, 47, 84)
+        pdf.cell(width - 6, 7, _fit(pdf, _clean(item.get("value")), width - 6))
+        pdf.set_xy(x + 3, y + 10)
+        pdf.set_font("DejaVu", "", 8)
+        pdf.set_text_color(95, 110, 130)
+        pdf.cell(width - 6, 5, _fit(pdf, _clean(item.get("label")), width - 6))
+    pdf.set_draw_color(0, 0, 0)
+    pdf.set_y(y + 22)
+
+
+def _report_custom(args: dict):
+    title = _clean(args.get("title")).strip()
+    if not title:
+        raise ValueError("Для своего отчёта нужен title — заголовок")
+    sections = [s for s in (args.get("sections") or []) if isinstance(s, dict)][:_MAX_SECTIONS]
+    if not sections and not args.get("summary"):
+        raise ValueError("Пустой отчёт: передай sections (разделы) или summary (ключевые цифры)")
+    wide = any(len((s.get("table") or {}).get("columns") or []) > 6 for s in sections)
+    pdf = _ReportPDF(title, orientation="L" if wide else "P")
+    page_w = pdf.w - pdf.l_margin - pdf.r_margin
+    if args.get("subtitle"):
+        pdf.set_font("DejaVu", "", 9.5)
+        pdf.set_text_color(95, 110, 130)
+        pdf.multi_cell(page_w, 5, _clean(args.get("subtitle")))
+        pdf.ln(2)
+    _kpis(pdf, args.get("summary") or [])
+    total_rows = 0
+    for sec in sections:
+        heading = _clean(sec.get("heading")).strip()
+        if heading:
+            if pdf.get_y() > pdf.h - 40:
+                pdf.add_page()
+            pdf.set_font("DejaVu", "B", 11.5)
+            pdf.set_text_color(18, 47, 84)
+            pdf.multi_cell(page_w, 6.5, heading)
+            pdf.ln(1)
+        text = _clean(sec.get("text")).strip()
+        if text:
+            pdf.set_font("DejaVu", "", 9.5)
+            pdf.set_text_color(30, 30, 30)
+            pdf.multi_cell(page_w, 5, text)
+            pdf.ln(1.5)
+        for bullet in (sec.get("bullets") or [])[:60]:
+            pdf.set_font("DejaVu", "", 9.5)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_x(pdf.l_margin + 2)
+            pdf.multi_cell(page_w - 2, 5, "•  " + _clean(bullet))
+        table = sec.get("table") or {}
+        columns = [_clean(c) for c in (table.get("columns") or [])][:12]
+        if columns:
+            room = max(0, _MAX_TOTAL_ROWS - total_rows)
+            rows = [[_clean(v) for v in (r if isinstance(r, list) else [r])][:len(columns)]
+                    for r in (table.get("rows") or [])[:min(_MAX_TABLE_ROWS, room)]]
+            total_rows += len(rows)
+            pdf.ln(1)
+            _table(pdf, columns, _auto_widths(pdf, columns, rows, page_w), rows)
+            hidden = len(table.get("rows") or []) - len(rows)
+            if hidden > 0:
+                pdf.set_font("DejaVu", "", 8)
+                pdf.set_text_color(120, 120, 120)
+                pdf.cell(page_w, 5, f"…и ещё {hidden} строк не поместилось в отчёт")
+                pdf.ln(5)
+        pdf.ln(3)
+    slug = _re.sub(r"[^0-9A-Za-z]+", "_", _clean(args.get("filename") or "")).strip("_")[:50]
+    stamp = datetime.now(db.TASHKENT_TZ).strftime("%Y%m%d")
+    filename = f"buraq_{slug or 'report'}_{stamp}.pdf"
+    caption = f"📄 {title}"
+    return pdf, filename, caption
+
+
 def build_report(report: str, args: dict):
     """(pdf_bytes, filename, caption) или ValueError с человекочитаемой причиной."""
     kind = (report or "").strip()
-    if kind == "batches":
+    if kind == "custom":
+        pdf, filename, caption = _report_custom(args or {})
+    elif kind == "batches":
         pdf, filename, caption = _report_batches()
     elif kind == "batch_detail":
         pdf, filename, caption = _report_batch_detail(args or {})
@@ -242,6 +364,6 @@ def build_report(report: str, args: dict):
         pdf, filename, caption = _report_send_logs(args or {})
     else:
         raise ValueError(
-            "Неизвестный отчёт. Доступны: batches, batch_detail, late_cargo, problems, send_logs"
+            "Неизвестный отчёт. Доступны: custom, batches, batch_detail, late_cargo, problems, send_logs"
         )
     return bytes(pdf.output()), filename, caption

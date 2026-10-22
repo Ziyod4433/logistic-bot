@@ -693,7 +693,10 @@ def _system_prompt() -> str:
   propose_action kind='send_tracking_bl' (params: bl_id). Для всей партии — send_tracking_batch.
 - PDF-ОТЧЁТЫ: make_pdf_report присылает готовый PDF файлом прямо в чат (batches / batch_detail /
   late_cargo / problems / send_logs). Просят отчёт, сводку, выгрузку, «в PDF/файлом» — используй его сразу,
-  это чтение данных, подтверждения не нужно.
+  это чтение данных, подтверждения не нужно. СВОЙ анализ в PDF («красивый отчёт по уснувшим клиентам»,
+  «сводка по этому Excel») — report='custom': сначала собери факты инструментами, потом передай title,
+  summary (ключевые цифры) и sections (выводы текстом, списки, таблицы). Стандартный отчёт вместо
+  запрошенного анализа не отправляй.
 - Если запрос неоднозначен (какая партия? какая группа?) — сначала уточни или покажи варианты из данных.
 
 ════════ РЕЦЕПТЫ: ВОПРОС → ИНСТРУМЕНТЫ ════════
@@ -1594,6 +1597,10 @@ TOOLS = [
             "name": "make_pdf_report",
             "description": (
                 "Сформировать PDF-отчёт и прислать его ФАЙЛОМ прямо в этот чат. report: "
+                "'custom' — СВОЙ отчёт из твоего анализа (уснувшие клиенты, сводка по Excel-вложению, разбор групп, "
+                "что угодно): title, subtitle, summary — ключевые цифры [{label, value}] (до 6), sections — разделы "
+                "[{heading, text, bullets[], table{columns[], rows[[…]]}}]. Заполняй ТОЛЬКО фактами из инструментов "
+                "этого диалога; на просьбу о своём анализе в PDF — это custom, НЕ подменяй его стандартным отчётом; "
                 "'batches' — все партии (активные и неактивные) со статусами, весом/объёмом и датами; "
                 "'batch_detail' — одна партия со всеми BL (params: batch — id или часть имени); "
                 "'late_cargo' — опаздывающие грузы из шитса статусов; "
@@ -1604,9 +1611,25 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "report": {"type": "string", "enum": ["batches", "batch_detail", "late_cargo", "problems", "send_logs"]},
+                    "report": {"type": "string",
+                               "enum": ["custom", "batches", "batch_detail", "late_cargo", "problems", "send_logs"]},
                     "batch": {"type": "string", "description": "для batch_detail: id или часть имени партии"},
                     "limit": {"type": "integer", "description": "для send_logs: сколько строк"},
+                    "title": {"type": "string", "description": "для custom: заголовок отчёта"},
+                    "subtitle": {"type": "string", "description": "для custom: период, источник данных"},
+                    "filename": {"type": "string", "description": "для custom: короткое имя файла латиницей"},
+                    "summary": {"type": "array", "description": "для custom: ключевые цифры",
+                                "items": {"type": "object", "properties": {
+                                    "label": {"type": "string"}, "value": {"type": "string"}}}},
+                    "sections": {"type": "array", "description": "для custom: разделы отчёта",
+                                 "items": {"type": "object", "properties": {
+                                     "heading": {"type": "string"},
+                                     "text": {"type": "string"},
+                                     "bullets": {"type": "array", "items": {"type": "string"}},
+                                     "table": {"type": "object", "properties": {
+                                         "columns": {"type": "array", "items": {"type": "string"}},
+                                         "rows": {"type": "array", "description": "строки таблицы, значения текстом",
+                                                  "items": {"type": "array", "items": {"type": "string"}}}}}}}},
                 },
                 "required": ["report"],
             },
@@ -4520,6 +4543,12 @@ def _to_anthropic_messages(messages) -> tuple:
             text = m.get("content") or ""
             if text:
                 out.append({"role": "user", "content": text})
+    # Claude требует, чтобы переписка начиналась с сообщения человека. Окно истории
+    # (последние N сообщений) может начаться с ответа бота, если когда-то ответ не
+    # сохранился (перезапуск посреди хода), — тогда каждый вызов падал 400-й
+    # (владелец, 22.10.2026: Opus «не отвечал» в личке весь день).
+    while out and (out[0]["role"] != "user" or isinstance(out[0]["content"], list)):
+        out.pop(0)
     return "\n\n".join(system), out
 
 
@@ -4983,11 +5012,16 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
 
     reply_text = ""
     _smart_down = False
+    _smart_error = ""
     try:
         try:
             reply_text = _attempt(smart)
-        except SmartTierFailed:
-            # сложная ступень недоступна (баланс, сбой) — отвечает основная модель
+        except SmartTierFailed as exc:
+            # сложная ступень недоступна (баланс, сбой) — отвечает основная модель;
+            # причину пишем в журнал: без неё сбой Opus 22.10 искали вслепую
+            import logging
+            logging.getLogger(__name__).warning("Smart tier failed: %s", exc)
+            _smart_error = str(exc)[:200]
             smart = False
             _smart_down = True
             reply_text = "" if created_actions else _attempt(False)
@@ -5071,7 +5105,8 @@ def handle_owner_message(tg_user_id, text: str, readonly: bool = False, owner_di
             provider=prov, model=mdl, smart=smart, rounds=_rounds_done,
             tools_used=",".join(_used_tools[:15]),
             duration_ms=int((time.time() - _t0) * 1000),
-            ok=ok_flag, error="" if ok_flag else reply_text[:200],
+            ok=ok_flag, error=(("" if ok_flag else reply_text[:200])
+                               + (f" [сложная ступень: {_smart_error}]" if _smart_error else ""))[:400],
         )
     except Exception:
         pass          # журнал не должен ломать ответ человеку
