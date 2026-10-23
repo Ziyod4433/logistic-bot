@@ -4199,6 +4199,11 @@ def handle_ai_action_callback(callback_query: dict, callback_id, data: str):
         if (action.get("kind") in ("link_bl_group", "mark_no_tracking")
                 and ai_assistant.is_group_link_responsible(voter)):
             allowed = True
+        # отправку уведомлений клиентам (трекинг партии/BL, сообщение в
+        # группу) подтверждает и модератор Jahongir (владелец, 23.10.2026)
+        if (action.get("kind") in ai_assistant.NOTIFY_ACTION_KINDS
+                and ai_assistant.can_approve_notification(voter.get("id"))):
+            allowed = True
         # отложенный packing list подтверждает и ответственный за них (Jigar):
         # это ему бот задавал вопрос «qaysi BL uchun?»
         if (action.get("kind") == "attach_pending_file"

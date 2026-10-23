@@ -419,6 +419,9 @@ def speaker_role(speaker: dict) -> tuple:
     packing_id = (os.getenv("PACKING_RESPONSIBLE_TG_ID", "8526226966") or "").strip()
     if uid and uid == packing_id:
         return "ответственный за packing list", {"attach_pending_file"}
+    if can_approve_notification(uid):
+        return ("модератор: привязка групп и уведомления клиентам",
+                {"link_bl_group", "mark_no_tracking"} | NOTIFY_ACTION_KINDS)
     if is_group_link_responsible(speaker):
         return "ответственный за привязку групп", {"link_bl_group", "mark_no_tracking"}
     return "участник без прав на изменения", set()
@@ -445,6 +448,16 @@ def can_approve_announcement(tg_user_id) -> bool:
 
 def can_prepare_announcement(tg_user_id) -> bool:
     return can_approve_announcement(tg_user_id) or can_change(tg_user_id)
+
+
+# Уведомления клиентам (трекинг партии/BL, сообщение в группу) подтверждает
+# и модератор Jahongir (владелец, 23.10.2026) — те же люди, что и объявления.
+# Прочие заявки (удаление, слияние, статусы…) ему по-прежнему не положены.
+NOTIFY_ACTION_KINDS = {"send_tracking_batch", "send_tracking_bl", "send_group_message"}
+
+
+def can_approve_notification(tg_user_id) -> bool:
+    return can_approve_announcement(tg_user_id)
 
 
 def confidential_chat_ids() -> set:
