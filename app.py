@@ -7090,10 +7090,28 @@ def ask_packing_file_owner(chat_id, base: str, path: str, reason: str = "", fold
     mention = ""
     if PACKING_RESPONSIBLE_TG_ID:
         mention = f'<a href="tg://user?id={PACKING_RESPONSIBLE_TG_ID}">{html_escape(PACKING_RESPONSIBLE_NAME)}</a>, '
+    # явные признаки (бренд — часть кода, места, папка = партия) называем сразу:
+    # «IDEA 93 MESTA» из папки 14.10 → IDEAELECTR 14.10, 93 joy (23.10.2026)
+    hint = ""
+    brand, mesta = _parse_packing_filename(base)
+    if mesta is not None:
+        try:
+            _index, rows = _build_active_bl_index()
+            guess = _better_packing_targets({"id": None, "code": brand}, mesta, _folder_date_key(folder_name),
+                                            base, rows)
+        except Exception:
+            app.logger.exception("packing hint failed for %s", base)
+            guess = []
+        if len(guess) == 1:
+            db.set_setting(f"packing_suggest_{qid}", str(guess[0]["id"]))
+            hint = (f"💡 Ehtimol: <code>{html_escape(str(guess[0].get('code')))}</code> "
+                    f"({html_escape(str(guess[0].get('batch_name') or ''))}, {_places_of(guess[0])} joy) — "
+                    "to'g'ri bo'lsa <b>ha</b> deb javob bering.\n")
     text = (
         f"❓ {mention}bu packing list qaysi BL uchun?\n"
         f"📎 <code>{html_escape(base)}</code>\n"
         + (f"ℹ️ {reason}\n" if reason else "")
+        + hint
         + "\n<i>Shu xabarga REPLY qilib BL kodini yozing (masalan: <code>BL-690</code>, "
         "kerak bo'lsa partiya bilan: <code>BL-690 14.08</code>) — o'zim biriktiraman. "
         "Kerak bo'lmasa: <code>yo'q</code>.</i>"
@@ -7172,6 +7190,62 @@ def _resolve_answer_to_bl(answer: str, filename: str, rows: list, chat_titles: d
     return pool, "bir nechta variant qoldi"
 
 
+# Вопрос в ответ на вопрос бота — это НЕ ответ (владелец, 23.10.2026: на
+# «Idea digan gurux bormi?» бот нашёл в тексте код IDEA и сразу прикрепил файл).
+# «какой-то», «где-нибудь» — не вопрос, поэтому слово не должно продолжаться дефисом
+_PACKING_QUESTION_RE = re.compile(
+    r"\?|\b(bormi|qaysi|qayerda|qaerda|nechta|nima|kimniki|qanaqa|qachon)\b(?!-)"
+    r"|есть\s+ли|\b(какой|какая|какие|где|сколько|чей|чья|почему)\b(?!-)", re.IGNORECASE)
+_PACKING_YES_WORDS = {"ha", "xa", "haa", "да", "yes", "ok", "ок", "mayli", "shu", "shunga", "to'g'ri",
+                      "togri", "верно", "давай", "biriktir", "biriktiring"}
+
+
+def _is_packing_yes(text: str) -> bool:
+    """Короткое согласие на предложенный BL («ha», «ha, shunga», «да»)."""
+    norm = re.sub(r"[‘’ʻʼ`]", "'", str(text or "").lower())
+    words = re.findall(r"[\w']+", norm)
+    return 0 < len(words) <= 3 and all(w in _PACKING_YES_WORDS for w in words)
+
+
+def _places_of(bl: dict) -> int:
+    try:
+        return int(round(float(bl.get("quantity_places") or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _better_packing_targets(bl: dict, mesta: int, folder_key, filename: str, rows: list) -> list:
+    """Грузы того же клиента, которые сходятся по числу мест из имени файла
+    (и, если есть, по дате папки), — вместо названного, который не сходится."""
+    brand, _m = _parse_packing_filename(filename)
+    tokens = {_normalize_bl_code(brand), _normalize_bl_code(str(bl.get("code") or "")),
+              _normalize_bl_code(str(bl.get("client_name") or ""))}
+    tokens = {t for t in tokens if len(t) >= 3}
+    chat = str(bl.get("chat_id") or "").strip()
+
+    def related(o) -> bool:
+        code = _normalize_bl_code(str(o.get("code") or ""))
+        client = _normalize_bl_code(str(o.get("client_name") or ""))
+        if chat and str(o.get("chat_id") or "").strip() == chat:
+            return True
+        return any(t in code or (code and code in t) or (client and t in client) for t in tokens)
+
+    better = [o for o in rows if o["id"] != bl["id"] and _mesta_matches(o, mesta) and related(o)]
+    if folder_key:
+        in_folder = [o for o in better if _batch_in_folder(str(o.get("batch_name") or ""), folder_key)]
+        better = in_folder or better
+    return better
+
+
+def _packing_followup(chat_id, question_id: int, text: str) -> None:
+    """Уточнение по вопросу о packing list: reply на него тоже считается
+    ответом (иначе «ha» на уточнение уходило мимо вопроса)."""
+    resp = telegram_send_message(chat_id, text)
+    message_id = ((resp or {}).get("result") or {}).get("message_id")
+    if message_id:
+        db.record_packing_question_reask(question_id, message_id, reminder=False)
+
+
 def maybe_handle_packing_answer(message: dict) -> bool:
     """Ответ (reply) на вопрос «какой это BL?» — находим BL и прикрепляем."""
     from services import ai_assistant
@@ -7196,16 +7270,65 @@ def maybe_handle_packing_answer(message: dict) -> bool:
         db.resolve_packing_question(question["id"], "cancelled", answer)
         telegram_send_message(chat_id, "✅ Tushunarli, bu faylni biriktirmayman.")
         return True
+    if _PACKING_QUESTION_RE.search(answer):
+        # человек спрашивает, а не отвечает — пусть разберётся ассистент
+        # (реплика на сообщение бота уходит ему с текстом вопроса о файле)
+        return False
 
     index, rows = _build_active_bl_index()
     chat_titles = _build_chat_title_lookup(rows)
-    candidates, why = _resolve_answer_to_bl(answer, question["filename"], rows, chat_titles)
+    suggest_key = f"packing_suggest_{question['id']}"
+    _brand, mesta = _parse_packing_filename(question["filename"])
+    folder = str(question.get("folder_name") or "") or db.drive_folder_of(question["filename"])
+    folder_key = _folder_date_key(folder)
+
+    # «ha» на наше уточнение — прикрепляем к тому, что бот предложил
+    suggested = None
+    if _is_packing_yes(answer):
+        sid = str(db.get_setting(suggest_key) or "")
+        if sid.isdigit():
+            suggested = next((r for r in rows if r["id"] == int(sid)), None)
+    if suggested is not None:
+        candidates, why = [suggested], ""
+    else:
+        candidates, why = _resolve_answer_to_bl(answer, question["filename"], rows, chat_titles)
+    better = []
+    if len(candidates) == 1 and suggested is None and mesta is not None and not _mesta_matches(candidates[0], mesta) \
+            and not _ANSWER_DATE_RE.search(answer):
+        better = _better_packing_targets(candidates[0], mesta, folder_key, question["filename"], rows)
+    if better:
+        # названный груз не сходится по местам из имени файла, у того же клиента
+        # есть сходящийся, а партию человек не назвал — не прикрепляем вслепую:
+        # показываем подходящий груз и ждём «ha». Подходящего нет — слово
+        # человека решает (прикрепим ниже с пометкой о местах).
+        named = candidates[0]
+        target = better[0] if len(better) == 1 else named
+        db.set_setting(suggest_key, str(target["id"]))
+        head = (f"⚠️ <code>{html_escape(question['filename'])}</code>: "
+                f"<code>{html_escape(str(named.get('code')))}</code> ({html_escape(str(named.get('batch_name') or ''))}) — "
+                f"{_places_of(named)} joy, faylda esa {mesta} MESTA.")
+        if target is not named:
+            in_folder = folder_key and _batch_in_folder(str(target.get("batch_name") or ""), folder_key)
+            text_out = (f"{head}\n✅ Mos keladigani: <code>{html_escape(str(target.get('code')))}</code> "
+                        f"({html_escape(str(target.get('batch_name') or ''))}, {_places_of(target)} joy"
+                        + (f", papka {html_escape(folder)} bilan ham mos" if in_folder else "") + ").\n"
+                        "Shunga biriktiraymi? <b>ha</b> deb javob bering yoki BL kodini partiya sanasi bilan yozing.")
+        else:
+            listed = ", ".join(
+                f"<code>{html_escape(str(c.get('code')))}</code> ({html_escape(str(c.get('batch_name') or ''))}, "
+                f"{_places_of(c)} joy)" for c in better[:5])
+            text_out = (f"{head}\n{mesta} joy bo'yicha mos keladiganlar: {listed}.\n"
+                        "Qaysi biri? BL kodini partiya sanasi bilan yozing "
+                        f"(baribir <code>{html_escape(str(named.get('code')))}</code> ga — <b>ha</b>).")
+        _packing_followup(chat_id, question["id"], text_out)
+        return True
     if len(candidates) != 1:
         # НЕ повторяем фразу человека и не даём абстрактный пример —
         # показываем кандидатов ИМЕННО этого файла, чтобы было что выбрать
         if candidates:
             listed = ", ".join(
-                f"<code>{html_escape(str(c.get('code')))}</code> ({html_escape(str(c.get('batch_name') or ''))})"
+                f"<code>{html_escape(str(c.get('code')))}</code> ({html_escape(str(c.get('batch_name') or ''))}, "
+                f"{_places_of(c)} joy{' ✅' if mesta is not None and _mesta_matches(c, mesta) else ''})"
                 for c in candidates[:5]
             )
             text_out = (
@@ -7219,14 +7342,18 @@ def maybe_handle_packing_answer(message: dict) -> bool:
                 f"🤔 <code>{html_escape(question['filename'])}</code> uchun BL topolmadim ({why}).\n"
                 "BL kodini yozing — masalan <code>BL-690</code>, kerak bo'lsa partiya bilan."
             )
-        telegram_send_message(chat_id, text_out)
+        _packing_followup(chat_id, question["id"], text_out)
         return True
 
     bl = candidates[0]
     if not db.resolve_packing_question(question["id"], "attached", answer, bl_id=bl["id"]):
         return True  # кто-то уже ответил раньше
+    db.set_setting(suggest_key, "")
     path = question["file_path"]
     base = question["filename"]
+    mesta_note = ("" if mesta is None or _mesta_matches(bl, mesta)
+                  else f"\n⚠️ Faylda {mesta} MESTA, BL da {_places_of(bl)} joy — sizning javobingiz bo'yicha "
+                       "biriktirdim, xato bo'lsa ayting.")
     try:
         with open(path, "rb") as fh:
             data = fh.read()
@@ -7240,7 +7367,7 @@ def maybe_handle_packing_answer(message: dict) -> bool:
         telegram_send_message(
             chat_id,
             f"✅ <code>{html_escape(base)}</code> → <code>{html_escape(str(bl.get('code')))}</code> "
-            f"({html_escape(str(bl.get('batch_name') or ''))}) biriktirildi. Rahmat!",
+            f"({html_escape(str(bl.get('batch_name') or ''))}) biriktirildi. Rahmat!{mesta_note}",
         )
         try:
             os.remove(path)

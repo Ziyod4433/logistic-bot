@@ -4611,9 +4611,11 @@ def set_packing_question_message(question_id: int, message_id) -> None:
         conn.close()
 
 
-def record_packing_question_reask(question_id: int, message_id) -> None:
+def record_packing_question_reask(question_id: int, message_id, reminder: bool = True) -> None:
     """Вопрос повторили новым сообщением: запоминаем его id, чтобы reply на
-    повтор тоже считался ответом, и сдвигаем время следующего напоминания."""
+    повтор тоже считался ответом, и сдвигаем время следующего напоминания.
+    reminder=False — это уточнение в диалоге, а не напоминание: счётчик
+    напоминаний не растёт."""
     conn = get_conn()
     try:
         row = conn.execute(
@@ -4627,7 +4629,8 @@ def record_packing_question_reask(question_id: int, message_id) -> None:
         conn.execute(
             "UPDATE packing_file_questions SET reask_message_ids = ?, ask_count = ?, last_asked_at = ? "
             "WHERE id = ?",
-            (",".join(ids[-20:]), int(row["ask_count"] or 1) + 1, current_ts(), int(question_id)),
+            (",".join(ids[-20:]), int(row["ask_count"] or 1) + (1 if reminder else 0), current_ts(),
+             int(question_id)),
         )
         conn.commit()
     finally:
